@@ -304,13 +304,21 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef _WIN32
-    /* Libuv will set windows sockets as non-blocking */
-#elif defined(__APPLE__)
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK  | O_CLOEXEC);
-#else
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+/* Libuv will set windows sockets as non-blocking */
+#ifndef _WIN32
+    if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
+        int flags = fcntl(fd, F_GETFL, 0);
+
+        // F_GETFL supports O_NONBLCOK
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        flags = fcntl(fd, F_GETFD, 0);
+
+        // F_GETFD supports FD_CLOEXEC
+        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+    }
 #endif
+
     return fd;
 }
 
@@ -395,12 +403,27 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
+    LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
+    const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
+    do {
+        created_fd = socket(domain, type | flags, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return apple_no_sigpipe(created_fd);
 #else
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
+    do {
+        created_fd = socket(domain, type, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }

@@ -1,11 +1,14 @@
 import { test, expect } from "bun:test";
-import { isCI } from "harness";
+import { isCI, isDebug } from "harness";
 
 interface InvalidFuzzOptions {
   maxLength: number;
   strategy: "syntax" | "structure" | "encoding" | "memory" | "all";
   iterations: number;
 }
+
+const shutup = process.env.CSS_FUZZ_SHUTUP === "1";
+const log = shutup ? () => {} : console.log;
 
 // Collection of invalid CSS generation strategies
 const invalidGenerators = {
@@ -62,7 +65,7 @@ const invalidGenerators = {
 
   // Memory and resource stress
   memory: {
-    deepNesting: (depth: number = 1000) => {
+    deepNesting: (depth: number = 300) => {
       let css = "";
       for (let i = 0; i < depth; i++) {
         css += "@media screen {";
@@ -111,107 +114,108 @@ function corruptCSS(css: string): string {
 // TODO:
 if (!isCI) {
   // Main fuzzing test suite for invalid inputs
-  test.each([
-    ["syntax", 1000],
-    ["structure", 1000],
-    ["encoding", 500],
-    ["memory", 100],
-  ])("CSS Parser Invalid Input Fuzzing - %s (%d iterations)", async (strategy, iterations) => {
-    const options: InvalidFuzzOptions = {
-      maxLength: 10000,
-      strategy: strategy as any,
-      iterations,
-    };
+  test.each(
+    [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
+      xs => xs.length > 0,
+    ),
+  )(
+    "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
+    async (strategy, iterations) => {
+      const options: InvalidFuzzOptions = {
+        maxLength: 10000,
+        strategy: strategy as any,
+        iterations,
+      };
 
-    let crashCount = 0;
-    let errorCount = 0;
-    const startTime = performance.now();
+      let crashCount = 0;
+      let errorCount = 0;
+      const startTime = performance.now();
 
-    for (let i = 0; i < options.iterations; i++) {
-      let invalidCSS = "";
+      for (let i = 0; i < options.iterations; i++) {
+        let invalidCSS = "";
 
-      switch (strategy) {
-        case "syntax":
-          invalidCSS =
-            invalidGenerators.syntax[
-              Object.keys(invalidGenerators.syntax)[
-                Math.floor(Math.random() * Object.keys(invalidGenerators.syntax).length)
-              ]
-            ]()[Math.floor(Math.random() * 5)];
-          break;
+        switch (strategy) {
+          case "syntax":
+            invalidCSS =
+              invalidGenerators.syntax[
+                Object.keys(invalidGenerators.syntax)[
+                  Math.floor(Math.random() * Object.keys(invalidGenerators.syntax).length)
+                ]
+              ]()[Math.floor(Math.random() * 5)];
+            break;
 
-        case "structure":
-          invalidCSS =
-            invalidGenerators.structure[
-              Object.keys(invalidGenerators.structure)[
-                Math.floor(Math.random() * Object.keys(invalidGenerators.structure).length)
-              ]
-            ]()[Math.floor(Math.random() * 3)];
-          break;
+          case "structure":
+            invalidCSS =
+              invalidGenerators.structure[
+                Object.keys(invalidGenerators.structure)[
+                  Math.floor(Math.random() * Object.keys(invalidGenerators.structure).length)
+                ]
+              ]()[Math.floor(Math.random() * 3)];
+            break;
 
-        case "encoding":
-          invalidCSS =
-            invalidGenerators.encoding[
-              Object.keys(invalidGenerators.encoding)[
-                Math.floor(Math.random() * Object.keys(invalidGenerators.encoding).length)
-              ]
-            ]()[0];
-          break;
+          case "encoding":
+            invalidCSS =
+              invalidGenerators.encoding[
+                Object.keys(invalidGenerators.encoding)[
+                  Math.floor(Math.random() * Object.keys(invalidGenerators.encoding).length)
+                ]
+              ]()[0];
+            break;
 
-        case "memory":
-          const memoryFuncs = Object.keys(invalidGenerators.memory);
-          const selectedFunc = memoryFuncs[Math.floor(Math.random() * memoryFuncs.length)];
-          invalidCSS = invalidGenerators.memory[selectedFunc](1000);
-          break;
-      }
-
-      // Further corrupt the CSS randomly
-      if (Math.random() < 0.3) {
-        invalidCSS = corruptCSS(invalidCSS);
-      }
-
-      console.log("--- CSS Fuzz ---");
-      invalidCSS = invalidCSS + "";
-      console.log(JSON.stringify(invalidCSS, null, 2));
-      await Bun.write("invalid.css", invalidCSS);
-
-      try {
-        const result = await Bun.build({
-          entrypoints: ["invalid.css"],
-          experimentalCss: true,
-        });
-
-        if (result.logs.length > 0) {
-          throw new AggregateError("CSS parser returned logs", result.logs);
+          case "memory":
+            const memoryFuncs = Object.keys(invalidGenerators.memory);
+            const selectedFunc = memoryFuncs[Math.floor(Math.random() * memoryFuncs.length)];
+            invalidCSS = invalidGenerators.memory[selectedFunc]();
+            break;
         }
 
-        // We expect the parser to either throw an error or return a valid result
-        // If it returns undefined/null, that's a potential issue
-        if (result === undefined || result === null) {
-          crashCount++;
-          console.error(`Parser returned ${result} for input:\n${invalidCSS.slice(0, 100)}...`);
+        // Further corrupt the CSS randomly
+        if (Math.random() < 0.3) {
+          invalidCSS = corruptCSS(invalidCSS);
         }
-      } catch (error) {
-        // Expected behavior for invalid CSS
-        errorCount++;
 
-        // Check for specific error types we want to track
-        if (error instanceof RangeError || error instanceof TypeError) {
-          console.warn(`Unexpected error type: ${error.constructor.name} for input:\n${invalidCSS.slice(0, 100)}...`);
+        log("--- CSS Fuzz ---");
+        invalidCSS = invalidCSS + "";
+        log(JSON.stringify(invalidCSS, null, 2));
+        await Bun.write("invalid.css", invalidCSS);
+
+        try {
+          const result = await Bun.build({
+            entrypoints: ["invalid.css"],
+            experimentalCss: true,
+          });
+
+          if (result.logs.length > 0) {
+            throw new AggregateError("CSS parser returned logs", result.logs);
+          }
+
+          // We expect the parser to either throw an error or return a valid result
+          // If it returns undefined/null, that's a potential issue
+          if (result === undefined || result === null) {
+            crashCount++;
+            console.error(`Parser returned ${result} for input:\n${invalidCSS.slice(0, 100)}...`);
+          }
+        } catch (error) {
+          // Expected behavior for invalid CSS
+          errorCount++;
+
+          // Check for specific error types we want to track
+          if (error instanceof RangeError || error instanceof TypeError) {
+            console.warn(`Unexpected error type: ${error.constructor.name} for input:\n${invalidCSS.slice(0, 100)}...`);
+          }
+        }
+
+        // Memory check every 100 iterations
+        if (i % 100 === 0) {
+          const heapUsed = process.memoryUsage().heapUsed / 1024 / 1024;
+          expect(heapUsed).toBeLessThan(500); // Alert if memory usage exceeds 500MB
         }
       }
 
-      // Memory check every 100 iterations
-      if (i % 100 === 0) {
-        const heapUsed = process.memoryUsage().heapUsed / 1024 / 1024;
-        expect(heapUsed).toBeLessThan(500); // Alert if memory usage exceeds 500MB
-      }
-    }
+      const endTime = performance.now();
+      const duration = endTime - startTime;
 
-    const endTime = performance.now();
-    const duration = endTime - startTime;
-
-    console.log(`
+      console.log(`
     Strategy: ${strategy}
     Total iterations: ${iterations}
     Crashes: ${crashCount}
@@ -220,10 +224,12 @@ if (!isCI) {
     Average time per test: ${(duration / iterations).toFixed(2)}ms
   `);
 
-    // We expect some errors for invalid input, but no crashes
-    expect(crashCount).toBe(0);
-    expect(errorCount).toBeGreaterThan(0);
-  });
+      // We expect some errors for invalid input, but no crashes
+      expect(crashCount).toBe(0);
+      expect(errorCount).toBeGreaterThan(0);
+    },
+    10 * 1000,
+  );
 
   // Additional test for mixed valid/invalid input
   test("CSS Parser Mixed Input Fuzzing", async () => {

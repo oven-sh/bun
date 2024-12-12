@@ -19,7 +19,7 @@
 #include <unistd.h>
 #endif
 
-BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "native_plugin_test";
+extern "C" BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "native_plugin_test";
 
 struct External {
   std::atomic<size_t> foo_count;

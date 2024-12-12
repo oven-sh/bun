@@ -12,6 +12,9 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const OOM = bun.OOM;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const Lockfile = bun.install.Lockfile;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
 pub const String = extern struct {
@@ -34,6 +37,106 @@ pub const String = extern struct {
         }
         return String.init(inlinable_buffer, inlinable_buffer);
     }
+
+    pub const Buf = struct {
+        bytes: std.ArrayList(u8),
+        pool: Builder.StringPool,
+
+        pub fn init(allocator: std.mem.Allocator) Buf {
+            return .{
+                .bytes = std.ArrayList(u8).init(allocator),
+                .pool = Builder.StringPool.init(allocator),
+            };
+        }
+
+        pub fn apply(this: *Buf, lockfile: *Lockfile) void {
+            lockfile.buffers.string_bytes = this.bytes.moveToUnmanaged();
+            lockfile.string_pool = this.pool;
+        }
+
+        pub fn append(this: *Buf, str: string) OOM!String {
+            if (canInline(str)) {
+                return String.initInline(str);
+            }
+
+            const hash = Builder.stringHash(str);
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            // new entry
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return new;
+        }
+
+        pub fn appendWithHash(this: *Buf, str: string, hash: u64) OOM!String {
+            if (canInline(str)) {
+                return initInline(str);
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            // new entry
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return new;
+        }
+
+        pub fn appendExternal(this: *Buf, str: string) OOM!ExternalString {
+            const hash = Builder.stringHash(str);
+
+            if (canInline(str)) {
+                return .{
+                    .value = String.initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
+
+        pub fn appendExternalWithHash(this: *Buf, str: string, hash: u64) OOM!ExternalString {
+            if (canInline(str)) {
+                return .{
+                    .value = initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
+    };
 
     pub const Tag = enum {
         small,
@@ -185,6 +288,60 @@ pub const String = extern struct {
                 )) | 1 << 63),
             ),
         };
+    }
+
+    pub fn initInline(
+        in: string,
+    ) String {
+        bun.assertWithLocation(canInline(in), @src());
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+            8 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+            else => unreachable,
+        };
+    }
+
+    pub fn initAppendIfNeeded(
+        buf: *std.ArrayList(u8),
+        in: string,
+    ) OOM!String {
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+
+            max_inline_len =>
+            // If they use the final bit, then it's a big string.
+            // This should only happen for non-ascii strings that are exactly 8 bytes.
+            // so that's an edge-case
+            if ((in[max_inline_len - 1]) >= 128)
+                try initAppend(buf, in)
+            else
+                .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+
+            else => try initAppend(buf, in),
+        };
+    }
+
+    pub fn initAppend(
+        buf: *std.ArrayList(u8),
+        in: string,
+    ) OOM!String {
+        try buf.appendSlice(in);
+        const in_buf = buf.items[buf.items.len - in.len ..];
+        return @bitCast((@as(u64, 0) | @as(u64, @as(max_addressable_space, @truncate(@as(u64, @bitCast(Pointer.init(buf.items, in_buf))))))) | 1 << 63);
     }
 
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {

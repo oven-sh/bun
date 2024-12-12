@@ -34,7 +34,7 @@ const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
+pub const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
@@ -347,14 +347,16 @@ fn JSONLikeParser_(
     };
 }
 
-// This is a special JSON parser that stops as soon as it finds
+// This is a special JSON parser that stops as soon as it finds combinations of
 // {
 //    "name": "NAME_IN_HERE",
 //    "version": "VERSION_IN_HERE",
+//    "bin": ... or "directories": { "bin": ... }
 // }
-// and then returns the name and version.
-// More precisely, it stops as soon as it finds a top-level "name" and "version" property which are strings
-// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them)
+// and then returns the name, version, and bin
+// More precisely, it stops as soon as it finds a top-level "name" and "version" (and/or "bin").
+// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them).
+// If searching for "bin", objects are only created if the key is top level "bin". "bin" within "directories" can only be a string.
 pub const PackageJSONVersionChecker = struct {
     const Lexer = js_lexer.NewLexer(opts);
 
@@ -369,9 +371,14 @@ pub const PackageJSONVersionChecker = struct {
 
     found_name: []const u8 = "",
     found_version: []const u8 = "",
+    found_bin: union(enum) {
+        bin: Expr,
+        dir: Expr,
+    } = .{ .bin = Expr.empty },
 
     has_found_name: bool = false,
     has_found_version: bool = false,
+    has_found_bin: bool = false,
 
     name_loc: logger.Loc = logger.Loc.Empty,
 
@@ -382,21 +389,24 @@ pub const PackageJSONVersionChecker = struct {
         .allow_comments = true,
     };
 
-    pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+    pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, checks: enum { check_for_bin, ignore_bin, only_bin }) !Parser {
         return Parser{
             .lexer = try Lexer.init(log, source.*, allocator),
             .allocator = allocator,
             .log = log,
             .source = source,
+            .has_found_bin = checks == .ignore_bin,
+            .has_found_name = checks == .only_bin,
+            .has_found_version = checks == .only_bin,
         };
     }
 
     const Parser = @This();
 
-    pub fn parseExpr(p: *Parser) anyerror!Expr {
+    pub fn parseExpr(p: *Parser, collect_props: bool, parent_is_directories: bool) anyerror!Expr {
         const loc = p.lexer.loc();
 
-        if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+        if (p.has_found_name and p.has_found_version and p.has_found_bin) return newExpr(E.Missing{}, loc);
 
         switch (p.lexer.token) {
             .t_false => {
@@ -443,7 +453,7 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    _ = try p.parseExpr();
+                    _ = try p.parseExpr(false, false);
                     has_exprs = true;
                 }
 
@@ -454,6 +464,8 @@ pub const PackageJSONVersionChecker = struct {
                 try p.lexer.next();
                 p.depth += 1;
                 defer p.depth -= 1;
+
+                var properties = std.ArrayList(G.Property).init(p.allocator);
 
                 var has_properties = false;
                 while (p.lexer.token != .t_close_brace) {
@@ -471,39 +483,95 @@ pub const PackageJSONVersionChecker = struct {
 
                     try p.lexer.expect(.t_colon);
 
-                    const value = try p.parseExpr();
+                    var collect_prop_props = false;
+                    var is_directories = false;
+
+                    if (!p.has_found_bin and
+                        p.depth == 1 and
+                        // next is going to be a top level property
+                        // with an object value. check if it is "bin"
+                        // or "directories"
+                        p.lexer.token == .t_open_brace and
+                        key.data == .e_string)
+                    {
+                        if (strings.eqlComptime(key.data.e_string.data, "bin")) {
+                            collect_prop_props = true;
+                        } else if (strings.eqlComptime(key.data.e_string.data, "directories")) {
+                            is_directories = true;
+                        }
+
+                        // if bin is in directories it can only be a string, so
+                        // don't need to set collect_prop_props when depth == 2
+                        // and in parent_is_directories == true.
+
+                    }
+
+                    const value = try p.parseExpr(collect_prop_props, is_directories);
 
                     if (p.depth == 1) {
                         // if you have multiple "name" fields in the package.json....
                         // first one wins
-                        if (key.data == .e_string and value.data == .e_string) {
-                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
-                                const len = @min(
-                                    value.data.e_string.data.len,
-                                    p.found_name_buf.len,
-                                );
+                        if (key.data == .e_string) {
+                            if (value.data == .e_string) {
+                                if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
+                                    const len = @min(
+                                        value.data.e_string.data.len,
+                                        p.found_name_buf.len,
+                                    );
 
-                                bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
-                                p.found_name = p.found_name_buf[0..len];
-                                p.has_found_name = true;
-                                p.name_loc = value.loc;
-                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
-                                const len = @min(
-                                    value.data.e_string.data.len,
-                                    p.found_version_buf.len,
-                                );
-                                bun.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
-                                p.found_version = p.found_version_buf[0..len];
-                                p.has_found_version = true;
+                                    bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
+                                    p.found_name = p.found_name_buf[0..len];
+                                    p.has_found_name = true;
+                                    p.name_loc = value.loc;
+                                } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
+                                    const len = @min(
+                                        value.data.e_string.data.len,
+                                        p.found_version_buf.len,
+                                    );
+                                    bun.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
+                                    p.found_version = p.found_version_buf[0..len];
+                                    p.has_found_version = true;
+                                }
+                            }
+
+                            if (!p.has_found_bin and strings.eqlComptime(key.data.e_string.data, "bin")) {
+                                p.found_bin = .{
+                                    .bin = value,
+                                };
+                                p.has_found_bin = true;
+                            }
+                        }
+                    } else if (parent_is_directories) {
+                        if (key.data == .e_string) {
+                            if (!p.has_found_bin and strings.eqlComptime(key.data.e_string.data, "bin")) {
+                                p.found_bin = .{
+                                    .dir = value,
+                                };
+                                p.has_found_bin = true;
                             }
                         }
                     }
 
-                    if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+                    if (p.has_found_name and p.has_found_version and p.has_found_bin) return newExpr(E.Missing{}, loc);
+
                     has_properties = true;
+                    if (collect_props) {
+                        properties.append(.{
+                            .key = key,
+                            .value = value,
+                            .kind = .normal,
+                            .initializer = null,
+                        }) catch bun.outOfMemory();
+                    }
                 }
 
                 try p.lexer.expect(.t_close_brace);
+
+                if (collect_props) {
+                    return newExpr(E.Object{
+                        .properties = G.Property.List.fromList(properties),
+                    }, loc);
+                }
                 return newExpr(E.Missing{}, loc);
             },
             else => {
@@ -741,41 +809,6 @@ pub fn parse(
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
 pub fn parsePackageJSONUTF8(
-    source: *const logger.Source,
-    log: *logger.Log,
-    allocator: std.mem.Allocator,
-) !Expr {
-    const len = source.contents.len;
-
-    switch (len) {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-        },
-        // This is a fast pass I guess
-        2 => {
-            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
-            }
-        },
-        else => {},
-    }
-
-    var parser = try JSONLikeParser(.{
-        .is_json = true,
-        .allow_comments = true,
-        .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
-    bun.assert(parser.source().contents.len > 0);
-
-    return try parser.parseExpr(false, true);
-}
-
-pub fn parsePackageJSONUTF8AlwaysDecode(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,

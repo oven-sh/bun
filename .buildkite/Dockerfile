@@ -114,9 +114,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
 
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    echo "Downloading buildkite-cli-v3.4.1/bk_3.4.1_linux_$ARCH.deb from https://github.com/buildkite/cli/releases/download/v3.4.1/bk_3.4.1_linux_$ARCH.deb" && \
-    curl -fsSL https://github.com/buildkite/cli/releases/download/v3.4.1/bk_3.4.1_linux_$ARCH.deb -o /tmp/bk.deb && \
-    dpkg -i /tmp/bk.deb && cp $(which bk) /usr/bin/buildkite-agent
+    echo "Downloading buildkite" && \ 
+    curl -fsSL "https://github.com/buildkite/agent/releases/download/v3.87.0/buildkite-agent-linux-${ARCH}-3.87.0.tar.gz" -o /tmp/buildkite-agent.tar.gz && \
+    mkdir -p /tmp/buildkite-agent && \
+    tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
+    mv /tmp/buildkite-agent/buildkite-agent /usr/bin/buildkite-agent
 
 RUN useradd -r -m -d /var/lib/buildkite-agent buildkite-agent \
     && mkdir -p /etc/buildkite-agent \

@@ -50,9 +50,7 @@ endif()
 
 # Windows requires unwind tables, apparently.
 if(NOT WIN32)
-  # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-  # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
-  set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
+  set(RUST_FLAGS "-Cpanic=abort -Cdebuginfo=0 -Cforce-unwind-tables=no -Copt-level=s")
 endif()
 
 register_command(
@@ -70,12 +68,23 @@ register_command(
     CARGO_TERM_COLOR=always
     CARGO_TERM_VERBOSE=true
     CARGO_TERM_DIAGNOSTIC=true
-    CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}
     CARGO_HOME=${CARGO_HOME}
     RUSTUP_HOME=${RUSTUP_HOME}
+    CC=${CMAKE_C_COMPILER}
+    CFLAGS=${CMAKE_C_FLAGS}
+    CXX=${CMAKE_CXX_COMPILER}
+    CXXFLAGS=${CMAKE_CXX_FLAGS}
+    AR=${CMAKE_AR}
+    RUSTFLAGS=${RUST_FLAGS}
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})
 if(BUN_LINK_ONLY)
   target_sources(${bun} PRIVATE ${LOLHTML_LIBRARY})
 endif()
+
+# Notes for OSXCross, which doesn't work yet:
+# CFLAGS += --sysroot=${CMAKE_OSX_SYSROOT}
+# CXXFLAGS += --sysroot=${CMAKE_OSX_SYSROOT}
+# LDFLAGS += -F${CMAKE_OSX_SYSROOT}/System/Library/Frameworks
+# RUSTFLAGS += -C linker=${CMAKE_LINKER} -C link-arg=-F${CMAKE_OSX_SYSROOT}/System/Library/Frameworks -C link-arg=-L${CMAKE_OSX_SYSROOT}/usr/lib

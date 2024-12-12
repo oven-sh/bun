@@ -18,10 +18,8 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Setup Dependencies
-        run: bun install --global oxlint@${{ env.OXLINT_VERSION }}
       - name: Lint
-        run: bun lint --quiet --format github
+        run: oxlint --config oxlint.json --quiet --format github
 
 
 

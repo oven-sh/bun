@@ -348,6 +348,8 @@ pub fn loadFromDir(
             }
         };
 
+        bun.Analytics.Features.text_lockfile += 1;
+
         return .{
             .ok = .{
                 .lockfile = this,
@@ -379,6 +381,8 @@ pub fn loadFromDir(
                 TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
+
+                bun.Analytics.Features.text_lockfile += 1;
             }
         },
         else => {},

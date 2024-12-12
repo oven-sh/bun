@@ -491,6 +491,15 @@ pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
 pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
 
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    memmove(dest.ptr, src.ptr, src.len);
+}
+
 // https://man7.org/linux/man-pages/man3/fmod.3.html
 pub extern fn fmod(f64, f64) f64;
 

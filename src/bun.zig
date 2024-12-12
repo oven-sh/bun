@@ -4122,3 +4122,6 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+pub const macho = @import("./macho.zig");
+pub const elf = @import("./elf.zig");

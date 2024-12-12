@@ -56,7 +56,7 @@ fn NewEVP(comptime digest_size: comptime_int, comptime MDName: []const u8) type 
             return this;
         }
 
-        pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
+        pub fn hash(bytes: []const u8, out: *Digest, engine: ?*BoringSSL.ENGINE) void {
             const md = @field(BoringSSL, MDName)();
 
             bun.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);

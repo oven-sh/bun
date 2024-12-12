@@ -23,6 +23,7 @@
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
+    "test/snippets/**",
     "test/regression/issue/14477/*.tsx",
     "test/js/**/*bad.js",
     "test/bundler/transpiler/decorators.test.ts", // uses `arguments` as decorator

@@ -26,8 +26,30 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
+if(CMAKE_CROSSCOMPILING)
+  if(ARCH STREQUAL "x64")
+    set(RUST_ARCH x86_64)
+  elseif(ARCH STREQUAL "arm64")
+    set(RUST_ARCH aarch64)
+  else()
+    unsupported(ARCH)
+  endif()
+
+  if(APPLE)
+    set(RUST_TARGET ${RUST_ARCH}-apple-darwin)
+  elseif(LINUX)
+    set(RUST_TARGET ${RUST_ARCH}-unknown-linux-gnu)
+  elseif(WIN32)
+    set(RUST_TARGET ${RUST_ARCH}-pc-windows-msvc)
+  else()
+    unsupported(CMAKE_SYSTEM_NAME)
+  endif()
+
+  list(APPEND LOLHTML_BUILD_ARGS --target=${RUST_TARGET})
+endif()
+
 # Windows requires unwind tables, apparently.
-if (NOT WIN32)
+if(NOT WIN32)
   # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
   # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
   set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")

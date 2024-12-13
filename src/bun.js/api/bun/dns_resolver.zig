@@ -2397,6 +2397,16 @@ pub const DNSResolver = struct {
 
         const name_value = arguments.ptr[0];
 
+        if (name_value.isFalsey()) {
+            // For Node.js compatibility.
+            const promise = JSC.JSPromise.create(globalThis);
+            const address_key = JSC.ZigString.init("address").withEncoding();
+            const family_key = JSC.ZigString.init("family").withEncoding();
+            const object = JSValue.createObject2(globalThis, &address_key, &family_key, .null, JSC.jsNumber(4));
+            promise.resolve(globalThis, object);
+            return promise.asValue(globalThis);
+        }
+
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
         }

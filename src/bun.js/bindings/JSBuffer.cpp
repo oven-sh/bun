@@ -565,6 +565,12 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
     RETURN_IF_EXCEPTION(scope, {});
     size_t length = lengthValue.toLength(lexicalGlobalObject);
 
+    if (length == 0) {
+        auto* uint8Array = createEmptyBuffer(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
+    }
+
     // fill argument
     if (UNLIKELY(callFrame->argumentCount() > 1)) {
         auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, length);

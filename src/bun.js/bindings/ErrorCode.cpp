@@ -600,6 +600,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObje
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_IP_ADDRESS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, "Invalid IP address"_s));
+}
+
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)

@@ -216,24 +216,31 @@ pub fn analyzeTranspiledModule(p: anytype, tree: Ast, allocator: std.mem.Allocat
     return res;
 }
 
-export fn zig__ModuleInfo__parseFromSourceCode(vm: *bun.JSC.VM, module_record: *JSModuleRecord, source_ptr: [*]const u8, source_len: usize) bool {
+export fn zig__ModuleInfo__parseFromSourceCode(
+    globalObject: *bun.JSC.JSGlobalObject,
+    vm: *bun.JSC.VM,
+    module_key: *const IdentifierArray,
+    source_code: *const SourceCode,
+    declared_variables: *VariableEnvironment,
+    lexical_variables: *VariableEnvironment,
+    source_ptr: [*]const u8,
+    source_len: usize,
+) ?*JSModuleRecord {
     const stderr = std.io.getStdErr().writer();
-    const declared_variables = JSModuleRecord.declaredVariables(module_record);
-    const lexical_variables = JSModuleRecord.lexicalVariables(module_record);
 
     const source = source_ptr[0..source_len];
-    const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return false;
-    const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return false;
-    const l1 = std.mem.lastIndexOfScalar(u8, source[0..l2], '\n') orelse return false;
-    const l0 = std.mem.lastIndexOfScalar(u8, source[0..l1], '\n') orelse return false;
+    const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return null;
+    const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return null;
+    const l1 = std.mem.lastIndexOfScalar(u8, source[0..l2], '\n') orelse return null;
+    const l0 = std.mem.lastIndexOfScalar(u8, source[0..l1], '\n') orelse return null;
 
-    if (l3 + 1 != source.len) return false;
+    if (l3 + 1 != source.len) return null;
 
-    if (!std.mem.eql(u8, source[l0..l1], "\n// <jsc-module-info>")) return false;
-    if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return false;
-    if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return false;
+    if (!std.mem.eql(u8, source[l0..l1], "\n// <jsc-module-info>")) return null;
+    if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return null;
+    if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return null;
     const json_part = source[l1 + "\n// ".len .. l2];
-    var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return false;
+    var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return null;
     defer res.deinit();
 
     res.jsonStringify(stderr) catch {};
@@ -245,6 +252,8 @@ export fn zig__ModuleInfo__parseFromSourceCode(vm: *bun.JSC.VM, module_record: *
     for (res.declared_variables.items) |id| declared_variables.add(identifiers, id);
     for (res.lexical_variables.items) |id| lexical_variables.add(identifiers, id);
 
+    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.uses_import_meta);
+
     for (res.requested_modules.keys()) |_| @panic("TODO requested_modules");
     for (res.imports.items) |_| @panic("TODO imports");
     for (res.exports.items) |export_info| switch (export_info) {
@@ -254,7 +263,7 @@ export fn zig__ModuleInfo__parseFromSourceCode(vm: *bun.JSC.VM, module_record: *
         .star => module_record.addStarExport(identifiers, export_info.star.module_name),
     };
 
-    return true;
+    return module_record;
 }
 export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
     info.deinit();
@@ -277,7 +286,11 @@ const IdentifierArray = opaque {
         JSC__IdentifierArray__setFromUtf8(self, n, vm, str.ptr, str.len);
     }
 };
+const SourceCode = opaque {};
 const JSModuleRecord = opaque {
+    extern fn JSC_JSModuleRecord__create(global_object: *bun.JSC.JSGlobalObject, vm: *bun.JSC.VM, module_key: *const IdentifierArray, source_code: *const SourceCode, declared_variables: *VariableEnvironment, lexical_variables: *VariableEnvironment, has_import_meta: bool) *JSModuleRecord;
+    pub const create = JSC_JSModuleRecord__create;
+
     extern fn JSC_JSModuleRecord__declaredVariables(module_record: *JSModuleRecord) *VariableEnvironment;
     pub const declaredVariables = JSC_JSModuleRecord__declaredVariables;
     extern fn JSC_JSModuleRecord__lexicalVariables(module_record: *JSModuleRecord) *VariableEnvironment;

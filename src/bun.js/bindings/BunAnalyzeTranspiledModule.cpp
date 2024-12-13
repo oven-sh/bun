@@ -198,7 +198,7 @@ extern "C" void zig_log_cstr(const char* m1, const char* m2);
 extern "C" void zig_log_ushort(const char* m1, unsigned short value);
 
 struct ModuleInfo;
-extern "C" bool zig__ModuleInfo__parseFromSourceCode(VM& vm, JSModuleRecord* moduleRecord, const char* source_ptr, size_t source_len);
+extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
 {
@@ -225,6 +225,11 @@ extern "C" VariableEnvironment* JSC_JSModuleRecord__declaredVariables(JSModuleRe
 extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRecord* moduleRecord)
 {
     return &moduleRecord->m_lexicalVariables;
+}
+
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta)
+{
+    return JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey[0], sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
 }
 
 extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName)
@@ -315,9 +320,9 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
         VariableEnvironment declaredVariables = VariableEnvironment();
         VariableEnvironment lexicalVariables = VariableEnvironment();
-        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, 0);
 
-        if (!zig__ModuleInfo__parseFromSourceCode(vm, moduleRecord, sourceCodeStdString.data(), sourceCodeStdString.size())) {
+        auto moduleRecord = zig__ModuleInfo__parseFromSourceCode(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, sourceCodeStdString.data(), sourceCodeStdString.size());
+        if (moduleRecord == nullptr) {
             RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
         }
 

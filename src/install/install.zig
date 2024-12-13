@@ -14659,6 +14659,8 @@ pub const PackageManager = struct {
         manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
+        const lockfile_before_clean = manager.lockfile;
+
         manager.lockfile = try manager.lockfile.cleanWithLogger(
             manager,
             manager.update_requests,
@@ -14751,14 +14753,22 @@ pub const PackageManager = struct {
 
         const packages_len_before_install = manager.lockfile.packages.len;
 
-        if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
-            if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
-                if (comptime log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
-                    Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+        if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
+            if (load_result.loadedFromTextLockfile()) {
+                if (manager.lockfile.eql(lockfile_before_clean)) {
+                    break :frozen_lockfile;
                 }
-                Global.crash();
+            } else {
+                if (!(manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false)) {
+                    break :frozen_lockfile;
+                }
             }
+
+            if (comptime log_level != .silent) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
+                Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+            }
+            Global.crash();
         }
 
         var install_summary = PackageInstall.Summary{

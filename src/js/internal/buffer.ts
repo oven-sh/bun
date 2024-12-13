@@ -72,34 +72,12 @@ function check_bigint64(buf, value, offset, min, max) {
   checkInt(value, min, max, buf, offset, 7);
 }
 
-function from(value, encodingOrOffset, length) {
-  if (typeof value === "string") return BufferFrom5(value, encodingOrOffset);
+function fromString(string, encoding) {
+  return BufferFrom5(string, encoding);
+}
 
-  if (typeof value === "object" && value !== null) {
-    if (isAnyArrayBuffer(value)) return BufferFrom2(value, encodingOrOffset, length);
-
-    const valueOf = value.valueOf && value.valueOf();
-    if (valueOf != null && valueOf !== value && (typeof valueOf === "string" || typeof valueOf === "object")) {
-      return from(valueOf, encodingOrOffset, length);
-    }
-
-    const b = fromObject(value);
-    if (b) return b;
-
-    const toPrimitive = $tryGetByIdWithWellKnownSymbol(value, "toPrimitive");
-    if (typeof toPrimitive === "function") {
-      const primitive = toPrimitive.$call(value, "string");
-      if (typeof primitive === "string") {
-        return BufferFrom5(primitive, encodingOrOffset);
-      }
-    }
-  }
-
-  throw $ERR_INVALID_ARG_TYPE(
-    "first argument",
-    ["string", "Buffer", "ArrayBuffer", "Array", "Array-like Object"],
-    value,
-  );
+function fromArrayBuffer(arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number) {
+  return BufferFrom2(arrayBuffer, byteOffset, length);
 }
 
 function isAnyArrayBuffer(value) {
@@ -111,8 +89,7 @@ function fromObject(obj) {
     if (typeof obj.length !== "number") {
       return BufferFrom4(0);
     }
-    // return fromArrayLike(obj);
-    return BufferFrom2(obj.buffer, 0, obj.length);
+    return fromArrayLike(obj);
   }
   if (obj.type === "Buffer" && ArrayIsArray(obj.data)) {
     return fromArrayLike(obj.data);
@@ -148,5 +125,7 @@ export default {
   check_int40,
   check_int48,
   check_bigint64,
-  from,
+  fromString,
+  fromObject,
+  fromArrayBuffer,
 };

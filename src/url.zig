@@ -111,7 +111,7 @@ pub const URL = struct {
 
     pub fn s3Path(this: *const URL) string {
         // we need to remove protocol if exists and ignore searchParams, should be host + pathname
-        const href = if (this.protocol.len > 0) this.href[this.protocol.len + 2 ..] else this.href;
+        const href = if (this.protocol.len > 0 and this.href.len > this.protocol.len + 2) this.href[this.protocol.len + 2 ..] else this.href;
         return href[0 .. href.len - (this.search.len + this.hash.len)];
     }
 

@@ -58,6 +58,7 @@ pub const AWSCredentials = struct {
     }
 
     const DIGESTED_HMAC_256_LEN = 32;
+    const ENABLE_SIGNATURE_CACHE = false;
     threadlocal var SIGNATURE_CACHE: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = undefined;
     threadlocal var SIGNATURE_CACHE_DATE: u64 = 0;
 
@@ -165,22 +166,24 @@ pub const AWSCredentials = struct {
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
 
-                if (SIGNATURE_CACHE_DATE == date_result.numeric_day) {
-                    if (SIGNATURE_CACHE.getKey(key)) |cached| {
-                        break :brk_sign cached;
-                    }
-                } else {
-                    if (SIGNATURE_CACHE_DATE == 0) {
-                        // first request we need a new map instance
-                        SIGNATURE_CACHE = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
-                    } else {
-                        // day changed so we clean the old cache
-                        for (SIGNATURE_CACHE.keys()) |cached_key| {
-                            bun.default_allocator.free(cached_key);
+                if (comptime ENABLE_SIGNATURE_CACHE) {
+                    if (SIGNATURE_CACHE_DATE == date_result.numeric_day) {
+                        if (SIGNATURE_CACHE.getKey(key)) |cached| {
+                            break :brk_sign cached;
                         }
-                        SIGNATURE_CACHE.clearRetainingCapacity();
+                    } else {
+                        if (SIGNATURE_CACHE_DATE == 0) {
+                            // first request we need a new map instance
+                            SIGNATURE_CACHE = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
+                        } else {
+                            // day changed so we clean the old cache
+                            for (SIGNATURE_CACHE.keys()) |cached_key| {
+                                bun.default_allocator.free(cached_key);
+                            }
+                            SIGNATURE_CACHE.clearRetainingCapacity();
+                        }
+                        SIGNATURE_CACHE_DATE = date_result.numeric_day;
                     }
-                    SIGNATURE_CACHE_DATE = date_result.numeric_day;
                 }
                 // not cached yet lets generate a new one
                 const sigDate = bun.hmac.generate(try std.fmt.bufPrint(&tmp_buffer, "AWS4{s}", .{this.secretAccessKey}), amz_day, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
@@ -188,7 +191,9 @@ pub const AWSCredentials = struct {
                 const sigDateRegionService = bun.hmac.generate(sigDateRegion, service_name, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
                 const result = bun.hmac.generate(sigDateRegionService, "aws4_request", .sha256, &hmac_sig_service2) orelse return error.FailedToGenerateSignature;
 
-                try SIGNATURE_CACHE.put(try bun.default_allocator.dupe(u8, key), hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].*);
+                if (comptime ENABLE_SIGNATURE_CACHE) {
+                    try SIGNATURE_CACHE.put(try bun.default_allocator.dupe(u8, key), hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].*);
+                }
                 break :brk_sign result;
             };
             if (signQuery) {

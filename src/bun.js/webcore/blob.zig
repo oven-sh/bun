@@ -3574,7 +3574,7 @@ pub const Blob = struct {
             const args = callframe.arguments_old(1);
             var method: bun.http.Method = .GET;
             var expires: usize = 86400; // 1 day
-            if (args.len == 1) {
+            if (args.len > 0) {
                 const options = args.ptr[0];
                 if (options.isObject()) {
                     if (try options.getTruthyComptime(globalThis, "method")) |method_| {
@@ -3582,10 +3582,9 @@ pub const Blob = struct {
                             return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
                         };
                     }
-                    if (try options.getTruthyComptime(globalThis, "expiresIn")) |expires_| {
-                        const coerced = expires_.coerce(i32, globalThis);
-                        if (coerced <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
-                        expires = @intCast(coerced);
+                    if (try options.getOptional(globalThis, "expiresIn", i32)) |expires_| {
+                        if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
+                        expires = @intCast(expires_);
                     }
                 }
             }

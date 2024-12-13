@@ -889,7 +889,7 @@ function invalidArgTypeHelper(input) {
     if (input.constructor?.name) {
       return ` Received an instance of ${input.constructor.name}`;
     }
-    return ` Received ${inspect(input, { depth: -1 })}`;
+    return ` Received ${inspect(input, { depth: 0 })}`;
   }
 
   let inspected = inspect(input, { colors: false });

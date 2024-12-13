@@ -1123,15 +1123,14 @@ assert.strictEqual(SlowBuffer.prototype.offset, undefined);
 
 
 // Test that ParseArrayIndex handles full uint32
-// TODO:
-// {
-//   const errMsg = common.expectsError({
-//     code: 'ERR_BUFFER_OUT_OF_BOUNDS',
-//     name: 'RangeError',
-//     message: '"offset" is outside of buffer bounds'
-//   });
-//   assert.throws(() => Buffer.from(new ArrayBuffer(0), -1 >>> 0), errMsg);
-// }
+{
+  const errMsg = common.expectsError({
+    code: 'ERR_BUFFER_OUT_OF_BOUNDS',
+    name: 'RangeError',
+    message: '"offset" is outside of buffer bounds'
+  });
+  assert.throws(() => Buffer.from(new ArrayBuffer(0), -1 >>> 0), errMsg);
+}
 
 // ParseArrayIndex() should reject values that don't fit in a 32 bits size_t.
 assert.throws(() => {
@@ -1149,13 +1148,12 @@ assert.throws(() => {
 }
 
 // Regression test to verify that an empty ArrayBuffer does not throw.
-// Buffer.from(new ArrayBuffer());
+Buffer.from(new ArrayBuffer());
 
 // Test that ArrayBuffer from a different context is detected correctly.
 const arrayBuf = vm.runInNewContext('new ArrayBuffer()');
-// TODO:
-// Buffer.from(arrayBuf);
-// Buffer.from({ buffer: arrayBuf });
+Buffer.from(arrayBuf);
+Buffer.from({ buffer: arrayBuf });
 
 assert.throws(() => Buffer.alloc({ valueOf: () => 1 }),
               /"size" argument must be of type number/);

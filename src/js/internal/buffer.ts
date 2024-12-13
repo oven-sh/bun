@@ -1,5 +1,6 @@
 const { validateNumber, validateInteger } = require("internal/validators");
 const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE, ERR_BUFFER_OUT_OF_BOUNDS } = require("internal/errors");
+const { isAnyArrayBuffer } = require("node:util/types");
 
 const BufferFrom1 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_Array", 0);
 const BufferFrom2 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_ArraybufferByteoffsetLength", 0);
@@ -78,10 +79,6 @@ function fromString(string, encoding) {
 
 function fromArrayBuffer(arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number) {
   return BufferFrom2(arrayBuffer, byteOffset, length);
-}
-
-function isAnyArrayBuffer(value) {
-  return value instanceof ArrayBuffer || value instanceof SharedArrayBuffer;
 }
 
 function fromObject(obj) {

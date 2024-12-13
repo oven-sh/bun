@@ -3,7 +3,7 @@
 $constructor;
 export function from(value, encodingOrOffset, length) {
   const { fromString, fromArrayBuffer, fromObject } = require("internal/buffer");
-  const isAnyArrayBuffer = value => value instanceof ArrayBuffer || value instanceof SharedArrayBuffer;
+  const { isAnyArrayBuffer } = require("node:util/types");
 
   if (typeof value === "string") return fromString(value, encodingOrOffset);
 
@@ -12,7 +12,7 @@ export function from(value, encodingOrOffset, length) {
 
     const valueOf = value.valueOf && value.valueOf();
     if (valueOf != null && valueOf !== value && (typeof valueOf === "string" || typeof valueOf === "object")) {
-      return from(valueOf, encodingOrOffset, length);
+      return Buffer.from(valueOf, encodingOrOffset, length);
     }
 
     const b = fromObject(value);

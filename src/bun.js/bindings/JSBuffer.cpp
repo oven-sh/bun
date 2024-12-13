@@ -45,6 +45,7 @@
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <cstddef>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -2320,8 +2321,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Array, (JSGlobalObject * lexicalG
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "TODO jsFunction_BufferFrom_Array"_s));
-    return {};
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    auto arrayValue = callFrame->argument(0);
+    auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
+    MarkedArgumentBuffer argsBuffer;
+    argsBuffer.append(arrayValue);
+    JSValue target = globalObject->JSBufferConstructor();
+    auto* object = JSC::construct(lexicalGlobalObject, constructor, target, argsBuffer, "Buffer failed to construct"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -2334,28 +2343,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSG
     auto offsetValue = callFrame->argument(1);
     auto lengthValue = callFrame->argument(2);
 
-    // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
-    // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
-    size_t offset = 0;
-    std::optional<size_t> length;
-    if (argsCount > 1) {
-
-        if (!offsetValue.isUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, jsString(vm, String("offset"_s)), jsNumber(0), jsUndefined());
-            RETURN_IF_EXCEPTION(throwScope, {});
-            offset = offsetValue.asNumber();
-        }
-
-        if (argsCount > 2) {
-            // If the length value is present but undefined, treat it as missing.
-            if (!lengthValue.isUndefined()) {
-                length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
-                // TOOD: return Node.js error
-                RETURN_IF_EXCEPTION(throwScope, {});
-            }
-        }
-    }
-
     auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(arrayBufferValue.asCell());
     RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
     if (buffer->isDetached()) {
@@ -2364,6 +2351,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSG
         return {};
     }
     size_t byteLength = buffer->byteLength();
+    double byteLengthD = byteLength;
+
+    // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
+    // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
+    size_t offset = 0;
+    std::optional<size_t> length;
+    size_t maxLength = byteLength;
+    if (argsCount > 1) {
+
+        if (!offsetValue.isUndefined()) {
+            offsetValue = jsDoubleNumber(offsetValue.toNumber(lexicalGlobalObject));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (std::isnan(offsetValue.asNumber())) offsetValue = jsNumber(0);
+            if ((byteLengthD - offsetValue.asNumber()) < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
+            maxLength = byteLengthD - offsetValue.asNumber();
+            offset = offsetValue.asNumber();
+        }
+
+        if (!lengthValue.isUndefined()) {
+            lengthValue = jsDoubleNumber(lengthValue.toNumber(lexicalGlobalObject));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            length = lengthValue.asNumber();
+            if (length > 0) {
+                if (length > maxLength) {
+                    return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
+                }
+            } else {
+                length = 0;
+            }
+        }
+    }
+
     if (offset > byteLength) {
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "offset"_s);
     }

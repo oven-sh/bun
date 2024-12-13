@@ -594,7 +594,7 @@ pub const ZigString = extern struct {
         return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
     }
 
-    pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
+    pub fn utf16Slice(this: *const ZigString) []align(1) const u16 {
         if (comptime bun.Environment.allow_assert) {
             if (this.len > 0 and !this.is16Bit()) {
                 @panic("ZigString.utf16Slice() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
@@ -604,7 +604,7 @@ pub const ZigString = extern struct {
         return @as([*]align(1) const u16, @ptrCast(untagged(this._unsafe_ptr_do_not_use)))[0..this.len];
     }
 
-    pub inline fn utf16SliceAligned(this: *const ZigString) []const u16 {
+    pub fn utf16SliceAligned(this: *const ZigString) []const u16 {
         if (comptime bun.Environment.allow_assert) {
             if (this.len > 0 and !this.is16Bit()) {
                 @panic("ZigString.utf16SliceAligned() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");

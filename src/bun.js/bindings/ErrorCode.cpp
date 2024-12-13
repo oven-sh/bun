@@ -614,9 +614,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObje
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_IP_ADDRESS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_IP_ADDRESS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, "Invalid IP address"_s));
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    EXPECT_ARG_COUNT(1);
+    auto param = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
 }
 
 } // namespace Bun

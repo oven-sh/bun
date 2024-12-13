@@ -46,6 +46,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__setServers);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
@@ -359,6 +360,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNSResolver__getServers, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, Bun__DNSResolver__setServers, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

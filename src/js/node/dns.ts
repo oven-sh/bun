@@ -2,6 +2,23 @@
 // only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
+const { isIP } = require("./net");
+const {
+  validateFunction,
+  validateAbortSignal,
+  validateArray,
+  validateString,
+  validateBoolean,
+  validateInteger,
+  validateUint32,
+  validateNumber,
+} = require("internal/validators");
+
+const { ERR_INVALID_IP_ADDRESS } = require("internal/errors");
+
+const IANA_DNS_PORT = 53;
+const IPv6RE = /^\[([^[\]]*)\]/;
+const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
@@ -21,6 +38,53 @@ function withTranslatedError(error: any) {
 
 function getServers() {
   return dns.getServers();
+}
+
+function setServers(servers) {
+  validateArray(servers, "servers");
+
+  const triples = [];
+
+  servers.forEach((server, i) => {
+    validateString(server, `servers[${i}]`);
+    let ipVersion = isIP(server);
+
+    if (ipVersion !== 0) {
+      triples.push([ipVersion, server, IANA_DNS_PORT]);
+      return;
+    }
+
+    const match = IPv6RE.exec(server);
+
+    // Check for an IPv6 in brackets.
+    if (match) {
+      ipVersion = isIP(match[1]);
+      if (ipVersion !== 0) {
+        const port = parseInt(addrSplitRE[Symbol.replace](server, "$2")) || IANA_DNS_PORT;
+        triples.push([ipVersion, match[1], port]);
+        return;
+      }
+    }
+
+    // addr:port
+    const addrSplitMatch = addrSplitRE.exec(server);
+
+    if (addrSplitMatch) {
+      const hostIP = addrSplitMatch[1];
+      const port = addrSplitMatch[2] || IANA_DNS_PORT;
+
+      ipVersion = isIP(hostIP);
+
+      if (ipVersion !== 0) {
+        triples.push([ipVersion, hostIP, parseInt(port)]);
+        return;
+      }
+    }
+
+    throw ERR_INVALID_IP_ADDRESS(server);
+  });
+
+  dns.setServers(triples);
 }
 
 function lookup(domain, options, callback) {
@@ -332,7 +396,6 @@ var {
 } = InternalResolver.prototype;
 
 function setDefaultResultOrder() {}
-function setServers() {}
 
 const mapLookupAll = res => {
   const { address, family } = res;

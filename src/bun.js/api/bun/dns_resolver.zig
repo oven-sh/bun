@@ -2787,12 +2787,10 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = callframe;
-
+    fn getChannelFromVM(globalThis: *JSC.JSGlobalObject) bun.JSError!*c_ares.Channel {
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
-        const channel: *c_ares.Channel = switch (resolver.getChannel()) {
+        return switch (resolver.getChannel()) {
             .result => |res| res,
             .err => |err| {
                 const system_error = JSC.SystemError{
@@ -2804,7 +2802,12 @@ pub const DNSResolver = struct {
                 return globalThis.throwValue(system_error.toErrorInstance(globalThis));
             },
         };
+    }
 
+    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        _ = callframe;
+
+        const channel = try getChannelFromVM(globalThis);
         var servers: ?*c_ares.struct_ares_addr_port_node = null;
         const r = c_ares.ares_get_servers_ports(channel, &servers);
         if (r != c_ares.ARES_SUCCESS) {
@@ -2862,6 +2865,84 @@ pub const DNSResolver = struct {
         }
 
         return values;
+    }
+
+    pub fn setServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const channel = try getChannelFromVM(globalThis);
+
+        const arguments = callframe.arguments();
+        if (arguments.len == 0) {
+            return globalThis.throwNotEnoughArguments("setServers", 1, 0);
+        }
+
+        const argument = arguments[0];
+        if (!argument.isArray()) {
+            return globalThis.throwInvalidArgumentType("setServers", "servers", "array");
+        }
+
+        var triplesIterator = argument.arrayIterator(globalThis);
+
+        if (triplesIterator.len == 0) {
+            const r = c_ares.ares_set_servers_ports(channel, null);
+            if (r != c_ares.ARES_SUCCESS) {
+                const err = c_ares.Error.get(r).?;
+                return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
+            }
+            return .undefined;
+        }
+
+        const entries = bun.default_allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch bun.outOfMemory();
+        defer bun.default_allocator.free(entries);
+
+        var i: u32 = 0;
+
+        while (triplesIterator.next()) |triple| : (i += 1) {
+            if (!triple.isArray()) {
+                return globalThis.throwInvalidArgumentType("setServers", "triple", "array");
+            }
+
+            const family = JSValue.getIndex(triple, globalThis, 0).toInt32();
+            const port = JSValue.getIndex(triple, globalThis, 2).toInt32();
+
+            if (family != 4 and family != 6) {
+                return globalThis.throwInvalidArguments("Invalid address family", .{});
+            }
+
+            const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString2(globalThis);
+            defer addressString.deref();
+
+            const addressSlice = addressString.toSlice(bun.default_allocator).slice();
+            var addressBuffer = bun.default_allocator.alloc(u8, addressSlice.len + 1) catch bun.outOfMemory();
+            defer bun.default_allocator.free(addressBuffer);
+            _ = strings.copy(addressBuffer[0..], addressSlice);
+            addressBuffer[addressSlice.len] = 0;
+
+            const af: c_int = if (family == 4) std.posix.AF.INET else std.posix.AF.INET6;
+
+            entries[i] = .{
+                .next = null,
+                .family = af,
+                .addr = undefined,
+                .udp_port = port,
+                .tcp_port = port,
+            };
+
+            if (c_ares.ares_inet_pton(af, addressBuffer.ptr, &entries[i].addr) != 1) {
+                return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{addressSlice});
+            }
+
+            if (i > 0) {
+                entries[i - 1].next = &entries[i];
+            }
+        }
+
+        const r = c_ares.ares_set_servers_ports(channel, entries.ptr);
+        if (r != c_ares.ARES_SUCCESS) {
+            const err = c_ares.Error.get(r).?;
+            return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
+        }
+
+        return .undefined;
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
@@ -2972,6 +3053,8 @@ pub const DNSResolver = struct {
         @export(js_resolveCname, .{ .name = "Bun__DNSResolver__resolveCname" });
         const js_getServers = JSC.toJSHostFunction(getServers);
         @export(js_getServers, .{ .name = "Bun__DNSResolver__getServers" });
+        const js_setServers = JSC.toJSHostFunction(setServers);
+        @export(js_setServers, .{ .name = "Bun__DNSResolver__setServers" });
         const js_reverse = JSC.toJSHostFunction(reverse);
         @export(js_reverse, .{ .name = "Bun__DNSResolver__reverse" });
         const js_lookupService = JSC.toJSHostFunction(lookupService);

@@ -393,16 +393,19 @@ pub const TimeoutObject = struct {
         callback: JSValue,
         arguments_array_or_zero: JSValue,
     ) struct { *TimeoutObject, JSValue } {
-        const internals, const js = TimerObjectInternals.init(
+        // internals are initialized by init()
+        const timeout = TimeoutObject.new(.{ .internals = undefined });
+        const js = timeout.toJS(globalThis);
+        timeout.internals.init(
+            js,
             globalThis,
-            globalThis.bunVM(),
             id,
             kind,
             interval,
             callback,
             arguments_array_or_zero,
         );
-        return .{ TimeoutObject.new(.{ .internals = internals }), js };
+        return .{ timeout, js };
     }
 
     pub fn deinit(this: *TimeoutObject) void {
@@ -460,16 +463,18 @@ pub const ImmediateObject = struct {
         callback: JSValue,
         arguments_array_or_zero: JSValue,
     ) struct { *ImmediateObject, JSValue } {
-        const internals, const js = TimerObjectInternals.init(
+        const immediate = ImmediateObject.new(.{ .internals = undefined });
+        const js = immediate.toJS(globalThis);
+        immediate.internals.init(
+            js,
             globalThis,
-            globalThis.bunVM(),
             id,
             .setImmediate,
             0,
             callback,
             arguments_array_or_zero,
         );
-        return .{ ImmediateObject.new(.{ .internals = internals }), js };
+        return .{ immediate, js };
     }
 
     pub fn deinit(this: *ImmediateObject) void {
@@ -526,18 +531,19 @@ const TimerObjectInternals = struct {
 
     has_js_ref: bool = true,
 
-    fn toJS(this: *TimerObjectInternals, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return switch (this.kind) {
-            .setImmediate => ImmediateObject.toJS(@fieldParentPtr("internals", this), globalObject),
-            .setTimeout, .setInterval => TimeoutObject.toJS(@fieldParentPtr("internals", this), globalObject),
-        };
-    }
-
     fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
-        return switch (this.kind) {
-            .setImmediate => &@as(*ImmediateObject, @fieldParentPtr("internals", this)).event_loop_timer,
-            .setTimeout, .setInterval => &@as(*TimeoutObject, @fieldParentPtr("internals", this)).event_loop_timer,
-        };
+        switch (this.kind) {
+            .setImmediate => {
+                const parent: *ImmediateObject = @fieldParentPtr("internals", this);
+                assert(parent.event_loop_timer.tag == .ImmediateObject);
+                return &parent.event_loop_timer;
+            },
+            .setTimeout, .setInterval => {
+                const parent: *TimeoutObject = @fieldParentPtr("internals", this);
+                assert(parent.event_loop_timer.tag == .TimeoutObject);
+                return &parent.event_loop_timer;
+            },
+        }
     }
 
     fn ref(this: *TimerObjectInternals) void {
@@ -703,21 +709,21 @@ const TimerObjectInternals = struct {
     }
 
     pub fn init(
+        this: *TimerObjectInternals,
+        timer_js: JSValue,
         globalThis: *JSGlobalObject,
-        vm: *VirtualMachine,
         id: i32,
         kind: Kind,
         interval: i32,
         callback: JSValue,
         arguments: JSValue,
-    ) struct { TimerObjectInternals, JSValue } {
-        var timer: TimerObjectInternals = .{
+    ) void {
+        this.* = .{
             .id = id,
             .kind = kind,
             .interval = interval,
         };
-        var timer_js = timer.toJS(globalThis);
-        timer_js.ensureStillAlive();
+
         if (kind == .setImmediate) {
             if (arguments != .zero)
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
@@ -726,14 +732,10 @@ const TimerObjectInternals = struct {
             if (arguments != .zero)
                 TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
             TimeoutObject.callbackSetCached(timer_js, globalThis, callback);
+            this.reschedule(globalThis.bunVM());
         }
 
-        timer_js.ensureStillAlive();
-        timer.strong_this.set(globalThis, timer_js);
-        if (kind != .setImmediate) {
-            timer.reschedule(vm);
-        }
-        return .{ timer, timer_js };
+        this.strong_this.set(globalThis, timer_js);
     }
 
     pub fn doRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

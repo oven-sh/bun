@@ -1,4 +1,4 @@
-import { quickAndDirtyJavaScriptSyntaxHighlighter as highlighter } from "bun:internal-for-testing";
+import { highlightJavaScript as highlighter } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 
 test("highlighter", () => {

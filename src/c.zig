@@ -42,29 +42,13 @@ pub extern "c" fn memchr(s: [*]const u8, c: u8, n: usize) ?[*]const u8;
 
 pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
-pub const lstat = blk: {
-    const T = *const fn ([*c]const u8, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
-    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "lstat" });
-    break :blk @extern(T, .{ .name = "lstat64" });
-};
-pub const fstat = blk: {
-    const T = *const fn (c_int, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
-    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "fstat" });
-    break :blk @extern(T, .{ .name = "fstat64" });
-};
-pub const stat = blk: {
-    const T = *const fn ([*c]const u8, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
-    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "stat" });
-    break :blk @extern(T, .{ .name = "stat64" });
-};
-
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet, conside using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
-    switch (errno(lstat(path.ptr, &st))) {
+    switch (errno(bun.C.lstat(path.ptr, &st))) {
         .SUCCESS => {},
         .NOENT => return error.FileNotFound,
         // .EINVAL => unreachable,

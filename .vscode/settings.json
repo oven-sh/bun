@@ -63,7 +63,7 @@
     "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
-  "clangd.arguments": ["-header-insertion=never"],
+  "clangd.arguments": ["-header-insertion=never", "-no-unused-includes"],
 
   // JavaScript
   "prettier.enable": true,

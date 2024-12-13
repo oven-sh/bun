@@ -176,6 +176,10 @@ if(LINUX)
     DESCRIPTION "Disable relocation read-only (RELRO)"
     -Wl,-z,norelro
   )
+  register_compiler_flags(
+    DESCRIPTION "Disable semantic interposition"
+    -fno-semantic-interposition
+  )
 endif()
 
 # --- Assertions ---

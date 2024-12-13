@@ -26,22 +26,22 @@ import {
   getBuildUrl,
   getEnv,
   getFileUrl,
-  getLoggedInUserCount,
+  getLoggedInUserCountOrDetails,
   getShell,
   getWindowsExitReason,
-  isArm64,
   isBuildkite,
   isCI,
   isGithubAction,
   isMacOS,
   isWindows,
+  isX64,
   printEnvironment,
   startGroup,
   tmpdir,
   unzip,
 } from "./utils.mjs";
 import { userInfo } from "node:os";
-
+let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
@@ -52,6 +52,10 @@ const integrationTimeout = 5 * 60_000;
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
+    ["node-tests"]: {
+      type: "boolean",
+      default: false,
+    },
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -86,6 +90,10 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
+    ["quiet"]: {
+      type: "boolean",
+      default: false,
+    },
     ["smoke"]: {
       type: "string",
       default: undefined,
@@ -96,6 +104,10 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
+
+if (options["quiet"]) {
+  isQuiet = true;
+}
 
 /**
  *
@@ -108,13 +120,13 @@ async function runTests() {
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
-  console.log("Bun:", execPath);
+  !isQuiet && console.log("Bun:", execPath);
 
   const revision = getRevision(execPath);
-  console.log("Revision:", revision);
+  !isQuiet && console.log("Revision:", revision);
 
   const tests = getRelevantTests(testsPath);
-  console.log("Running tests:", tests.length);
+  !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -123,7 +135,7 @@ async function runTests() {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
       vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
-      console.log("Running vendor tests:", vendorTotal);
+      !isQuiet && console.log("Running vendor tests:", vendorTotal);
     }
   }
 
@@ -180,9 +192,11 @@ async function runTests() {
     return result;
   };
 
-  for (const path of [cwd, testsPath]) {
-    const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-    await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+  if (!isQuiet) {
+    for (const path of [cwd, testsPath]) {
+      const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
+      await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+    }
   }
 
   if (results.every(({ ok }) => ok)) {
@@ -193,22 +207,24 @@ async function runTests() {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
-            timeout: spawnTimeout,
+            timeout: 10_000,
             env: {
               FORCE_COLOR: "0",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
+          const mb = 1024 ** 3;
+          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
           return {
             testPath: title,
-            ok,
+            ok: ok,
             status: ok ? "pass" : "fail",
-            error,
+            error: error,
             errors: [],
             tests: [],
-            stdout,
-            stdoutPreview: "",
+            stdout: stdout,
+            stdoutPreview: stdoutPreview,
           };
         });
         continue;
@@ -262,10 +278,10 @@ async function runTests() {
   }
 
   if (!isCI) {
-    console.log("-------");
-    console.log("passing", results.length - failedTests.length, "/", results.length);
+    !isQuiet && console.log("-------");
+    !isQuiet && console.log("passing", results.length - failedTests.length, "/", results.length);
     for (const { testPath } of failedTests) {
-      console.log("-", testPath);
+      !isQuiet && console.log("-", testPath);
     }
   }
   return results;
@@ -779,13 +795,18 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+function targetDoesRunNodeTests() {
+  if (isMacOS && isX64) return false;
+  return true;
 }
 
 /**
@@ -949,9 +970,13 @@ async function getVendorTests(cwd) {
  * @returns {string[]}
  */
 function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+  let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
+
+  if (options["node-tests"]) {
+    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+  }
 
   const isMatch = (testPath, filter) => {
     return testPath.replace(/\\/g, "/").includes(filter);
@@ -969,7 +994,7 @@ function getRelevantTests(cwd) {
   const includes = options["include"]?.flatMap(getFilter);
   if (includes?.length) {
     availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
-    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
+    !isQuiet && console.log("Including tests:", includes, availableTests.length, "/", tests.length);
   } else {
     availableTests.push(...tests);
   }
@@ -984,7 +1009,7 @@ function getRelevantTests(cwd) {
           availableTests.splice(index, 1);
         }
       }
-      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+      !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
   }
 
@@ -992,7 +1017,7 @@ function getRelevantTests(cwd) {
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
     filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
-    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
   } else if (options["smoke"] !== undefined) {
     const smokePercent = parseFloat(options["smoke"]) || 0.01;
     const smokeCount = Math.ceil(availableTests.length * smokePercent);
@@ -1002,23 +1027,24 @@ function getRelevantTests(cwd) {
       smokeTests.add(availableTests[randomIndex]);
     }
     filteredTests.push(...Array.from(smokeTests));
-    console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
     for (let i = 0; i < availableTests.length; i++) {
       if (i % maxShards === shardId) {
         filteredTests.push(availableTests[i]);
       }
     }
-    console.log(
-      "Sharding tests:",
-      shardId,
-      "/",
-      maxShards,
-      "with tests",
-      filteredTests.length,
-      "/",
-      availableTests.length,
-    );
+    !isQuiet &&
+      console.log(
+        "Sharding tests:",
+        shardId,
+        "/",
+        maxShards,
+        "with tests",
+        filteredTests.length,
+        "/",
+        availableTests.length,
+      );
   } else {
     filteredTests.push(...availableTests);
   }
@@ -1299,7 +1325,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
+  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
   if (stderr) {
     errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }
@@ -1454,7 +1480,9 @@ export async function main() {
     process.on(signal, () => onExit(signal));
   }
 
-  printEnvironment();
+  if (!isQuiet) {
+    printEnvironment();
+  }
 
   // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
   // It also appears to hang on 1.1.1.1, which could explain this issue:
@@ -1471,17 +1499,21 @@ export async function main() {
 
   let waitForUser = false;
   while (isCI) {
-    const userCount = getLoggedInUserCount();
+    const userCount = getLoggedInUserCountOrDetails();
     if (!userCount) {
       if (waitForUser) {
-        console.log("No users logged in, exiting runner...");
+        !isQuiet && console.log("No users logged in, exiting runner...");
       }
       break;
     }
 
     if (!waitForUser) {
       startGroup("Summary");
-      console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      if (typeof userCount === "number") {
+        console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      } else {
+        console.warn(userCount);
+      }
       waitForUser = true;
     }
 

@@ -13,19 +13,4 @@ steps:
     agents:
       queue: "build-darwin"
     command:
-      - ".buildkite/scripts/prepare-build.sh"
-
-  - if: "build.branch == 'main' && !build.pull_request.repository.fork"
-    label: ":github:"
-    agents:
-      queue: "test-darwin"
-    depends_on:
-      - "darwin-aarch64-build-bun"
-      - "darwin-x64-build-bun"
-      - "linux-aarch64-build-bun"
-      - "linux-x64-build-bun"
-      - "linux-x64-baseline-build-bun"
-      - "windows-x64-build-bun"
-      - "windows-x64-baseline-build-bun"
-    command:
-      - ".buildkite/scripts/upload-release.sh"
+      - "node .buildkite/ci.mjs"

@@ -1870,12 +1870,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
 
-        /// Start of the 'dependencies' linked list. These are the other files
-        /// that import used by this file. Walk this list to discover what
-        /// files are to be reloaded when something changes.
+        /// Start of a file's 'dependencies' linked list. These are the other
+        /// files that have imports to this file. Walk this list to discover
+        /// what files are to be reloaded when something changes.
         first_dep: ArrayListUnmanaged(EdgeIndex.Optional),
-        /// Start of the 'imports' linked list. These are the files that this
-        /// file imports.
+        /// Start of a file's 'imports' linked lists. These are the files that
+        /// this file imports.
         first_import: ArrayListUnmanaged(EdgeIndex.Optional),
         /// `File` objects act as nodes in a directional many-to-many graph,
         /// where edges represent the imports between modules. An 'dependency'
@@ -3319,7 +3319,7 @@ pub const SerializedFailure = struct {
         }
     };
 
-    const ErrorKind = enum(u8) {
+    pub const ErrorKind = enum(u8) {
         // A log message. The `logger.Kind` is encoded here.
         bundler_log_err = 0,
         bundler_log_warn = 1,

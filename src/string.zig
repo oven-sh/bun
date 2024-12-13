@@ -1481,3 +1481,8 @@ pub const SliceWithUnderlyingString = struct {
         return this.underlying.toJS(globalObject);
     }
 };
+
+comptime {
+    bun.assert_eql(@sizeOf(bun.String), 24);
+    bun.assert_eql(@alignOf(bun.String), 8);
+}

@@ -605,7 +605,7 @@ it("should run with bun instead of npm even with leading spaces", async () => {
       env: bunEnv,
     });
 
-    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stderr.toString()).toMatch(/\$    bun(-debug)? run other_script    \n\$    echo hi    \n/);
     expect(stdout.toString()).toEndWith("hi\n");
     expect(exitCode).toBe(0);
   }

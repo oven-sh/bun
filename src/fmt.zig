@@ -234,9 +234,18 @@ const JSONFormatter = struct {
 
 const JSONFormatterUTF8 = struct {
     input: []const u8,
+    opts: Options,
+
+    pub const Options = struct {
+        quote: bool = true,
+    };
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        if (self.opts.quote) {
+            try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        } else {
+            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+        }
     }
 };
 
@@ -245,8 +254,8 @@ pub fn formatJSONString(text: []const u8) JSONFormatter {
     return .{ .input = text };
 }
 
-pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
-    return .{ .input = text };
+pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) JSONFormatterUTF8 {
+    return .{ .input = text, .opts = opts };
 }
 
 const SharedTempBuffer = [32 * 1024]u8;
@@ -1717,51 +1726,37 @@ fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.Form
     try writer.writeAll(remain);
 }
 
-pub const fmt_js_test_bindings = struct {
-    const Formatter = enum {
-        fmtJavaScript,
-        escapePowershell,
-    };
+pub const js_bindings = struct {
+    const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        const args = callframe.arguments_old(2);
-        if (args.len < 2) {
-            return globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = try args.ptr[0].toSliceOrNull(globalThis);
-        defer code.deinit();
-
+    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 
-        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
         switch (formatter_id) {
-            .fmtJavaScript => {
-                const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .highlight_javascript => {
+                const formatter = bun.fmt.fmtJavaScript(code, .{
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+                    return global.throwError(err, "while formatting");
                 };
             },
-            .escapePowershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+            .escape_powershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
+                    return global.throwError(err, "while formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting");
+            return global.throwError(err, "while formatting");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8(buffer.list.items);
     }
 };
 

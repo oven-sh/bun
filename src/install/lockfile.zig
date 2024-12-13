@@ -2351,7 +2351,7 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
         return new_id;
     }
 
-    const resolutions = this.packages.items(.resolution);
+    var resolutions = this.packages.items(.resolution);
 
     return switch (entry.value_ptr.*) {
         .id => |existing_id| {
@@ -2363,6 +2363,8 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
+
+            resolutions = this.packages.items(.resolution);
 
             var ids = try PackageIDList.initCapacity(this.allocator, 8);
             ids.items.len = 2;
@@ -2389,6 +2391,8 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
+
+            resolutions = this.packages.items(.resolution);
 
             for (existing_ids.items, 0..) |existing_id, i| {
                 if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt) {
@@ -6618,7 +6622,7 @@ pub const Serializer = struct {
     }
 };
 
-const EqlSorter = struct {
+pub const EqlSorter = struct {
     string_buf: string,
     pkg_names: []const String,
 
@@ -6626,10 +6630,11 @@ const EqlSorter = struct {
     pub const IdPair = struct {
         pkg_id: PackageID,
         tree_id: Tree.Id,
+        tree_path: string,
     };
 
     pub fn isLessThan(this: @This(), l: IdPair, r: IdPair) bool {
-        switch (std.math.order(l.tree_id, r.tree_id)) {
+        switch (strings.order(l.tree_path, r.tree_path)) {
             .lt => return true,
             .gt => return false,
             .eq => {},
@@ -6643,27 +6648,38 @@ const EqlSorter = struct {
     }
 };
 
-pub fn eql(l: *const Lockfile, r: *const Lockfile) bool {
+pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator) OOM!bool {
     const l_hoisted_deps = l.buffers.hoisted_dependencies.items;
     const r_hoisted_deps = r.buffers.hoisted_dependencies.items;
+    const l_string_buf = l.buffers.string_bytes.items;
+    const r_string_buf = r.buffers.string_bytes.items;
+
     const l_len = l_hoisted_deps.len;
     const r_len = r_hoisted_deps.len;
 
     if (l_len != r_len) return false;
 
-    const sort_buf_len = l_len * 2;
-    const sort_buf = l.allocator.alloc(EqlSorter.IdPair, sort_buf_len) catch bun.outOfMemory();
+    const sort_buf = try allocator.alloc(EqlSorter.IdPair, l_len + r_len);
     defer l.allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
-    var r_buf = sort_buf[l_len..];
+    var r_buf = sort_buf[r_len..];
+
+    var path_buf: bun.PathBuffer = undefined;
+    var depth_buf: Tree.DepthBuf = undefined;
 
     var i: usize = 0;
     for (l.buffers.trees.items) |l_tree| {
+        const rel_path, _ = Tree.relativePathAndDepth(l, l_tree.id, &path_buf, &depth_buf, .pkg_path);
+        const tree_path = try allocator.dupe(u8, rel_path);
         for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
             if (l_dep_id == invalid_dependency_id) continue;
             const l_pkg_id = l.buffers.resolutions.items[l_dep_id];
             if (l_pkg_id == invalid_package_id) continue;
-            l_buf[i] = .{ .pkg_id = l_pkg_id, .tree_id = l_tree.id };
+            l_buf[i] = .{
+                .pkg_id = l_pkg_id,
+                .tree_id = l_tree.id,
+                .tree_path = tree_path,
+            };
             i += 1;
         }
     }
@@ -6671,11 +6687,17 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile) bool {
 
     i = 0;
     for (r.buffers.trees.items) |r_tree| {
+        const rel_path, _ = Tree.relativePathAndDepth(r, r_tree.id, &path_buf, &depth_buf, .pkg_path);
+        const tree_path = try allocator.dupe(u8, rel_path);
         for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
             if (r_dep_id == invalid_dependency_id) continue;
             const r_pkg_id = r.buffers.resolutions.items[r_dep_id];
             if (r_pkg_id == invalid_package_id) continue;
-            r_buf[i] = .{ .pkg_id = r_pkg_id, .tree_id = r_tree.id };
+            r_buf[i] = .{
+                .pkg_id = r_pkg_id,
+                .tree_id = r_tree.id,
+                .tree_path = tree_path,
+            };
             i += 1;
         }
     }
@@ -6685,13 +6707,15 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile) bool {
 
     const l_pkgs = l.packages.slice();
     const r_pkgs = r.packages.slice();
+    const l_pkg_names = l_pkgs.items(.name);
+    const r_pkg_names = r_pkgs.items(.name);
 
     std.sort.pdq(
         EqlSorter.IdPair,
         l_buf,
         EqlSorter{
-            .pkg_names = l_pkgs.items(.name),
-            .string_buf = l.buffers.string_bytes.items,
+            .pkg_names = l_pkg_names,
+            .string_buf = l_string_buf,
         },
         EqlSorter.isLessThan,
     );
@@ -6700,17 +6724,31 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile) bool {
         EqlSorter.IdPair,
         r_buf,
         EqlSorter{
-            .pkg_names = r_pkgs.items(.name),
-            .string_buf = r.buffers.string_bytes.items,
+            .pkg_names = r_pkg_names,
+            .string_buf = r_string_buf,
         },
         EqlSorter.isLessThan,
     );
 
     const l_pkg_name_hashes = l_pkgs.items(.name_hash);
+    const l_pkg_resolutions = l_pkgs.items(.resolution);
     const r_pkg_name_hashes = r_pkgs.items(.name_hash);
+    const r_pkg_resolutions = r_pkgs.items(.resolution);
 
     for (l_buf, r_buf) |l_ids, r_ids| {
-        if (l_pkg_name_hashes[l_ids.pkg_id] != r_pkg_name_hashes[r_ids.pkg_id]) {
+        const l_pkg_id = l_ids.pkg_id;
+        const r_pkg_id = r_ids.pkg_id;
+        if (l_pkg_name_hashes[l_pkg_id] != r_pkg_name_hashes[r_pkg_id]) {
+            return false;
+        }
+        const l_res = l_pkg_resolutions[l_pkg_id];
+        const r_res = r_pkg_resolutions[r_pkg_id];
+
+        if (l_res.tag == .uninitialized or r_res.tag == .uninitialized) {
+            if (l_res.tag != r_res.tag) {
+                return false;
+            }
+        } else if (!l_res.eql(&r_res, l_string_buf, r_string_buf)) {
             return false;
         }
     }

@@ -407,6 +407,7 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    PosixSignalTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
@@ -781,6 +782,18 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+
+    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null else {},
+
+    pub export fn Bun__ensureSignalHandler() void {
+        if (Environment.isPosix) {
+            const vm = JSC.VirtualMachine.getMainThreadVM();
+            const this = vm.eventLoop();
+            if (this.signal_handler == null) {
+                this.signal_handler = PosixSignalHandle.init(vm);
+            }
+        }
+    }
 
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
@@ -1255,6 +1268,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
                     var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
                     any.runOnJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(PosixSignalTask))) => {
+                    var any: *PosixSignalTask = task.get(PosixSignalTask).?;
+                    any.runFromJSThread(global);
                 },
 
                 else => {
@@ -2292,4 +2309,146 @@ pub const EventLoopTask = union {
 pub const EventLoopTaskPtr = union {
     js: *ConcurrentTask,
     mini: *JSC.AnyTaskWithExtraContext,
+};
+
+pub const PosixSignalHandle = struct {
+    pipe_read_fd: bun.FileDescriptor = bun.invalid_fd,
+    pipe_write_fd: bun.FileDescriptor = bun.invalid_fd,
+    file_poll: *bun.Async.FilePoll = undefined,
+
+    pub usingnamespace bun.New(@This());
+
+    const log = bun.Output.scoped(.PosixSignalHandle, true);
+
+    pub fn init(vm: *JSC.VirtualMachine) *PosixSignalHandle {
+        if (comptime !Environment.isPosix) {
+            @compileError("PosixSignalHandle is not supported on Windows");
+        }
+
+        const pipe = bun.sys.pipe().unwrap() catch bun.Output.panic("Failed to create pipe for signal handling", .{});
+        const this = PosixSignalHandle.new(.{
+            .pipe_read_fd = pipe[0],
+            .pipe_write_fd = pipe[1],
+        });
+        _ = bun.sys.setNonblocking(this.pipe_read_fd);
+        _ = bun.sys.setNonblocking(this.pipe_write_fd);
+        _ = bun.sys.setCloseOnExec(this.pipe_read_fd);
+        _ = bun.sys.setCloseOnExec(this.pipe_write_fd);
+        this.file_poll = bun.Async.FilePoll.init(vm, this.pipe_read_fd, .{}, PosixSignalHandle, this);
+        switch (this.file_poll.registerWithFd(vm.eventLoop().usocketsLoop(), .readable, .none, this.pipe_read_fd)) {
+            .err => |err| {
+                bun.Output.panic("Failed to register file poll for signal handling: {}", .{err});
+            },
+            .result => {},
+        }
+        return this;
+    }
+
+    pub fn onPoll(this: *PosixSignalHandle, _: isize, _: bool) void {
+        if (comptime !Environment.isPosix) {
+            @compileError("PosixSignalHandle is not supported on Windows");
+        }
+
+        var buffer: [1024]u8 = undefined;
+        var remaining: []u8 = &buffer;
+
+        while (remaining.len > 0) {
+            switch (bun.sys.read(this.pipe_read_fd, remaining)) {
+                .err => |err| {
+                    if (err.isRetry()) {
+                        // We are done.
+                        return;
+                    }
+                    bun.Output.panic("Failed to read from pipe: {}", .{err});
+                },
+                .result => |amount| {
+                    remaining = remaining[amount..];
+                    if (amount == 0) break;
+                },
+            }
+        }
+
+        const total_read = buffer.len - remaining.len;
+        const read_buffer = buffer[0..total_read];
+
+        const task = PosixSignalTask.new(
+            .{
+                .signal = if (read_buffer.len == 1) .{
+                    .signal = read_buffer[0],
+                } else .{
+                    .signals = bun.default_allocator.dupe(u8, read_buffer) catch bun.outOfMemory(),
+                },
+            },
+        );
+        JSC.VirtualMachine.getMainThreadVM().eventLoop().enqueueTask(JSC.Task.init(task));
+    }
+
+    pub fn enqueue(this: *PosixSignalHandle, signal: u8) void {
+        if (comptime !Environment.isPosix) {
+            @compileError("PosixSignalHandle is not supported on Windows");
+        }
+
+        var buffer: [1]u8 = undefined;
+        buffer[0] = signal;
+        while (true) {
+            switch (bun.sys.write(this.pipe_write_fd, &buffer)) {
+                .err => |err| {
+                    // If the pipe buffer is full, the user is out of luck (libuv does the same thing)
+                    if (err.isRetry()) break;
+
+                    // Not sure what to do here.
+                    // Let's show a debug log and see if it ever happpens.
+                    bun.Output.debugWarn("Failed to write to signal pipe: {}", .{err});
+                },
+                .result => break,
+            }
+        }
+    }
+
+    export fn Bun__onPosixSignal(number: i32) void {
+        if (comptime !Environment.isPosix) {
+            unreachable;
+        }
+
+        const vm = JSC.VirtualMachine.getMainThreadVM();
+        log("{s} {d}", .{ bun.SignalCode.from(number).name() orelse "(unknown)", number });
+        vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
+    }
+};
+
+pub const PosixSignalTask = struct {
+    signal: union(enum) {
+        signal: u8,
+        signals: []u8,
+    },
+
+    extern "C" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
+
+    pub usingnamespace bun.New(@This());
+    pub fn runFromJSThread(this: *PosixSignalTask, globalObject: *JSC.JSGlobalObject) void {
+        if (comptime !Environment.isPosix) {
+            unreachable;
+        }
+
+        defer this.destroy();
+
+        switch (this.signal) {
+            .signal => |signal| {
+                Bun__onSignalForJS(signal, globalObject);
+            },
+            .signals => |signals| {
+                defer bun.default_allocator.free(signals);
+                Bun__onSignalForJS(signals[0], globalObject);
+
+                // Dedupe multiple signals
+                if (signals.len > 1) {
+                    globalObject.bunVM().drainMicrotasks();
+                    for (signals[1..]) |signal| {
+                        Bun__onSignalForJS(signal, globalObject);
+                        globalObject.bunVM().drainMicrotasks();
+                    }
+                }
+            },
+        }
+    }
 };

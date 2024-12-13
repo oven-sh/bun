@@ -35,6 +35,7 @@ const Meta = BinaryLockfile.Package.Meta;
 const Negatable = Npm.Negatable;
 const DependencyID = Install.DependencyID;
 const invalid_dependency_id = Install.invalid_dependency_id;
+const DependencyIDSlice = BinaryLockfile.DependencyIDSlice;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -213,6 +214,9 @@ pub const PkgPath = struct {
         };
     }
 
+    // TODO(dylan-conway): The structure of this map can change
+    // now that a path buffer is used. Parent isn't needed, and
+    // keys don't need to be iterated.
     pub const Map = struct {
         root: Node,
 
@@ -515,10 +519,33 @@ pub const Stringifier = struct {
             try decIndent(writer, indent);
             try writer.writeAll("},\n");
 
+            const TreeSortCtx = struct {
+                pub const Item = struct { []const DependencyID, string, usize };
+
+                pub fn isLessThan(_: void, l: Item, r: Item) bool {
+                    _, const l_rel_path, const l_depth = l;
+                    _, const r_rel_path, const r_depth = r;
+                    return switch (std.math.order(l_depth, r_depth)) {
+                        .lt => true,
+                        .gt => false,
+                        .eq => strings.order(l_rel_path, r_rel_path) == .lt,
+                    };
+                }
+            };
+
+            var tree_sort_buf: std.ArrayListUnmanaged(TreeSortCtx.Item) = .{};
+            defer tree_sort_buf.deinit(allocator);
+
             var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
 
             // find trusted and patched dependencies. also overrides
             while (pkgs_iter.next({})) |node| {
+                try tree_sort_buf.append(allocator, .{
+                    node.dependencies,
+                    try allocator.dupe(u8, node.relative_path),
+                    node.depth,
+                });
+
                 for (node.dependencies) |dep_id| {
                     const pkg_id = resolution_buf[dep_id];
                     if (pkg_id == invalid_package_id) continue;
@@ -569,6 +596,13 @@ pub const Stringifier = struct {
             }
 
             pkgs_iter.reset();
+
+            std.sort.pdq(
+                TreeSortCtx.Item,
+                tree_sort_buf.items,
+                {},
+                TreeSortCtx.isLessThan,
+            );
 
             if (found_trusted_dependencies.count() > 0) {
                 try writeIndent(writer, indent);
@@ -661,9 +695,10 @@ pub const Stringifier = struct {
             try writeIndent(writer, indent);
             try writer.writeAll("\"packages\": {");
             var first = true;
-            while (pkgs_iter.next({})) |node| {
+            for (tree_sort_buf.items) |item| {
+                const dependencies, const relative_path, const depth = item;
                 deps_sort_buf.clearRetainingCapacity();
-                try deps_sort_buf.appendSlice(allocator, node.dependencies);
+                try deps_sort_buf.appendSlice(allocator, dependencies);
 
                 std.sort.pdq(
                     DependencyID,
@@ -690,15 +725,15 @@ pub const Stringifier = struct {
                         try writer.writeByte('\n');
                         try incIndent(writer, indent);
                     } else {
-                        try writer.writeAll(",\n");
+                        try writer.writeAll(",\n\n");
                         try writeIndent(writer, indent);
                     }
 
                     try writer.writeByte('"');
                     // relative_path is empty string for root resolutions
-                    try writer.writeAll(node.relative_path);
+                    try writer.writeAll(relative_path);
 
-                    if (node.depth != 0) {
+                    if (depth != 0) {
                         try writer.writeByte('/');
                     }
 
@@ -900,7 +935,7 @@ pub const Stringifier = struct {
         if (optional_peers_buf.items.len > 0) {
             bun.debugAssert(any);
             try writer.writeAll(
-                \\, "optionalPeerDependencies": [
+                \\, "optionalPeers": [
             );
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
@@ -1050,7 +1085,7 @@ pub const Stringifier = struct {
             );
             try writeIndent(writer, indent);
             try writer.writeAll(
-                \\"optionalPeerDependencies": [
+                \\"optionalPeers": [
                 \\
             );
             indent.* += 1;
@@ -1108,6 +1143,7 @@ const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior 
 
 const ParseError = OOM || error{
     InvalidLockfileVersion,
+    UnknownLockfileVersion,
     InvalidOptionalValue,
     InvalidPeerValue,
     InvalidDefaultRegistry,
@@ -1147,9 +1183,22 @@ pub fn parseIntoBinaryLockfile(
         return error.InvalidLockfileVersion;
     };
 
-    const lockfile_version: u32 = switch (lockfile_version_expr.data) {
-        .e_number => |num| @intFromFloat(std.math.divExact(f64, num.value, 1) catch return error.InvalidLockfileVersion),
-        else => return error.InvalidLockfileVersion,
+    const lockfile_version: u32 = lockfile_version: {
+        err: {
+            switch (lockfile_version_expr.data) {
+                .e_number => |num| {
+                    if (num.value < 0 or num.value > std.math.maxInt(u32)) {
+                        break :err;
+                    }
+
+                    break :lockfile_version @intFromFloat(std.math.divExact(f64, num.value, 1) catch break :err);
+                },
+                else => {},
+            }
+        }
+
+        try log.addError(source, lockfile_version_expr.loc, "Invalid lockfile version");
+        return error.InvalidLockfileVersion;
     };
 
     lockfile.text_lockfile_version = std.meta.intToEnum(Version, lockfile_version) catch {
@@ -1323,7 +1372,6 @@ pub fn parseIntoBinaryLockfile(
     defer optional_peers_buf.deinit(allocator);
 
     if (maybe_root_pkg) |root_pkg| {
-        // TODO(dylan-conway): maybe sort this. behavior is already sorted, but names are not
         const maybe_name = if (root_pkg.get("name")) |name| name.asString(allocator) orelse {
             try log.addError(source, name.loc, "Expected a string");
             return error.InvalidWorkspaceObject;
@@ -1343,7 +1391,9 @@ pub fn parseIntoBinaryLockfile(
         pkg.dependencies = .{ .off = off, .len = len };
         pkg.resolutions = .{ .off = off, .len = len };
 
+        pkg.meta.id = 0;
         try lockfile.packages.append(allocator, pkg);
+        try lockfile.getOrPutID(0, pkg.name_hash);
     } else {
         try log.addError(source, workspaces.loc, "Expected root package");
         return error.InvalidWorkspaceObject;
@@ -1409,11 +1459,10 @@ pub fn parseIntoBinaryLockfile(
             };
 
             if (res.tag == .npm) {
-                if (pkg_info.len < 2) {
+                if (i >= pkg_info.len) {
                     try log.addError(source, value.loc, "Missing npm registry");
                     return error.InvalidPackageInfo;
                 }
-
                 const registry_expr = pkg_info.at(i);
                 i += 1;
 
@@ -1441,6 +1490,11 @@ pub fn parseIntoBinaryLockfile(
             // dependencies, os, cpu, libc
             switch (res.tag) {
                 .npm, .folder, .git, .github, .local_tarball, .remote_tarball, .symlink, .workspace => {
+                    if (i >= pkg_info.len) {
+                        try log.addError(source, value.loc, "Missing dependencies object");
+                        return error.InvalidPackageInfo;
+                    }
+
                     const deps_os_cpu_libc_obj = pkg_info.at(i);
                     i += 1;
                     if (!deps_os_cpu_libc_obj.isObject()) {
@@ -1448,7 +1502,6 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    // TODO(dylan-conway): maybe sort this. behavior is already sorted, but names are not
                     const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_obj, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
@@ -1473,6 +1526,10 @@ pub fn parseIntoBinaryLockfile(
             // integrity
             switch (res.tag) {
                 .npm => {
+                    if (i >= pkg_info.len) {
+                        try log.addError(source, value.loc, "Missing integrity");
+                        return error.InvalidPackageInfo;
+                    }
                     const integrity_expr = pkg_info.at(i);
                     i += 1;
                     const integrity_str = integrity_expr.asString(allocator) orelse {
@@ -1536,7 +1593,9 @@ pub fn parseIntoBinaryLockfile(
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
                 if (pkg_map.root.nodes.getPtr(dep.name.slice(string_buf.bytes.items))) |dep_node| {
-                    dep_node.dep_id = dep_id;
+                    if (dep_node.dep_id == invalid_dependency_id) {
+                        dep_node.dep_id = dep_id;
+                    }
                     lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
                 }
             }
@@ -1544,6 +1603,8 @@ pub fn parseIntoBinaryLockfile(
             // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
 
         }
+
+        var path_buf: bun.PathBuffer = undefined;
 
         // then each package dependency
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
@@ -1566,17 +1627,74 @@ pub fn parseIntoBinaryLockfile(
             deps: for (pkg_deps[pkg_id].begin()..pkg_deps[pkg_id].end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
+                const dep_name = dep.name.slice(string_buf.bytes.items);
 
-                var curr: ?*PkgPath.Map.Node = pkg_map_entry;
-                while (curr) |node| {
-                    if (node.nodes.getPtr(dep.name.slice(string_buf.bytes.items))) |dep_node| {
-                        dep_node.dep_id = dep_id;
-                        lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
+                @memcpy(path_buf[0..pkg_path.len], pkg_path);
+                path_buf[pkg_path.len] = '/';
+                var offset = pkg_path.len + 1;
 
+                var valid = true;
+                while (valid) {
+                    @memcpy(path_buf[offset..][0..dep_name.len], dep_name);
+                    const res_path = path_buf[0 .. offset + dep_name.len];
+
+                    if (try pkg_map.get(res_path)) |entry| {
+                        if (entry.dep_id == invalid_dependency_id) {
+                            entry.dep_id = dep_id;
+                        }
+                        lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
                         continue :deps;
                     }
-                    curr = node.parent orelse if (curr != &pkg_map.root) &pkg_map.root else null;
+
+                    if (offset == 0) {
+                        if (dep.behavior.isOptionalPeer()) {
+                            continue :deps;
+                        }
+                        try log.addError(source, key.loc, "Unable to resolve dependencies for package");
+                        return error.InvalidPackageInfo;
+                    }
+
+                    const slash = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '/') orelse {
+                        offset = 0;
+                        continue;
+                    };
+
+                    // might be a scoped package
+                    const at = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '@') orelse {
+                        offset = slash + 1;
+                        continue;
+                    };
+
+                    if (at > slash) {
+                        valid = false;
+                        continue;
+                    }
+
+                    const next_slash = strings.lastIndexOfChar(path_buf[0..slash], '/') orelse {
+                        if (at != 0) {
+                            try log.addError(source, key.loc, "Invalid package path");
+                            return error.InvalidPackageKey;
+                        }
+                        offset = 0;
+                        continue;
+                    };
+
+                    if (next_slash > at) {
+                        // there's a scoped package but it exists farther up
+                        offset = slash + 1;
+                        continue;
+                    }
+
+                    if (next_slash + 1 != at) {
+                        valid = false;
+                        continue;
+                    }
+
+                    offset = at;
                 }
+
+                try log.addError(source, key.loc, "Invalid package path");
+                return error.InvalidPackageKey;
             }
         }
 
@@ -1606,10 +1724,12 @@ pub fn parseIntoBinaryLockfile(
                 tree_id += 1;
             }
         }
+    } else {
+        lockfile.initEmpty(allocator);
+        return;
     }
 
-    lockfile.buffers.string_bytes = string_buf.bytes.moveToUnmanaged();
-    lockfile.string_pool = string_buf.pool;
+    string_buf.apply(lockfile);
 }
 
 fn parseAppendDependencies(
@@ -1623,7 +1743,7 @@ fn parseAppendDependencies(
 ) ParseError!struct { u32, u32 } {
     defer optional_peers_buf.clearRetainingCapacity();
 
-    if (obj.get("optionalPeerDependencies")) |optional_peers| {
+    if (obj.get("optionalPeers")) |optional_peers| {
         if (!optional_peers.isArray()) {
             try log.addError(source, optional_peers.loc, "Expected an array");
             return error.InvalidPackageInfo;

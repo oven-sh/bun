@@ -14755,7 +14755,7 @@ pub const PackageManager = struct {
 
         if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
             if (load_result.loadedFromTextLockfile()) {
-                if (manager.lockfile.eql(lockfile_before_clean)) {
+                if (manager.lockfile.eql(lockfile_before_clean, manager.allocator) catch bun.outOfMemory()) {
                     break :frozen_lockfile;
                 }
             } else {

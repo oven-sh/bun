@@ -140,7 +140,7 @@ export default [
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData" },
-      exists: { fn: "getExists", length: 0 },
+      exists: { fn: "getExists", length: 0, passThis: true },
 
       // Non-standard, but consistent!
       bytes: { fn: "getBytes" },

@@ -86,7 +86,7 @@ pub const AWSCredentials = struct {
         }
     };
 
-    pub fn s3Request(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8) !SignResult {
+    pub fn signRequest(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
 
         const method_name = switch (method) {
@@ -188,5 +188,297 @@ pub const AWSCredentials = struct {
                 .{ .name = "Host", .value = host },
             },
         };
+    }
+
+    pub const S3StatResult = union(enum) {
+        success: struct {
+            size: usize = 0,
+            /// etag is not owned and need to be copied if used after this callback
+            etag: []const u8 = "",
+        },
+        not_found: void,
+
+        /// failure error is not owned and need to be copied if used after this callback
+        failure: struct {
+            code: []const u8,
+            message: []const u8,
+        },
+    };
+    pub const S3DownloadResult = union(enum) {
+        success: struct {
+            /// etag is not owned and need to be copied if used after this callback
+            etag: []const u8 = "",
+            /// body is owned and dont need to be copied, but dont forget to free it
+            body: bun.MutableString,
+        },
+        not_found: void,
+        /// failure error is not owned and need to be copied if used after this callback
+        failure: struct {
+            code: []const u8,
+            message: []const u8,
+        },
+    };
+    pub const S3UploadResult = union(enum) {
+        success: void,
+        /// failure error is not owned and need to be copied if used after this callback
+        failure: struct {
+            code: []const u8,
+            message: []const u8,
+        },
+    };
+    pub const S3DeleteResult = union(enum) {
+        success: void,
+        not_found: void,
+
+        /// failure error is not owned and need to be copied if used after this callback
+        failure: struct {
+            code: []const u8,
+            message: []const u8,
+        },
+    };
+    pub const S3HttpSimpleTask = struct {
+        http: bun.http.AsyncHTTP,
+        vm: *JSC.VirtualMachine,
+        sign_result: SignResult,
+        headers: JSC.WebCore.Headers,
+        callback_context: *anyopaque,
+        callback: Callback,
+        response_buffer: bun.MutableString = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        },
+        result: bun.http.HTTPClientResult = .{},
+        concurrent_task: JSC.ConcurrentTask = .{},
+        range: ?[]const u8,
+
+        usingnamespace bun.New(@This());
+        pub const Callback = union(enum) {
+            stat: *const fn (S3StatResult, *anyopaque) void,
+            download: *const fn (S3DownloadResult, *anyopaque) void,
+            upload: *const fn (S3UploadResult, *anyopaque) void,
+            delete: *const fn (S3DeleteResult, *anyopaque) void,
+
+            pub fn fail(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) void {
+                switch (this) {
+                    inline .upload, .download, .stat, .delete => |callback| callback(.{
+                        .failure = .{
+                            .code = code,
+                            .message = message,
+                        },
+                    }, context),
+                }
+            }
+        };
+        pub fn deinit(this: *@This()) void {
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+            }
+
+            this.response_buffer.deinit();
+            this.headers.deinit();
+            this.sign_result.deinit();
+            this.http.clearData();
+            if (this.range) |range| {
+                bun.default_allocator.free(range);
+            }
+            if (this.result.metadata) |*metadata| {
+                metadata.deinit(bun.default_allocator);
+            }
+            this.destroy();
+        }
+
+        fn fail(this: @This()) void {
+            var code: []const u8 = "UnknownError";
+            var message: []const u8 = "an unexpected error has occurred";
+            if (this.result.body) |body| {
+                const bytes = body.list.items;
+                if (bytes.len > 0) {
+                    message = bytes[0..];
+                    if (strings.indexOf(bytes, "<Code>")) |start| {
+                        if (strings.indexOf(bytes, "</Code>")) |end| {
+                            code = bytes[start + "<Code>".len .. end];
+                        }
+                    }
+                    if (strings.indexOf(bytes, "<Message>")) |start| {
+                        if (strings.indexOf(bytes, "</Message>")) |end| {
+                            message = bytes[start + "<Message>".len .. end];
+                        }
+                    }
+                }
+            }
+            this.callback.fail(code, message, this.callback_context);
+        }
+
+        pub fn onResponse(this: *@This()) void {
+            defer this.deinit();
+            bun.assert(this.result.metadata != null);
+            const response = this.result.metadata.?.response;
+            switch (this.callback) {
+                .stat => |callback| {
+                    switch (response.status_code) {
+                        404 => {
+                            callback(.{ .not_found = {} }, this.callback_context);
+                        },
+                        200 => {
+                            callback(.{
+                                .success = .{
+                                    .etag = response.headers.get("etag") orelse "",
+                                    .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
+                                },
+                            }, this.callback_context);
+                        },
+                        else => {
+                            this.fail();
+                        },
+                    }
+                },
+                .delete => |callback| {
+                    switch (response.status_code) {
+                        404 => {
+                            callback(.{ .not_found = {} }, this.callback_context);
+                        },
+                        200 => {
+                            callback(.{ .success = {} }, this.callback_context);
+                        },
+                        else => {
+                            this.fail();
+                        },
+                    }
+                },
+                .upload => |callback| {
+                    switch (response.status_code) {
+                        200 => {
+                            callback(.{ .success = {} }, this.callback_context);
+                        },
+                        else => {
+                            this.fail();
+                        },
+                    }
+                },
+                .download => |callback| {
+                    switch (response.status_code) {
+                        404 => {
+                            callback(.{ .not_found = {} }, this.callback_context);
+                        },
+                        200, 206 => {
+                            const body = this.response_buffer;
+                            this.response_buffer = .{
+                                .allocator = bun.default_allocator,
+                                .list = .{
+                                    .items = &.{},
+                                    .capacity = 0,
+                                },
+                            };
+                            callback(.{
+                                .success = .{
+                                    .etag = response.headers.get("etag") orelse "",
+                                    .body = body,
+                                },
+                            }, this.callback_context);
+                        },
+                        else => {
+                            //error
+                            this.fail();
+                        },
+                    }
+                },
+            }
+        }
+
+        pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
+            const is_done = !result.has_more;
+            this.result = result;
+            this.http = async_http.*;
+            this.http.response_buffer = async_http.response_buffer;
+            if (is_done) {
+                this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+            }
+        }
+    };
+
+    pub fn executeSimpleS3Request(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8) void {
+        var result = this.signRequest(bucket, path, method, null) catch |sign_err| {
+            if (range) |range_| bun.default_allocator.free(range_);
+
+            return switch (sign_err) {
+                error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
+                error.InvalidMethod => callback.fail("MissingCredentials", "method must be GET, PUT, DELETE or HEAD when using s3 protocol", callback_context),
+                error.InvalidPath => callback.fail("InvalidPath", "invalid s3 bucket, key combination", callback_context),
+                else => callback.fail("SignError", "failed to retrieve s3 content check your credentials", callback_context),
+            };
+        };
+
+        const headers = brk: {
+            if (range) |range_| {
+                var headersWithRange: [5]picohttp.Header = .{
+                    result.headers[0],
+                    result.headers[1],
+                    result.headers[2],
+                    result.headers[3],
+                    .{ .name = "range", .value = range_ },
+                };
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+            } else {
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+            }
+        };
+        const task = S3HttpSimpleTask.new(.{
+            .http = undefined,
+            .sign_result = result,
+            .callback_context = callback_context,
+            .callback = callback,
+            .range = range,
+            .headers = headers,
+            .vm = JSC.VirtualMachine.get(),
+        });
+
+        const url = bun.URL.parse(result.url);
+
+        task.http = bun.http.AsyncHTTP.init(
+            bun.default_allocator,
+            method,
+            url,
+            task.headers.entries,
+            task.headers.buf.items,
+            &task.response_buffer,
+            body,
+            bun.http.HTTPClientResult.Callback.New(
+                *S3HttpSimpleTask,
+                S3HttpSimpleTask.http_callback,
+            ).init(task),
+            .follow,
+            .{
+                .http_proxy = if (proxy_url) |proxy| bun.URL.parse(proxy) else null,
+            },
+        );
+        // queue http request
+        bun.http.HTTPThread.init(&.{});
+        var batch = bun.ThreadPool.Batch{};
+        task.http.schedule(bun.default_allocator, &batch);
+        bun.http.http_thread.schedule(batch);
+    }
+
+    pub fn s3Stat(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(bucket, path, .HEAD, .{ .stat = callback }, callback_context, proxy_url, "", null);
+    }
+
+    pub fn s3Download(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(bucket, path, .GET, .{ .download = callback }, callback_context, proxy_url, "", null);
+    }
+
+    pub fn s3DownloadSlice(this: *const @This(), bucket: []const u8, path: []const u8, offset: usize, len: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        const range = if (len != null) std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, offset + len.? }) catch bun.outOfMemory() else std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        this.executeSimpleS3Request(bucket, path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range);
+    }
+
+    pub fn s3Delete(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(bucket, path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null);
+    }
+
+    pub fn s3Upload(this: *const @This(), bucket: []const u8, path: []const u8, content: []const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(bucket, path, .POST, .{ .upload = callback }, callback_context, proxy_url, content, null);
     }
 };

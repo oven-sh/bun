@@ -19,7 +19,6 @@ const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-
 const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
@@ -44,6 +43,7 @@ const Request = JSC.WebCore.Request;
 
 const libuv = bun.windows.libuv;
 
+const AWS = @import("../../s3.zig").AWSCredentials;
 const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
@@ -147,6 +147,14 @@ pub const Blob = struct {
 
     pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFile", .{});
+        if (this.isS3()) {
+            const WrappedFn = struct {
+                pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
+                    return JSC.toJSHostValue(g, Function(b, g, by, .clone));
+                }
+            };
+            return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
+        }
 
         const Handler = NewReadFileHandler(Function);
 
@@ -3423,12 +3431,149 @@ pub const Blob = struct {
         return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
+    fn isS3(this: *Blob) bool {
+        if (this.store) |store| {
+            if (store.data == .file) {
+                if (store.data.file.pathlike == .path) {
+                    const slice = store.data.file.pathlike.path.slice();
+                    return strings.startsWith(slice, "s3://");
+                }
+            }
+        }
+        return false;
+    }
+
+    const S3BlobDownloadTask = struct {
+        blob: Blob,
+        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.JSPromise.Strong,
+        poll_ref: bun.Async.KeepAlive = .{},
+
+        handler: S3ReadHandler,
+        usingnamespace bun.New(S3BlobDownloadTask);
+        pub const S3ReadHandler = *const fn (this: *Blob, globalthis: *JSGlobalObject, raw_bytes: []u8) JSValue;
+
+        pub fn callHandler(this: *S3BlobDownloadTask, raw_bytes: []u8) JSValue {
+            return this.handler(&this.blob, this.globalThis, raw_bytes);
+        }
+        pub fn onS3DownloadResolved(result: AWS.S3DownloadResult, this: *S3BlobDownloadTask) void {
+            defer this.deinit();
+            switch (result) {
+                .not_found => {
+                    const js_err = this.globalThis.createErrorInstance("File not found", .{});
+                    js_err.put(this.globalThis, ZigString.static("code"), ZigString.init("FileNotFound").toJS(this.globalThis));
+                    this.promise.reject(this.globalThis, js_err);
+                },
+                .success => |response| {
+                    const bytes = response.body.list.items;
+                    if (this.blob.size == Blob.max_size) {
+                        this.blob.size = @truncate(bytes.len);
+                    }
+                    JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
+                },
+                .failure => |err| {
+                    const js_err = this.globalThis.createErrorInstance("{s}", .{err.message});
+                    js_err.put(this.globalThis, ZigString.static("code"), ZigString.init(err.code).toJS(this.globalThis));
+                    this.promise.rejectOnNextTick(this.globalThis, js_err);
+                },
+            }
+        }
+
+        pub fn init(globalThis: *JSC.JSGlobalObject, blob: *Blob, handler: S3BlobDownloadTask.S3ReadHandler) JSValue {
+            blob.store.?.ref();
+
+            const this = S3BlobDownloadTask.new(.{
+                .globalThis = globalThis,
+                .blob = blob.*,
+                .promise = JSC.JSPromise.Strong.init(globalThis),
+                .handler = handler,
+            });
+            const promise = this.promise.value();
+            const env = this.globalThis.bunVM().bundler.env;
+            const credentials = env.getAWSCredentials();
+            const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
+            this.poll_ref.ref(globalThis.bunVM());
+
+            if (blob.offset > 0) {
+                const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
+                const offset: usize = @intCast(blob.offset);
+                credentials.s3DownloadSlice(url.hostname, url.path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            } else {
+                credentials.s3Download(url.hostname, url.path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            }
+            return promise;
+        }
+
+        pub fn deinit(this: *S3BlobDownloadTask) void {
+            this.blob.store.?.deref();
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            this.promise.deinit();
+            this.destroy();
+        }
+    };
+
+    const S3BlobStatTask = struct {
+        blob: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.JSPromise.Strong,
+        strong_ref: JSC.Strong,
+        poll_ref: bun.Async.KeepAlive = .{},
+        usingnamespace bun.New(S3BlobStatTask);
+
+        pub fn onS3StatResolved(result: AWS.S3StatResult, this: *S3BlobStatTask) void {
+            defer this.deinit();
+            switch (result) {
+                .not_found => {
+                    this.promise.resolve(this.globalThis, .false);
+                },
+                .success => |stat| {
+                    if (this.blob.size == Blob.max_size) {
+                        this.blob.size = @truncate(stat.size);
+                    }
+                    this.promise.resolve(this.globalThis, .true);
+                },
+                .failure => |err| {
+                    const js_err = this.globalThis.createErrorInstance("{s}", .{err.message});
+                    js_err.put(this.globalThis, ZigString.static("code"), ZigString.init(err.code).toJS(this.globalThis));
+                    this.promise.rejectOnNextTick(this.globalThis, js_err);
+                },
+            }
+        }
+
+        pub fn init(globalThis: *JSC.JSGlobalObject, blob: *Blob, js_blob: JSValue) JSValue {
+            const this = S3BlobStatTask.new(.{
+                .globalThis = globalThis,
+                .blob = blob,
+                .promise = JSC.JSPromise.Strong.init(globalThis),
+                .strong_ref = JSC.Strong.create(js_blob, globalThis),
+            });
+            const promise = this.promise.value();
+            const env = this.globalThis.bunVM().bundler.env;
+            const credentials = env.getAWSCredentials();
+            const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
+            this.poll_ref.ref(globalThis.bunVM());
+            credentials.s3Stat(url.hostname, url.path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            return promise;
+        }
+
+        pub fn deinit(this: *S3BlobStatTask) void {
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            this.strong_ref.deinit();
+            this.promise.deinit();
+            this.destroy();
+        }
+    };
+
     // This mostly means 'can it be read?'
     pub fn getExists(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
+        this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
+        if (this.isS3()) {
+            return S3BlobStatTask.init(globalThis, this, this_value);
+        }
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
@@ -3783,7 +3928,7 @@ pub const Blob = struct {
         if (this.store) |store| {
             if (store.data == .file) {
                 // last_modified can be already set during read.
-                if (store.data.file.last_modified == JSC.init_timestamp) {
+                if (store.data.file.last_modified == JSC.init_timestamp and !this.isS3()) {
                     resolveFileStat(store);
                 }
                 return JSValue.jsNumber(store.data.file.last_modified);

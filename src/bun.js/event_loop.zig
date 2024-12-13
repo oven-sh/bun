@@ -18,6 +18,7 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
+const S3HttpSimpleTask = @import("../s3.zig").AWSCredentials.S3HttpSimpleTask;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -407,6 +408,7 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    S3HttpSimpleTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
@@ -990,6 +992,10 @@ pub const EventLoop = struct {
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
+                },
+                .S3HttpSimpleTask => {
+                    var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
                 },
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;

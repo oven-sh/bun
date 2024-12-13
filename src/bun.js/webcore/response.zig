@@ -2274,6 +2274,7 @@ pub const Fetch = struct {
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
+        var range: ?[]u8 = null;
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
         var url_proxy_buffer: []const u8 = "";
@@ -2311,6 +2312,10 @@ pub const Fetch = struct {
             if (hostname) |hn| {
                 bun.default_allocator.free(hn);
                 hostname = null;
+            }
+            if (range) |range_| {
+                bun.default_allocator.free(range_);
+                range = null;
             }
 
             if (ssl_config) |conf| {
@@ -2929,6 +2934,15 @@ pub const Fetch = struct {
                     }
                     hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                 }
+                if (url.isS3()) {
+                    if (headers_.fastGet(JSC.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                        if (range) |range_| {
+                            range = null;
+                            allocator.free(range_);
+                        }
+                        range = _range.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    }
+                }
 
                 break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch bun.outOfMemory();
             }
@@ -3228,7 +3242,7 @@ pub const Fetch = struct {
                 }
             }
             // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
-            var result = credentials.s3Request(url.hostname, url.path, method, null) catch |sign_err| {
+            var result = credentials.signRequest(url.hostname, url.path, method, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
                         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);
@@ -3236,7 +3250,7 @@ pub const Fetch = struct {
                         return JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     error.InvalidMethod => {
-                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "method must be GET, PUT, DELETE when using s3 protocol", .{}, ctx);
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{}, ctx);
                         is_error = true;
                         return JSPromise.rejectedPromiseValue(globalThis, err);
                     },
@@ -3274,7 +3288,18 @@ pub const Fetch = struct {
             if (headers) |*headers_| {
                 headers_.deinit();
             }
-            headers = Headers.fromPicoHttpHeaders(&result.headers, allocator) catch bun.outOfMemory();
+            if (range) |range_| {
+                var headersWithRange: [5]picohttp.Header = .{
+                    result.headers[0],
+                    result.headers[1],
+                    result.headers[2],
+                    result.headers[3],
+                    .{ .name = "range", .value = range_ },
+                };
+                headers = Headers.fromPicoHttpHeaders(&headersWithRange, allocator) catch bun.outOfMemory();
+            } else {
+                headers = Headers.fromPicoHttpHeaders(&result.headers, allocator) catch bun.outOfMemory();
+            }
         }
 
         // Only create this after we have validated all the input.

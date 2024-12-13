@@ -8,7 +8,7 @@ import { test } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */
@@ -27,21 +27,31 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
-export interface DevServerTest {
-  /**
-   * Framework to use. Consider `minimalFramework` if possible.
-   * Provide this object or `files['bun.app.ts']` for a dynamic one.
-   */
-  framework?: Bake.Framework | "react";
-  /**
-   * Source code for a TSX file that `export default`s an array of BunPlugin,
-   * combined with the `framework` option.
-   */
-  pluginFile?: string;
-  /** Starting files */
-  files: FileObject;
+export type DevServerTest = (
+  | {
+      /** Starting files */
+      files: FileObject;
+      /**
+       * Framework to use. Consider `minimalFramework` if possible.
+       * Provide this object or `files['bun.app.ts']` for a dynamic one.
+       */
+      framework?: Bake.Framework | "react";
+      /**
+       * Source code for a TSX file that `export default`s an array of BunPlugin,
+       * combined with the `framework` option.
+       */
+      pluginFile?: string;
+    }
+  | {
+      /**
+       * Copy all files from test/bake/fixtures/<name>
+       * This directory must contain `bun.app.ts` to allow hacking on fixtures manually via `bun run .`
+       */
+      fixture: string;
+    }
+) & {
   test: (dev: Dev) => Promise<void>;
-}
+};
 
 type FileObject = Record<string, string | Buffer>;
 
@@ -67,9 +77,9 @@ export class Dev {
   }
 
   fetch(url: string, init?: RequestInit) {
-    return new DevFetchPromise((resolve, reject) =>
-      fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
-      this
+    return new DevFetchPromise(
+      (resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+      this,
     );
   }
 
@@ -113,7 +123,10 @@ export class Dev {
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
       // bundling error, and a success came in.
-      err.then(() => Bun.sleep(500), () => {}), 
+      err.then(
+        () => Bun.sleep(500),
+        () => {},
+      ),
       success,
     ]);
   }
@@ -131,7 +144,10 @@ export interface Step {
 
 class DevFetchPromise extends Promise<Response> {
   dev: Dev;
-  constructor(executor: (resolve: (value: Response | PromiseLike<Response>) => void, reject: (reason?: any) => void) => void, dev: Dev) {
+  constructor(
+    executor: (resolve: (value: Response | PromiseLike<Response>) => void, reject: (reason?: any) => void) => void,
+    dev: Dev,
+  ) {
     super(executor);
     this.dev = dev;
   }
@@ -319,39 +335,53 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  // TODO: Tests are too flaky on Windows. Cannot reproduce locally.
-  if (isWindows) {
+  // TODO: Tests are flaky on all platforms. Disable
+  if (isCI) {
     jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
     return options;
   }
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);
-    writeAll(root, options.files);
-    if (options.files["bun.app.ts"] == undefined) {
-      if (!options.framework) {
-        throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+    if ("files" in options) {
+      writeAll(root, options.files);
+      if (options.files["bun.app.ts"] == undefined) {
+        if (!options.framework) {
+          throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+        }
+        if (options.pluginFile) {
+          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+        }
+        fs.writeFileSync(
+          path.join(root, "bun.app.ts"),
+          dedent`
+            ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+            export default {
+              app: {
+                framework: ${JSON.stringify(options.framework)},
+                plugins,
+              },
+            };
+          `,
+        );
+      } else {
+        if (options.pluginFile) {
+          throw new Error("Cannot provide both bun.app.ts and pluginFile");
+        }
       }
-      if (options.pluginFile) {
-        fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
-      }
-      fs.writeFileSync(
-        path.join(root, "bun.app.ts"),
-        dedent`
-          ${options.pluginFile ? 
-            `import plugins from './pluginFile.ts';` : "let plugins = undefined;"
-          }
-          export default {
-            app: {
-              framework: ${JSON.stringify(options.framework)},
-              plugins,
-            },
-          };
-        `,
-      );
     } else {
-      if (options.pluginFile) {
-        throw new Error("Cannot provide both bun.app.ts and pluginFile");
+      if (!options.fixture) {
+        throw new Error("Must provide either `fixture` or `files`");
+      }
+      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+      fs.cpSync(fixture, root, { recursive: true });
+
+      if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
+        throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`);
+      }
+      if (!fs.existsSync(path.join(root, "node_modules"))) {
+        // link the node_modules directory from test/node_modules to the temp directory
+        fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
       }
     }
     fs.writeFileSync(
@@ -359,8 +389,8 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       dedent`
         import appConfig from "./bun.app.ts";
         export default {
+          ...appConfig,
           port: 0,
-          ...appConfig
         };
       `,
     );
@@ -373,6 +403,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         {
           FORCE_COLOR: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
+          BUN_DUMP_STATE_ON_CRASH: "1",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

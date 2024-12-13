@@ -1,4 +1,5 @@
 const conv = std.builtin.CallingConvention.Unspecified;
+
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -10,7 +11,6 @@ const conv = std.builtin.CallingConvention.Unspecified;
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
-    pub const braces = toJSCallback(Bun.braces);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
     pub const color = toJSCallback(bun.css.CssColor.jsFunctionColor);
     pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
@@ -18,7 +18,6 @@ pub const BunObject = struct {
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
-    pub const gc = toJSCallback(Bun.runGC);
     pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
@@ -39,7 +38,6 @@ pub const BunObject = struct {
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
-    pub const stringWidth = toJSCallback(Bun.stringWidth);
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
@@ -136,7 +134,6 @@ pub const BunObject = struct {
 
         // -- Callbacks --
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
-        @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.color, .{ .name = callbackName("color") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
@@ -144,7 +141,6 @@ pub const BunObject = struct {
         @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.gc, .{ .name = callbackName("gc") });
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
@@ -165,7 +161,6 @@ pub const BunObject = struct {
         @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
-        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
@@ -285,68 +280,42 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return jsval;
 }
 
-pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments_old(2);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    defer arguments.deinit();
+const gen = bun.gen.BunObject;
 
-    const brace_str_js = arguments.nextEat() orelse {
-        return globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-    };
-    const brace_str = brace_str_js.toBunString(globalThis);
-    defer brace_str.deref();
-    if (globalThis.hasException()) return .zero;
-
+pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.BracesOptions) bun.JSError!JSC.JSValue {
     const brace_slice = brace_str.toUTF8(bun.default_allocator);
     defer brace_slice.deinit();
-
-    var tokenize: bool = false;
-    var parse: bool = false;
-    if (arguments.nextEat()) |opts_val| {
-        if (opts_val.isObject()) {
-            if (comptime bun.Environment.allow_assert) {
-                if (try opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
-                    tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
-                }
-
-                if (try opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
-                    parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
-                }
-            }
-        }
-    }
-    if (globalThis.hasException()) return .zero;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
     var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        return globalThis.throwError(err, "failed to tokenize braces");
+        return global.throwError(err, "failed to tokenize braces");
     };
 
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        return globalThis.throwError(err, "failed to calculate brace expansion amount");
+        return global.throwError(err, "failed to calculate brace expansion amount");
     };
 
-    if (tokenize) {
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{});
-        defer globalThis.bunVM().allocator.free(str);
+    if (opts.tokenize) {
+        const str = try std.json.stringifyAlloc(global.bunVM().allocator, lexer_output.tokens.items[0..], .{});
+        defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun_str.toJS(global);
     }
-    if (parse) {
+    if (opts.parse) {
         var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
         const ast_node = parser.parse() catch |err| {
-            return globalThis.throwError(err, "failed to parse braces");
+            return global.throwError(err, "failed to parse braces");
         };
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{});
-        defer globalThis.bunVM().allocator.free(str);
+        const str = try std.json.stringifyAlloc(global.bunVM().allocator, ast_node, .{});
+        defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun_str.toJS(global);
     }
 
     if (expansion_count == 0) {
-        return bun.String.toJSArray(globalThis, &.{brace_str});
+        return bun.String.toJSArray(global, &.{brace_str});
     }
 
     var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
@@ -360,8 +329,10 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         lexer_output.tokens.items[0..],
         expanded_strings,
         lexer_output.contains_nested,
-    ) catch {
-        return globalThis.throwOutOfMemory();
+    ) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        error.UnexpectedToken => return global.throwPretty("Unexpected token while expanding braces", .{}),
+        error.StackFull => return global.throwPretty("Too much nesting while expanding braces", .{}),
     };
 
     var out_strings = try arena.allocator().alloc(bun.String, expansion_count);
@@ -369,7 +340,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
     }
 
-    return bun.String.toJSArray(globalThis, out_strings[0..]);
+    return bun.String.toJSArray(global, out_strings[0..]);
 }
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -845,10 +816,8 @@ pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame
     return globalObject.generateHeapSnapshot();
 }
 
-pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments_old(1);
-    const arguments = arguments_.slice();
-    return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
+pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
+    return vm.garbageCollect(sync);
 }
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -4147,8 +4116,8 @@ pub const FFIObject = struct {
         finalizationCallback: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
-            .err => |erro| {
-                return erro;
+            .err => |err| {
+                return err;
             },
             .slice => |slice| {
                 var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
@@ -4191,8 +4160,8 @@ pub const FFIObject = struct {
         valueLength: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
-            .err => |erro| {
-                return erro;
+            .err => |err| {
+                return err;
             },
             .slice => |slice| {
                 return JSC.JSValue.createBuffer(globalThis, slice, null);
@@ -4208,37 +4177,14 @@ pub const FFIObject = struct {
     }
 };
 
-fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
-    const value = if (arguments.len > 0) arguments[0] else .undefined;
-    const options_object = if (arguments.len > 1) arguments[1] else .undefined;
+pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
+    if (str.length() == 0)
+        return 0;
 
-    if (!value.isString()) {
-        return JSC.jsNumber(0);
-    }
+    if (opts.count_ansi_escape_codes)
+        return str.visibleWidth(!opts.ambiguous_is_narrow);
 
-    const str = value.toBunString(globalObject);
-    defer str.deref();
-
-    var count_ansi_escapes = false;
-    var ambiguous_as_wide = false;
-
-    if (options_object.isObject()) {
-        if (try options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
-            if (count_ansi_escapes_value.isBoolean())
-                count_ansi_escapes = count_ansi_escapes_value.toBoolean();
-        }
-        if (try options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
-            if (ambiguous_is_narrow.isBoolean())
-                ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
-        }
-    }
-
-    if (count_ansi_escapes) {
-        return JSC.jsNumber(str.visibleWidth(ambiguous_as_wide));
-    }
-
-    return JSC.jsNumber(str.visibleWidthExcludeANSIColors(ambiguous_as_wide));
+    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
 }
 
 /// EnvironmentVariables is runtime defined.

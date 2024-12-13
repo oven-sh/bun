@@ -1,11 +1,4 @@
-import type {
-  BuildConfig,
-  BunPlugin,
-  OnLoadCallback,
-  OnResolveCallback,
-  PluginBuilder,
-  PluginConstraints,
-} from "bun";
+import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
 type AnyFunction = (...args: any[]) => any;
 
 interface BundlerPlugin {
@@ -46,6 +39,8 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
+type BeforeOnParseExternal = unknown;
+
 export function runSetupFunction(
   this: BundlerPlugin,
   setup: Setup,
@@ -57,14 +52,33 @@ export function runSetupFunction(
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onBeforeParsePlugins = new Map<
+    string,
+    [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
+  >();
 
-  function validate(filterObject: PluginConstraints, callback, map) {
+  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
 
-    if (!callback || !$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
+    let isOnBeforeParse = false;
+    if (map === onBeforeParsePlugins) {
+      isOnBeforeParse = true;
+      // TODO: how to check if it a napi module here?
+      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+        throw new TypeError(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
+        );
+      }
+
+      if (typeof symbol !== "string") {
+        throw new TypeError("onBeforeParse `symbol` must be a string");
+      }
+    } else {
+      if (!callback || !$isCallable(callback)) {
+        throw new TypeError("lmao callback must be a function");
+      }
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -92,23 +106,30 @@ export function runSetupFunction(
     var callbacks = map.$get(namespace);
 
     if (!callbacks) {
-      map.$set(namespace, [[filter, callback]]);
+      map.$set(namespace, [isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]]);
     } else {
-      $arrayPush(callbacks, [filter, callback]);
+      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]);
     }
   }
 
   function onLoad(filterObject, callback) {
-    validate(filterObject, callback, onLoadPlugins);
+    validate(filterObject, callback, onLoadPlugins, undefined, undefined);
   }
 
   function onResolve(filterObject, callback) {
-    validate(filterObject, callback, onResolvePlugins);
+    validate(filterObject, callback, onResolvePlugins, undefined, undefined);
+  }
+
+  function onBeforeParse(
+    filterObject,
+    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
+  ) {
+    validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
   }
 
   const self = this;
   function onStart(callback) {
-    if(isBake) {
+    if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
     if (!$isCallable(callback)) {
@@ -126,7 +147,8 @@ export function runSetupFunction(
 
   const processSetupResult = () => {
     var anyOnLoad = false,
-      anyOnResolve = false;
+      anyOnResolve = false,
+      anyOnBeforeParse = false;
 
     for (var [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
@@ -139,6 +161,13 @@ export function runSetupFunction(
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 0);
         anyOnResolve = true;
+      }
+    }
+
+    for (let [namespace, callbacks] of onBeforeParsePlugins.entries()) {
+      for (let [filter, addon, symbol, external] of callbacks) {
+        this.onBeforeParse(filter, namespace, addon, symbol, external);
+        anyOnBeforeParse = true;
       }
     }
 
@@ -189,6 +218,7 @@ export function runSetupFunction(
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
+    onBeforeParse,
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {
@@ -335,7 +365,14 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId, isServerSide: boolean) {
+export function runOnLoadPlugins(
+  this: BundlerPlugin,
+  internalID,
+  path,
+  namespace,
+  defaultLoaderId,
+  isServerSide: boolean,
+) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
@@ -376,15 +413,15 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
         }
 
         var { contents, loader = defaultLoader } = result as any;
-        if ((loader as any) === 'object') {
-          if (!('exports' in result)) {
+        if ((loader as any) === "object") {
+          if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
           }
           try {
             contents = JSON.stringify(result.exports);
-            loader = 'json';
+            loader = "json";
           } catch (e) {
-            throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
+            throw new TypeError("When using Bun.build, onLoad plugin must return a JSON-serializable object: " + e);
           }
         }
 

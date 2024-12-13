@@ -327,6 +327,19 @@ pub fn build(b: *Build) !void {
             .{ .os = .windows, .arch = .x86_64 },
         });
     }
+
+    // zig build enum-extractor
+    {
+        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
+        // const exe = b.addExecutable(.{
+        //     .name = "enum_extractor",
+        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+        //     .target = b.graph.host,
+        //     .optimize = .Debug,
+        // });
+        // const run = b.addRunArtifact(exe);
+        // step.dependOn(&run.step);
+    }
 }
 
 pub fn addMultiCheck(
@@ -414,6 +427,15 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_plugin_api = b.addTranslateC(.{
+        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .link_libc = true,
+    });
+    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+
     return obj;
 }
 

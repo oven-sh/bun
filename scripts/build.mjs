@@ -3,6 +3,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { isCI, printEnvironment, startGroup } from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -35,6 +36,10 @@ async function build(args) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+  }
+
+  if (isCI) {
+    printEnvironment();
   }
 
   const env = {
@@ -102,7 +107,8 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-  await spawn("cmake", generateArgs, { env }, "configuration");
+
+  await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
   if (existsSync(envPath)) {
@@ -116,7 +122,8 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  await spawn("cmake", buildArgs, { env }, "compilation");
+
+  await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   printDuration("total", Date.now() - startTime);
 }

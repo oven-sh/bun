@@ -195,13 +195,10 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
-    if (UNLIKELY(!ptr)) {
-        RELEASE_ASSERT_NOT_REACHED();
-        return String();
-    }
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr), encodedLength);
+
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }

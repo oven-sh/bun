@@ -23,6 +23,7 @@
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
 const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
+const { validateFunction, validateString } = require("internal/validators");
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -89,6 +90,7 @@ class AsyncLocalStorage {
   }
 
   static bind(fn, ...args: any) {
+    validateFunction(fn);
     return this.snapshot().bind(null, fn, ...args);
   }
 
@@ -234,6 +236,14 @@ class AsyncLocalStorage {
       if (context[i] === this) return context[i + 1];
     }
   }
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _enable() {}
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _propagate(resource, triggerResource, type) {}
 }
 
 if (IS_BUN_DEVELOPMENT) {
@@ -251,9 +261,7 @@ class AsyncResource {
   #snapshot;
 
   constructor(type, options?) {
-    if (typeof type !== "string") {
-      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
-    }
+    validateString(type, "type");
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
@@ -320,11 +328,10 @@ function createWarning(message, isCreateHook?: boolean) {
       // times bundled into a framework or application. Their use defines three
       // handlers which are all TODO stubs. for more info see this comment:
       // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
-      if (typeof arg1 === 'object') {
+      if (typeof arg1 === "object") {
         const { init, promiseResolve, destroy } = arg1;
         if (init && promiseResolve && destroy) {
-          if (isEmptyFunction(init) && isEmptyFunction(destroy))
-            return;
+          if (isEmptyFunction(init) && isEmptyFunction(destroy)) return;
         }
       }
     }
@@ -337,8 +344,8 @@ function createWarning(message, isCreateHook?: boolean) {
 
 function isEmptyFunction(f: Function) {
   let str = f.toString();
-  if(!str.startsWith('function()'))return false;
-  str = str.slice('function()'.length).trim();
+  if (!str.startsWith("function()")) return false;
+  str = str.slice("function()".length).trim();
   return /^{\s*}$/.test(str);
 }
 

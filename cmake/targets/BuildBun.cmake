@@ -891,15 +891,22 @@ if(LINUX)
     target_link_options(${bun} PUBLIC
       -Wl,--wrap=exp
       -Wl,--wrap=expf
+      -Wl,--wrap=fcntl64
       -Wl,--wrap=log
       -Wl,--wrap=log2
       -Wl,--wrap=log2f
       -Wl,--wrap=logf
       -Wl,--wrap=pow
       -Wl,--wrap=powf
-      -Wl,--wrap=fcntl64
     )
-  endif()
+  else()
+    target_link_options(${bun} PUBLIC
+      -Wl,--wrap=exp
+      -Wl,--wrap=expf
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=powf
+    )
   endif()
 
   if(NOT ABI STREQUAL "musl")

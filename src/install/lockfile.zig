@@ -242,6 +242,14 @@ pub const LoadResult = union(enum) {
         }
     };
 
+    pub fn loadedFromTextLockfile(this: LoadResult) bool {
+        return switch (this) {
+            .not_found => false,
+            .err => |err| err.format == .text,
+            .ok => |ok| ok.format == .text,
+        };
+    }
+
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
@@ -321,6 +329,7 @@ pub fn loadFromDir(
 
     if (lockfile_format == .text) {
         const source = logger.Source.initPathString("bun.lock", buf);
+        initializeStore();
         const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
             return .{
                 .err = .{
@@ -374,6 +383,7 @@ pub fn loadFromDir(
                 };
 
                 const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
+                initializeStore();
                 const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
@@ -6607,6 +6617,106 @@ pub const Serializer = struct {
         return res;
     }
 };
+
+const EqlSorter = struct {
+    string_buf: string,
+    pkg_names: []const String,
+
+    // Basically placement id
+    pub const IdPair = struct {
+        pkg_id: PackageID,
+        tree_id: Tree.Id,
+    };
+
+    pub fn isLessThan(this: @This(), l: IdPair, r: IdPair) bool {
+        switch (std.math.order(l.tree_id, r.tree_id)) {
+            .lt => return true,
+            .gt => return false,
+            .eq => {},
+        }
+
+        // they exist in the same tree, name can't be the same so string
+        // compare.
+        const l_name = this.pkg_names[l.pkg_id];
+        const r_name = this.pkg_names[r.pkg_id];
+        return l_name.order(&r_name, this.string_buf, this.string_buf) == .lt;
+    }
+};
+
+pub fn eql(l: *const Lockfile, r: *const Lockfile) bool {
+    const l_hoisted_deps = l.buffers.hoisted_dependencies.items;
+    const r_hoisted_deps = r.buffers.hoisted_dependencies.items;
+    const l_len = l_hoisted_deps.len;
+    const r_len = r_hoisted_deps.len;
+
+    if (l_len != r_len) return false;
+
+    const sort_buf_len = l_len * 2;
+    const sort_buf = l.allocator.alloc(EqlSorter.IdPair, sort_buf_len) catch bun.outOfMemory();
+    defer l.allocator.free(sort_buf);
+    var l_buf = sort_buf[0..l_len];
+    var r_buf = sort_buf[l_len..];
+
+    var i: usize = 0;
+    for (l.buffers.trees.items) |l_tree| {
+        for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
+            if (l_dep_id == invalid_dependency_id) continue;
+            const l_pkg_id = l.buffers.resolutions.items[l_dep_id];
+            if (l_pkg_id == invalid_package_id) continue;
+            l_buf[i] = .{ .pkg_id = l_pkg_id, .tree_id = l_tree.id };
+            i += 1;
+        }
+    }
+    l_buf = l_buf[0..i];
+
+    i = 0;
+    for (r.buffers.trees.items) |r_tree| {
+        for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
+            if (r_dep_id == invalid_dependency_id) continue;
+            const r_pkg_id = r.buffers.resolutions.items[r_dep_id];
+            if (r_pkg_id == invalid_package_id) continue;
+            r_buf[i] = .{ .pkg_id = r_pkg_id, .tree_id = r_tree.id };
+            i += 1;
+        }
+    }
+    r_buf = r_buf[0..i];
+
+    if (l_buf.len != r_buf.len) return false;
+
+    const l_pkgs = l.packages.slice();
+    const r_pkgs = r.packages.slice();
+
+    std.sort.pdq(
+        EqlSorter.IdPair,
+        l_buf,
+        EqlSorter{
+            .pkg_names = l_pkgs.items(.name),
+            .string_buf = l.buffers.string_bytes.items,
+        },
+        EqlSorter.isLessThan,
+    );
+
+    std.sort.pdq(
+        EqlSorter.IdPair,
+        r_buf,
+        EqlSorter{
+            .pkg_names = r_pkgs.items(.name),
+            .string_buf = r.buffers.string_bytes.items,
+        },
+        EqlSorter.isLessThan,
+    );
+
+    const l_pkg_name_hashes = l_pkgs.items(.name_hash);
+    const r_pkg_name_hashes = r_pkgs.items(.name_hash);
+
+    for (l_buf, r_buf) |l_ids, r_ids| {
+        if (l_pkg_name_hashes[l_ids.pkg_id] != r_pkg_name_hashes[r_ids.pkg_id]) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !bool {
     const previous_meta_hash = this.meta_hash;

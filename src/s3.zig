@@ -272,7 +272,10 @@ pub const AWSCredentials = struct {
             },
         };
     }
-
+    pub const S3Error = struct {
+        code: []const u8,
+        message: []const u8,
+    };
     pub const S3StatResult = union(enum) {
         success: struct {
             size: usize = 0,
@@ -282,10 +285,7 @@ pub const AWSCredentials = struct {
         not_found: void,
 
         /// failure error is not owned and need to be copied if used after this callback
-        failure: struct {
-            code: []const u8,
-            message: []const u8,
-        },
+        failure: S3Error,
     };
     pub const S3DownloadResult = union(enum) {
         success: struct {
@@ -296,28 +296,19 @@ pub const AWSCredentials = struct {
         },
         not_found: void,
         /// failure error is not owned and need to be copied if used after this callback
-        failure: struct {
-            code: []const u8,
-            message: []const u8,
-        },
+        failure: S3Error,
     };
     pub const S3UploadResult = union(enum) {
         success: void,
         /// failure error is not owned and need to be copied if used after this callback
-        failure: struct {
-            code: []const u8,
-            message: []const u8,
-        },
+        failure: S3Error,
     };
     pub const S3DeleteResult = union(enum) {
         success: void,
         not_found: void,
 
         /// failure error is not owned and need to be copied if used after this callback
-        failure: struct {
-            code: []const u8,
-            message: []const u8,
-        },
+        failure: S3Error,
     };
     pub const S3HttpSimpleTask = struct {
         http: bun.http.AsyncHTTP,

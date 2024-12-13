@@ -95,6 +95,7 @@ function getTargetLabel(target) {
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
+ * @property {string[]} [features]
  */
 
 /**
@@ -102,10 +103,10 @@ function getTargetLabel(target) {
  */
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
-  // { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-  { os: "linux", arch: "x64", distro: "debian", release: "11" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
+  { os: "darwin", arch: "x64", release: "14" },
+  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -119,8 +120,8 @@ const buildPlatforms = [
 const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  // { os: "darwin", arch: "x64", release: "13", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
@@ -175,12 +176,21 @@ function getPlatformLabel(platform) {
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release } = platform;
+  const { os, arch, distro, release, features, abi } = platform;
   const version = release.replace(/\./g, "");
+  let key = `${os}-${arch}-${version}`;
   if (distro) {
-    return `${os}-${arch}-${distro}-${version}`;
+    key += `-${distro}`;
   }
-  return `${os}-${arch}-${version}`;
+  if (features?.length) {
+    key += `-with-${features.join("-")}`;
+  }
+
+  if (abi) {
+    key += `-${abi}`;
+  }
+
+  return key;
 }
 
 /**
@@ -198,13 +208,15 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os, arch, distro, release } = platform;
+  const { os } = platform;
   const { buildImages, publishImages } = options;
-  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
+
+  const name = getImageKey(platform);
 
   if (buildImages && !publishImages) {
     return `${name}-build-${getBuildNumber()}`;
   }
+
   return `${name}-v${getBootstrapVersion(os)}`;
 }
 
@@ -253,6 +265,7 @@ function getPriority() {
  * @property {string} instanceType
  * @property {number} cpuCount
  * @property {number} threadsPerCore
+ * @property {boolean} dryRun
  */
 
 /**
@@ -270,8 +283,6 @@ function getEc2Agent(platform, options, ec2Options) {
     abi,
     distro,
     release,
-    // The agent is created by robobun, see more details here:
-    // https://github.com/oven-sh/robobun/blob/d46c07e0ac5ac0f9ffe1012f0e98b59e1a0d387a/src/robobun.ts#L1707
     robobun: true,
     robobun2: true,
     "image-name": getImageName(platform, options),
@@ -288,7 +299,7 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, distro } = platform;
 
   if (os === "darwin") {
     return {
@@ -312,25 +323,9 @@ function getCppAgent(platform, options) {
  */
 function getZigAgent(platform, options) {
   const { arch } = platform;
-
   return {
     queue: "build-zig",
   };
-
-  // return getEc2Agent(
-  //   {
-  //     os: "linux",
-  //     arch,
-  //     distro: "debian",
-  //     release: "11",
-  //   },
-  //   options,
-  //   {
-  //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
-  //     cpuCount: 4,
-  //     threadsPerCore: 1,
-  //   },
-  // );
 }
 
 /**
@@ -517,6 +512,7 @@ function getBuildBunStep(platform, options) {
  * @property {string} [buildId]
  * @property {boolean} [unifiedTests]
  * @property {string[]} [testFiles]
+ * @property {boolean} [dryRun]
  */
 
 /**
@@ -564,9 +560,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * @returns {Step}
  */
 function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release } = platform;
+  const { os, arch, distro, release, features } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
+
   const command = [
     "node",
     "./scripts/machine.mjs",
@@ -579,6 +576,10 @@ function getBuildImageStep(platform, options) {
     "--ci",
     "--authorized-org=oven-sh",
   ];
+  for (const feature of features || []) {
+    command.push(`--feature=${feature}`);
+  }
+
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -947,9 +948,9 @@ async function getPipelineOptions() {
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      testFiles: parseArray(options["test-files"]),
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
+      testFiles: parseArray(options["test-files"]),
       unifiedBuilds: parseBoolean(options["unified-builds"]),
       unifiedTests: parseBoolean(options["unified-tests"]),
       buildProfiles: parseArray(options["build-profiles"]),
@@ -959,6 +960,7 @@ async function getPipelineOptions() {
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.map(key => testPlatformsMap.get(key))
         : Array.from(testPlatformsMap.values()),
+      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -986,6 +988,9 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    buildImages: parseOption(/\[(build images?)\]/i),
+    dryRun: parseOption(/\[(dry run)\]/i),
+    publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
     buildProfiles: ["release"],
@@ -1031,7 +1036,8 @@ async function getPipeline(options = {}) {
     });
   }
 
-  const { skipBuilds, forceBuilds, unifiedBuilds } = options;
+  let { skipBuilds, forceBuilds, unifiedBuilds, dryRun } = options;
+  dryRun = dryRun || !!buildImages;
 
   /** @type {string | undefined} */
   let buildId;

@@ -692,7 +692,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line(`{`);
   w.line(`    static constexpr std::pair<ComparableASCIILiteral, ${name}> mappings[] = {`);
   for (const value of type.data) {
-    w.line(`        { ${str(value)}, ${name}::${pascal(value)} },`);
+    w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);

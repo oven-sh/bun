@@ -151,6 +151,8 @@ var InternalResolver = class Resolver {
     if (typeof rrtype == "function") {
       callback = rrtype;
       rrtype = null;
+    } else if (typeof rrtype != "string") {
+      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
     if (typeof callback != "function") {
@@ -448,8 +450,11 @@ const promises = {
   },
 
   resolve(hostname, rrtype) {
+    if (typeof hostname !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+    }
     if (typeof rrtype !== "string") {
-      rrtype = null;
+      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
     switch (rrtype?.toLowerCase()) {
       case "a":
@@ -617,9 +622,9 @@ for (const [method, pMethod] of [
 
 export default {
   // these are wrong
-  ADDRCONFIG: 0,
-  ALL: 1,
-  V4MAPPED: 2,
+  ADDRCONFIG: dns.ADDRCONFIG,
+  ALL: dns.ALL,
+  V4MAPPED: dns.V4MAPPED,
 
   // ERROR CODES
   NODATA: "DNS_ENODATA",

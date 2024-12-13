@@ -26,7 +26,6 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const actual = try safeToString(global, alloc, callframe.argument(0));
     const expected = try safeToString(global, alloc, callframe.argument(1));
 
-
     const diff = assert.myersDiff(arena.allocator(), actual.slice(), expected.slice()) catch |e| {
         return switch (e) {
             error.OutOfMemory => return global.throwOutOfMemory(),
@@ -41,7 +40,7 @@ fn safeToString(global: *JSC.JSGlobalObject, alloc: Allocator, argument: JSC.JSV
         return global.throwInvalidArgumentTypeValue("argument", "string", argument);
     }
 
-    const bunstring =  argument.toBunString2(global) catch @panic("argument is string-like but could not be converted into a bun.String. This is a bug.");
+    const bunstring = argument.toBunString2(global) catch @panic("argument is string-like but could not be converted into a bun.String. This is a bug.");
     return bunstring.toUTF8WithoutRef(alloc);
 }
 

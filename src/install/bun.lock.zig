@@ -413,7 +413,7 @@ pub const Stringifier = struct {
         const resolution_buf = lockfile.buffers.resolutions.items;
         const pkgs = lockfile.packages.slice();
         const pkg_dep_lists: []DependencySlice = pkgs.items(.dependencies);
-        const pkg_resolution: []Resolution = pkgs.items(.resolution);
+        const pkg_resolutions: []Resolution = pkgs.items(.resolution);
         const pkg_names: []String = pkgs.items(.name);
         const pkg_name_hashes: []PackageNameHash = pkgs.items(.name_hash);
         const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
@@ -435,6 +435,9 @@ pub const Stringifier = struct {
         var found_overrides: std.AutoHashMapUnmanaged(u64, struct { String, Dependency.Version }) = .{};
         defer found_overrides.deinit(allocator);
         try found_overrides.ensureTotalCapacity(allocator, @truncate(lockfile.overrides.map.count()));
+
+        var optional_peers_buf = std.ArrayList(String).init(allocator);
+        defer optional_peers_buf.deinit();
 
         var _indent: u32 = 0;
         const indent = &_indent;
@@ -458,16 +461,45 @@ pub const Stringifier = struct {
                     buf,
                     deps_buf,
                     lockfile.workspace_versions,
+                    &optional_peers_buf,
                 );
-                for (0..pkgs.len) |pkg_id| {
-                    const res = pkg_resolution[pkg_id];
+
+                var workspace_sort_buf: std.ArrayListUnmanaged(PackageID) = .{};
+                defer workspace_sort_buf.deinit(allocator);
+
+                for (0..pkgs.len) |_pkg_id| {
+                    const pkg_id: PackageID = @intCast(_pkg_id);
+                    const res = pkg_resolutions[pkg_id];
                     if (res.tag != .workspace) continue;
-                    try writer.writeAll(",\n");
+                    try workspace_sort_buf.append(allocator, pkg_id);
+                }
+
+                const Sorter = struct {
+                    string_buf: string,
+                    res_buf: []const Resolution,
+
+                    pub fn isLessThan(this: @This(), l: PackageID, r: PackageID) bool {
+                        const l_res = this.res_buf[l];
+                        const r_res = this.res_buf[r];
+                        return l_res.value.workspace.order(&r_res.value.workspace, this.string_buf, this.string_buf) == .lt;
+                    }
+                };
+
+                std.sort.pdq(
+                    PackageID,
+                    workspace_sort_buf.items,
+                    Sorter{ .string_buf = buf, .res_buf = pkg_resolutions },
+                    Sorter.isLessThan,
+                );
+
+                for (workspace_sort_buf.items) |workspace_pkg_id| {
+                    const res = pkg_resolutions[workspace_pkg_id];
+                    try writer.writeAll("\n");
                     try writeIndent(writer, indent);
                     try writeWorkspaceDeps(
                         writer,
                         indent,
-                        @intCast(pkg_id),
+                        @intCast(workspace_pkg_id),
                         res.value.workspace,
                         pkg_names,
                         pkg_name_hashes,
@@ -475,6 +507,7 @@ pub const Stringifier = struct {
                         buf,
                         deps_buf,
                         lockfile.workspace_versions,
+                        &optional_peers_buf,
                     );
                 }
             }
@@ -492,7 +525,7 @@ pub const Stringifier = struct {
 
                     const pkg_name = pkg_names[pkg_id];
                     const pkg_name_hash = pkg_name_hashes[pkg_id];
-                    const res = pkg_resolution[pkg_id];
+                    const res = pkg_resolutions[pkg_id];
                     const dep = deps_buf[dep_id];
 
                     if (lockfile.patched_dependencies.count() > 0) {
@@ -608,15 +641,42 @@ pub const Stringifier = struct {
                 );
             }
 
+            const DepSortCtx = struct {
+                string_buf: string,
+                deps_buf: []const Dependency,
+
+                pub fn isLessThan(this: @This(), lhs: DependencyID, rhs: DependencyID) bool {
+                    const l = this.deps_buf[lhs];
+                    const r = this.deps_buf[rhs];
+                    return strings.cmpStringsAsc({}, l.name.slice(this.string_buf), r.name.slice(this.string_buf));
+                }
+            };
+
+            var deps_sort_buf: std.ArrayListUnmanaged(DependencyID) = .{};
+            defer deps_sort_buf.deinit(allocator);
+
+            var pkg_deps_sort_buf: std.ArrayListUnmanaged(DependencyID) = .{};
+            defer pkg_deps_sort_buf.deinit(allocator);
+
             try writeIndent(writer, indent);
             try writer.writeAll("\"packages\": {");
             var first = true;
             while (pkgs_iter.next({})) |node| {
-                for (node.dependencies) |dep_id| {
+                deps_sort_buf.clearRetainingCapacity();
+                try deps_sort_buf.appendSlice(allocator, node.dependencies);
+
+                std.sort.pdq(
+                    DependencyID,
+                    deps_sort_buf.items,
+                    DepSortCtx{ .string_buf = buf, .deps_buf = deps_buf },
+                    DepSortCtx.isLessThan,
+                );
+
+                for (deps_sort_buf.items) |dep_id| {
                     const pkg_id = resolution_buf[dep_id];
                     if (pkg_id == invalid_package_id) continue;
 
-                    const res = pkg_resolution[pkg_id];
+                    const res = pkg_resolutions[pkg_id];
                     switch (res.tag) {
                         .root, .npm, .folder, .local_tarball, .github, .git, .symlink, .workspace, .remote_tarball => {},
                         .uninitialized => continue,
@@ -651,7 +711,20 @@ pub const Stringifier = struct {
 
                     const pkg_name = pkg_names[pkg_id].slice(buf);
                     const pkg_meta = pkg_metas[pkg_id];
-                    const pkg_deps = pkg_dep_lists[pkg_id].get(deps_buf);
+                    const pkg_deps_list = pkg_dep_lists[pkg_id];
+
+                    pkg_deps_sort_buf.clearRetainingCapacity();
+                    try pkg_deps_sort_buf.ensureUnusedCapacity(allocator, pkg_deps_list.len);
+                    for (pkg_deps_list.begin()..pkg_deps_list.end()) |pkg_dep_id| {
+                        pkg_deps_sort_buf.appendAssumeCapacity(@intCast(pkg_dep_id));
+                    }
+
+                    std.sort.pdq(
+                        DependencyID,
+                        pkg_deps_sort_buf.items,
+                        DepSortCtx{ .string_buf = buf, .deps_buf = deps_buf },
+                        DepSortCtx.isLessThan,
+                    );
 
                     // first index is resolution for all dependency types
                     // npm         -> [ "name@version", registry or "" (default), deps..., integrity, ... ]
@@ -662,9 +735,6 @@ pub const Stringifier = struct {
                     // root        -> [ "name@root:" ]
                     // git         -> [ "name@git+repo", deps..., ... ]
                     // github      -> [ "name@github:user/repo", deps..., ... ]
-
-                    var optional_peers_buf = std.ArrayList(String).init(allocator);
-                    defer optional_peers_buf.deinit();
 
                     switch (res.tag) {
                         .root => {
@@ -679,9 +749,9 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.folder.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .local_tarball => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -689,9 +759,9 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.local_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .remote_tarball => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -699,9 +769,9 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .symlink => {
                             try writer.print("[\"{s}@link:{}\", ", .{
@@ -709,9 +779,9 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.symlink.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .npm => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -727,9 +797,8 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            // TODO(dylan-conway): delete placeholder
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
                             });
@@ -742,7 +811,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(workspace_path, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.writeByte(']');
                         },
@@ -753,9 +822,9 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         else => unreachable,
                     }
@@ -763,7 +832,7 @@ pub const Stringifier = struct {
             }
 
             if (!first) {
-                try writer.writeByte('\n');
+                try writer.writeAll(",\n");
                 try decIndent(writer, indent);
             }
             try writer.writeAll("}\n");
@@ -779,7 +848,9 @@ pub const Stringifier = struct {
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageDepsAndMeta(
         writer: anytype,
-        deps: []const Dependency,
+        _: DependencyID,
+        deps_buf: []const Dependency,
+        pkg_dep_ids: []const DependencyID,
         meta: *const Meta,
         buf: string,
         optional_peers_buf: *std.ArrayList(String),
@@ -793,7 +864,8 @@ pub const Stringifier = struct {
             const group_name, const group_behavior = group;
 
             var first = true;
-            for (deps) |dep| {
+            for (pkg_dep_ids) |dep_id| {
+                const dep = deps_buf[dep_id];
                 if (!dep.behavior.includes(group_behavior)) continue;
 
                 if (dep.behavior.isOptionalPeer()) {
@@ -828,16 +900,16 @@ pub const Stringifier = struct {
         if (optional_peers_buf.items.len > 0) {
             bun.debugAssert(any);
             try writer.writeAll(
-                \\, "optionalPeers": [
+                \\, "optionalPeerDependencies": [
             );
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\"{s}{s}{s}",
+                    \\{s}"{s}"{s}
                 , .{
-                    if (i != 0) "," else "",
+                    if (i != 0) " " else "",
                     optional_peer.slice(buf),
-                    if (i != optional_peers_buf.items.len) " " else "",
+                    if (i != optional_peers_buf.items.len - 1) "," else "",
                 });
             }
 
@@ -895,7 +967,9 @@ pub const Stringifier = struct {
         buf: string,
         deps_buf: []const Dependency,
         workspace_versions: BinaryLockfile.VersionHashMap,
+        optional_peers_buf: *std.ArrayList(String),
     ) OOM!void {
+        defer optional_peers_buf.clearRetainingCapacity();
         // any - have any properties been written
         var any = false;
 
@@ -931,6 +1005,12 @@ pub const Stringifier = struct {
             for (pkg_deps[pkg_id].get(deps_buf)) |dep| {
                 if (!dep.behavior.includes(group_behavior)) continue;
 
+                if (dep.behavior.isOptionalPeer()) {
+                    if (group_behavior.isOptional()) continue;
+
+                    try optional_peers_buf.append(dep.name);
+                }
+
                 if (first) {
                     if (any) {
                         try writer.writeByte(',');
@@ -957,16 +1037,39 @@ pub const Stringifier = struct {
             }
 
             if (!first) {
-                try writer.writeByte('\n');
+                try writer.writeAll(",\n");
                 try decIndent(writer, indent);
                 try writer.writeAll("}");
             }
         }
+        if (optional_peers_buf.items.len > 0) {
+            bun.debugAssert(any);
+            try writer.writeAll(
+                \\,
+                \\
+            );
+            try writeIndent(writer, indent);
+            try writer.writeAll(
+                \\"optionalPeerDependencies": [
+                \\
+            );
+            indent.* += 1;
+            for (optional_peers_buf.items) |optional_peer| {
+                try writeIndent(writer, indent);
+                try writer.print(
+                    \\"{s}",
+                    \\
+                , .{optional_peer.slice(buf)});
+            }
+            try decIndent(writer, indent);
+            try writer.writeByte(']');
+        }
+
         if (any) {
-            try writer.writeByte('\n');
+            try writer.writeAll(",\n");
             try decIndent(writer, indent);
         }
-        try writer.writeAll("}");
+        try writer.writeAll("},");
     }
 
     fn writeIndent(writer: anytype, indent: *const u32) OOM!void {
@@ -999,8 +1102,8 @@ const dependency_groups = [3]struct { []const u8, Dependency.Behavior }{
 const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
     .{ "dependencies", Dependency.Behavior.normal },
     .{ "devDependencies", Dependency.Behavior.dev },
-    .{ "peerDependencies", Dependency.Behavior.peer },
     .{ "optionalDependencies", Dependency.Behavior.optional },
+    .{ "peerDependencies", Dependency.Behavior.peer },
 };
 
 const ParseError = OOM || error{
@@ -1369,7 +1472,7 @@ pub fn parseIntoBinaryLockfile(
 
             // integrity
             switch (res.tag) {
-                .npm, .git, .github => {
+                .npm => {
                     const integrity_expr = pkg_info.at(i);
                     i += 1;
                     const integrity_str = integrity_expr.asString(allocator) orelse {
@@ -1424,7 +1527,7 @@ pub fn parseIntoBinaryLockfile(
         _ = pkg_resolution_lists;
 
         {
-            // root pkg
+            // first the root dependencies are resolved
             pkg_resolutions[0] = Resolution.init(.{ .root = {} });
             pkg_metas[0].origin = .local;
 
@@ -1437,8 +1540,12 @@ pub fn parseIntoBinaryLockfile(
                     lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
                 }
             }
+
+            // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
+
         }
 
+        // then each package dependency
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;
@@ -1463,9 +1570,6 @@ pub fn parseIntoBinaryLockfile(
                 var curr: ?*PkgPath.Map.Node = pkg_map_entry;
                 while (curr) |node| {
                     if (node.nodes.getPtr(dep.name.slice(string_buf.bytes.items))) |dep_node| {
-
-                        // it doesn't matter which dependency is assigned to this node. the dependency
-                        // id will only be used for getting the dependency name
                         dep_node.dep_id = dep_id;
                         lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
 
@@ -1519,7 +1623,7 @@ fn parseAppendDependencies(
 ) ParseError!struct { u32, u32 } {
     defer optional_peers_buf.clearRetainingCapacity();
 
-    if (obj.get("optionalPeers")) |optional_peers| {
+    if (obj.get("optionalPeerDependencies")) |optional_peers| {
         if (!optional_peers.isArray()) {
             try log.addError(source, optional_peers.loc, "Expected an array");
             return error.InvalidPackageInfo;
@@ -1591,6 +1695,13 @@ fn parseAppendDependencies(
         }
     }
     const end = lockfile.buffers.dependencies.items.len;
+
+    std.sort.pdq(
+        Dependency,
+        lockfile.buffers.dependencies.items[off..],
+        buf.bytes.items,
+        Dependency.isLessThan,
+    );
 
     return .{ @intCast(off), @intCast(end - off) };
 }

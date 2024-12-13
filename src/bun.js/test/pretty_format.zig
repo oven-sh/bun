@@ -1268,6 +1268,8 @@ pub const JestPrettyFormat = struct {
                         writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
                             immediate.internals.id,
                         });
+
+                        return;
                     } else if (value.as(JSC.BuildMessage)) |build_log| {
                         build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;

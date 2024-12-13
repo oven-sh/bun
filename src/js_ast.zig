@@ -325,10 +325,6 @@ pub const Binding = struct {
         loc: logger.Loc,
     };
 
-    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc });
-    }
-
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
         const ExprType = expr_type;
         return struct {
@@ -2857,6 +2853,53 @@ pub const Stmt = struct {
         loc: logger.Loc,
     };
 
+    pub fn print(self: *const Stmt, writer: std.io.AnyWriter) !void {
+        switch (self.data) {
+            .s_expr => |expr| {
+                try writer.print(".s_expr{{ .does_not_affect_tree_shaking = {}, .value = ", .{expr.does_not_affect_tree_shaking});
+                try expr.value.print(writer, 0);
+                try writer.print("}}", .{});
+            },
+            .s_local => |local| {
+                try writer.print(".s_local{{ .kind = .{s}, .is_export = {}, .was_ts_import_equals = {}, .was_commonjs_export = {}, .decls = .{{\n", .{ @tagName(local.kind), local.is_export, local.was_ts_import_equals, local.was_commonjs_export });
+                for (local.decls.slice()) |m| {
+                    try writer.print("    .{{\n        .binding = ", .{});
+                    switch (m.binding.data) {
+                        .b_array => |v| {
+                            try writer.print(".b_array{{ .has_spread = {}, .is_single_line = {}, .items = .{{", .{ v.has_spread, v.is_single_line });
+                            for (v.items, 0..) |item, i| {
+                                if (i != 0) try writer.print(", ", .{});
+                                try writer.print("(TODO)", .{});
+                                _ = item;
+                            }
+                            try writer.print("}}}}", .{});
+                        },
+                        .b_identifier => |v| {
+                            try writer.print(".b_identifier{{ .ref = {} }}", .{v.ref});
+                        },
+                        .b_object => {
+                            try writer.print(".b_object", .{});
+                        },
+                        .b_missing => {
+                            try writer.print(".b_missing", .{});
+                        },
+                    }
+                    try writer.print(",\n        .value = ", .{});
+                    if (m.value == null) {
+                        try writer.print("null", .{});
+                    } else {
+                        try m.value.?.print(writer, 2);
+                    }
+                    try writer.print(",\n    }},\n", .{});
+                }
+                try writer.print("}} }}", .{});
+            },
+            else => {
+                try writer.print(".{s}._todo_print_stmt", .{@tagName(self.data)});
+            },
+        }
+    }
+
     pub fn jsonStringify(self: *const Stmt, writer: anytype) !void {
         return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc });
     }
@@ -3229,6 +3272,18 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub fn print(self: *const Expr, writer: std.io.AnyWriter, depth: u32) !void {
+        _ = depth;
+        switch (self.data) {
+            .e_string => |str| {
+                try writer.print("(string: \"{s}\")", .{bun.strings.formatEscapes(str.data, .{ .str_encoding = .utf8, .quote_char = '"' })});
+            },
+            else => {
+                try writer.print("(expr: {s})", .{@tagName(self.data)});
+            },
+        }
+    }
 
     pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
 

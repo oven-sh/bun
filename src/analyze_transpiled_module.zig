@@ -52,9 +52,10 @@ const ModuleInfo = struct {
         self.lexical_variables.deinit();
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
-        const gpres = try self.strings.getOrPut(value, {});
+        const gpres = try self.strings.getOrPut(value);
         if (gpres.found_existing) return @enumFromInt(@as(u32, @intCast(gpres.index)));
         gpres.key_ptr.* = try self.strings.allocator.dupe(u8, value);
+        gpres.value_ptr.* = {};
         return @enumFromInt(@as(u32, @intCast(gpres.index)));
     }
 
@@ -131,31 +132,42 @@ const ExportInfo = union(enum) {
     },
 };
 
-pub fn analyzeTranspiledModule(tree: Ast, allocator: std.mem.Allocator, contains_import_meta: bool) !ModuleInfo {
+pub fn analyzeTranspiledModule(p: anytype, tree: Ast, allocator: std.mem.Allocator, contains_import_meta: bool) !ModuleInfo {
     var res: ModuleInfo = ModuleInfo.init(allocator);
     errdefer res.deinit();
+
+    // DeclaredVariables is important and used in JSModuleRecord::instantiateDeclarations
+    // so we need to make sure to add `function a()` in DeclaredVariables and also `var a`
 
     std.log.err("\n\n\n\n\n\n       \x1b[97mPrinting AST:\x1b(B\x1b[m", .{});
     std.log.err("  Import Records:", .{});
     for (tree.import_records.slice()) |record| {
+        try res.requested_modules.put(try res.str(record.path.text), {});
         std.log.err("  - {s}", .{record.path.text});
     }
     std.log.err("  Export Records:", .{});
+    const writer = std.io.getStdErr().writer();
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
+            try stmt.print(writer.any());
+            try writer.print(",\n", .{});
             switch (stmt.data) {
-                .s_export_clause,
-                .s_export_default,
-                .s_export_equals,
-                .s_export_from,
-                .s_export_star,
-                .s_lazy_export,
-                => {
-                    std.log.err("  - {s}", .{@tagName(stmt.data)});
-                },
-                .s_local => |local| {
-                    if (local.is_export) {
-                        std.log.err("  - {s} (is_export)", .{@tagName(stmt.data)});
+                .s_local => |slocal| {
+                    if (slocal.is_export) {
+                        for (slocal.decls.slice()) |decl| {
+                            switch (decl.binding.data) {
+                                .b_identifier => |v| {
+                                    const name = p.renamer.nameForSymbol(v.ref);
+                                    switch (slocal.kind) {
+                                        .k_var => try res.declared_variables.append(try res.str(name)),
+                                        else => try res.lexical_variables.append(try res.str(name)),
+                                    }
+                                },
+                                else => {
+                                    @panic("TODO support exported non-identifier binding");
+                                },
+                            }
+                        }
                     }
                 },
                 else => {},

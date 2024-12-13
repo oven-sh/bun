@@ -5854,7 +5854,7 @@ pub fn printAst(
         }
     }
 
-    var mod = try @import("analyze_transpiled_module.zig").analyzeTranspiledModule(tree, opts.allocator, printer.contains_import_meta);
+    var mod = try @import("analyze_transpiled_module.zig").analyzeTranspiledModule(&printer, tree, opts.allocator, printer.contains_import_meta);
     defer mod.deinit();
     printer.print("\n// <jsc-module-info>\n// ");
     try mod.jsonStringify(printer.writer.stdWriter());

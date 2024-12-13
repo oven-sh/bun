@@ -5858,7 +5858,7 @@ pub fn printAst(
     defer mod.deinit();
     printer.print("\n// <jsc-module-info>\n// ");
     try mod.jsonStringify(printer.writer.stdWriter());
-    printer.print("\n// </jsc-module-info-end>\n");
+    printer.print("\n// </jsc-module-info>\n");
 
     try printer.writer.done();
 

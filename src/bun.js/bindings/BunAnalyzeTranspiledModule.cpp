@@ -196,7 +196,55 @@ void dumpRecordInfo(JSModuleRecord* moduleRecord);
 extern "C" void zig_log_u8(const char* m1, const unsigned char* m2, size_t m2_size);
 extern "C" void zig_log_cstr(const char* m1, const char* m2);
 extern "C" void zig_log_ushort(const char* m1, unsigned short value);
-extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
+
+struct ModuleInfo;
+extern "C" bool zig__ModuleInfo__parseFromSourceCode(VM& vm, JSModuleRecord* moduleRecord, const char* source_ptr, size_t source_len);
+
+extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
+{
+    return new Identifier[len];
+}
+extern "C" void JSC__IdentifierArray__destroy(Identifier* identifier)
+{
+    delete[] identifier;
+}
+extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, size_t n, VM& vm, char* str, size_t len)
+{
+    identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
+}
+
+extern "C" void JSC__VariableEnvironment__add(VariableEnvironment& environment, Identifier* identifierArray, uint32_t index)
+{
+    environment.add(identifierArray[index]);
+}
+
+extern "C" VariableEnvironment* JSC_JSModuleRecord__declaredVariables(JSModuleRecord* moduleRecord)
+{
+    return &moduleRecord->m_declaredVariables;
+}
+extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRecord* moduleRecord)
+{
+    return &moduleRecord->m_lexicalVariables;
+}
+
+extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName)
+{
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(identifierArray[exportName], identifierArray[importName], identifierArray[moduleName]));
+}
+extern "C" void JSC_JSModuleRecord__addLocalExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t localName)
+{
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(identifierArray[exportName], identifierArray[localName]));
+}
+extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName)
+{
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(identifierArray[exportName], identifierArray[moduleName]));
+}
+extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+{
+    moduleRecord->addStarExportEntry(identifierArray[moduleName]);
+}
+
+extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -210,7 +258,9 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
     zig_log_cstr("  ------", "");
     zig_log_cstr("  BunAnalyzeTranspiledModule:", "");
 
-    if (sourceCode.toUTF8().toStdString().starts_with("globalThis[\"a.ts\"];")) {
+    auto sourceCodeStdString = sourceCode.toUTF8().toStdString();
+
+    if (sourceCodeStdString.starts_with("globalThis[\"a.ts\"];")) {
         zig_log_cstr("  -> Faking Module 'a.ts'", "");
         // Dependencies: 1 modules
         //   module('./q'),attributes(0x0)
@@ -260,29 +310,23 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
         scope.release();
         promise->fulfillWithNonPromise(globalObject, moduleRecord);
         return JSValue::encode(promise);
-    } else if (sourceCode.toUTF8().toStdString().starts_with("globalThis[\"q.ts\"];")) {
-        zig_log_cstr("  -> Faking Module 'q.ts'", "");
-
-        // Dependencies: 0 modules
-        // Import: 0 entries
-        // Export: 1 entries
-        //   [Local] export('q'), local('q')
+    } else if (sourceCodeStdString.starts_with("globalThis[\"q.ts\"];")) {
+        zig_log_cstr("  -> Importing Module 'q.ts'", "");
 
         VariableEnvironment declaredVariables = VariableEnvironment();
         VariableEnvironment lexicalVariables = VariableEnvironment();
-
-        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
-
         JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, 0);
 
-        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "q"), Identifier::fromLatin1(vm, "q")));
+        if (!zig__ModuleInfo__parseFromSourceCode(vm, moduleRecord, sourceCodeStdString.data(), sourceCodeStdString.size())) {
+            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
+        }
 
         dumpRecordInfo(moduleRecord);
 
         scope.release();
         promise->fulfillWithNonPromise(globalObject, moduleRecord);
         return JSValue::encode(promise);
-    } else if (sourceCode.toUTF8().toStdString().find("globalThis[\"b.ts\"];") != std::string::npos) {
+    } else if (sourceCodeStdString.find("globalThis[\"b.ts\"];") != std::string::npos) {
         zig_log_cstr("  -> Faking Module 'b.ts'", "");
 
         // error:   BunAnalyzeTranspiledModule:

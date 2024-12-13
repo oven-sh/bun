@@ -856,7 +856,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         return;
     // signal handlers can be run on any thread
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
-        Bun__onSignalForJS(signalNumber, context.jsGlobalObject());
+        Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
 #else
 

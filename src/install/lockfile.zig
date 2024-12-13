@@ -484,9 +484,16 @@ pub const Tree = struct {
 
     pub const root_dep_id: DependencyID = invalid_package_id - 1;
     pub const invalid_id: Id = std.math.maxInt(Id);
-    const dependency_loop = invalid_id - 1;
-    const hoisted = invalid_id - 2;
-    const error_id = hoisted;
+
+    pub const HoistResult = union(enum) {
+        dependency_loop,
+        hoisted,
+        dest_id: Id,
+        replace: struct {
+            dest_id: Id,
+            dep_id: DependencyID,
+        },
+    };
 
     const SubtreeError = error{ OutOfMemory, DependencyLoop };
 
@@ -749,8 +756,8 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
             // Do not hoist folder dependencies
-            const destination = if (resolutions[pid].tag == .folder)
-                next.id
+            const res: HoistResult = if (resolutions[pid].tag == .folder)
+                .{ .dest_id = next.id }
             else
                 try next.hoistDependency(
                     true,
@@ -761,14 +768,23 @@ pub const Tree = struct {
                     builder,
                 );
 
-            switch (destination) {
-                Tree.dependency_loop, Tree.hoisted => continue,
-                else => {
-                    dependency_lists[destination].append(builder.allocator, dep_id) catch unreachable;
-                    trees[destination].dependencies.len += 1;
+            switch (res) {
+                .dependency_loop, .hoisted => continue,
+                .replace => |replacement| {
+                    var dep_ids = dependency_lists[replacement.dest_id].items;
+                    for (0..dep_ids.len) |i| {
+                        if (dep_ids[i] == replacement.dep_id) {
+                            dep_ids[i] = dep_id;
+                            break;
+                        }
+                    }
+                },
+                .dest_id => |dest_id| {
+                    dependency_lists[dest_id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                    trees[dest_id].dependencies.len += 1;
                     if (builder.resolution_lists[pid].len > 0) {
                         try builder.queue.writeItem(.{
-                            .tree_id = destination,
+                            .tree_id = dest_id,
                             .dependency_id = dep_id,
                         });
                     }
@@ -786,6 +802,7 @@ pub const Tree = struct {
     // 1 (return hoisted) - de-duplicate (skip) the package
     // 2 (return id) - move the package to the top directory
     // 3 (return dependency_loop) - leave the package at the same (relative) directory
+    // 4 (replace) - replace the existing (same name) parent dependency
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -794,15 +811,16 @@ pub const Tree = struct {
         dependency_lists: []Lockfile.DependencyIDList,
         trees: []Tree,
         builder: *Builder,
-    ) !Id {
-        const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
-        for (this_dependencies) |dep_id| {
+    ) !HoistResult {
+        const this_dependencies = this.dependencies.mut(dependency_lists[this.id].items);
+        for (0..this_dependencies.len) |i| {
+            const dep_id = this_dependencies[i];
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
 
             if (builder.resolutions[dep_id] == package_id) {
                 // this dependency is the same package as the other, hoist
-                return hoisted; // 1
+                return .hoisted; // 1
             }
 
             if (comptime as_defined) {
@@ -810,10 +828,10 @@ pub const Tree = struct {
                 // choose dev dep over other if enabled
                 if (dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                        return hoisted; // 1
+                        return .hoisted; // 1
                     }
 
-                    return dependency_loop; // 3
+                    return .dependency_loop; // 3
                 }
             }
 
@@ -825,7 +843,7 @@ pub const Tree = struct {
                     const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
                     const version = dependency.version.value.npm.version;
                     if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                        return hoisted; // 1
+                        return .hoisted; // 1
                     }
                 }
 
@@ -833,7 +851,7 @@ pub const Tree = struct {
                 // to hoist other peers even if they don't satisfy the version
                 if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
                     // TODO: warning about peer dependency version mismatch
-                    return hoisted; // 1
+                    return .hoisted; // 1
                 }
             }
 
@@ -854,21 +872,21 @@ pub const Tree = struct {
                 // if the dependency is wildcard, use the existing dependency
                 // in the parent
                 if (dependency.version.value.npm.version.@"is *"()) {
-                    return hoisted;
+                    return .hoisted;
                 }
 
                 // if the parent dependency is wildcard, replace with the
                 // current dependency
                 if (dep.version.value.npm.version.@"is *"()) {
-                    return this.id;
+                    return .{ .replace = .{ .dest_id = this.id, .dep_id = dep_id } }; // 4
                 }
             }
 
-            return dependency_loop; // 3
+            return .dependency_loop; // 3
         }
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
-        if (this.parent < error_id) {
+        if (this.parent != invalid_id) {
             const id = trees[this.parent].hoistDependency(
                 false,
                 package_id,
@@ -877,11 +895,11 @@ pub const Tree = struct {
                 trees,
                 builder,
             ) catch unreachable;
-            if (!as_defined or id != dependency_loop) return id; // 1 or 2
+            if (!as_defined or id != .dependency_loop) return id; // 1 or 2
         }
 
         // place the dependency in the current tree
-        return this.id; // 2
+        return .{ .dest_id = this.id }; // 2
     }
 };
 

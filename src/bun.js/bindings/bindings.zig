@@ -40,7 +40,7 @@ pub const JSObject = extern struct {
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
     pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
-        return createFromStructWithPrototype(@TypeOf(pojo, &T, pojo, global, false);
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
     }
     /// Marshall a struct into a JSObject, copying its properties. It's
     /// `__proto__` will be `null`.
@@ -51,7 +51,7 @@ pub const JSObject = extern struct {
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
     pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
-        return createFromStructWithPrototype(@TypeOf(poj), pojo, global, true);
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
     }
 
     /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
@@ -66,7 +66,7 @@ pub const JSObject = extern struct {
     /// depending on whether `null_prototype` is set. Prefer using the object
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
-    fn createFromStructWithPrototype(comptime T: type, pojo: *T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
         const info: std.builtin.Type.Struct = @typeInfo(T).Struct;
 
         const obj = obj: {
@@ -84,7 +84,7 @@ pub const JSObject = extern struct {
             cell.put(
                 global,
                 field.name,
-                JSC.toJS(global, @Type(property), property, .temporary),
+                JSC.toJS(global, @TypeOf(property), property, .temporary),
             );
         }
 

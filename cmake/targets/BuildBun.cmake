@@ -576,6 +576,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/io/*.cpp
   ${CWD}/src/bun.js/modules/*.cpp
@@ -632,6 +633,7 @@ register_command(
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${BUN_ERROR_CODE_OUTPUTS}
   ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
@@ -884,48 +886,20 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
-    if(ARCH STREQUAL "aarch64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=fcntl64
-        -Wl,--wrap=statx
-      )
-    endif()
-    
-    if(ARCH STREQUAL "x64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=fcntl
-        -Wl,--wrap=fcntl64
-        -Wl,--wrap=fstat
-        -Wl,--wrap=fstat64
-        -Wl,--wrap=fstatat
-        -Wl,--wrap=fstatat64
-        -Wl,--wrap=lstat
-        -Wl,--wrap=lstat64
-        -Wl,--wrap=mknod
-        -Wl,--wrap=mknodat
-        -Wl,--wrap=stat
-        -Wl,--wrap=stat64
-        -Wl,--wrap=statx
-      )
-    endif()
-
+  # on arm64
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
     target_link_options(${bun} PUBLIC
-      -Wl,--wrap=cosf
       -Wl,--wrap=exp
       -Wl,--wrap=expf
-      -Wl,--wrap=fmod
-      -Wl,--wrap=fmodf
       -Wl,--wrap=log
-      -Wl,--wrap=log10f
       -Wl,--wrap=log2
       -Wl,--wrap=log2f
       -Wl,--wrap=logf
       -Wl,--wrap=pow
       -Wl,--wrap=powf
-      -Wl,--wrap=sincosf
-      -Wl,--wrap=sinf
-      -Wl,--wrap=tanf
+      -Wl,--wrap=fcntl64
     )
+  endif()
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -954,7 +928,7 @@ if(LINUX)
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
-    -Wl,--hash-style=gnu
+    -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
@@ -966,6 +940,7 @@ if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
   target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
+
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
   target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()

@@ -384,7 +384,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             // }
 
             // return null;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
@@ -405,7 +405,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             // };
             // return out;
 
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Returns a longhand property for this shorthand.
@@ -430,7 +430,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //     }
             // }
             // return null;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Updates this shorthand from a longhand property.
@@ -451,7 +451,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //     }
             // }
             // return false;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
     };
 }
@@ -916,12 +916,8 @@ pub fn DeriveValueType(comptime T: type) type {
 }
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {
-    const StackCount = 16;
-    var sfb = std.heap.stackFallback(@sizeOf(BlockType) * StackCount, tokenizer.allocator);
-    const alloc = sfb.get();
-    var stack = std.ArrayList(BlockType).initCapacity(alloc, StackCount) catch unreachable;
-    defer stack.deinit();
-
+    @setCold(true);
+    var stack = SmallList(BlockType, 16){};
     stack.appendAssumeCapacity(block_type);
 
     while (switch (tokenizer.next()) {
@@ -929,13 +925,13 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void
         .err => null,
     }) |tok| {
         if (BlockType.closing(&tok)) |b| {
-            if (stack.getLast() == b) {
+            if (stack.getLastUnchecked() == b) {
                 _ = stack.pop();
-                if (stack.items.len == 0) return;
+                if (stack.len() == 0) return;
             }
         }
 
-        if (BlockType.opening(&tok)) |bt| stack.append(bt) catch unreachable;
+        if (BlockType.opening(&tok)) |bt| stack.append(tokenizer.allocator, bt);
     }
 }
 
@@ -4200,8 +4196,6 @@ const Tokenizer = struct {
             .position = 0,
         };
 
-        // make current point to the first token
-        _ = lexer.next();
         lexer.position = 0;
 
         return lexer;
@@ -6253,6 +6247,20 @@ pub const serializer = struct {
             };
         } else notation: {
             var buf: [129]u8 = undefined;
+            // We must pass finite numbers to dtoa_short
+            if (std.math.isPositiveInf(value)) {
+                const output = "1e999";
+                try writer.writeAll(output);
+                return;
+            } else if (std.math.isNegativeInf(value)) {
+                const output = "-1e999";
+                try writer.writeAll(output);
+                return;
+            }
+            // We shouldn't receive NaN here.
+            // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
+            // are not NaN.
+            bun.debugAssert(!std.math.isNan(value));
             const str, const notation = dtoa_short(&buf, value, 6);
             try writer.writeAll(str);
             break :notation notation;
@@ -6691,6 +6699,7 @@ const Notation = struct {
 
 pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
     buf[0] = '0';
+    bun.debugAssert(std.math.isFinite(value));
     const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;
     return restrict_prec(buf[0 .. buf_len + 1], precision);
 }

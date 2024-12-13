@@ -891,7 +891,7 @@ describe("whoami", async () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
-    test("two .npmrc", async () => {
+  test("two .npmrc", async () => {
     const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
@@ -1697,6 +1697,85 @@ describe("package.json indentation", async () => {
     });
     expect(await exited).toBe(0);
     expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
+  });
+});
+
+describe("text lockfile", () => {
+  test("workspace sorting", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "b", "package.json"),
+        JSON.stringify({
+          name: "b",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "c", "package.json"),
+        JSON.stringify({
+          name: "c",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    let out = await Bun.readableStreamToText(stdout);
+    let err = await Bun.readableStreamToText(stderr);
+    console.log({ out, err });
+    expect(await exited).toBe(0);
+
+    expect(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    ).toMatchSnapshot();
+
+    // now add workspace 'a'
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "a",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    err = await Bun.readableStreamToText(stderr);
+    console.log({ out, err });
+    expect(await exited).toBe(0);
+
+    const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
   });
 });
 

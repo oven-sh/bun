@@ -413,7 +413,7 @@ pub const Stringifier = struct {
         const resolution_buf = lockfile.buffers.resolutions.items;
         const pkgs = lockfile.packages.slice();
         const pkg_dep_lists: []DependencySlice = pkgs.items(.dependencies);
-        const pkg_resolution: []Resolution = pkgs.items(.resolution);
+        const pkg_resolutions: []Resolution = pkgs.items(.resolution);
         const pkg_names: []String = pkgs.items(.name);
         const pkg_name_hashes: []PackageNameHash = pkgs.items(.name_hash);
         const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
@@ -463,15 +463,43 @@ pub const Stringifier = struct {
                     lockfile.workspace_versions,
                     &optional_peers_buf,
                 );
-                for (0..pkgs.len) |pkg_id| {
-                    const res = pkg_resolution[pkg_id];
+
+                var workspace_sort_buf: std.ArrayListUnmanaged(PackageID) = .{};
+                defer workspace_sort_buf.deinit(allocator);
+
+                for (0..pkgs.len) |_pkg_id| {
+                    const pkg_id: PackageID = @intCast(_pkg_id);
+                    const res = pkg_resolutions[pkg_id];
                     if (res.tag != .workspace) continue;
-                    try writer.writeAll(",\n");
+                    try workspace_sort_buf.append(allocator, pkg_id);
+                }
+
+                const Sorter = struct {
+                    string_buf: string,
+                    res_buf: []const Resolution,
+
+                    pub fn isLessThan(this: @This(), l: PackageID, r: PackageID) bool {
+                        const l_res = this.res_buf[l];
+                        const r_res = this.res_buf[r];
+                        return l_res.value.workspace.order(&r_res.value.workspace, this.string_buf, this.string_buf) == .lt;
+                    }
+                };
+
+                std.sort.pdq(
+                    PackageID,
+                    workspace_sort_buf.items,
+                    Sorter{ .string_buf = buf, .res_buf = pkg_resolutions },
+                    Sorter.isLessThan,
+                );
+
+                for (workspace_sort_buf.items) |workspace_pkg_id| {
+                    const res = pkg_resolutions[workspace_pkg_id];
+                    try writer.writeAll("\n");
                     try writeIndent(writer, indent);
                     try writeWorkspaceDeps(
                         writer,
                         indent,
-                        @intCast(pkg_id),
+                        @intCast(workspace_pkg_id),
                         res.value.workspace,
                         pkg_names,
                         pkg_name_hashes,
@@ -497,7 +525,7 @@ pub const Stringifier = struct {
 
                     const pkg_name = pkg_names[pkg_id];
                     const pkg_name_hash = pkg_name_hashes[pkg_id];
-                    const res = pkg_resolution[pkg_id];
+                    const res = pkg_resolutions[pkg_id];
                     const dep = deps_buf[dep_id];
 
                     if (lockfile.patched_dependencies.count() > 0) {
@@ -648,7 +676,7 @@ pub const Stringifier = struct {
                     const pkg_id = resolution_buf[dep_id];
                     if (pkg_id == invalid_package_id) continue;
 
-                    const res = pkg_resolution[pkg_id];
+                    const res = pkg_resolutions[pkg_id];
                     switch (res.tag) {
                         .root, .npm, .folder, .local_tarball, .github, .git, .symlink, .workspace, .remote_tarball => {},
                         .uninitialized => continue,

@@ -849,6 +849,21 @@ pub const Tree = struct {
                 return error.DependencyLoop;
             }
 
+            if (dependency.version.tag == .npm and dep.version.tag == .npm) {
+
+                // if the dependency is wildcard, use the existing dependency
+                // in the parent
+                if (dependency.version.value.npm.version.@"is *"()) {
+                    return hoisted;
+                }
+
+                // if the parent dependency is wildcard, replace with the
+                // current dependency
+                if (dep.version.value.npm.version.@"is *"()) {
+                    return this.id;
+                }
+            }
+
             return dependency_loop; // 3
         }
 

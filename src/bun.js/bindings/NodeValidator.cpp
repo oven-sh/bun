@@ -459,6 +459,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
 
     auto buffer = callFrame->argument(0);
     auto name = callFrame->argument(1);
+    return V::validateBuffer(scope, globalObject, buffer, name);
+}
+JSC::EncodedJSValue V::validateBuffer(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue buffer, JSValue name)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (name.isUndefined()) name = jsString(vm, String("buffer"_s));
 
     if (!buffer.isCell()) return JSValue::encode(jsUndefined());
     auto ty = buffer.asCell()->type();

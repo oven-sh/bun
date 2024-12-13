@@ -908,6 +908,7 @@ if(LINUX)
       -Wl,--wrap=powf
     )
   endif()
+  endif()
 
   if(NOT ABI STREQUAL "musl")
     target_link_options(${bun} PUBLIC

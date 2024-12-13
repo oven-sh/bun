@@ -18,6 +18,7 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const OOM = bun.OOM;
 
 const ExtractTarball = @This();
 
@@ -60,40 +61,9 @@ pub fn buildURL(
         string_buf,
         @TypeOf(FileSystem.instance.dirname_store),
         string,
-        anyerror,
+        OOM,
         FileSystem.instance.dirname_store,
         FileSystem.DirnameStore.print,
-    );
-}
-
-pub fn buildURLWithWriter(
-    comptime Writer: type,
-    writer: Writer,
-    registry_: string,
-    full_name_: strings.StringOrTinyString,
-    version: Semver.Version,
-    string_buf: []const u8,
-) !void {
-    const Printer = struct {
-        writer: Writer,
-
-        pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
-            return try std.fmt.format(this.writer, fmt, args);
-        }
-    };
-
-    return try buildURLWithPrinter(
-        registry_,
-        full_name_,
-        version,
-        string_buf,
-        Printer,
-        void,
-        Writer.Error,
-        Printer{
-            .writer = writer,
-        },
-        Printer.print,
     );
 }
 

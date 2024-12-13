@@ -47,6 +47,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
         case JSC::ErrorType::Error:
             prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
             break;
+        case JSC::ErrorType::URIError:
+            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
+            break;
         default: {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
             break;
@@ -299,16 +302,9 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
 namespace ERR {
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, JSC::JSValue val_actual_value)
 {
-    auto arg_name = val_arg_name.span8();
-    ASSERT(WTF::charactersAreAllASCII(arg_name));
-
     auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
-
-    auto expected_type = val_expected_type.span8();
-    ASSERT(WTF::charactersAreAllASCII(expected_type));
-
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
@@ -319,15 +315,11 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, WTF::ASCIILiteral expected_type, JSC::JSValue val_actual_value)
 {
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
-
-    auto expected_type = val_expected_type.span8();
-    ASSERT(WTF::charactersAreAllASCII(expected_type));
+    auto arg_kind = arg_name.startsWith("options."_s) ? "property"_s : "argument"_s;
 
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
@@ -405,15 +397,9 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
 {
-    ASCIILiteral type;
-    {
-        auto sp = name.span8();
-        auto str = std::string_view((const char*)(sp.data()), sp.size());
-        auto has = str.find('.') == std::string::npos;
-        type = has ? "property"_s : "argument"_s;
-    }
+    ASCIILiteral type = String(name).find('.') != notFound ? "property"_s : "argument"_s;
 
     auto value_string = JSValueToStringSafe(globalObject, value);
     RETURN_IF_EXCEPTION(throwScope, {});

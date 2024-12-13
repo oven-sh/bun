@@ -134,3 +134,72 @@ exports[`auto-install symlinks (and junctions) are created correctly in the inst
 }
 "
 `;
+
+exports[`text lockfile workspace sorting 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/c": {
+      "name": "c",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "b": ["b@workspace:packages/b", { "dependencies": { "no-deps": "1.0.0" } }],
+    "c": ["c@workspace:packages/c", { "dependencies": { "no-deps": "1.0.0" } }],
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`text lockfile workspace sorting 2`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/c": {
+      "name": "c",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a", { "dependencies": { "no-deps": "1.0.0" } }],
+    "b": ["b@workspace:packages/b", { "dependencies": { "no-deps": "1.0.0" } }],
+    "c": ["c@workspace:packages/c", { "dependencies": { "no-deps": "1.0.0" } }],
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;

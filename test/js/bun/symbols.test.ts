@@ -6,7 +6,7 @@ import { semver } from "bun";
 const BUN_EXE = bunExe();
 
 if (process.platform === "linux") {
-  test("objdump -T does not include symbols from glibc > 2.27", async () => {
+  test("objdump -T does not include symbols from glibc > 2.26", async () => {
     const objdump = Bun.which("objdump") || Bun.which("llvm-objdump");
     if (!objdump) {
       throw new Error("objdump executable not found. Please install it.");
@@ -22,7 +22,7 @@ if (process.platform === "linux") {
         if (version.startsWith("2..")) {
           version = "2." + version.slice(3);
         }
-        if (semver.order(version, "2.27.0") >= 0) {
+        if (semver.order(version, "2.26.0") > 0) {
           errors.push({
             symbol: line.slice(line.lastIndexOf(")") + 1).trim(),
             "glibc version": version,
@@ -31,7 +31,7 @@ if (process.platform === "linux") {
       }
     }
     if (errors.length) {
-      throw new Error(`Found glibc symbols >= 2.27. This breaks Amazon Linux 2 and Vercel.
+      throw new Error(`Found glibc symbols > 2.26. This breaks Amazon Linux 2 and Vercel.
 
 ${Bun.inspect.table(errors, { colors: true })}
 To fix this, add it to -Wl,-wrap=symbol in the linker flags and update workaround-missing-symbols.cpp.`);

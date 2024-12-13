@@ -87,6 +87,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return ret;
         }
 
+        pub inline fn getLastUnchecked(this: *const @This()) T {
+            if (this.spilled()) return this.data.heap.ptr[this.data.heap.len - 1];
+            return this.data.inlined[this.capacity - 1];
+        }
+
         pub inline fn at(this: *const @This(), idx: u32) *const T {
             return &this.as_const_ptr()[idx];
         }
@@ -173,6 +178,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(This), alloc: Allocator) void {
                         if (pfs.contains(css.VendorPrefix.fromName(prefix))) {
                             var images = SmallList(T, 1).initCapacity(alloc, pfi.len());
+                            images.setLen(pfi.len());
                             for (images.slice_mut(), pfi.slice()) |*out, *in| {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);
@@ -429,6 +435,14 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             bun.debugAssert(len_ptr.* < capp);
             ptr[len_ptr.*] = item;
             len_ptr.* += 1;
+        }
+
+        pub fn pop(this: *@This()) ?T {
+            const ptr, const len_ptr, _ = this.tripleMut();
+            if (len_ptr.* == 0) return null;
+            const last_index = len_ptr.* - 1;
+            len_ptr.* = last_index;
+            return ptr[last_index];
         }
 
         pub fn append(this: *@This(), allocator: Allocator, item: T) void {

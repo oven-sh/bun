@@ -15,20 +15,19 @@ const {
   //   StringPrototypeSlice,
   //   StringPrototypeSplit,
   //   StringPrototypeStartsWith,
-} = require('internal/primordials');
+} = require("internal/primordials");
 
-const { isError } = require('internal/util');
+const { isError } = require("internal/util");
 // const { Buffer } = require('node:buffer');
 // const {
 //   isErrorStackTraceLimitWritable,
 //   overrideStackTrace,
 // } = require('internal/errors');
-const AssertionError = require('internal/assert/assertion_error');
+const AssertionError = require("internal/assert/assertion_error");
 // const { openSync, closeSync, readSync } = require('node:fs');
 // // const { EOL } = require('internal/constants');
 // // const { BuiltinModule } = require('internal/bootstrap/realm');
 // // const { isError } = require('internal/util');
-
 
 // const errorCache = new SafeMap();
 // // const { fileURLToPath } = require('internal/url');
@@ -174,8 +173,7 @@ function getErrMessage(message: string, value: unknown, fn: Function): string | 
   // overrideStackTrace.set(err, (_, stack) => stack);
   // const call = err.stack[0];
   //
-  if (fn.name === 'ok') {
-    if (message === null) throw new Error('what the fuck'); // message = "null"
+  if (fn.name === "ok") {
     return `The expression evaluated to a falsy value:\n\n  assert.ok(${value})\n`;
   }
 
@@ -272,7 +270,7 @@ export function innerOk(fn, argLen, value, message) {
 
     if (argLen === 0) {
       generatedMessage = true;
-      message = 'No value argument passed to `assert.ok()`';
+      message = "No value argument passed to `assert.ok()`";
     } else if (message == null) {
       generatedMessage = true;
       message = getErrMessage(message, value, fn);
@@ -285,7 +283,7 @@ export function innerOk(fn, argLen, value, message) {
       actual: value,
       expected: true,
       message,
-      operator: '==',
+      operator: "==",
       stackStartFn: fn,
     });
     err.generatedMessage = generatedMessage;

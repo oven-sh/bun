@@ -14,29 +14,9 @@ const {
   StringPrototypeRepeat,
   StringPrototypeSlice,
   StringPrototypeSplit,
-} = require("internal/primordials");;
+} = require("internal/primordials");
 
 const { isError } = require("internal/util");
-const prims = [
-  ArrayPrototypeJoin,
-  ArrayPrototypePop,
-  ArrayPrototypeSlice,
-  Error,
-  ErrorCaptureStackTrace,
-  ObjectAssign,
-  ObjectDefineProperty,
-  ObjectGetPrototypeOf,
-  ObjectPrototypeHasOwnProperty,
-  String,
-  StringPrototypeRepeat,
-  StringPrototypeSlice,
-  StringPrototypeSplit,
-]
-for (const p of prims) {
-  if (typeof p !== "function") {
-    throw new Error(`Expected ${p} to be a function`);
-  }
-}
 
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
@@ -261,8 +241,9 @@ class AssertionError extends Error {
     } = options;
     let { actual, expected } = options;
 
+    // NOTE: stack trace is always writable.
     const limit = Error.stackTraceLimit;
-    // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = 0;
+    Error.stackTraceLimit = 0;
 
     if (message != null) {
       if (operator === "deepStrictEqual" || operator === "strictEqual") {
@@ -355,7 +336,7 @@ class AssertionError extends Error {
       }
     }
 
-    // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = limit;
+    Error.stackTraceLimit = limit;
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {

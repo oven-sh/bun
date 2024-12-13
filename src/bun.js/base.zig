@@ -75,7 +75,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
                 var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |*item, i| {
-                    const res = toJS(globalObject, *Child, item, lifetime);
+                    const res = toJS(globalObject, *const Child, item, lifetime);
                     if (res == .zero) return .zero;
                     array.putIndex(
                         globalObject,

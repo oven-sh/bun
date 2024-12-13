@@ -12,9 +12,6 @@ const {
   SafeWeakMap,
 } = require("internal/primordials");
 
-// const {
-//   codes: { ERR_INVALID_ARG_VALUE, ERR_UNAVAILABLE_DURING_EXIT },
-// } = require("internal/errors");
 const AssertionError = require("internal/assert/assertion_error");
 const { validateUint32 } = require("internal/validators");
 

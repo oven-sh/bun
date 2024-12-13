@@ -10,11 +10,13 @@ const Global = bun.Global;
 const JSC = bun.JSC;
 const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
+const String = bun.Semver.String;
+const string = bun.string;
 
 const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
-    package_name: []const u8,
+    package_name: string,
 
     scripts: Lockfile.Package.Scripts.List,
     current_script_index: u8 = 0,

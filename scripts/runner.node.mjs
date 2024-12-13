@@ -26,7 +26,7 @@ import {
   getBuildUrl,
   getEnv,
   getFileUrl,
-  getLoggedInUserCount,
+  getLoggedInUserCountOrDetails,
   getShell,
   getWindowsExitReason,
   isBuildkite,
@@ -1499,7 +1499,7 @@ export async function main() {
 
   let waitForUser = false;
   while (isCI) {
-    const userCount = getLoggedInUserCount();
+    const userCount = getLoggedInUserCountOrDetails();
     if (!userCount) {
       if (waitForUser) {
         !isQuiet && console.log("No users logged in, exiting runner...");
@@ -1509,7 +1509,11 @@ export async function main() {
 
     if (!waitForUser) {
       startGroup("Summary");
-      console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      if (typeof userCount === "number") {
+        console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      } else {
+        console.warn(userCount);
+      }
       waitForUser = true;
     }
 

@@ -101,7 +101,7 @@ pub const AWSCredentials = struct {
         return "us-east-1";
     }
 
-    pub fn signRequest(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
+    pub fn signRequest(this: *const @This(), full_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
         const expires = if (signQueryOption) |options| options.expires else 0;
@@ -113,10 +113,21 @@ pub const AWSCredentials = struct {
             else => return error.InvalidMethod,
         };
 
-        const endpoint = if (this.endpoint.len > 0) bun.URL.parse(this.endpoint).hostname else "";
-        const region = if (this.region.len > 0) this.region else guessRegion(endpoint);
+        const region = if (this.region.len > 0) this.region else guessRegion(this.endpoint);
+        var path: []const u8 = full_path;
+        var bucket: []const u8 = this.bucket;
 
-        if (bucket.len == 0) return error.InvalidPath;
+        if (bucket.len == 0) {
+            //TODO: r2 supports bucket in the endpoint
+
+            // guess bucket using path
+            if (strings.indexOf(full_path, "/")) |end| {
+                bucket = full_path[0..end];
+                path = full_path[end + 1 ..];
+            } else {
+                return error.InvalidPath;
+            }
+        }
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (path.len == 0) return error.InvalidPath;
 
@@ -133,8 +144,8 @@ pub const AWSCredentials = struct {
 
         // detect service name and host from region or endpoint
         const host = brk_host: {
-            if (endpoint.len > 0) {
-                break :brk_host try bun.default_allocator.dupe(u8, endpoint);
+            if (this.endpoint.len > 0) {
+                break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
             } else {
                 break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
             }
@@ -466,8 +477,8 @@ pub const AWSCredentials = struct {
         }
     };
 
-    pub fn executeSimpleS3Request(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8) void {
-        var result = this.signRequest(bucket, path, method, null, null) catch |sign_err| {
+    pub fn executeSimpleS3Request(this: *const @This(), path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8) void {
+        var result = this.signRequest(path, method, null, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
 
             return switch (sign_err) {
@@ -528,24 +539,24 @@ pub const AWSCredentials = struct {
         bun.http.http_thread.schedule(batch);
     }
 
-    pub fn s3Stat(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(bucket, path, .HEAD, .{ .stat = callback }, callback_context, proxy_url, "", null);
+    pub fn s3Stat(this: *const @This(), path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(path, .HEAD, .{ .stat = callback }, callback_context, proxy_url, "", null);
     }
 
-    pub fn s3Download(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(bucket, path, .GET, .{ .download = callback }, callback_context, proxy_url, "", null);
+    pub fn s3Download(this: *const @This(), path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", null);
     }
 
-    pub fn s3DownloadSlice(this: *const @This(), bucket: []const u8, path: []const u8, offset: usize, len: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+    pub fn s3DownloadSlice(this: *const @This(), path: []const u8, offset: usize, len: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
         const range = if (len != null) std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, offset + len.? }) catch bun.outOfMemory() else std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
-        this.executeSimpleS3Request(bucket, path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range);
+        this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range);
     }
 
-    pub fn s3Delete(this: *const @This(), bucket: []const u8, path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(bucket, path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null);
+    pub fn s3Delete(this: *const @This(), path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null);
     }
 
-    pub fn s3Upload(this: *const @This(), bucket: []const u8, path: []const u8, content: []const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(bucket, path, .POST, .{ .upload = callback }, callback_context, proxy_url, content, null);
+    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        this.executeSimpleS3Request(path, .POST, .{ .upload = callback }, callback_context, proxy_url, content, null);
     }
 };

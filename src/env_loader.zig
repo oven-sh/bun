@@ -143,9 +143,9 @@ pub const Loader = struct {
             region = region_;
         }
         if (this.get("S3_ENDPOINT")) |endpoint_| {
-            endpoint = endpoint_;
+            endpoint = bun.URL.parse(endpoint_).hostname;
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
-            endpoint = endpoint_;
+            endpoint = bun.URL.parse(endpoint_).hostname;
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;

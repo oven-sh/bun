@@ -3493,17 +3493,17 @@ pub const Blob = struct {
             const credentials = env.getAWSCredentials();
             const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
             this.poll_ref.ref(globalThis.bunVM());
-
+            const path = url.s3Path();
             if (blob.offset > 0) {
                 const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(url.hostname, url.path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
             } else if (blob.size == Blob.max_size) {
-                credentials.s3Download(url.hostname, url.path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3Download(path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
             } else {
                 const len: usize = @intCast(blob.size);
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(url.hostname, url.path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
             }
             return promise;
         }
@@ -3556,7 +3556,8 @@ pub const Blob = struct {
             const credentials = env.getAWSCredentials();
             const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
             this.poll_ref.ref(globalThis.bunVM());
-            credentials.s3Stat(url.hostname, url.path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+
+            credentials.s3Stat(url.s3Path(), @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
             return promise;
         }
 
@@ -3591,8 +3592,7 @@ pub const Blob = struct {
             const url = bun.URL.parse(this.store.?.data.file.pathlike.path.slice());
             const env = this.globalThis.bunVM().bundler.env;
             const credentials = env.getAWSCredentials();
-
-            const result = credentials.signRequest(url.hostname, url.path, method, null, .{ .expires = expires }) catch |sign_err| {
+            const result = credentials.signRequest(url.s3Path(), method, null, .{ .expires = expires }) catch |sign_err| {
                 return switch (sign_err) {
                     error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                     error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),

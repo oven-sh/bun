@@ -3196,6 +3196,7 @@ pub const Fetch = struct {
             var secretAccessKeySlice: ?ZigString.Slice = null;
             var regionSlice: ?ZigString.Slice = null;
             var endpointSlice: ?ZigString.Slice = null;
+            var bucketSlice: ?ZigString.Slice = null;
 
             defer {
                 // cleanup s3 options
@@ -3203,6 +3204,7 @@ pub const Fetch = struct {
                 if (secretAccessKeySlice) |slice| slice.deinit();
                 if (regionSlice) |slice| slice.deinit();
                 if (endpointSlice) |slice| slice.deinit();
+                if (bucketSlice) |slice| slice.deinit();
             }
 
             if (options_object) |options| {
@@ -3246,15 +3248,29 @@ pub const Fetch = struct {
                                 defer str.deref();
                                 if (str.tag != .Empty and str.tag != .Dead) {
                                     endpointSlice = str.toUTF8(bun.default_allocator);
-                                    credentials.endpoint = endpointSlice.?.slice();
+                                    const normalized_endpoint = bun.URL.parse(endpointSlice.?.slice()).hostname;
+                                    if (normalized_endpoint.len > 0) {
+                                        credentials.endpoint = normalized_endpoint;
+                                    }
+                                }
+                            }
+                        }
+                        if (try s3_options.getTruthyComptime(globalThis, "bucket")) |js_value| {
+                            if (js_value.isString()) {
+                                const str = bun.String.fromJS(js_value, globalThis);
+                                defer str.deref();
+                                if (str.tag != .Empty and str.tag != .Dead) {
+                                    bucketSlice = str.toUTF8(bun.default_allocator);
+                                    credentials.bucket = bucketSlice.?.slice();
                                 }
                             }
                         }
                     }
                 }
             }
+
             // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
-            var result = credentials.signRequest(url.hostname, url.path, method, null, null) catch |sign_err| {
+            var result = credentials.signRequest(url.s3Path(), method, null, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
                         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);

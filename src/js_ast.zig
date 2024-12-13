@@ -2853,8 +2853,44 @@ pub const Stmt = struct {
         loc: logger.Loc,
     };
 
-    pub fn print(self: *const Stmt, writer: std.io.AnyWriter) !void {
+    pub fn print(self: *const Stmt, tree: Ast, writer: std.io.AnyWriter) !void {
+        _ = tree;
         switch (self.data) {
+            .s_import => |simport| {
+                // const record = &tree.import_records.slice()[simport.import_record_index];
+                try writer.print(".s_import{{\n", .{});
+                try writer.print("    import_records[import_record_index = {d}] = ,\n", .{simport.import_record_index});
+                // simport.default_name
+                // simport.is_single_line
+                // simport.items
+                // simport.namespace_ref
+
+                // === record: ===
+                // range: logger.Range,
+                // path: fs.Path,
+                // kind: ImportKind,
+                // tag: Tag = .none,
+                // source_index: Index = Index.invalid,
+                // print_mode: PrintMode = .normal,
+                // handles_import_errors: bool = false,
+                // is_internal: bool = false,
+                // is_unused: bool = false,
+                // contains_import_star: bool = false,
+                // contains_default_alias: bool = false,
+                // contains_es_module_alias: bool = false,
+                // calls_runtime_re_export_fn: bool = false,
+                // is_inside_try_body: bool = false,
+                // was_originally_bare_import: bool = false,
+                // was_originally_require: bool = false,
+                // was_injected_by_macro: bool = false,
+                // is_external_without_side_effects: bool = false,
+                // print_namespace_in_path: bool = false,
+                // wrap_with_to_esm: bool = false,
+                // wrap_with_to_commonjs: bool = false,
+
+                try writer.print("    ", .{});
+                try writer.print("}}", .{});
+            },
             .s_expr => |expr| {
                 try writer.print(".s_expr{{ .does_not_affect_tree_shaking = {}, .value = ", .{expr.does_not_affect_tree_shaking});
                 try expr.value.print(writer, 0);

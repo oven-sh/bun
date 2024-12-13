@@ -168,18 +168,14 @@ pub fn analyzeTranspiledModule(p: anytype, tree: Ast, allocator: std.mem.Allocat
     // so we need to make sure to add `function a()` in DeclaredVariables and also `var a`
 
     std.log.err("\n\n\n\n\n\n       \x1b[95mPrinting AST:\x1b(B\x1b[m", .{});
-    std.log.err("  Import Records:", .{});
-    for (tree.import_records.slice()) |record| {
-        try res.requested_modules.put(try res.str(record.path.text), {});
-        std.log.err("  - {s}", .{record.path.text});
-    }
-    std.log.err("  Export Records:", .{});
+    std.log.err("  AST:", .{});
     const writer = std.io.getStdErr().writer();
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try stmt.print(writer.any());
+            try stmt.print(tree, writer.any());
             try writer.print(",\n", .{});
             switch (stmt.data) {
+                .s_import => |_| {},
                 .s_local => |slocal| {
                     for (slocal.decls.slice()) |decl| {
                         switch (decl.binding.data) {

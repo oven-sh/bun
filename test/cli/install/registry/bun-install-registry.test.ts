@@ -1746,7 +1746,9 @@ describe("text lockfile", () => {
     console.log({ out, err });
     expect(await exited).toBe(0);
 
-    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toMatchSnapshot();
+    expect(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    ).toMatchSnapshot();
 
     // now add workspace 'a'
     await write(
@@ -1772,7 +1774,8 @@ describe("text lockfile", () => {
     console.log({ out, err });
     expect(await exited).toBe(0);
 
-    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toMatchSnapshot();
+    const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
   });
 });
 

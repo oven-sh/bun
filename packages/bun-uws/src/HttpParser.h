@@ -613,6 +613,7 @@ namespace uWS
             * ought to be handled as an error. */
             std::string_view transferEncodingString = req->getHeader("transfer-encoding");
             std::string_view contentLengthString = req->getHeader("content-length");
+
             auto transferEncodingStringLen = transferEncodingString.length();
             auto contentLengthStringLen = contentLengthString.length();
             if (transferEncodingStringLen && contentLengthStringLen) {
@@ -635,6 +636,14 @@ namespace uWS
                 }
             }
 
+            // lets check if content len is valid before calling requestHandler
+            if(contentLengthStringLen) {
+                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
+                if (remainingStreamingBytes == UINT64_MAX) {
+                    /* Parser error */
+                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                }
+            }
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
@@ -685,7 +694,7 @@ namespace uWS
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-              
+
                 if (!CONSUME_MINIMALLY) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);

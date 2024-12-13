@@ -27,6 +27,7 @@ namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
 
+
 template <bool SSL>
 struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
@@ -34,6 +35,7 @@ struct alignas(16) HttpContextData {
     template <bool> friend struct TemplatedApp;
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -50,6 +52,9 @@ private:
     void *upgradedWebSocket = nullptr;
     bool isParsingHttp = false;
     bool rejectUnauthorized = false;
+
+    /* Used to simulate Node.js socket events. */
+    OnSocketClosedCallback onSocketClosed = nullptr;
 
     // TODO: SNI
     void clearRoutes() {

@@ -334,10 +334,13 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__NodeHTTPRequest__onResolve,
+        Bun__NodeHTTPRequest__onReject,
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__FetchTasklet__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 26;
+
+    static constexpr size_t promiseFunctionsSize = 27;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -584,6 +587,8 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
+
+    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

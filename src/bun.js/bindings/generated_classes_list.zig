@@ -76,5 +76,6 @@ pub const Classes = struct {
     pub const TextEncoderStreamEncoder = JSC.WebCore.TextEncoderStreamEncoder;
     pub const NativeZlib = JSC.API.NativeZlib;
     pub const NativeBrotli = JSC.API.NativeBrotli;
+    pub const NodeHTTPResponse = JSC.API.NodeHTTPResponse;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
 };

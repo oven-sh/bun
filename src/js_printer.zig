@@ -5854,43 +5854,11 @@ pub fn printAst(
         }
     }
 
-    std.log.err("\n\n\n\n\n\n       \x1b[97mPrinting AST:\x1b(B\x1b[m", .{});
-    std.log.err("  Import Records:", .{});
-    for (tree.import_records.slice()) |record| {
-        std.log.err("  - {s}", .{record.path.text});
-    }
-    std.log.err("  Export Records:", .{});
-    for (tree.parts.slice()) |part| {
-        for (part.stmts) |stmt| {
-            switch (stmt.data) {
-                .s_export_clause,
-                .s_export_default,
-                .s_export_equals,
-                .s_export_from,
-                .s_export_star,
-                .s_lazy_export,
-                => {
-                    std.log.err("  - {s}", .{@tagName(stmt.data)});
-                },
-                .s_local => |local| {
-                    if (local.is_export) {
-                        std.log.err("  - {s} (is_export)", .{@tagName(stmt.data)});
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-    std.log.err("  Uses import.meta: {}", .{printer.contains_import_meta});
-
-    // - varDeclarations:
-    //
-    // - lexicalVariables:
-    //
-
-    // if(comptime true) {
-    //     tree
-    // }
+    var mod = try @import("analyze_transpiled_module.zig").analyzeTranspiledModule(tree, opts.allocator, printer.contains_import_meta);
+    defer mod.deinit();
+    printer.print("\n// <jsc-module-info>\n// ");
+    try mod.jsonStringify(printer.writer.stdWriter());
+    printer.print("\n// </jsc-module-info-end>\n");
 
     try printer.writer.done();
 

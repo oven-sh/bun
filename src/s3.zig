@@ -547,8 +547,18 @@ pub const AWSCredentials = struct {
         this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", null);
     }
 
-    pub fn s3DownloadSlice(this: *const @This(), path: []const u8, offset: usize, len: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        const range = if (len != null) std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, offset + len.? }) catch bun.outOfMemory() else std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+    pub fn s3DownloadSlice(this: *const @This(), path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        const range = brk: {
+            if (size) |size_| {
+                var end = (offset + size_);
+                if (size_ > 0) {
+                    end -= 1;
+                }
+                break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            }
+            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        };
+
         this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range);
     }
 

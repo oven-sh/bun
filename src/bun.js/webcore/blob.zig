@@ -3498,8 +3498,12 @@ pub const Blob = struct {
                 const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
                 const offset: usize = @intCast(blob.offset);
                 credentials.s3DownloadSlice(url.hostname, url.path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
-            } else {
+            } else if (blob.size == Blob.max_size) {
                 credentials.s3Download(url.hostname, url.path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            } else {
+                const len: usize = @intCast(blob.size);
+                const offset: usize = @intCast(blob.offset);
+                credentials.s3DownloadSlice(url.hostname, url.path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
             }
             return promise;
         }
@@ -3563,6 +3567,45 @@ pub const Blob = struct {
             this.destroy();
         }
     };
+
+    pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        if (this.isS3()) {
+            const args = callframe.arguments_old(1);
+            var method: bun.http.Method = .GET;
+            var expires: usize = 86400; // 1 day
+            if (args.len == 1) {
+                const options = args.ptr[0];
+                if (options.isObject()) {
+                    if (try options.getTruthyComptime(globalThis, "method")) |method_| {
+                        method = Method.fromJS(globalThis, method_) orelse {
+                            return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
+                        };
+                    }
+                    if (try options.getTruthyComptime(globalThis, "expires")) |expires_| {
+                        const coerced = expires_.coerce(i32, globalThis);
+                        if (coerced <= 0) return globalThis.throwInvalidArguments("expires must be greather than 0", .{});
+                        expires = @intCast(coerced);
+                    }
+                }
+            }
+            const url = bun.URL.parse(this.store.?.data.file.pathlike.path.slice());
+            const env = this.globalThis.bunVM().bundler.env;
+            const credentials = env.getAWSCredentials();
+
+            const result = credentials.signRequest(url.hostname, url.path, method, null, .{ .expires = expires }) catch |sign_err| {
+                return switch (sign_err) {
+                    error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
+                    error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
+                    error.InvalidPath => globalThis.throwError(sign_err, "invalid s3 bucket, key combination"),
+                    else => globalThis.throwError(error.SignError, "failed to retrieve s3 content check your credentials"),
+                };
+            };
+            defer result.deinit();
+            var str = bun.String.fromUTF8(result.url);
+            return str.transferToJS(this.globalThis);
+        }
+        return globalThis.throwError(error.NotSupported, "is only possible to presign s3:// files");
+    }
 
     // This mostly means 'can it be read?'
     pub fn getExists(

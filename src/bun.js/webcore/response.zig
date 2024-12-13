@@ -3242,7 +3242,7 @@ pub const Fetch = struct {
                 }
             }
             // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
-            var result = credentials.signRequest(url.hostname, url.path, method, null) catch |sign_err| {
+            var result = credentials.signRequest(url.hostname, url.path, method, null, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
                         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);

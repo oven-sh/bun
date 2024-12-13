@@ -85,10 +85,13 @@ pub const AWSCredentials = struct {
             }
         }
     };
-
-    pub fn signRequest(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8) !SignResult {
+    pub const SignQueryOptions = struct {
+        expires: usize = 86400,
+    };
+    pub fn signRequest(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
-
+        const signQuery = signQueryOption != null;
+        const expires = if (signQueryOption) |options| options.expires else 0;
         const method_name = switch (method) {
             .GET => "GET",
             .POST, .PUT => "PUT",
@@ -110,23 +113,22 @@ pub const AWSCredentials = struct {
         errdefer bun.default_allocator.free(amz_date);
 
         const amz_day = amz_date[0..8];
-        const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+        const signedHeaders = if (signQuery) "host" else "host;x-amz-content-sha256;x-amz-date";
         const region = if (this.region.len > 0) this.region else "us-east-1";
 
         // detect service name and host from region or endpoint
-
         const host = try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
         const service_name = "s3";
 
         errdefer bun.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else "UNSIGNED-PAYLOAD";
+        var tmp_buffer: [2048]u8 = undefined;
+
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
             var hmac_sig_service: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
             var hmac_sig_service2: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
-
-            var tmp_buffer: [2048]u8 = undefined;
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
@@ -157,9 +159,36 @@ pub const AWSCredentials = struct {
                 try SIGNATURE_CACHE.put(try bun.default_allocator.dupe(u8, key), hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].*);
                 break :brk_sign result;
             };
+            if (signQuery) {
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signedHeaders, aws_content_hash });
+                var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
+                bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
-            const searchParams = "";
-            const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, searchParams, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+
+                const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
+                break :brk try std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                    .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                );
+            } else {
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
+
+                var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
+                bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+
+                const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
+
+                break :brk try std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "AWS4-HMAC-SHA256 Credential={s}/{s}/{s}/{s}/aws4_request, SignedHeaders={s}, Signature={s}",
+                    .{ this.accessKeyId, amz_day, region, service_name, signedHeaders, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                );
+            }
+            const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
 
             var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
             bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -176,6 +205,23 @@ pub const AWSCredentials = struct {
         };
         errdefer bun.default_allocator.free(authorization);
 
+        if (signQuery) {
+            defer bun.default_allocator.free(host);
+            defer bun.default_allocator.free(amz_date);
+
+            return SignResult{
+                .amz_date = "",
+                .host = "",
+                .authorization = "",
+                .url = authorization,
+                .headers = .{
+                    .{ .name = "x-amz-content-sha256", .value = "" },
+                    .{ .name = "x-amz-date", .value = "" },
+                    .{ .name = "Authorization", .value = "" },
+                    .{ .name = "Host", .value = "" },
+                },
+            };
+        }
         return SignResult{
             .amz_date = amz_date,
             .host = host,
@@ -400,7 +446,7 @@ pub const AWSCredentials = struct {
     };
 
     pub fn executeSimpleS3Request(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8) void {
-        var result = this.signRequest(bucket, path, method, null) catch |sign_err| {
+        var result = this.signRequest(bucket, path, method, null, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
 
             return switch (sign_err) {

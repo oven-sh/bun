@@ -141,6 +141,8 @@ export default [
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData" },
       exists: { fn: "getExists", length: 0, passThis: true },
+      // Non-standard, s3 support (migrate to a new place if needed)
+      presign: { fn: "getPresignUrl", length: 1 },
 
       // Non-standard, but consistent!
       bytes: { fn: "getBytes" },

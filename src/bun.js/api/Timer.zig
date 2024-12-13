@@ -130,33 +130,13 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *const All, spec: *timespec) bool {
-        if (this.active_timer_count == 0) {
-            return false;
-        }
-
-        if (this.timers.peek()) |min| {
-            const now = timespec.now();
-            switch (now.order(&min.next)) {
-                .gt, .eq => {
-                    spec.* = .{ .nsec = 0, .sec = 0 };
-                    return true;
-                },
-                .lt => {
-                    spec.* = min.next.duration(&now);
-                    return true;
-                },
-            }
-        }
-
-        return false;
-    }
-
-    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
-        drainTimers(&vm.timer, vm);
-    }
-
-    comptime {
-        _ = &Bun__internal_drainTimers;
+        const min = this.timers.peek() orelse return false;
+        const now = timespec.now();
+        spec.* = switch (now.order(&min.next)) {
+            .gt, .eq => .{ .nsec = 0, .sec = 0 },
+            .lt => min.next.duration(&now),
+        };
+        return true;
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
@@ -715,7 +695,7 @@ const heap = bun.io.heap;
 
 pub const EventLoopTimer = struct {
     /// The absolute time to fire this timer next.
-    next: timespec,
+    next: timespec = .{},
 
     /// Internal heap fields.
     heap: heap.IntrusiveField(EventLoopTimer) = .{},
@@ -724,6 +704,44 @@ pub const EventLoopTimer = struct {
 
     tag: Tag = .TimerCallback,
 
+    pub fn cancel(this: *@This(), vm: *JSC.VirtualMachine) void {
+        if (this.state == .ACTIVE) {
+            vm.timer.remove(this);
+        }
+    }
+
+    pub fn set(this: *@This(), vm: *JSC.VirtualMachine, interval: i32) void {
+        // if the timer is active we need to remove it
+        if (this.state == .ACTIVE) {
+            vm.timer.remove(this);
+        }
+
+        // if the interval is 0 means that we stop the timer
+        if (interval == 0) {
+            return;
+        }
+
+        // reschedule the timer
+        this.next = bun.timespec.msFromNow(interval);
+        vm.timer.insert(this);
+    }
+
+    pub fn setWithTimespec(this: *@This(), vm: *JSC.VirtualMachine, next: *const timespec, interval: i32) void {
+        // if the timer is active we need to remove it
+        if (this.state == .ACTIVE) {
+            vm.timer.remove(this);
+        }
+
+        // if the interval is 0 means that we stop the timer
+        if (interval == 0) {
+            return;
+        }
+
+        // reschedule the timer
+        this.next = next.addMs(interval);
+        vm.timer.insert(this);
+    }
+
     pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
         TimerObject,
@@ -731,7 +749,9 @@ pub const EventLoopTimer = struct {
         StatWatcherScheduler,
         UpgradedDuplex,
         WindowsNamedPipe,
-
+        GCTimer,
+        GCRepeatingTimer,
+        TimeoutTask,
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
@@ -740,6 +760,9 @@ pub const EventLoopTimer = struct {
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .GCTimer => JSC.GarbageCollectionController,
+                .GCRepeatingTimer => JSC.GarbageCollectionController,
+                .TimeoutTask => JSC.EventLoop.TimeoutTask,
             };
         }
     } else enum {
@@ -748,7 +771,9 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
-
+        GCTimer,
+        GCRepeatingTimer,
+        TimeoutTask,
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
@@ -756,6 +781,9 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .GCTimer => JSC.GarbageCollectionController,
+                .GCRepeatingTimer => JSC.GarbageCollectionController,
+                .TimeoutTask => JSC.EventLoop.TimeoutTask,
             };
         }
     };
@@ -808,8 +836,33 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
+            .GCTimer => {
+                const gc_controller: *JSC.GarbageCollectionController = @fieldParentPtr("gc_timer", this);
+                this.state = .FIRED;
+                gc_controller.onGCTimer();
+                return .disarm;
+            },
+            .GCRepeatingTimer => {
+                const gc_controller: *JSC.GarbageCollectionController = @fieldParentPtr("gc_repeating_timer", this);
+                this.state = .FIRED;
+                gc_controller.onGCRepeatingTimer(now);
+
+                if (this.state == .FIRED) {
+                    // It's repeating, so let's repeat it.
+                    this.next = now.addMs(gc_controller.repeatingTimeInterval());
+                    vm.timer.insert(this);
+                }
+                return .disarm;
+            },
+            .TimeoutTask => {
+                const timeout_task: *JSC.EventLoop.TimeoutTask = @fieldParentPtr("event_loop_timer", this);
+                this.state = .FIRED;
+                timeout_task.schedule(vm);
+                return .disarm;
+            },
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
+
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }

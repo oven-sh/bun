@@ -3581,9 +3581,9 @@ pub const Blob = struct {
                             return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
                         };
                     }
-                    if (try options.getTruthyComptime(globalThis, "expires")) |expires_| {
+                    if (try options.getTruthyComptime(globalThis, "expiresIn")) |expires_| {
                         const coerced = expires_.coerce(i32, globalThis);
-                        if (coerced <= 0) return globalThis.throwInvalidArguments("expires must be greather than 0", .{});
+                        if (coerced <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
                         expires = @intCast(coerced);
                     }
                 }

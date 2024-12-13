@@ -1084,7 +1084,7 @@ pub const JSFrameworkRouter = struct {
     const validators = bun.JSC.Node.validators;
 
     pub fn getBindings(global: *JSC.JSGlobalObject) JSC.JSValue {
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.createFromStruct(global, .{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
             .FrameworkRouter = codegen.getConstructor(global),
         }).toJS();

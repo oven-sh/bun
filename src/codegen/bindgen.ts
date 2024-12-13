@@ -7,7 +7,6 @@ import * as path from "node:path";
 import {
   CodeWriter,
   TypeImpl,
-  cAbiTypeInfo,
   cAbiTypeName,
   cap,
   extDispatchVariant,
@@ -31,10 +30,11 @@ import {
   alignForward,
   isFunc,
   Func,
+  NodeValidator,
+  cAbiIntegerLimits,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
-import { type IntegerTypeKind } from "bindgen";
 
 // arg parsing
 let { "codegen-root": codegenRoot, debug } = argParse(["codegen-root", "debug"]);
@@ -335,7 +335,6 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
   const map: { [K in TypeKind]?: string } = {
     boolean: "WebCore::IDLBoolean",
     undefined: "WebCore::IDLUndefined",
-    f64: "WebCore::IDLDouble",
     usize: "WebCore::IDLUnsignedLongLong",
     u8: "WebCore::IDLOctet",
     u16: "WebCore::IDLUnsignedShort",
@@ -349,6 +348,11 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
   let entry = map[type.kind];
   if (!entry) {
     switch (type.kind) {
+      case "f64":
+        entry = type.flags.finite //
+          ? "WebCore::IDLDouble"
+          : "WebCore::IDLUnrestrictedDouble";
+        break;
       case "stringEnum":
         type.lowersToNamedType;
         // const cType = cAbiTypeForEnum(type.data.length);
@@ -361,14 +365,27 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
   }
 
   if (type.flags.range) {
-    // TODO: when enforceRange is used, a custom adaptor should be used instead
-    // of chaining both `WebCore::IDLEnforceRangeAdaptor` and custom logic.
-    const rangeAdaptor = {
-      "clamp": "WebCore::IDLClampAdaptor",
-      "enforce": "WebCore::IDLEnforceRangeAdaptor",
-    }[type.flags.range[0]];
-    assert(rangeAdaptor);
-    entry = `${rangeAdaptor}<${entry}>`;
+    const { range, nodeValidator } = type.flags;
+    if ((range[0] === "enforce" && range[1] !== "abi") || nodeValidator) {
+      if (nodeValidator) assert(nodeValidator === NodeValidator.validateInteger); // TODO?
+
+      const [abiMin, abiMax] = cAbiIntegerLimits(type.kind as CAbiType);
+      let [_, min, max] = range as [string, bigint | number | "abi", bigint | number | "abi"];
+      if (min === "abi") min = abiMin;
+      if (max === "abi") max = abiMax;
+
+      headers.add("BindgenCustomEnforceRange.h");
+      entry = `Bun::BindgenCustomEnforceRange<${cAbiTypeName(type.kind as CAbiType)}, ${min}, ${max}, Bun::BindgenCustomEnforceRangeKind::${
+        nodeValidator ? "Node" : "Web"
+      }>`;
+    } else {
+      const rangeAdaptor = {
+        "clamp": "WebCore::IDLClampAdaptor",
+        "enforce": "WebCore::IDLEnforceRangeAdaptor",
+      }[range[0]];
+      assert(rangeAdaptor);
+      entry = `${rangeAdaptor}<${entry}>`;
+    }
   }
 
   return entry;
@@ -415,7 +432,7 @@ function emitConvertValue(
       : "";
     cpp.line(`${storageLocation} = WebCore::convert<${simpleType}>(*global, ${jsValueRef}${exceptionHandler});`);
 
-    if (type.flags.range && type.flags.range[1] !== "abi") {
+    if (type.flags.range && type.flags.range[0] === "clamp" && type.flags.range[1] !== "abi") {
       emitRangeModifierCheck(cAbiType, storageLocation, type.flags.range);
     }
 
@@ -483,17 +500,9 @@ function emitRangeModifierCheck(
   if (kind === "clamp") {
     cpp.line(`if (${storageLocation} < ${min}) ${storageLocation} = ${min};`);
     cpp.line(`else if (${storageLocation} > ${max}) ${storageLocation} = ${max};`);
-  } else if (kind === "enforce") {
-    cpp.line(`if (${storageLocation} < ${min} || ${storageLocation} > ${max}) {`);
-    cpp.indent();
-    cpp.line(
-      `throwTypeError(global, throwScope, rangeErrorString<${cAbiTypeName(cAbiType)}>(${storageLocation}, ${min}, ${max}));`,
-    );
-    cpp.line(`return {};`);
-    cpp.dedent();
-    cpp.line(`}`);
   } else {
-    throw new Error(`TODO: range modifier ${kind}`);
+    // Implemented in BindgenCustomEnforceRange
+    throw new Error(`This should not be called for 'enforceRange' types.`);
   }
 }
 

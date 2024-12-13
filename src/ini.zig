@@ -593,7 +593,7 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return globalThis.createObjectFromStruct(.{
+        return JSC.JSObject.createFromStruct(globalThis, .{
             .default_registry_url = default_registry_url.toJS(globalThis),
             .default_registry_token = default_registry_token.toJS(globalThis),
             .default_registry_username = default_registry_username.toJS(globalThis),

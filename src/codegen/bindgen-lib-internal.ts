@@ -70,12 +70,18 @@ interface TypeDataDefs {
 }
 type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
+export const enum NodeValidator {
+  validateInteger = "validateInteger",
+}
+
 interface Flags {
+  nodeValidator?: NodeValidator;
   optional?: boolean;
   required?: boolean;
   nullable?: boolean;
   default?: any;
   range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
+  finite?: boolean;
 }
 
 export interface DictionaryField {
@@ -263,7 +269,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   cppClassName() {
-    assert(this.lowersToNamedType());
+    assert(this.lowersToNamedType(), `Does not lower to named type: ${inspect(this)}`);
     const name = this.name();
     const namespace = typeHashToNamespace.get(this.hash());
     return namespace ? `${namespace}::${cap(name)}` : name;
@@ -325,48 +331,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         }
         break;
     }
-  }
-
-  // Interface definition API
-  get optional() {
-    if (this.flags.required) {
-      throw new Error("Cannot derive optional on a required type");
-    }
-    if (this.flags.default) {
-      throw new Error("Cannot derive optional on a something with a default value (default implies optional)");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      optional: true,
-    });
-  }
-
-  get nullable() {
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      nullable: true,
-    });
-  }
-
-  get required() {
-    if (this.flags.required) {
-      throw new Error("This type already has required set");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive required on an optional type");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      required: true,
-    });
-  }
-
-  clamp(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "clamp");
-  }
-
-  enforceRange(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "enforce");
   }
 
   #rangeModifier(min: undefined | number | bigint, max: undefined | number | bigint, kind: "clamp" | "enforce") {
@@ -562,9 +526,88 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         : "")
     );
   }
+
+  // Public interface definition API
+  get optional() {
+    if (this.flags.required) {
+      throw new Error("Cannot derive optional on a required type");
+    }
+    if (this.flags.default) {
+      throw new Error("Cannot derive optional on a something with a default value (default implies optional)");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      optional: true,
+    });
+  }
+
+  get nullable() {
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      nullable: true,
+    });
+  }
+
+  get finite() {
+    if (this.kind !== "f64") {
+      throw new Error("finite can only be used on f64");
+    }
+    if (this.flags.finite) {
+      throw new Error("This type already has finite set");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      finite: true,
+    });
+  }
+
+  get required() {
+    if (this.flags.required) {
+      throw new Error("This type already has required set");
+    }
+    if (this.flags.required) {
+      throw new Error("Cannot derive required on an optional type");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      required: true,
+    });
+  }
+
+  clamp(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "clamp");
+  }
+
+  enforceRange(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "enforce");
+  }
+
+  validateInt32(min?: number, max?: number) {
+    if (this.kind !== "i32") {
+      throw new Error("validateInt32 can only be used on i32 or u32");
+    }
+    const rangeInfo = cAbiIntegerLimits("i32");
+    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
+  }
+
+  validateUint32(min?: number, max?: number) {
+    if (this.kind !== "u32") {
+      throw new Error("validateUint32 can only be used on i32 or u32");
+    }
+    const rangeInfo = cAbiIntegerLimits("u32");
+    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
+  }
+
+  validateInteger(min?: number | bigint, max?: number | bigint) {
+    min ??= Number.MIN_SAFE_INTEGER;
+    max ??= Number.MAX_SAFE_INTEGER;
+    const enforceRange = this.#rangeModifier(min, max, "enforce") as TypeImpl;
+    enforceRange.flags.nodeValidator = NodeValidator.validateInteger;
+    return enforceRange;
+  }
 }
 
-function cAbiIntegerLimits(type: CAbiType) {
+export function cAbiIntegerLimits(type: CAbiType) {
   switch (type) {
     case "u8":
       return [0, 255];
@@ -584,6 +627,8 @@ function cAbiIntegerLimits(type: CAbiType) {
       return [-2147483648, 2147483647];
     case "i64":
       return [-9223372036854775808n, 9223372036854775807n];
+    case "f64":
+      return [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
     default:
       throw new Error(`Unexpected type ${type}`);
   }

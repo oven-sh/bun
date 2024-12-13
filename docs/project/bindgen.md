@@ -180,11 +180,34 @@ export const add = fn({
     // enforce in i32 range
     a: t.i32.enforceRange(),
     // clamp to u16 range
-    c: t.u16,
+    b: t.u16,
     // enforce in arbitrary range, with a default if not provided
-    b: t.i32.enforceRange(0, 1000).default(5),
+    c: t.i32.enforceRange(0, 1000).default(5),
     // clamp to arbitrary range, or null
     d: t.u16.clamp(0, 10).optional,
+  },
+  ret: t.i32,
+});
+```
+
+Various Node.js validator functions such as `validateInteger`, `validateNumber`, and more are available. Use these when implementing Node.js APIs, so the error messages match 1:1 what Node would do.
+
+Unlike `enforceRange`, which is taken from WebIDL, `validate*` functions are much more strict on the input they accept. For example, Node's numerical validator check `typeof value === 'number'`, while WebIDL uses `ToNumber` for lossy conversion.
+
+```ts
+import { t, fn } from "bindgen";
+
+export const add = fn({
+  args: {
+    global: t.globalObject,
+    // throw if not given a number
+    a: t.f64.validateNumber(),
+    // valid in i32 range
+    a: t.i32.validateInt32(),
+    // f64 within safe integer range
+    b: t.f64.validateInteger(),
+    // f64 in given range
+    c: t.f64.validateNumber(-10000, 10000),
   },
   ret: t.i32,
 });

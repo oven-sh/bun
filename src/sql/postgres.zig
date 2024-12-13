@@ -2544,7 +2544,7 @@ pub const PostgresSQLStatement = struct {
             for (this.fields, names) |*field, *name| {
                 name.* = String.fromUTF8(field.name.slice());
             }
-            const structure_ = JSC.JSObject.createStructure(
+            const structure_ = JSC.Structure.createFromStrings(
                 globalObject,
                 owner,
                 @truncate(this.fields.len),

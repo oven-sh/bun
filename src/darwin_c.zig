@@ -638,6 +638,8 @@ pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t
 pub extern fn getuid(...) std.posix.uid_t;
 pub extern fn getgid(...) std.posix.gid_t;
 
+pub extern fn geteuid() std.posix.uid_t;
+
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 

@@ -3195,12 +3195,14 @@ pub const Fetch = struct {
             var accessKeyIdSlice: ?ZigString.Slice = null;
             var secretAccessKeySlice: ?ZigString.Slice = null;
             var regionSlice: ?ZigString.Slice = null;
+            var endpointSlice: ?ZigString.Slice = null;
 
             defer {
                 // cleanup s3 options
                 if (accessKeyIdSlice) |slice| slice.deinit();
                 if (secretAccessKeySlice) |slice| slice.deinit();
                 if (regionSlice) |slice| slice.deinit();
+                if (endpointSlice) |slice| slice.deinit();
             }
 
             if (options_object) |options| {
@@ -3235,6 +3237,16 @@ pub const Fetch = struct {
                                 if (str.tag != .Empty and str.tag != .Dead) {
                                     regionSlice = str.toUTF8(bun.default_allocator);
                                     credentials.region = regionSlice.?.slice();
+                                }
+                            }
+                        }
+                        if (try s3_options.getTruthyComptime(globalThis, "endpoint")) |js_value| {
+                            if (js_value.isString()) {
+                                const str = bun.String.fromJS(js_value, globalThis);
+                                defer str.deref();
+                                if (str.tag != .Empty and str.tag != .Dead) {
+                                    endpointSlice = str.toUTF8(bun.default_allocator);
+                                    credentials.endpoint = endpointSlice.?.slice();
                                 }
                             }
                         }

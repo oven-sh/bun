@@ -10,7 +10,8 @@ pub const AWSCredentials = struct {
     accessKeyId: []const u8,
     secretAccessKey: []const u8,
     region: []const u8,
-
+    endpoint: []const u8,
+    bucket: []const u8,
     const log = bun.Output.scoped(.AWS, false);
 
     const DateResult = struct {
@@ -88,6 +89,18 @@ pub const AWSCredentials = struct {
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
     };
+    fn guessRegion(endpoint: []const u8) []const u8 {
+        if (endpoint.len > 0) {
+            if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
+            if (strings.indexOf(endpoint, ".amazonaws.com")) |end| {
+                if (strings.indexOf(endpoint, "s3.")) |start| {
+                    return endpoint[start + 3 .. end];
+                }
+            }
+        }
+        return "us-east-1";
+    }
+
     pub fn signRequest(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -99,6 +112,9 @@ pub const AWSCredentials = struct {
             .HEAD => "HEAD",
             else => return error.InvalidMethod,
         };
+
+        const endpoint = if (this.endpoint.len > 0) bun.URL.parse(this.endpoint).hostname else "";
+        const region = if (this.region.len > 0) this.region else guessRegion(endpoint);
 
         if (bucket.len == 0) return error.InvalidPath;
         // if we allow path.len == 0 it will list the bucket for now we disallow
@@ -114,10 +130,15 @@ pub const AWSCredentials = struct {
 
         const amz_day = amz_date[0..8];
         const signedHeaders = if (signQuery) "host" else "host;x-amz-content-sha256;x-amz-date";
-        const region = if (this.region.len > 0) this.region else "us-east-1";
 
         // detect service name and host from region or endpoint
-        const host = try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
+        const host = brk_host: {
+            if (endpoint.len > 0) {
+                break :brk_host try bun.default_allocator.dupe(u8, endpoint);
+            } else {
+                break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
+            }
+        };
         const service_name = "s3";
 
         errdefer bun.default_allocator.free(host);

@@ -123,28 +123,41 @@ pub const Loader = struct {
         var accessKeyId: []const u8 = "";
         var secretAccessKey: []const u8 = "";
         var region: []const u8 = "";
+        var endpoint: []const u8 = "";
+        var bucket: []const u8 = "";
 
-        if (this.get("AWS_ACCESS_KEY_ID")) |access_key| {
+        if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
-        } else if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
+        } else if (this.get("AWS_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
         }
-        if (this.get("AWS_SECRET_ACCESS_KEY")) |access_key| {
+        if (this.get("S3_SECRET_ACCESS_KEY")) |access_key| {
             secretAccessKey = access_key;
-        } else if (this.get("S3_SECRET_ACCESS_KEY")) |access_key| {
+        } else if (this.get("AWS_SECRET_ACCESS_KEY")) |access_key| {
             secretAccessKey = access_key;
         }
 
-        if (this.get("AWS_REGION")) |region_| {
+        if (this.get("S3_REGION")) |region_| {
             region = region_;
-        } else if (this.get("S3_REGION")) |region_| {
+        } else if (this.get("AWS_REGION")) |region_| {
             region = region_;
         }
-
+        if (this.get("S3_ENDPOINT")) |endpoint_| {
+            endpoint = endpoint_;
+        } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
+            endpoint = endpoint_;
+        }
+        if (this.get("S3_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        } else if (this.get("AWS_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        }
         this.aws_credentials = .{
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,
+            .endpoint = endpoint,
+            .bucket = bucket,
         };
 
         return this.aws_credentials.?;

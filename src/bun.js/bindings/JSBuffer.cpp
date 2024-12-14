@@ -2428,6 +2428,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSG
         if (!lengthValue.isUndefined()) {
             lengthValue = jsDoubleNumber(lengthValue.toNumber(lexicalGlobalObject));
             RETURN_IF_EXCEPTION(throwScope, {});
+            if (std::isnan(lengthValue.asNumber())) lengthValue = jsNumber(0);
             length = lengthValue.asNumber();
             if (length > 0) {
                 if (length > maxLength) {

@@ -70,3 +70,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Array, (JSC::JSGlobalObject * lex
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArrayBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Size, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_String, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
+
+JSC::EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* lexicalGlobalObject, size_t argsCount, JSC::JSValue arrayBufferValue, JSC::JSValue offsetValue, JSC::JSValue lengthValue);
+JSC::EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue arrayValue);

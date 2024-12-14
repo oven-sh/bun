@@ -1428,20 +1428,18 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         return -1;
     }
 
-    JSString* encodingValue_jstr;
-    WTF::String encodingValue_wstr;
+    WTF::String encodingString;
     if (!encodingValue.isUndefined()) {
-        encodingValue_jstr = encodingValue.toStringOrNull(lexicalGlobalObject);
+        encodingString = encodingValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        encodingValue_wstr = encodingValue_jstr->getString(lexicalGlobalObject);
-        encoding = parseEnumeration2(*lexicalGlobalObject, encodingValue_wstr);
+        encoding = parseEnumeration2(*lexicalGlobalObject, encodingString);
     } else {
         encoding = BufferEncodingType::utf8;
     }
 
     if (valueValue.isString()) {
         if (!encoding.has_value()) {
-            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingValue_wstr);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingString);
         }
         auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
@@ -2396,6 +2394,7 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.append(arrayValue);
     JSValue target = globalObject->JSBufferConstructor();
+    // TODO: I wish we could avoid this - it adds ~30ns of overhead just using JSC::construct.
     auto* object = JSC::construct(lexicalGlobalObject, constructor, target, argsBuffer, "Buffer failed to construct"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));

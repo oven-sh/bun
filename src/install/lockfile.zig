@@ -949,22 +949,25 @@ pub fn maybeCloneFilteringRootPackages(
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
-    const root_deps_list: Lockfile.DependencySlice = old.packages.items(.dependencies)[0];
+    const workspace_package_id = manager.root_package_id.get(old, manager.workspace_name_hash);
+    const root_deps_list: Lockfile.DependencySlice = old.packages.items(.dependencies)[workspace_package_id];
+
     if (@as(usize, root_deps_list.off) < old.buffers.dependencies.items.len) {
         var string_builder = old.stringBuilder();
 
         {
             const root_deps: []const Dependency = root_deps_list.get(old.buffers.dependencies.items);
-            const old_resolutions_list = old.packages.items(.resolutions)[0];
+            const old_resolutions_list = old.packages.items(.resolutions)[workspace_package_id];
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
             const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
 
             for (updates) |update| {
-                if (update.version.tag == .uninitialized) {
+                if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
+                            if (res.tag != .npm) continue;
                             const len = switch (exact_versions) {
                                 false => std.fmt.count("^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
                                 true => std.fmt.count("{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
@@ -986,16 +989,17 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
 
             const root_deps: []Dependency = root_deps_list.mut(old.buffers.dependencies.items);
             const old_resolutions_list_lists = old.packages.items(.resolutions);
-            const old_resolutions_list = old_resolutions_list_lists[0];
+            const old_resolutions_list = old_resolutions_list_lists[workspace_package_id];
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
             const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
 
             for (updates) |*update| {
-                if (update.version.tag == .uninitialized) {
+                if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |*dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
+                            if (res.tag != .npm) continue;
                             const buf = switch (exact_versions) {
                                 false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
                                 true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,

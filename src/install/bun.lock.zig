@@ -1130,12 +1130,6 @@ pub const Stringifier = struct {
     }
 };
 
-const dependency_groups = [3]struct { []const u8, Dependency.Behavior }{
-    .{ "dependencies", Dependency.Behavior.normal },
-    .{ "peerDependencies", Dependency.Behavior.normal },
-    .{ "optionalDependencies", Dependency.Behavior.normal },
-};
-
 const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
     .{ "dependencies", Dependency.Behavior.normal },
     .{ "devDependencies", Dependency.Behavior.dev },

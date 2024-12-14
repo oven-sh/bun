@@ -12079,6 +12079,40 @@ pub const PackageManager = struct {
         }
     }
 
+    pub const LazyPackageDestinationDir = union(enum) {
+        dir: std.fs.Dir,
+        node_modules_path: struct {
+            node_modules: *NodeModulesFolder,
+            root_node_modules_dir: std.fs.Dir,
+        },
+        closed: void,
+
+        pub fn getDir(this: *LazyPackageDestinationDir) !std.fs.Dir {
+            return switch (this.*) {
+                .dir => |dir| dir,
+                .node_modules_path => |lazy| brk: {
+                    const dir = try lazy.node_modules.openDir(lazy.root_node_modules_dir);
+                    this.* = .{ .dir = dir };
+                    break :brk dir;
+                },
+                .closed => @panic("LazyPackageDestinationDir is closed! This should never happen. Why did this happen?! It's not your fault. Its our fault. We're sorry."),
+            };
+        }
+
+        pub fn close(this: *LazyPackageDestinationDir) void {
+            switch (this.*) {
+                .dir => {
+                    if (this.dir.fd != std.fs.cwd().fd) {
+                        this.dir.close();
+                    }
+                },
+                .node_modules_path, .closed => {},
+            }
+
+            this.* = .{ .closed = {} };
+        }
+    };
+
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
         path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
@@ -12223,7 +12257,7 @@ pub const PackageManager = struct {
         pub fn incrementTreeInstallCount(
             this: *PackageInstaller,
             tree_id: Lockfile.Tree.Id,
-            maybe_destination_dir: ?std.fs.Dir,
+            maybe_destination_dir: ?*LazyPackageDestinationDir,
             comptime should_install_packages: bool,
             comptime log_level: Options.LogLevel,
         ) void {
@@ -12250,21 +12284,23 @@ pub const PackageManager = struct {
 
             this.completed_trees.set(tree_id);
 
-            if (maybe_destination_dir orelse (this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch null)) |_destination_dir| {
-                var destination_dir = _destination_dir;
-                defer {
-                    if (maybe_destination_dir == null) {
-                        destination_dir.close();
+            if (maybe_destination_dir) |maybe| {
+                if (maybe.getDir() catch null) |_destination_dir| {
+                    var destination_dir = _destination_dir;
+                    defer {
+                        if (maybe_destination_dir == null) {
+                            destination_dir.close();
+                        }
                     }
-                }
 
-                this.seen_bin_links.clearRetainingCapacity();
+                    this.seen_bin_links.clearRetainingCapacity();
 
-                if (tree.binaries.count() > 0) {
-                    var link_target_buf: bun.PathBuffer = undefined;
-                    var link_dest_buf: bun.PathBuffer = undefined;
-                    var link_rel_buf: bun.PathBuffer = undefined;
-                    this.linkTreeBins(tree, tree_id, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                    if (tree.binaries.count() > 0) {
+                        var link_target_buf: bun.PathBuffer = undefined;
+                        var link_dest_buf: bun.PathBuffer = undefined;
+                        var link_rel_buf: bun.PathBuffer = undefined;
+                        this.linkTreeBins(tree, tree_id, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                    }
                 }
             }
 
@@ -12664,7 +12700,7 @@ pub const PackageManager = struct {
             alias: string,
             package_id: PackageID,
             resolution_tag: Resolution.Tag,
-            node_modules_folder: std.fs.Dir,
+            node_modules_folder: *LazyPackageDestinationDir,
             comptime log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
@@ -13112,6 +13148,8 @@ pub const PackageManager = struct {
                     if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
                 }
 
+                var lazy_package_dir: LazyPackageDestinationDir = .{ .dir = destination_dir };
+
                 const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => result: {
@@ -13175,7 +13213,7 @@ pub const PackageManager = struct {
                             if (this.enqueueLifecycleScripts(
                                 alias.slice(this.lockfile.buffers.string_bytes.items),
                                 log_level,
-                                destination_dir,
+                                &lazy_package_dir,
                                 package_id,
                                 dep.behavior.optional,
                                 resolution,
@@ -13203,7 +13241,7 @@ pub const PackageManager = struct {
                                     alias.slice(this.lockfile.buffers.string_bytes.items),
                                     package_id,
                                     resolution.tag,
-                                    destination_dir,
+                                    &lazy_package_dir,
                                     log_level,
                                 );
                                 if (count > 0) {
@@ -13221,7 +13259,7 @@ pub const PackageManager = struct {
                             },
                         }
 
-                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
+                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
                     },
                     .fail => |cause| {
                         if (comptime Environment.allow_assert) {
@@ -13230,7 +13268,7 @@ pub const PackageManager = struct {
 
                         // even if the package failed to install, we still need to increment the install
                         // counter for this tree
-                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
+                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
 
                         if (cause.err == error.DanglingSymlink) {
                             Output.prettyErrorln(
@@ -13249,7 +13287,15 @@ pub const PackageManager = struct {
                             };
                             if (!Singleton.node_modules_is_ok) {
                                 if (!Environment.isWindows) {
-                                    const stat = bun.sys.fstat(bun.toFD(destination_dir)).unwrap() catch |err| {
+                                    const stat = bun.sys.fstat(bun.toFD(lazy_package_dir.getDir() catch |err| {
+                                        Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                            this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                        });
+                                        if (Environment.isDebug) {
+                                            Output.err(err, "Failed to stat node_modules", .{});
+                                        }
+                                        Global.exit(1);
+                                    })).unwrap() catch |err| {
                                         Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                             this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
                                         });
@@ -13303,23 +13349,18 @@ pub const PackageManager = struct {
                     this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
                 }
 
-                var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
-                    if (log_level != .silent) {
-                        Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
-                            pkg_name.slice(this.lockfile.buffers.string_bytes.items),
-                            bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
-                        });
-                    }
-                    this.summary.fail += 1;
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
-                    return;
+                var destination_dir: LazyPackageDestinationDir = .{
+                    .node_modules_path = .{
+                        .node_modules = &this.node_modules,
+                        .root_node_modules_dir = this.root_node_modules_folder,
+                    },
                 };
 
                 defer {
-                    if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+                    destination_dir.close();
                 }
 
-                defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
+                defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &destination_dir, !is_pending_package_install, log_level);
 
                 const dep = this.lockfile.buffers.dependencies.items[dependency_id];
                 const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
@@ -13338,7 +13379,7 @@ pub const PackageManager = struct {
                     if (this.enqueueLifecycleScripts(
                         alias.slice(this.lockfile.buffers.string_bytes.items),
                         log_level,
-                        destination_dir,
+                        &destination_dir,
                         package_id,
                         dep.behavior.optional,
                         resolution,
@@ -13428,7 +13469,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             folder_name: string,
             comptime log_level: Options.LogLevel,
-            node_modules_folder: std.fs.Dir,
+            node_modules_folder: *LazyPackageDestinationDir,
             package_id: PackageID,
             optional: bool,
             resolution: *const Resolution,

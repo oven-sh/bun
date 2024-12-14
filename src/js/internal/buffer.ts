@@ -1,3 +1,4 @@
+// XXX: should more of this file be c++ imports?
 const { validateNumber, validateInteger } = require("internal/validators");
 const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE, ERR_BUFFER_OUT_OF_BOUNDS } = require("internal/errors");
 const { isAnyArrayBuffer } = require("node:util/types");
@@ -14,7 +15,6 @@ function boundsError(value, length, type?) {
     validateNumber(value, type);
     throw ERR_OUT_OF_RANGE(type || "offset", "an integer", value);
   }
-
   if (length < 0) throw ERR_BUFFER_OUT_OF_BOUNDS();
   throw ERR_OUT_OF_RANGE(type || "offset", `>= ${type ? 1 : 0} and <= ${length}`, value);
 }
@@ -41,6 +41,12 @@ function checkInt(value, min, max, buf, offset, byteLength) {
     throw ERR_OUT_OF_RANGE("value", range, value);
   }
   checkBounds(buf, offset, byteLength);
+}
+
+function check_read(buf, offset, byteLength) {
+  validateInteger(offset, "offset");
+  const type = buf.length - byteLength;
+  if (!(offset >= 0 && offset <= type)) boundsError(offset, type);
 }
 
 function check_int8(buf, value, offset, min, max) {
@@ -103,7 +109,6 @@ function fromArrayLike(obj) {
     //   alignPool();
     //   return b;
   }
-  // return new FastBuffer(obj);
   return BufferFrom1(obj);
 }
 
@@ -115,6 +120,7 @@ export default {
   boundsError,
   checkBounds,
   checkInt,
+  check_read,
   check_int8,
   check_int16,
   check_int24,

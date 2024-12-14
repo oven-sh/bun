@@ -3,9 +3,9 @@ const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE, ERR_BUFFER_OUT_OF_BOUNDS } = req
 const { isAnyArrayBuffer } = require("node:util/types");
 
 const BufferFrom1 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_Array", 0);
-const BufferFrom2 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_ArraybufferByteoffsetLength", 0);
+const BufferFrom2 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_ArrayBuffer", 0);
 const BufferFrom4 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_Size", 0);
-const BufferFrom5 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_StringEncoding", 0);
+const BufferFrom5 = $newCppFunction("JSBuffer.cpp", "jsFunction_BufferFrom_String", 0);
 
 const ArrayIsArray = Array.isArray;
 

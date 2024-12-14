@@ -67,6 +67,6 @@ JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSOb
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Array, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArrayBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
 JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Size, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_StringEncoding, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_String, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame));

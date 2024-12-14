@@ -2388,7 +2388,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Array, (JSGlobalObject * lexicalG
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
 }
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArrayBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -2476,7 +2476,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Size, (JSGlobalObject * lexicalGl
     size_t length = lengthValue.toLength(lexicalGlobalObject);
     return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
 }
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_StringEncoding, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_String, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto stringValue = callFrame->argument(0);
     auto encodingValue = callFrame->argument(1);

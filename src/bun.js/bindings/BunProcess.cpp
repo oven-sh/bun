@@ -2904,6 +2904,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
+static int reallyReallyKill(int pid, int signal)
+{
+#if !OS(WINDOWS)
+    int result = kill(pid, signal);
+    if (result < 0)
+        return errno;
+    return 0;
+#else
+    return uv_kill(pid, signal);
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2920,15 +2932,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
     int signal = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if !OS(WINDOWS)
-    int result = kill(pid, signal);
-    if (result < 0)
-        result = errno;
-#else
-    int result = uv_kill(pid, signal);
-#endif
+    int result = reallyReallyKill(pid, signal);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
+}
+
+static JSValue Process_constructReallyKill(VM& vm, JSObject* processObject)
+{
+    auto* process = static_cast<Process*>(processObject);
+    process->m_isKillFunctionObservable = true;
+    return JSFunction::create(vm, processObject->globalObject(), 2, String("_kill"_s), Process_functionReallyKill, ImplementationVisibility::Public);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
@@ -2961,30 +2974,39 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
 
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
     auto& vm = global->vm();
-    JSValue _killFn = global->processObject()->get(globalObject, Identifier::fromString(vm, "_kill"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!_killFn.isCallable()) {
-        throwTypeError(globalObject, scope, "process._kill is not a function"_s);
-        return {};
+
+    int rc;
+
+    if (callFrame->thisValue() == global->processObject() && !jsCast<Process*>(callFrame->thisValue())->m_isKillFunctionObservable) {
+        rc = reallyReallyKill(pid, signal);
+    } else {
+        JSValue _killFn = global->processObject()->get(globalObject, Identifier::fromString(vm, "_kill"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!_killFn.isCallable()) {
+            throwTypeError(globalObject, scope, "process._kill is not a function"_s);
+            return {};
+        }
+
+        JSC::MarkedArgumentBuffer args;
+        args.append(jsNumber(pid));
+        args.append(jsNumber(signal));
+        JSC::CallData callData = JSC::getCallData(_killFn);
+
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* exception = returnedException.get()) {
+            scope.throwException(globalObject, exception->value());
+            returnedException.clear();
+            return {};
+        }
+        rc = result.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSC::MarkedArgumentBuffer args;
-    args.append(jsNumber(pid));
-    args.append(jsNumber(signal));
-    JSC::CallData callData = JSC::getCallData(_killFn);
-
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (auto* exception = returnedException.get()) {
-        scope.throwException(globalObject, exception->value());
-        returnedException.clear();
-        return {};
-    }
-    auto err = result.toInt32(globalObject);
-    if (err) {
-        throwSystemError(scope, globalObject, "kill"_s, err);
+    if (rc) {
+        throwSystemError(scope, globalObject, "kill"_s, rc);
         return {};
     }
 
@@ -3092,7 +3114,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
-  _kill                            Process_functionReallyKill                          Function 2
+  _kill                            Process_constructReallyKill                         PropertyCallback
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0
   geteuid                          Process_functiongeteuid                             Function 0

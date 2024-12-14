@@ -45,6 +45,7 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
+    bool m_isKillFunctionObservable = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

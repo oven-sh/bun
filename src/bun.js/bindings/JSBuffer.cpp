@@ -1316,7 +1316,9 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     size_t finalresult = 0;
+    if (thisLength == 1) return -1;
     thisLength = thisLength / 2 * 2;
+    if (valueLength == 1) return -1;
     valueLength = valueLength / 2 * 2;
     byteOffset = byteOffset / 2 * 2;
     while (true) {

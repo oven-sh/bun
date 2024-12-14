@@ -77,7 +77,7 @@
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
-extern bool Bun__Node__ZeroFillBuffers;
+extern "C" bool Bun__Node__ZeroFillBuffers;
 
 using namespace JSC;
 using namespace WebCore;

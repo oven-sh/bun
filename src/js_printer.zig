@@ -23,6 +23,8 @@ const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
+const analyze_transpiled_module = @import("analyze_transpiled_module.zig");
+const ModuleInfo = analyze_transpiled_module.ModuleInfo;
 
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
@@ -691,7 +693,6 @@ fn NewPrinter(
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         writer: Writer,
-        contains_import_meta: bool = false,
 
         has_printed_bundled_import_statement: bool = false,
         imported_module_ids: std.ArrayList(u32),
@@ -706,7 +707,29 @@ fn NewPrinter(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        module_info: if (!may_have_module_info) void else ?*ModuleInfo = if (!may_have_module_info) {} else null,
+
         const Printer = @This();
+
+        const may_have_module_info = is_bun_platform and !rewrite_esm_to_cjs;
+        const TopLevelAndIsExport = if (!may_have_module_info) struct {} else struct {
+            is_export: bool = false,
+            is_top_level: bool = false,
+        };
+        const TopLevel = if (!may_have_module_info) struct {
+            pub inline fn init(_: bool) @This() {
+                return .{};
+            }
+        } else struct {
+            is_top_level: bool = false,
+            pub inline fn init(is_top_level: bool) @This() {
+                return .{ .is_top_level = is_top_level };
+            }
+        };
+        inline fn moduleInfo(self: *const @This()) ?*ModuleInfo {
+            if (!may_have_module_info) return null;
+            return self.module_info;
+        }
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
         pub const Error = error{};
@@ -1004,7 +1027,7 @@ fn NewPrinter(
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
                 },
                 else => {
-                    p.contains_import_meta = true;
+                    if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
                 },
             }
@@ -1159,7 +1182,7 @@ fn NewPrinter(
                 else => {
                     p.printNewline();
                     p.indent();
-                    p.printStmt(stmt) catch unreachable;
+                    p.printStmt(stmt, .{}) catch bun.outOfMemory();
                     p.unindent();
                 },
             }
@@ -1168,7 +1191,7 @@ fn NewPrinter(
         pub fn printBlockBody(p: *Printer, stmts: []const Stmt) void {
             for (stmts) |stmt| {
                 p.printSemicolonIfNeeded();
-                p.printStmt(stmt) catch unreachable;
+                p.printStmt(stmt, .{}) catch bun.outOfMemory();
             }
         }
 
@@ -1204,7 +1227,7 @@ fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set, tlm: TopLevelAndIsExport) void {
             p.print(keyword);
             p.printSpace();
             var decls = decls_;
@@ -1312,7 +1335,7 @@ fn NewPrinter(
                             .is_single_line = true,
                         };
                         const binding = Binding.init(&b_object, target_e_dot.target.loc);
-                        p.printBinding(binding);
+                        p.printBinding(binding, tlm);
                     }
 
                     p.printWhitespacer(ws(" = "));
@@ -1328,7 +1351,7 @@ fn NewPrinter(
             }
 
             {
-                p.printBinding(decls[0].binding);
+                p.printBinding(decls[0].binding, tlm);
 
                 if (decls[0].value) |value| {
                     p.printWhitespacer(ws(" = "));
@@ -1340,7 +1363,7 @@ fn NewPrinter(
                 p.print(",");
                 p.printSpace();
 
-                p.printBinding(decl.binding);
+                p.printBinding(decl.binding, tlm);
 
                 if (decl.value) |value| {
                     p.printWhitespacer(ws(" = "));
@@ -1407,7 +1430,7 @@ fn NewPrinter(
                     p.print("...");
                 }
 
-                p.printBinding(arg.binding);
+                p.printBinding(arg.binding, .{});
 
                 if (arg.default) |default| {
                     p.printWhitespacer(ws(" = "));
@@ -1687,14 +1710,14 @@ fn NewPrinter(
                             if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
-                                p.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
                             if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
-                                p.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                                 p.print("globalThis.Bun.jest(import.meta.path)");
                             }
                         }
@@ -1841,7 +1864,7 @@ fn NewPrinter(
                 }
 
                 if (module_type == .esm and is_bun_platform) {
-                    p.contains_import_meta = true;
+                    if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                     p.print("import.meta.require");
                 } else if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
@@ -1920,27 +1943,14 @@ fn NewPrinter(
             p.print(quote);
         }
 
-        fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .import);
-        }
-
         fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: enum { @"export", @"var" }) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .import) {
-                if (strings.eql(name, item.alias)) {
-                    p.printIdentifier(name);
-                } else {
-                    p.printClauseAlias(item.alias);
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
-                    p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"var") {
+            if (comptime as == .@"var") {
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
@@ -2070,7 +2080,7 @@ fn NewPrinter(
                         p.print(".importMeta()");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2095,7 +2105,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.assert(p.options.module_type != .internal_bake_dev);
@@ -2285,7 +2295,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta.require.main");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2299,7 +2309,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta.require");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2312,7 +2322,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2342,7 +2352,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -3492,13 +3502,19 @@ fn NewPrinter(
             p.printExpr(initial, .comma, ExprFlag.None());
         }
 
-        pub fn printBinding(p: *Printer, binding: Binding) void {
+        pub fn printBinding(p: *Printer, binding: Binding, tlm: TopLevelAndIsExport) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |b| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(binding.loc);
-                    p.printSymbol(b.ref);
+                    const local_name = p.renamer.nameForSymbol(b.ref);
+                    p.printIdentifier(local_name);
+
+                    if (p.moduleInfo()) |mi| {
+                        if (tlm.is_top_level) mi.lexical_variables.append(mi.str(local_name) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        if (tlm.is_export) mi.exports.append(.{ .local = .{ .export_name = mi.str(local_name) catch bun.outOfMemory(), .local_name = mi.str(local_name) catch bun.outOfMemory() } }) catch bun.outOfMemory();
+                    }
                 },
                 .b_array => |b| {
                     p.print("[");
@@ -3525,7 +3541,7 @@ fn NewPrinter(
                                 p.print("...");
                             }
 
-                            p.printBinding(item.binding);
+                            p.printBinding(item.binding, tlm);
 
                             p.maybePrintDefaultBindingValue(item);
 
@@ -3572,7 +3588,7 @@ fn NewPrinter(
                                     p.print("]:");
                                     p.printSpace();
 
-                                    p.printBinding(property.value);
+                                    p.printBinding(property.value, tlm);
                                     p.maybePrintDefaultBindingValue(property);
                                     continue;
                                 }
@@ -3633,7 +3649,7 @@ fn NewPrinter(
                                 p.printSpace();
                             }
 
-                            p.printBinding(property.value);
+                            p.printBinding(property.value, tlm);
                             p.maybePrintDefaultBindingValue(property);
                         }
 
@@ -3659,7 +3675,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printStmt(p: *Printer, stmt: Stmt) !void {
+        pub fn printStmt(p: *Printer, stmt: Stmt, tlmtlo: TopLevel) !void {
             const prev_stmt_tag = p.prev_stmt_tag;
 
             defer {
@@ -3693,8 +3709,16 @@ fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(name.loc);
-                    p.printSymbol(nameRef);
+                    const local_name = p.renamer.nameForSymbol(nameRef);
+                    p.printIdentifier(local_name);
                     p.printFunc(s.func);
+
+                    if (p.moduleInfo()) |mi| {
+                        try mi.lexical_variables.append(try mi.str(local_name));
+                        if (s.func.flags.contains(.is_export)) {
+                            try mi.exports.append(.{ .local = .{ .export_name = try mi.str(local_name), .local_name = try mi.str(local_name) } });
+                        }
+                    }
 
                     // if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                     //     p.printSemicolonAfterStatement();
@@ -3786,20 +3810,26 @@ fn NewPrinter(
                                         p.maybePrintSpace();
                                     }
 
-                                    if (func.func.name) |name| {
-                                        p.printSymbol(name.ref.?);
-                                    }
+                                    const func_name: ?[]const u8 = if (func.func.name) |f| p.renamer.nameForSymbol(f.ref.?) else null;
+                                    if (func_name) |f| p.printIdentifier(f);
 
                                     p.printFunc(func.func);
 
                                     p.printNewline();
+
+                                    if (p.moduleInfo()) |mi| {
+                                        const local_name = if (func_name) |f| try mi.str(f) else try mi.starDefault();
+                                        try mi.exports.append(.{ .local = .{ .export_name = try mi.str("default"), .local_name = local_name } });
+                                        try mi.lexical_variables.append(local_name);
+                                    }
                                 },
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
 
-                                    if (class.class.class_name) |name| {
+                                    const class_name: ?[]const u8 = if (class.class.class_name) |f| p.renamer.nameForSymbol(f.ref.?) else null;
+                                    if (class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Output.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
+                                        p.printIdentifier(name);
                                     } else {
                                         p.print("class");
                                     }
@@ -3807,6 +3837,12 @@ fn NewPrinter(
                                     p.printClass(class.class);
 
                                     p.printNewline();
+
+                                    if (p.moduleInfo()) |mi| {
+                                        const local_name = if (class_name) |f| try mi.str(f) else try mi.starDefault();
+                                        try mi.exports.append(.{ .local = .{ .export_name = try mi.str("default"), .local_name = local_name } });
+                                        try mi.lexical_variables.append(local_name);
+                                    }
                                 },
                                 else => {
                                     Output.panic("Internal error: unexpected export default stmt data {any}", .{s});
@@ -4041,21 +4077,11 @@ fn NewPrinter(
                 },
                 .s_local => |s| {
                     switch (s.kind) {
-                        .k_const => {
-                            p.printDeclStmt(s.is_export, "const", s.decls.slice());
-                        },
-                        .k_let => {
-                            p.printDeclStmt(s.is_export, "let", s.decls.slice());
-                        },
-                        .k_var => {
-                            p.printDeclStmt(s.is_export, "var", s.decls.slice());
-                        },
-                        .k_using => {
-                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
-                        },
-                        .k_await_using => {
-                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
-                        },
+                        .k_const => p.printDeclStmt(s.is_export, "const", s.decls.slice(), tlmtlo),
+                        .k_let => p.printDeclStmt(s.is_export, "let", s.decls.slice(), tlmtlo),
+                        .k_var => p.printDeclStmt(s.is_export, "var", s.decls.slice(), tlmtlo),
+                        .k_using => p.printDeclStmt(s.is_export, "using", s.decls.slice(), tlmtlo),
+                        .k_await_using => p.printDeclStmt(s.is_export, "await using", s.decls.slice(), tlmtlo),
                     }
                 },
                 .s_if => |s| {
@@ -4075,7 +4101,7 @@ fn NewPrinter(
                         else => {
                             p.printNewline();
                             p.indent();
-                            p.printStmt(s.body) catch unreachable;
+                            p.printStmt(s.body, .{}) catch unreachable;
                             p.printSemicolonIfNeeded();
                             p.unindent();
                             p.printIndent();
@@ -4166,7 +4192,7 @@ fn NewPrinter(
                         if (catch_.binding) |binding| {
                             p.printSpace();
                             p.print("(");
-                            p.printBinding(binding);
+                            p.printBinding(binding, .{});
                             p.print(")");
                         }
                         p.printSpace();
@@ -4254,7 +4280,7 @@ fn NewPrinter(
                         p.indent();
                         for (c.body) |st| {
                             p.printSemicolonIfNeeded();
-                            p.printStmt(st) catch unreachable;
+                            p.printStmt(st, .{}) catch unreachable;
                         }
                         p.unindent();
                     }
@@ -4335,7 +4361,7 @@ fn NewPrinter(
                                 p.printSymbol(s.namespace_ref);
                                 p.@"print = "();
 
-                                p.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
                                 p.print("import.meta.require(");
                                 p.printImportRecordPath(record);
                                 p.print(")");
@@ -4430,10 +4456,23 @@ fn NewPrinter(
 
                     var item_count: usize = 0;
 
+                    const import_record_path = try p.fmtImportRecordPath(record);
+
                     if (s.default_name) |name| {
                         p.print(" ");
-                        p.printSymbol(name.ref.?);
+                        const local_name = p.renamer.nameForSymbol(name.ref.?);
+                        p.printIdentifier(local_name);
                         item_count += 1;
+
+                        if (p.moduleInfo()) |mi| {
+                            try mi.lexical_variables.append(try mi.str(local_name));
+                            try mi.imports.append(.{
+                                .kind = .single,
+                                .module_name = try mi.str(import_record_path),
+                                .import_name = try mi.str("default"),
+                                .local_name = try mi.str(local_name),
+                            });
+                        }
                     }
 
                     if (s.items.len > 0) {
@@ -4462,7 +4501,25 @@ fn NewPrinter(
                                 p.printIndent();
                             }
 
-                            p.printClauseItem(item);
+                            const local_name = p.renamer.nameForSymbol(item.name.ref.?);
+                            if (strings.eql(local_name, item.alias)) {
+                                p.printIdentifier(local_name);
+                            } else {
+                                p.printClauseAlias(item.alias);
+                                p.print(" as ");
+                                p.addSourceMapping(item.alias_loc);
+                                p.printIdentifier(local_name);
+                            }
+
+                            if (p.moduleInfo()) |mi| {
+                                try mi.lexical_variables.append(try mi.str(local_name));
+                                try mi.imports.append(.{
+                                    .kind = .single,
+                                    .module_name = try mi.str(import_record_path),
+                                    .import_name = try mi.str(item.alias),
+                                    .local_name = try mi.str(local_name),
+                                });
+                            }
                         }
 
                         if (!s.is_single_line) {
@@ -4482,10 +4539,22 @@ fn NewPrinter(
                         }
                         p.printSpace();
 
+                        const local_name = p.renamer.nameForSymbol(s.namespace_ref);
+
                         p.printWhitespacer(ws("* as"));
                         p.print(" ");
-                        p.printSymbol(s.namespace_ref);
+                        p.printIdentifier(local_name);
                         item_count += 1;
+
+                        if (p.moduleInfo()) |mi| {
+                            try mi.lexical_variables.append(try mi.str(local_name));
+                            try mi.imports.append(.{
+                                .kind = .namespace,
+                                .module_name = try mi.str(import_record_path),
+                                .import_name = try mi.str("*"),
+                                .local_name = try mi.str(local_name),
+                            });
+                        }
                     }
 
                     if (item_count > 0) {
@@ -4497,38 +4566,51 @@ fn NewPrinter(
                         p.printWhitespacer(ws("from "));
                     }
 
-                    p.printImportRecordPath(record);
+                    p.printStringLiteralUTF8(import_record_path, false);
 
+                    var fetch_parameters: ModuleInfo.FetchParameters = if (p.moduleInfo() != null) .none else undefined;
                     switch (record.tag) {
                         .with_type_sqlite, .with_type_sqlite_embedded => {
                             // we do not preserve "embed": "true" since it is not necessary
                             p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                            if (p.moduleInfo()) |mi| fetch_parameters = .{ .host_defined = try mi.str("sqlite") };
                         },
                         .with_type_text => {
                             if (comptime is_bun_platform) {
                                 p.printWhitespacer(ws(" with { type: \"text\" }"));
+                                if (p.moduleInfo()) |mi| fetch_parameters = .{ .host_defined = try mi.str("text") };
                             }
                         },
                         .with_type_json => {
                             // backwards compatibility: previously, we always stripped type json
                             if (comptime is_bun_platform) {
                                 p.printWhitespacer(ws(" with { type: \"json\" }"));
+                                if (p.moduleInfo() != null) fetch_parameters = .json;
                             }
                         },
                         .with_type_toml => {
                             // backwards compatibility: previously, we always stripped type
                             if (comptime is_bun_platform) {
                                 p.printWhitespacer(ws(" with { type: \"toml\" }"));
+                                if (p.moduleInfo()) |mi| fetch_parameters = .{ .host_defined = try mi.str("toml") };
                             }
                         },
                         .with_type_file => {
                             // backwards compatibility: previously, we always stripped type
                             if (comptime is_bun_platform) {
                                 p.printWhitespacer(ws(" with { type: \"file\" }"));
+                                if (p.moduleInfo()) |mi| fetch_parameters = .{ .host_defined = try mi.str("file") };
                             }
                         },
                         else => {},
                     }
+
+                    if (p.moduleInfo()) |mi| {
+                        // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+                        const gpres = try mi.requested_modules.getOrPut(try mi.str(import_record_path));
+                        if (!gpres.found_existing) gpres.value_ptr.* = fetch_parameters;
+                    }
+
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4612,22 +4694,16 @@ fn NewPrinter(
             p.print("module.exports");
         }
 
-        pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
-            if (comptime is_json)
-                unreachable;
+        pub fn fmtImportRecordPath(p: *Printer, import_record: *const ImportRecord) ![]const u8 {
+            if (comptime is_json) unreachable;
 
-            const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
-                p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.namespace, quote);
-                p.print(":");
-                p.printStringCharactersUTF8(import_record.path.text, quote);
-                p.print(quote);
-            } else {
-                p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.text, quote);
-                p.print(quote);
+                return try std.fmt.allocPrint(p.options.allocator, "{s}:{s}", .{ import_record.path.namespace, import_record.path.text });
             }
+            return import_record.path.text;
+        }
+        pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
+            p.printStringLiteralUTF8(p.fmtImportRecordPath(import_record) catch bun.outOfMemory(), false);
         }
 
         pub fn printBundledImport(p: *Printer, record: ImportRecord, s: *S.Import) void {
@@ -4803,21 +4879,11 @@ fn NewPrinter(
                 },
                 .s_local => |s| {
                     switch (s.kind) {
-                        .k_var => {
-                            p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_let => {
-                            p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_const => {
-                            p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_using => {
-                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_await_using => {
-                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
+                        .k_var => p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_let => p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_const => p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_using => p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_await_using => p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
                     }
                 },
                 // for(;)
@@ -4853,7 +4919,7 @@ fn NewPrinter(
                         p.printNewline();
 
                         p.indent();
-                        p.printStmt(s.yes) catch unreachable;
+                        p.printStmt(s.yes, .{}) catch bun.outOfMemory();
                         p.unindent();
                         p.needs_semicolon = false;
 
@@ -4868,7 +4934,7 @@ fn NewPrinter(
                     } else {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(s.yes) catch unreachable;
+                        p.printStmt(s.yes, .{}) catch bun.outOfMemory();
                         p.unindent();
 
                         if (s.no != null) {
@@ -4895,7 +4961,7 @@ fn NewPrinter(
                     else => {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(no_block) catch unreachable;
+                        p.printStmt(no_block, .{}) catch bun.outOfMemory();
                         p.unindent();
                     },
                 }
@@ -4976,14 +5042,14 @@ fn NewPrinter(
             }
         }
 
-        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
+        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl, tlmtlo: TopLevel) void {
             p.printIndent();
             p.printSpaceBeforeIdentifier();
 
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
-            p.printDecls(keyword, decls, ExprFlag.None());
+            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info and tlmtlo.is_top_level) .{ .is_export = is_export and !rewrite_esm_to_cjs, .is_top_level = true } else .{});
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
                 for (decls) |decl| {
@@ -5028,7 +5094,7 @@ fn NewPrinter(
                             p.print("}");
                         },
                         else => {
-                            p.printBinding(decl.binding);
+                            p.printBinding(decl.binding, .{});
                         },
                     }
                     p.print(")");
@@ -5809,6 +5875,10 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
+    var mi = ModuleInfo.init(opts.allocator);
+    defer mi.deinit();
+    if (PrinterType.may_have_module_info) printer.module_info = &mi;
+
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5817,7 +5887,7 @@ pub fn printAst(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5827,7 +5897,7 @@ pub fn printAst(
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5854,11 +5924,11 @@ pub fn printAst(
         }
     }
 
-    var mod = try @import("analyze_transpiled_module.zig").analyzeTranspiledModule(&printer, tree, opts.allocator, printer.contains_import_meta);
-    defer mod.deinit();
-    printer.print("\n// <jsc-module-info>\n// ");
-    try mod.jsonStringify(printer.writer.stdWriter());
-    printer.print("\n// </jsc-module-info>\n");
+    if (PrinterType.may_have_module_info) {
+        printer.print("\n// <jsc-module-info>\n// ");
+        try mi.jsonStringify(printer.writer.stdWriter());
+        printer.print("\n// </jsc-module-info>\n");
+    }
 
     try printer.writer.done();
 
@@ -6046,7 +6116,7 @@ pub fn printWithWriterAndPlatform(
 
         for (parts) |part| {
             for (part.stmts) |stmt| {
-                printer.printStmt(stmt) catch |err| {
+                printer.printStmt(stmt, PrinterType.TopLevel.init(true)) catch |err| {
                     return .{ .err = err };
                 };
                 if (printer.writer.getError()) {} else |err| {
@@ -6109,7 +6179,7 @@ pub fn printCommonJS(
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6118,7 +6188,7 @@ pub fn printCommonJS(
     }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }

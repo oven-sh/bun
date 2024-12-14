@@ -32,7 +32,9 @@
 // ref: JSModuleRecord.cpp
 // ref: NodesAnalyzeModule.cpp, search ::analyzeModule
 
+// TODO: #include "JavaScriptCore/parser/ModuleAnalyzer.h"
 #include "JavaScriptCore/ErrorType.h"
+#include "JavaScriptCore/Nodes.h"
 
 namespace JSC {
 
@@ -66,128 +68,7 @@ private:
     std::tuple<ErrorType, String> m_errorMessage;
 };
 
-} // namespace JSC
-
-namespace JSC {
-
-ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, CodeFeatures features)
-    : m_vm(globalObject->vm())
-    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, features))
-{
 }
-
-void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes)
-{
-    auto result = m_requestedModules.add(specifier.impl());
-    if (result.isNewEntry)
-        moduleRecord()->appendRequestedModule(specifier, WTFMove(attributes));
-}
-
-void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)
-{
-    // In the parser, we already marked the variables as Exported and Imported.
-    // By leveraging this information, we collect the information that is needed
-    // to construct the module environment.
-    //
-    // I E
-    //   * = exported module local variable
-    // *   = imported binding
-    //     = non-exported module local variable
-    // * * = indirect exported binding
-    //
-    // One exception is namespace binding (like import * as ns from "mod").
-    // This is annotated as an imported, but the actual binding is locate in the
-    // current module.
-
-    if (!variable.isExported())
-        return;
-
-    // Exported module local variable.
-    if (!variable.isImported()) {
-        for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-            moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromUid(m_vm, exportName.get()), Identifier::fromUid(m_vm, localName.get())));
-        return;
-    }
-
-    if (variable.isImportedNamespace()) {
-        // Exported namespace binding.
-        // import * as namespace from "mod"
-        // export { namespace }
-        //
-        // Sec 15.2.1.16.1 step 11-a-ii-2-b https://tc39.github.io/ecma262/#sec-parsemodule
-        // Namespace export is handled as local export since a namespace object binding itself is implemented as a local binding.
-        for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-            moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromUid(m_vm, exportName.get()), Identifier::fromUid(m_vm, localName.get())));
-        return;
-    }
-
-    // Indirectly exported binding.
-    // import a from "mod"
-    // export { a }
-    std::optional<JSModuleRecord::ImportEntry> optionalImportEntry = moduleRecord()->tryGetImportEntry(localName.get());
-    ASSERT(optionalImportEntry);
-    const JSModuleRecord::ImportEntry& importEntry = *optionalImportEntry;
-    for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-        moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromUid(m_vm, exportName.get()), importEntry.importName, importEntry.moduleRequest));
-}
-
-Expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze(ModuleProgramNode& moduleProgramNode)
-{
-    // Traverse the module AST and collect
-    // * Import entries
-    // * Export entries that have FromClause (e.g. export { a } from "mod")
-    // * Export entries that have star (e.g. export * from "mod")
-    // * Aliased export names (e.g. export { a as b })
-    if (!moduleProgramNode.analyzeModule(*this))
-        return makeUnexpected(WTFMove(m_errorMessage));
-
-    // Based on the collected information, categorize export entries into 3 types.
-    // 1. Local export entries
-    //     This references the local variable in the current module.
-    //     This variable should be allocated in the current module environment as a heap variable.
-    //
-    //     const variable = 20
-    //     export { variable }
-    //
-    // 2. Namespace export entries
-    //     This references the namespace object imported by some import entries.
-    //     This variable itself should be allocated in the current module environment as a heap variable.
-    //     But when the other modules attempt to resolve this export name in this module, this module
-    //     should tell the link to the original module.
-    //
-    //     import * as namespace from "mod"
-    //     export { namespace as mod }
-    //
-    // 3. Indirect export entries
-    //     This references the imported binding name from the other module.
-    //     This module environment itself should hold the pointer to (1) the original module and
-    //     (2) the binding in the original module. The variable itself is allocated in the original
-    //     module. This indirect binding is resolved when the CodeBlock resolves the references.
-    //
-    //     import mod from "mod"
-    //     export { mod }
-    //
-    //     export { a } from "mod"
-    //
-    // And separeted from the above 3 types, we also collect the star export entries.
-    //
-    // 4. Star export entries
-    //     This exports all the names from the specified external module as the current module's name.
-    //
-    //     export * from "mod"
-    for (const auto& pair : m_moduleRecord->declaredVariables())
-        exportVariable(moduleProgramNode, pair.key, pair.value);
-
-    for (const auto& pair : m_moduleRecord->lexicalVariables())
-        exportVariable(moduleProgramNode, pair.key, pair.value);
-
-    if (UNLIKELY(Options::dumpModuleRecord()))
-        m_moduleRecord->dump();
-
-    return m_moduleRecord;
-}
-
-} // namespace JSC
 
 namespace JSC {
 
@@ -198,7 +79,7 @@ extern "C" void zig_log_cstr(const char* m1, const char* m2);
 extern "C" void zig_log_ushort(const char* m1, unsigned short value);
 
 struct ModuleInfo;
-extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len);
+extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len, int* failure_reason);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
 {
@@ -211,6 +92,10 @@ extern "C" void JSC__IdentifierArray__destroy(Identifier* identifier)
 extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, size_t n, VM& vm, char* str, size_t len)
 {
     identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
+}
+extern "C" void JSC__IdentifierArray__setFromStarDefault(Identifier* identifierArray, size_t n, VM& vm)
+{
+    identifierArray[n] = vm.propertyNames->starDefaultPrivateName;
 }
 
 extern "C" void JSC__VariableEnvironment__add(VariableEnvironment& environment, Identifier* identifierArray, uint32_t index)
@@ -248,7 +133,52 @@ extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, 
 {
     moduleRecord->addStarExportEntry(identifierArray[moduleName]);
 }
+extern "C" void JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+{
+    RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {};
+    moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
+}
+extern "C" void JSC_JSModuleRecord__addRequestedModuleJavaScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+{
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JavaScript);
+    moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
+}
+extern "C" void JSC_JSModuleRecord__addRequestedModuleWebAssembly(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+{
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::WebAssembly);
+    moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
+}
+extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+{
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JSON);
+    moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
+}
+extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, const char* hostDefinedImportType)
+{
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(makeString(ASCIILiteral::fromLiteralUnsafe(hostDefinedImportType)));
+    moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
+}
 
+extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+{
+    moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+        .type = JSModuleRecord::ImportEntryType::Single,
+        .moduleRequest = identifierArray[moduleName],
+        .importName = identifierArray[importName],
+        .localName = identifierArray[localName],
+    });
+}
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+{
+    moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+        .type = JSModuleRecord::ImportEntryType::Namespace,
+        .moduleRequest = identifierArray[moduleName],
+        .importName = identifierArray[importName],
+        .localName = identifierArray[localName],
+    });
+}
+
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
 {
     VM& vm = globalObject->vm();
@@ -259,152 +189,51 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         return promise;
     };
 
-    zig_log_cstr("  ---code---\n\n", sourceCode.toUTF8().data());
+    zig_log_cstr("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  ---code---\n\n", sourceCode.toUTF8().data());
     zig_log_cstr("  ------", "");
     zig_log_cstr("  BunAnalyzeTranspiledModule:", "");
 
     auto sourceCodeStdString = sourceCode.toUTF8().toStdString();
 
-    if (sourceCodeStdString.starts_with("globalThis[\"a.ts\"];")) {
-        zig_log_cstr("  -> Faking Module 'a.ts'", "");
-        // Dependencies: 1 modules
-        //   module('./q'),attributes(0x0)
-        // Import: 2 entries
-        //   import('*'), local('q_mod'), module('./q')
-        //   import('q'), local('q'), module('./q')
-        // Export: 3 entries
-        //   [Indirect] export('w'), import('q'), module('./q')
-        //   [Local] export('q_mod'), local('q_mod')
-        //   [Local] export('my_value'), local('my_value')
-        //   [Star] module('./q')
+    VariableEnvironment declaredVariables = VariableEnvironment();
+    VariableEnvironment lexicalVariables = VariableEnvironment();
 
-        VariableEnvironment declaredVariables = VariableEnvironment();
-        VariableEnvironment lexicalVariables = VariableEnvironment();
-
-        lexicalVariables.add(Identifier::fromLatin1(vm, "q_mod"));
-        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
-        lexicalVariables.add(Identifier::fromLatin1(vm, "my_value"));
-
-        // for features, we need ImportMetaFeature if import.meta is used in the file
-        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, 0);
-
-        // make sure to only add each once
-
-        RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {}; // for import attributes from 'with' or 'assert'
-        moduleRecord->appendRequestedModule(Identifier::fromLatin1(vm, "./q"), WTFMove(attributes));
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Namespace,
-            Identifier::fromLatin1(vm, "./q"),
-            Identifier::fromLatin1(vm, "*"),
-            Identifier::fromLatin1(vm, "q_mod"),
-        });
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Single,
-            Identifier::fromLatin1(vm, "./q"),
-            Identifier::fromLatin1(vm, "q"),
-            Identifier::fromLatin1(vm, "q"),
-        });
-
-        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromLatin1(vm, "w"), Identifier::fromLatin1(vm, "q"), Identifier::fromLatin1(vm, "./q")));
-        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "q_mod"), Identifier::fromLatin1(vm, "q_mod")));
-        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "my_value"), Identifier::fromLatin1(vm, "my_value")));
-        moduleRecord->addStarExportEntry(Identifier::fromLatin1(vm, "./q"));
-
-        dumpRecordInfo(moduleRecord);
-
-        scope.release();
-        promise->fulfillWithNonPromise(globalObject, moduleRecord);
-        return JSValue::encode(promise);
-    } else if (sourceCodeStdString.starts_with("globalThis[\"q.ts\"];")) {
-        zig_log_cstr("  -> Importing Module 'q.ts'", "");
-
-        VariableEnvironment declaredVariables = VariableEnvironment();
-        VariableEnvironment lexicalVariables = VariableEnvironment();
-
-        auto moduleRecord = zig__ModuleInfo__parseFromSourceCode(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, sourceCodeStdString.data(), sourceCodeStdString.size());
-        if (moduleRecord == nullptr) {
+    int failure_reason = -1;
+    auto moduleRecord = zig__ModuleInfo__parseFromSourceCode(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, sourceCodeStdString.data(), sourceCodeStdString.size(), &failure_reason);
+    if (moduleRecord == nullptr) {
+        if (failure_reason == 1) {
+            // module does not have a <jsc-module-info> block. fall back to double-parse.
+            return fallbackParse(globalObject, moduleKey, sourceCode, promise);
+        } else if (failure_reason == 2) {
+            //
+            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
+        } else {
+            // :/
             RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
         }
+    }
 
-        dumpRecordInfo(moduleRecord);
+    bool compare = true;
+    zig_log_cstr("\n\n  \x1b[91m<Actual Record Info>\x1b(B\x1b[m\n  ------", "");
+    dumpRecordInfo(moduleRecord);
+    zig_log_cstr("\n  \x1b[91m</Actual Record Info>\x1b(B\x1b[m", "");
 
-        scope.release();
-        promise->fulfillWithNonPromise(globalObject, moduleRecord);
-        return JSValue::encode(promise);
-    } else if (sourceCodeStdString.find("globalThis[\"b.ts\"];") != std::string::npos) {
-        zig_log_cstr("  -> Faking Module 'b.ts'", "");
-
-        // error:   BunAnalyzeTranspiledModule:
-        // error:   -> Parse Success.
-        // error:   varDeclarations:
-        // error:   - expect
-        // error:   - test
-        // error:   lexicalVariables:
-        // error:   - w
-        // error:   - q_mod
-        // error:   - q
-        // error:   - my_value
-        // error:   features: 4096
-
-        // Analyzing ModuleRecord key('/Users/pfg/Dev/Node/temp/generated/c5b80dd5337b6903cc6ff8e4172c55f2/tmp/b.test.ts')
-        //     Dependencies: 1 modules
-        //       module('./a.ts'),attributes(0x0)
-        //     Import: 4 entries
-        //       import('w'), local('w'), module('./a.ts')
-        //       import('q_mod'), local('q_mod'), module('./a.ts')
-        //       import('q'), local('q'), module('./a.ts')
-        //       import('my_value'), local('my_value'), module('./a.ts')
-        //     Export: 0 entries
-
-        VariableEnvironment declaredVariables = VariableEnvironment();
-        VariableEnvironment lexicalVariables = VariableEnvironment();
-
-        declaredVariables.add(Identifier::fromLatin1(vm, "expect"));
-        declaredVariables.add(Identifier::fromLatin1(vm, "test"));
-
-        lexicalVariables.add(Identifier::fromLatin1(vm, "w"));
-        lexicalVariables.add(Identifier::fromLatin1(vm, "q_mod"));
-        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
-        lexicalVariables.add(Identifier::fromLatin1(vm, "my_value"));
-
-        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, ImportMetaFeature);
-
-        RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {}; // for import attributes from 'with' or 'assert'
-        moduleRecord->appendRequestedModule(Identifier::fromLatin1(vm, "./a.ts"), WTFMove(attributes));
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Single,
-            Identifier::fromLatin1(vm, "./a.ts"),
-            Identifier::fromLatin1(vm, "w"),
-            Identifier::fromLatin1(vm, "w"),
-        });
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Single,
-            Identifier::fromLatin1(vm, "./a.ts"),
-            Identifier::fromLatin1(vm, "q_mod"),
-            Identifier::fromLatin1(vm, "q_mod"),
-        });
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Single,
-            Identifier::fromLatin1(vm, "./a.ts"),
-            Identifier::fromLatin1(vm, "q"),
-            Identifier::fromLatin1(vm, "q"),
-        });
-        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
-            JSModuleRecord::ImportEntryType::Single,
-            Identifier::fromLatin1(vm, "./a.ts"),
-            Identifier::fromLatin1(vm, "my_value"),
-            Identifier::fromLatin1(vm, "my_value"),
-        });
-
-        dumpRecordInfo(moduleRecord);
-
-        scope.release();
+    scope.release();
+    if (compare) {
+        return fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord);
+    } else {
         promise->fulfillWithNonPromise(globalObject, moduleRecord);
         return JSValue::encode(promise);
     }
-
-    // TODO:
-    // always run this, use it to assert our generated record info is the same as jsc's generated record info in debug builds
+}
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto rejectWithError = [&](JSValue error) {
+        promise->reject(globalObject, error);
+        return promise;
+    };
 
     ParserError error;
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
@@ -420,16 +249,16 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     auto result = ModuleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
         auto [errorType, message] = WTFMove(result.error());
-        zig_log_cstr("    -> Parse Error:", message.ascii().data());
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, errorType, message))));
     }
-    zig_log_cstr("  -> Parse Success.", "");
 
     JSModuleRecord* moduleRecord = result.value();
+    zig_log_cstr("\n\n  \x1b[92m<Expected Record Info>\x1b(B\x1b[m\n  ------", "");
     dumpRecordInfo(moduleRecord);
+    zig_log_cstr("\n  \x1b[92m</Expected Record Info>\x1b(B\x1b[m", "");
 
     scope.release();
-    promise->fulfillWithNonPromise(globalObject, moduleRecord);
+    promise->fulfillWithNonPromise(globalObject, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 

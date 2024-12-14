@@ -21,25 +21,33 @@ export fn zig_log_ushort(m1: [*:0]const u8, value: c_ushort) void {
 //     @panic("TODO analyzeTranspiledModule");
 // }
 
-const ModuleInfo = struct {
+pub const ModuleInfo = struct {
     /// all strings in wtf-8. index in hashmap = StringID
     strings: bun.StringArrayHashMap(void),
-    requested_modules: std.AutoArrayHashMap(StringID, void),
+    requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     imports: std.ArrayList(ImportInfo),
     exports: std.ArrayList(ExportInfo),
     declared_variables: std.ArrayList(StringID),
     lexical_variables: std.ArrayList(StringID),
-    uses_import_meta: bool,
+    contains_import_meta: bool,
+
+    pub const FetchParameters = union(enum) {
+        none,
+        javascript,
+        webassembly,
+        json,
+        host_defined: StringID,
+    };
 
     pub fn init(allocator: std.mem.Allocator) ModuleInfo {
         return .{
             .strings = bun.StringArrayHashMap(void).init(allocator),
-            .requested_modules = std.AutoArrayHashMap(StringID, void).init(allocator),
+            .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .imports = std.ArrayList(ImportInfo).init(allocator),
             .exports = std.ArrayList(ExportInfo).init(allocator),
             .declared_variables = std.ArrayList(StringID).init(allocator),
             .lexical_variables = std.ArrayList(StringID).init(allocator),
-            .uses_import_meta = false,
+            .contains_import_meta = false,
         };
     }
     pub fn deinit(self: *ModuleInfo) void {
@@ -58,6 +66,9 @@ const ModuleInfo = struct {
         gpres.value_ptr.* = {};
         return @enumFromInt(@as(u32, @intCast(gpres.index)));
     }
+    pub fn starDefault(self: *ModuleInfo) !StringID {
+        return try self.str("*default*");
+    }
 
     const JsonStringifyableModuleInfo = struct {
         strings: []const struct {
@@ -75,23 +86,25 @@ const ModuleInfo = struct {
                 return .{ .value = token.allocated_string };
             }
         },
-        requested_modules: []const StringID,
+        requested_modules_keys: []const StringID,
+        requested_modules_values: []const FetchParameters,
         imports: []const ImportInfo,
         exports: []const ExportInfo,
         declared_variables: []const StringID,
         lexical_variables: []const StringID,
-        uses_import_meta: bool,
+        contains_import_meta: bool,
     };
 
     pub fn jsonStringify(self: *ModuleInfo, writer: anytype) !void {
         try std.json.stringify(JsonStringifyableModuleInfo{
             .strings = @ptrCast(self.strings.keys()),
-            .requested_modules = self.requested_modules.keys(),
+            .requested_modules_keys = self.requested_modules.keys(),
+            .requested_modules_values = self.requested_modules.values(),
             .imports = self.imports.items,
             .exports = self.exports.items,
             .declared_variables = self.declared_variables.items,
             .lexical_variables = self.lexical_variables.items,
-            .uses_import_meta = self.uses_import_meta,
+            .contains_import_meta = self.contains_import_meta,
         }, .{}, writer);
     }
     pub fn jsonParse(allocator: std.mem.Allocator, source: []const u8) !ModuleInfo {
@@ -99,16 +112,16 @@ const ModuleInfo = struct {
         defer parsed.deinit();
         var result = init(allocator);
         for (parsed.value.strings) |string| if (try result.strings.fetchPut(try allocator.dupe(u8, string.value), {}) != null) return error.ParseError;
-        for (parsed.value.requested_modules) |reqm| if (try result.requested_modules.fetchPut(reqm, {}) != null) return error.ParseError;
+        for (parsed.value.requested_modules_keys, parsed.value.requested_modules_values) |reqk, reqv| if (try result.requested_modules.fetchPut(reqk, reqv) != null) return error.ParseError;
         try result.imports.appendSlice(parsed.value.imports);
         try result.exports.appendSlice(parsed.value.exports);
         try result.declared_variables.appendSlice(parsed.value.declared_variables);
         try result.lexical_variables.appendSlice(parsed.value.lexical_variables);
-        result.uses_import_meta = parsed.value.uses_import_meta;
+        result.contains_import_meta = parsed.value.contains_import_meta;
         return result;
     }
 };
-const StringID = enum(u32) {
+pub const StringID = enum(u32) {
     _,
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
         try jw.write(@intFromEnum(self));
@@ -160,58 +173,10 @@ const ExportInfo = union(enum) {
     },
 };
 
-pub fn analyzeTranspiledModule(p: anytype, tree: Ast, allocator: std.mem.Allocator, contains_import_meta: bool) !ModuleInfo {
-    var res: ModuleInfo = ModuleInfo.init(allocator);
-    errdefer res.deinit();
-
-    // DeclaredVariables is important and used in JSModuleRecord::instantiateDeclarations
-    // so we need to make sure to add `function a()` in DeclaredVariables and also `var a`
-
-    std.log.err("\n\n\n\n\n\n       \x1b[95mPrinting AST:\x1b(B\x1b[m", .{});
-    std.log.err("  AST:", .{});
-    const writer = std.io.getStdErr().writer();
-    for (tree.parts.slice()) |part| {
-        for (part.stmts) |stmt| {
-            try stmt.print(tree, writer.any());
-            try writer.print(",\n", .{});
-            switch (stmt.data) {
-                .s_import => |_| {},
-                .s_local => |slocal| {
-                    for (slocal.decls.slice()) |decl| {
-                        switch (decl.binding.data) {
-                            .b_identifier => |v| {
-                                const name = p.renamer.nameForSymbol(v.ref);
-                                switch (slocal.kind) {
-                                    .k_var => try res.declared_variables.append(try res.str(name)),
-                                    else => try res.lexical_variables.append(try res.str(name)),
-                                }
-                                if (slocal.is_export) {
-                                    try res.exports.append(.{ .local = .{ .export_name = try res.str(name), .local_name = try res.str(name) } });
-                                }
-                            },
-                            else => {
-                                @panic("TODO support exported non-identifier binding");
-                            },
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-    std.log.err("  Uses import.meta: {}", .{contains_import_meta});
-    // - varDeclarations:
-    //
-    // - lexicalVariables:
-    //
-
-    // if(comptime true) {
-    //     tree
-    // }
-
-    return res;
+fn fail(result: *c_int, code: c_int) ?*JSModuleRecord {
+    result.* = code;
+    return null;
 }
-
 export fn zig__ModuleInfo__parseFromSourceCode(
     globalObject: *bun.JSC.JSGlobalObject,
     vm: *bun.JSC.VM,
@@ -221,37 +186,62 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     lexical_variables: *VariableEnvironment,
     source_ptr: [*]const u8,
     source_len: usize,
+    failure_reason: *c_int,
 ) ?*JSModuleRecord {
     const stderr = std.io.getStdErr().writer();
 
     const source = source_ptr[0..source_len];
-    const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return null;
-    const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return null;
-    const l1 = std.mem.lastIndexOfScalar(u8, source[0..l2], '\n') orelse return null;
-    const l0 = std.mem.lastIndexOfScalar(u8, source[0..l1], '\n') orelse return null;
+    const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return fail(failure_reason, 1);
+    const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return fail(failure_reason, 1);
+    const l1 = std.mem.lastIndexOfScalar(u8, source[0..l2], '\n') orelse return fail(failure_reason, 1);
+    const l0 = std.mem.lastIndexOfScalar(u8, source[0..l1], '\n') orelse return fail(failure_reason, 1);
 
-    if (l3 + 1 != source.len) return null;
+    if (l3 + 1 != source.len) return fail(failure_reason, 1);
 
-    if (!std.mem.eql(u8, source[l0..l1], "\n// <jsc-module-info>")) return null;
-    if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return null;
-    if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return null;
+    if (!std.mem.eql(u8, source[l0..l1], "\n// <jsc-module-info>")) return fail(failure_reason, 1);
+    if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return fail(failure_reason, 1);
+    if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return fail(failure_reason, 1);
     const json_part = source[l1 + "\n// ".len .. l2];
-    var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return null;
+    var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return fail(failure_reason, 2);
     defer res.deinit();
 
     res.jsonStringify(stderr) catch {};
+    stderr.print("\n", .{}) catch {};
 
     var identifiers = IdentifierArray.create(res.strings.keys().len);
     defer identifiers.destroy();
-    for (res.strings.keys(), 0..) |key, i| identifiers.setFromUtf8(i, vm, key);
+    for (res.strings.keys(), 0..) |key, i| {
+        if (bun.strings.eqlComptime(key, "*default*")) {
+            identifiers.setFromStarDefault(i, vm);
+        } else {
+            identifiers.setFromUtf8(i, vm, key);
+        }
+    }
 
     for (res.declared_variables.items) |id| declared_variables.add(identifiers, id);
     for (res.lexical_variables.items) |id| lexical_variables.add(identifiers, id);
 
-    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.uses_import_meta);
+    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.contains_import_meta);
 
-    for (res.requested_modules.keys()) |_| @panic("TODO requested_modules");
-    for (res.imports.items) |_| @panic("TODO imports");
+    for (res.requested_modules.keys(), res.requested_modules.values()) |reqk, reqv| {
+        switch (reqv) {
+            .none => module_record.addRequestedModuleNullAttributesPtr(identifiers, reqk),
+            .javascript => module_record.addRequestedModuleJavaScript(identifiers, reqk),
+            .webassembly => module_record.addRequestedModuleWebAssembly(identifiers, reqk),
+            .json => module_record.addRequestedModuleJSON(identifiers, reqk),
+            .host_defined => |v| {
+                const tmp_str = std.heap.c_allocator.dupeZ(u8, res.strings.keys()[@intFromEnum(v)]) catch return fail(failure_reason, 2);
+                defer std.heap.c_allocator.free(tmp_str);
+                if (std.mem.indexOfScalar(u8, tmp_str, 0) != null) return fail(failure_reason, 2);
+                if (!bun.strings.isAllASCII(tmp_str)) return fail(failure_reason, 2);
+                module_record.addRequestedModuleHostDefined(identifiers, reqk, tmp_str.ptr);
+            },
+        }
+    }
+    for (res.imports.items) |import_info| switch (import_info.kind) {
+        .single => module_record.addImportEntrySingle(identifiers, import_info.import_name, import_info.local_name, import_info.module_name),
+        .namespace => module_record.addImportEntryNamespace(identifiers, import_info.import_name, import_info.local_name, import_info.module_name),
+    };
     for (res.exports.items) |export_info| switch (export_info) {
         .indirect => module_record.addIndirectExport(identifiers, export_info.indirect.export_name, export_info.indirect.import_name, export_info.indirect.module_name),
         .local => module_record.addLocalExport(identifiers, export_info.local.export_name, export_info.local.local_name),
@@ -281,6 +271,9 @@ const IdentifierArray = opaque {
     pub fn setFromUtf8(self: *IdentifierArray, n: usize, vm: *bun.JSC.VM, str: []const u8) void {
         JSC__IdentifierArray__setFromUtf8(self, n, vm, str.ptr, str.len);
     }
+
+    extern fn JSC__IdentifierArray__setFromStarDefault(identifier_array: *IdentifierArray, n: usize, vm: *bun.JSC.VM) void;
+    pub const setFromStarDefault = JSC__IdentifierArray__setFromStarDefault;
 };
 const SourceCode = opaque {};
 const JSModuleRecord = opaque {
@@ -300,4 +293,20 @@ const JSModuleRecord = opaque {
     pub const addNamespaceExport = JSC_JSModuleRecord__addNamespaceExport;
     extern fn JSC_JSModuleRecord__addStarExport(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID) void;
     pub const addStarExport = JSC_JSModuleRecord__addStarExport;
+
+    extern fn JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID) void;
+    pub const addRequestedModuleNullAttributesPtr = JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr;
+    extern fn JSC_JSModuleRecord__addRequestedModuleJavaScript(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID) void;
+    pub const addRequestedModuleJavaScript = JSC_JSModuleRecord__addRequestedModuleJavaScript;
+    extern fn JSC_JSModuleRecord__addRequestedModuleWebAssembly(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID) void;
+    pub const addRequestedModuleWebAssembly = JSC_JSModuleRecord__addRequestedModuleWebAssembly;
+    extern fn JSC_JSModuleRecord__addRequestedModuleJSON(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID) void;
+    pub const addRequestedModuleJSON = JSC_JSModuleRecord__addRequestedModuleJSON;
+    extern fn JSC_JSModuleRecord__addRequestedModuleHostDefined(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, module_name: StringID, host_defined_import_type: [*:0]const u8) void;
+    pub const addRequestedModuleHostDefined = JSC_JSModuleRecord__addRequestedModuleHostDefined;
+
+    extern fn JSC_JSModuleRecord__addImportEntrySingle(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) void;
+    pub const addImportEntrySingle = JSC_JSModuleRecord__addImportEntrySingle;
+    extern fn JSC_JSModuleRecord__addImportEntryNamespace(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) void;
+    pub const addImportEntryNamespace = JSC_JSModuleRecord__addImportEntryNamespace;
 };

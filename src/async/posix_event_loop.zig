@@ -162,7 +162,7 @@ pub const FilePoll = struct {
     const Request = JSC.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
-    const PosixSignalHandle = JSC.PosixSignalHandle;
+
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
 
@@ -187,7 +187,6 @@ pub const FilePoll = struct {
         Request,
         // LifecycleScriptSubprocessOutputReader,
         Process,
-        PosixSignalHandle,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
     });
 
@@ -388,11 +387,7 @@ pub const FilePoll = struct {
                 var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(PosixSignalHandle))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) PosixSignalHandle", .{poll.fd});
-                var handler: *PosixSignalHandle = ptr.as(PosixSignalHandle);
-                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
-            },
+
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
                 var loader = ptr.as(Process);

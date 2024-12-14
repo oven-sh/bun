@@ -184,11 +184,15 @@ pub const Loader = struct {
         return true;
     }
 
-    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+    pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
+        return this.getHttpProxy(url.isHTTP(), url.hostname);
+    }
+
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
-        if (url.isHTTP()) {
+        if (is_http) {
             if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
                 if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
                     http_proxy = URL.parse(proxy);
@@ -204,7 +208,7 @@ pub const Loader = struct {
 
         // NO_PROXY filter
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        if (http_proxy != null) {
+        if (http_proxy != null and hostname != null) {
             if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
                     return http_proxy;
@@ -222,7 +226,7 @@ pub const Loader = struct {
                         host = host[1..];
                     }
                     //hostname ends with suffix
-                    if (strings.endsWith(url.hostname, host)) {
+                    if (strings.endsWith(hostname.?, host)) {
                         return null;
                     }
                     next = no_proxy_list.next();

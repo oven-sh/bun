@@ -43,7 +43,9 @@ const Request = JSC.WebCore.Request;
 
 const libuv = bun.windows.libuv;
 
-const AWS = @import("../../s3.zig").AWSCredentials;
+const AWSCredentials = @import("../../s3.zig").AWSCredentials;
+const AWS = AWSCredentials;
+
 const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
@@ -271,6 +273,10 @@ pub const Blob = struct {
                             blob.resolveSize();
                         }
                         switch (store.data) {
+                            .s3 => |_| {
+                                // TODO: s3
+                                // we need to make this async and use s3Download/s3DownloadSlice
+                            },
                             .file => |file| {
 
                                 // TODO: make this async + lazy
@@ -690,6 +696,15 @@ pub const Blob = struct {
         {
             const store = this.store.?;
             switch (store.data) {
+                .s3 => |s3| {
+                    try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
+                    try writer.print(
+                        comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+                        .{
+                            s3.pathlike.slice(),
+                        },
+                    );
+                },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
                     switch (file.pathlike) {
@@ -1439,6 +1454,7 @@ pub const Blob = struct {
                     return globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                 },
             };
+            //TODO: S3 add more options here for credentials
 
             if (blob.store) |store_| {
                 switch (store_.data) {
@@ -1447,7 +1463,7 @@ pub const Blob = struct {
                             (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
                         );
                     },
-                    .file => {
+                    .s3, .file => {
                         blob.name = name_value_str.dupeRef();
                     },
                 }
@@ -1524,6 +1540,7 @@ pub const Blob = struct {
                         store.data.bytes.len;
                 },
                 .file => size += store.data.file.pathlike.estimatedSize(),
+                .s3 => size += store.data.s3.estimatedSize(),
             }
         }
 
@@ -1650,6 +1667,13 @@ pub const Blob = struct {
             }
         };
 
+        if (path == .path) {
+            if (strings.startsWith(path.path.slice(), "s3://")) {
+                const credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
+                return Blob.initWithStore(Blob.Store.initS3(path.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+            }
+        }
+
         return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
     }
 
@@ -1666,7 +1690,7 @@ pub const Blob = struct {
         pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
                 .bytes => this.data.bytes.len,
-                .file => Blob.max_size,
+                .s3, .file => Blob.max_size,
             };
         }
 
@@ -1675,6 +1699,7 @@ pub const Blob = struct {
         pub const Data = union(enum) {
             bytes: ByteStore,
             file: FileStore,
+            s3: S3Store,
         };
 
         pub fn ref(this: *Store) void {
@@ -1703,6 +1728,30 @@ pub const Blob = struct {
             this.deref();
         }
 
+        pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials, allocator: std.mem.Allocator) !*Store {
+            const store = Blob.Store.new(.{
+                .data = .{
+                    .s3 = S3Store.init(
+                        pathlike,
+                        mime_type orelse brk: {
+                            const sliced = pathlike.slice();
+                            if (sliced.len > 0) {
+                                var extname = std.fs.path.extension(sliced);
+                                extname = std.mem.trim(u8, extname, ".");
+                                if (http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                                    break :brk mime;
+                                }
+                            }
+                            break :brk null;
+                        },
+                        credentials,
+                    ),
+                },
+                .allocator = allocator,
+                .ref_count = std.atomic.Value(u32).init(1),
+            });
+            return store;
+        }
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType, allocator: std.mem.Allocator) !*Store {
             const store = Blob.Store.new(.{
                 .data = .{
@@ -1772,6 +1821,9 @@ pub const Blob = struct {
                         }
                     }
                 },
+                .s3 => |s3| {
+                    s3.deinit(allocator);
+                },
             }
 
             this.destroy();
@@ -1799,6 +1851,14 @@ pub const Blob = struct {
                             try writer.writeAll(path_slice);
                         },
                     }
+                },
+                .s3 => |s3| {
+                    const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = .path;
+                    try writer.writeInt(u8, @intFromEnum(pathlike_tag), .little);
+
+                    const path_slice = s3.pathlike.slice();
+                    try writer.writeInt(u32, @as(u32, @truncate(path_slice.len)), .little);
+                    try writer.writeAll(path_slice);
                 },
                 .bytes => |bytes| {
                     const slice = bytes.slice();
@@ -3171,6 +3231,44 @@ pub const Blob = struct {
         }
     };
 
+    pub const S3Store = struct {
+        pathlike: JSC.Node.PathLike,
+        mime_type: http.MimeType = http.MimeType.other,
+        credentials: AWSCredentials,
+        pub fn isSeekable(_: *const @This()) ?bool {
+            return true;
+        }
+
+        pub fn getCredentials(this: *@This()) AWSCredentials {
+            return this.credentials;
+        }
+
+        pub fn path(this: *@This()) []const u8 {
+            return bun.URL.parse(this.pathlike.slice()).s3Path();
+        }
+
+        pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials) S3Store {
+            return .{
+                .credentials = credentials,
+                .pathlike = pathlike,
+                .mime_type = mime_type orelse http.MimeType.other,
+            };
+        }
+        pub fn estimatedSize(this: *@This()) usize {
+            // TODO: credentials size here
+            return this.pathlike.estimatedSize();
+        }
+
+        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
+            if (this.pathlike == .string) {
+                allocator.free(@constCast(this.pathlike.slice()));
+            } else {
+                this.pathlike.deinit();
+            }
+            //TODO: clear credentials
+        }
+    };
+
     pub const ByteStore = struct {
         ptr: [*]u8 = undefined,
         len: SizeType = 0,
@@ -3433,12 +3531,7 @@ pub const Blob = struct {
 
     fn isS3(this: *Blob) bool {
         if (this.store) |store| {
-            if (store.data == .file) {
-                if (store.data.file.pathlike == .path) {
-                    const slice = store.data.file.pathlike.path.slice();
-                    return strings.startsWith(slice, "s3://");
-                }
-            }
+            return store.data == .s3;
         }
         return false;
     }
@@ -3490,20 +3583,20 @@ pub const Blob = struct {
             });
             const promise = this.promise.value();
             const env = this.globalThis.bunVM().bundler.env;
-            const credentials = env.getAWSCredentials();
-            const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
+            const credentials = this.blob.store.?.data.s3.getCredentials();
+            const path = this.blob.store.?.data.s3.path();
+
             this.poll_ref.ref(globalThis.bunVM());
-            const path = url.s3Path();
             if (blob.offset > 0) {
                 const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else if (blob.size == Blob.max_size) {
-                credentials.s3Download(path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3Download(path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else {
                 const len: usize = @intCast(blob.size);
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             }
             return promise;
         }
@@ -3554,12 +3647,12 @@ pub const Blob = struct {
                 .strong_ref = JSC.Strong.create(js_blob, globalThis),
             });
             const promise = this.promise.value();
-            const env = this.globalThis.bunVM().bundler.env;
-            const credentials = env.getAWSCredentials();
-            const url = bun.URL.parse(this.blob.store.?.data.file.pathlike.path.slice());
             this.poll_ref.ref(globalThis.bunVM());
+            const credentials = this.blob.store.?.data.s3.getCredentials();
+            const path = this.blob.store.?.data.s3.path();
+            const env = globalThis.bunVM().bundler.env;
 
-            credentials.s3Stat(url.s3Path(), @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            credentials.s3Stat(path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             return promise;
         }
 
@@ -3590,10 +3683,10 @@ pub const Blob = struct {
                     }
                 }
             }
-            const url = bun.URL.parse(this.store.?.data.file.pathlike.path.slice());
-            const env = this.globalThis.bunVM().bundler.env;
-            const credentials = env.getAWSCredentials();
-            const result = credentials.signRequest(url.s3Path(), method, null, .{ .expires = expires }) catch |sign_err| {
+            const credentials = this.store.?.data.s3.getCredentials();
+            const path = this.store.?.data.s3.path();
+
+            const result = credentials.signRequest(path, method, null, .{ .expires = expires }, false) catch |sign_err| {
                 return switch (sign_err) {
                     error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                     error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
@@ -3636,15 +3729,15 @@ pub const Blob = struct {
         var store = this.store orelse {
             return globalThis.throwInvalidArguments("Blob is detached", .{});
         };
-
-        if (store.data != .file) {
-            return globalThis.throwInvalidArguments("Blob is read-only", .{});
-        }
         if (this.isS3()) {
             const env = globalThis.bunVM().bundler.env;
-            const credentials = env.getAWSCredentials();
-            const url = bun.URL.parse(store.data.file.pathlike.path.slice());
-            return try credentials.s3WritableStream(url.s3Path(), globalThis, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
+            const credentials = this.store.?.data.s3.getCredentials();
+            const path = this.store.?.data.s3.path();
+
+            return try credentials.s3WritableStream(path, globalThis, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        }
+        if (store.data != .file) {
+            return globalThis.throwInvalidArguments("Blob is read-only", .{});
         }
 
         if (Environment.isWindows) {

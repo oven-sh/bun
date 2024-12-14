@@ -77,16 +77,18 @@ pub const ModuleInfo = struct {
 
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
     pub fn fixupIndirectExports(self: *ModuleInfo) !void {
-        var local_name_to_module_name = std.AutoArrayHashMap(StringID, StringID).init(self.strings.allocator);
+        var local_name_to_module_name = std.AutoArrayHashMap(StringID, *ImportInfo).init(self.strings.allocator);
         defer local_name_to_module_name.deinit();
         for (self.imports.items) |*ip| {
-            try local_name_to_module_name.put(ip.local_name, ip.module_name);
+            try local_name_to_module_name.put(ip.local_name, ip);
         }
 
         for (self.exports.items) |*xp| {
             if (xp.* == .local) {
-                if (local_name_to_module_name.get(xp.local.local_name)) |im| {
-                    xp.* = .{ .indirect = .{ .export_name = xp.local.export_name, .import_name = xp.local.local_name, .module_name = im } };
+                if (local_name_to_module_name.get(xp.local.local_name)) |ip| {
+                    if (ip.kind == .single) {
+                        xp.* = .{ .indirect = .{ .export_name = xp.local.export_name, .import_name = ip.import_name, .module_name = ip.module_name } };
+                    }
                 }
             }
         }

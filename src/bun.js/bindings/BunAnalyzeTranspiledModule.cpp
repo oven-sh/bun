@@ -218,12 +218,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     dumpRecordInfo(moduleRecord);
     zig_log_cstr("\n  \x1b[91m</Actual Record Info>\x1b(B\x1b[m", "");
 
-    scope.release();
     if (compare) {
-        return fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord);
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
     } else {
         promise->fulfillWithNonPromise(globalObject, moduleRecord);
-        return JSValue::encode(promise);
+        RELEASE_AND_RETURN(scope, JSValue::encode(promise));
     }
 }
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue)

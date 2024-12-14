@@ -45,7 +45,7 @@ private:
     ~NodeVMGlobalObject();
 
     // The contextified object that acts as the global proxy
-    mutable JSC::WriteBarrier<JSC::JSObject> m_contextifiedObject;
+    mutable JSC::WriteBarrier<JSC::JSObject> m_sandbox;
 };
 
 // Helper functions to create vm contexts and run code

@@ -996,14 +996,22 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm or update.version.tag != .npm) continue;
+                            if (res.tag != .npm) continue;
+                            if (update.version.tag != .npm and update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const len = switch (exact_versions or update.version.value.npm.version.isExact()) {
-                                false => std.fmt.count("^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
-                                true => std.fmt.count("{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
+                            const len = switch (switch (update.version.tag) {
+                                .dist_tag => exact_versions,
+                                .npm => exact_versions or update.version.value.npm.version.isExact(),
+                                else => unreachable,
+                            }) {
+                                else => |exact| std.fmt.count("{s}{}", .{
+                                    if (exact) "" else "^",
+                                    res.value.npm.version.fmt(old.buffers.string_bytes.items),
+                                }),
                             };
+
                             if (len >= String.max_inline_len) {
                                 string_builder.cap += len;
                             }
@@ -1031,14 +1039,22 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm or update.version.tag != .npm) continue;
+                            if (res.tag != .npm) continue;
+                            if (update.version.tag != .npm and update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const buf = switch (exact_versions or update.version.value.npm.version.isExact()) {
-                                false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
-                                true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
+                            const buf = switch (switch (update.version.tag) {
+                                .dist_tag => exact_versions,
+                                .npm => exact_versions or update.version.value.npm.version.isExact(),
+                                else => unreachable,
+                            }) {
+                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
+                                    if (exact) "" else "^",
+                                    res.value.npm.version.fmt(old.buffers.string_bytes.items),
+                                }) catch break,
                             };
+
                             const external_version = string_builder.append(ExternalString, buf);
                             const sliced = external_version.value.sliced(old.buffers.string_bytes.items);
                             dep.version = Dependency.parse(
@@ -2249,7 +2265,6 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         assert(FileSystem.instance_loaded);
     }
 
-    const timer = std.time.Timer.start() catch unreachable;
     const bytes = if (save_format == .text)
         TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this) catch |err| {
             switch (err) {
@@ -2270,8 +2285,6 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         break :bytes bytes.items;
     };
     defer bun.default_allocator.free(bytes);
-    _ = timer;
-    // std.debug.print("time to write {s}: {}\n", .{ @tagName(save_format), bun.fmt.fmtDuration(timer.read()) });
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;

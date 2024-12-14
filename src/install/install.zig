@@ -1210,12 +1210,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
             defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return null;
-            defer {
-                if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
-            }
-
-            var package_json_file = File.openat(destination_dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return null;
+            var package_json_file = this.node_modules.openPackageJSON(root_node_modules_dir, package_json_path) catch return null;
             defer package_json_file.close();
 
             // Heuristic: most package.jsons will be less than 2048 bytes.
@@ -1339,6 +1334,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         .valid = true,
                         .update_lockfile_pointers = true,
                     };
+                } else if (bin.isUnset()) {
+                    // It's not unset. There's no bin.
+                    bin.unset = 0;
                 }
 
                 return .{
@@ -12089,9 +12087,40 @@ pub const PackageManager = struct {
             this.path.clearAndFree();
         }
 
+        noinline fn openPackageJSONFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, package_json_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
+            var path_buf: bun.PathBuffer = undefined;
+            const parts: [2][]const u8 = .{ this.path.items, package_json_path };
+            return bun.sys.File.openat(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
+        }
+
+        pub fn openPackageJSON(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, package_json_path: [:0]const u8) !bun.sys.File {
+            if (this.path.items.len + package_json_path.len * 2 < bun.MAX_PATH_BYTES) {
+                // If we do not run the risk of ENAMETOOLONG, then let's just avoid opening the extra directories altogether.
+                switch (this.openPackageJSONFileWithoutOpeningDirectories(root_node_modules_dir, package_json_path)) {
+                    .err => |e| {
+                        switch (e.getErrno()) {
+                            // Just incase we're wrong, let's try the fallback
+                            .PERM, .ACCES, .INVAL, .NAMETOOLONG => {
+                                // Use fallback
+                            },
+                            else => return e.toZigErr(),
+                        }
+                    },
+                    .result => |file| return file,
+                }
+            }
+
+            const dir = try this.openDir(root_node_modules_dir);
+            defer {
+                _ = bun.sys.close(bun.toFD(dir));
+            }
+
+            return try bun.sys.File.openat(bun.toFD(dir), package_json_path, bun.O.RDONLY, 0).unwrap();
+        }
+
         pub fn openDir(this: *const NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
             if (comptime Environment.isPosix) {
-                return root.openDir(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+                return (try bun.sys.openat(bun.toFD(root), &try std.posix.toPosixPath(this.path.items), bun.O.DIRECTORY, 0).unwrap()).asDir();
             }
 
             return (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
@@ -13346,7 +13375,8 @@ pub const PackageManager = struct {
                     this.manager.scopeForPackageName(pkg_name),
                     pkg_name_hash,
                     &expired,
-                    .load_from_memory_fallback_to_disk,
+                    // Do not fallback to disk. These files are much larger than the package.json
+                    .load_from_memory,
                 )) |manifest| {
                     if (manifest.findByVersion(resolution.value.npm.version)) |find| {
                         return find.package.bin.cloneAppend(manifest.string_buf, manifest.extern_strings_bin_entries, this.lockfile);

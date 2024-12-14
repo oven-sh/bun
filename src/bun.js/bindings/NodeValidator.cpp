@@ -51,6 +51,24 @@ JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObje
 
     return JSValue::encode(jsUndefined());
 }
+JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, const WTF::String& name, JSC::JSValue min, JSC::JSValue max)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
+    if (max.isUndefined()) max = jsDoubleNumber(JSC::maxSafeInteger());
+
+    auto value_num = value.asNumber();
+    auto min_num = min.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto max_num = max.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    max_num = std::max(min_num, max_num);
+
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -82,7 +100,27 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
         if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
     }
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const WTF::String& name, JSValue min, JSValue max)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
 
+    auto value_num = value.asNumber();
+    auto min_num = min.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto max_num = max.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto min_isnonnull = !min.isUndefinedOrNull();
+    auto max_isnonnull = !max.isUndefinedOrNull();
+
+    if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
+        if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
+    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -300,6 +338,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * global
     return V::validateArray(scope, globalObject, value, name, minLength);
 }
 JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (minLength.isUndefined()) minLength = jsNumber(0);
+
+    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+
+    auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto length_num = length.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto minLength_num = minLength.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (length_num < minLength_num) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
+    }
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const WTF::String& name, JSValue minLength)
 {
     JSC::VM& vm = globalObject->vm();
 

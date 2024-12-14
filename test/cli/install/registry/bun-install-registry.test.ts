@@ -1733,17 +1733,14 @@ describe("text lockfile", () => {
       ),
     ]);
 
-    let { stdout, stderr, exited } = spawn({
+    let { exited } = spawn({
       cmd: [bunExe(), "install", "--save-text-lockfile"],
       cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       env,
     });
 
-    let out = await Bun.readableStreamToText(stdout);
-    let err = await Bun.readableStreamToText(stderr);
-    console.log({ out, err });
     expect(await exited).toBe(0);
 
     expect(
@@ -1761,21 +1758,85 @@ describe("text lockfile", () => {
       }),
     );
 
-    ({ stdout, stderr, exited } = spawn({
+    ({ exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       env,
     }));
 
-    out = await Bun.readableStreamToText(stdout);
-    err = await Bun.readableStreamToText(stderr);
-    console.log({ out, err });
     expect(await exited).toBe(0);
 
     const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
     expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+  });
+
+  test("--frozen-lockfile", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "^1.0.0",
+            "a-dep": "^1.0.2",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "package1",
+          dependencies: {
+            "peer-deps-too": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    expect(firstLockfile.replace(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      "a-dep",
+      "no-deps",
+      "package1",
+      "peer-deps-too",
+    ]);
+
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
   });
 });
 

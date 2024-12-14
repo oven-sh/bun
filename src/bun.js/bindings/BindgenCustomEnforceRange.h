@@ -2,6 +2,7 @@
 #include "root.h"
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
+#include "ErrorCode.h"
 
 namespace Bun {
 
@@ -25,15 +26,20 @@ struct BindgenCustomEnforceRange : WebCore::IDLType<NumericType> {
 
 }
 
+static String rangeErrorString(double value, double min, double max)
+{
+    return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
+}
+
 namespace WebCore {
 
 template<
     typename NumericType,
     NumericType Min,
     NumericType Max,
-    Bun::BindgenCustomEnforceRangeKind Kind
-> struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
-: DefaultConverter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>> {
+    Bun::BindgenCustomEnforceRangeKind Kind>
+struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
+    : DefaultConverter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
     static inline NumericType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
@@ -48,7 +54,7 @@ template<
             //         throw new ERR_INVALID_ARG_TYPE(name, 'number', value);
             //
             if (!value.isNumber()) {
-                exceptionThrower(lexicalGlobalObject, scope);
+                Bun::ERR::INVALID_ARG_TYPE(scope, &lexicalGlobalObject, exceptionThrower(), "number"_s, value);
                 return 0;
             }
             unrestricted = value.asNumber();
@@ -58,15 +64,15 @@ template<
             if constexpr (std::is_integral_v<NumericType>) {
                 if (unrestricted != std::round(unrestricted)) {
                     // ERR_OUT_OF_RANGE "an integer"
-                    exceptionThrower(lexicalGlobalObject, scope);
+                    Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), "an integer"_s, value);
                     return 0;
                 }
             } else {
                 // When a range is specified (what this template is implementing),
                 // Node also throws on NaN being out of range
                 if (std::isnan(unrestricted)) {
-                    // ERR_OUT_OF_RANGE `>= ${min} && <= ${max}` (omit upper bound if infinite)
-                    exceptionThrower(lexicalGlobalObject, scope);
+                    // ERR_OUT_OF_RANGE `>= ${min} && <= ${max}`
+                    Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), Min, Max, value);
                     return 0;
                 }
             }
@@ -77,16 +83,24 @@ template<
             unrestricted = value.toNumber(&lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, 0);
 
+            if constexpr (std::is_integral_v<NumericType>) {
+                if (std::isnan(unrestricted) || std::isinf(unrestricted)) {
+                    throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(unrestricted, Min, Max));
+                    return 0;
+                }
+
+                // IDL uses trunc to convert the double to an integer.
+                unrestricted = trunc(unrestricted);
+            }
         }
 
         bool inRange = unrestricted >= Min && unrestricted <= Max;
         if (!inRange) {
             if constexpr (Kind == Bun::BindgenCustomEnforceRangeKind::Node) {
-                // ERR_OUT_OF_RANGE ">= ${min} && <= ${max}"
-                exceptionThrower(lexicalGlobalObject, scope);
+                Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), Min, Max, value);
             } else {
                 // WebKit range exception
-                exceptionThrower(lexicalGlobalObject, scope);
+                throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(unrestricted, Min, Max));
             }
             return 0;
         }

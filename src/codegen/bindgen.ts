@@ -32,6 +32,7 @@ import {
   Func,
   NodeValidator,
   cAbiIntegerLimits,
+  extInternalDispatchVariant,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
@@ -85,6 +86,10 @@ function resolveVariantStrategies(vari: Variant, name: string) {
   }
 
   return_strategy: {
+    if (vari.ret.kind === "undefined") {
+      vari.returnStrategy = { type: "void" };
+      break return_strategy;
+    }
     if (vari.ret.kind === "any") {
       vari.returnStrategy = { type: "jsvalue" };
       break return_strategy;
@@ -155,6 +160,10 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
   for (const arg of variant.args) {
     const type = arg.type;
     if (type.isVirtualArgument()) continue;
+    if (type.isIgnoredUndefinedType()) {
+      i += 1;
+      continue;
+    }
 
     const exceptionContext: ExceptionContext = {
       type: "argument",
@@ -233,6 +242,9 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
       cpp.line(`${cAbiTypeName(returnStrategy.abiType)} out;`);
       cpp.line(`if (!${dispatchFunctionName}(`);
       break;
+    case "void":
+      cpp.line(`if (!${dispatchFunctionName}(`);
+      break;
     default:
       throw new Error(`TODO: emitCppCallToVariant for ${inspect(returnStrategy)}`);
   }
@@ -257,6 +269,8 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
 
   for (const arg of variant.args) {
     i += 1;
+    if (arg.type.isIgnoredUndefinedType()) continue;
+
     if (arg.type.isVirtualArgument()) {
       switch (arg.type.kind) {
         case "zigVirtualMachine":
@@ -299,6 +313,13 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.trimLastNewline();
       }
       cpp.line(");");
+      break;
+    case "void":
+      cpp.dedent();
+      cpp.line(")) {");
+      cpp.line(`    return {};`);
+      cpp.line("}");
+      cpp.line("return JSC::JSValue::encode(JSC::jsUndefined());");
       break;
     case "basic-out-param":
       addCommaAfterArgument();
@@ -410,27 +431,28 @@ function emitConvertValue(
   if (simpleType) {
     const cAbiType = type.canDirectlyMapToCAbi();
     assert(cAbiType);
-    let exceptionHandlerBody;
+    let exceptionHandler: ExceptionHandler | undefined;
+    switch (exceptionContext.type) {
+      case "none":
+        break;
+      case "argument":
+        exceptionHandler = getArgumentExceptionHandler(
+          type,
+          exceptionContext.argumentIndex,
+          exceptionContext.name,
+          exceptionContext.functionName,
+        );
+    }
 
     switch (type.kind) {
-      case "zigEnum":
-      case "stringEnum": {
-        if (exceptionContext.type === "argument") {
-          const { argumentIndex, name, functionName: quotedFunctionName } = exceptionContext;
-          exceptionHandlerBody = `WebCore::throwArgumentMustBeEnumError(lexicalGlobalObject, scope, ${argumentIndex}, ${str(name)}_s, ${str(type.name())}_s, ${str(quotedFunctionName)}_s, WebCore::expectedEnumerationValues<${type.cppClassName()}>());`;
-        }
-        break;
-      }
     }
 
     if (decl === "declare") {
       cpp.add(`${type.cppName()} `);
     }
 
-    let exceptionHandler = exceptionHandlerBody
-      ? `, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { ${exceptionHandlerBody} }`
-      : "";
-    cpp.line(`${storageLocation} = WebCore::convert<${simpleType}>(*global, ${jsValueRef}${exceptionHandler});`);
+    let exceptionHandlerText = exceptionHandler ? `, ${exceptionHandler.params} { ${exceptionHandler.body} }` : "";
+    cpp.line(`${storageLocation} = WebCore::convert<${simpleType}>(*global, ${jsValueRef}${exceptionHandlerText});`);
 
     if (type.flags.range && type.flags.range[0] === "clamp" && type.flags.range[1] !== "abi") {
       emitRangeModifierCheck(cAbiType, storageLocation, type.flags.range);
@@ -482,6 +504,47 @@ function emitConvertValue(
       }
       default:
         throw new Error(`TODO: emitConvertValue for Type ${type.kind}`);
+    }
+  }
+}
+
+interface ExceptionHandler {
+  /** @example "[](JSC::JSGlobalObject& global, ThrowScope& scope)" */
+  params: string;
+  /** @example "WebCore::throwTypeError(global, scope)" */
+  body: string;
+}
+
+function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name: string, functionName: string) {
+  const { nodeValidator } = type.flags;
+  if (nodeValidator) {
+    switch (nodeValidator) {
+      case NodeValidator.validateInteger:
+        headers.add("ErrorCode.h");
+        return {
+          params: `[]()`,
+          body: `return ${str(name)}_s;`,
+        };
+      default:
+        throw new Error(`TODO: implement exception thrower for node validator ${nodeValidator}`);
+    }
+  }
+  switch (type.kind) {
+    case "zigEnum":
+    case "stringEnum": {
+      return {
+        params: `[](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
+        body: `WebCore::throwArgumentMustBeEnumError(${[
+          `global`,
+          `scope`,
+          `${argumentIndex}`,
+          `${str(name)}_s`,
+          `${str(type.name())}_s`,
+          `${str(functionName)}_s`,
+          `WebCore::expectedEnumerationValues<${type.cppClassName()}>()`,
+        ].join(", ")});`,
+      };
+      break;
     }
   }
 }
@@ -756,6 +819,7 @@ function zigTypeNameInner(type: TypeImpl): string {
 function returnStrategyCppType(strategy: ReturnStrategy): string {
   switch (strategy.type) {
     case "basic-out-param":
+    case "void":
       return "bool"; // true=success, false=exception
     case "jsvalue":
       return "JSC::EncodedJSValue";
@@ -769,6 +833,7 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
 function returnStrategyZigType(strategy: ReturnStrategy): string {
   switch (strategy.type) {
     case "basic-out-param":
+    case "void":
       return "bool"; // true=success, false=exception
     case "jsvalue":
       return "JSC.JSValue";
@@ -815,6 +880,190 @@ function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, ch
   switch (type.kind) {
     default:
       throw new Error(`TODO: emitComplexZigDecoder for Type ${type.kind}`);
+  }
+}
+
+type DistinguishablePrimitive = "undefined" | "string" | "number" | "boolean" | "object";
+type DistinguishStrategy = DistinguishablePrimitive;
+
+function typeCanDistinguish(t: TypeImpl[]) {
+  const seen: Record<DistinguishablePrimitive, boolean> = {
+    undefined: false,
+    string: false,
+    number: false,
+    boolean: false,
+    object: false,
+  };
+  let strategies: DistinguishStrategy[] = [];
+
+  for (const type of t) {
+    let primitive: DistinguishablePrimitive | null = null;
+    if (type.kind === "undefined") {
+      primitive = "undefined";
+    } else if (type.isStringType()) {
+      primitive = "string";
+    } else if (type.isNumberType()) {
+      primitive = "number";
+    } else if (type.kind === "boolean") {
+      primitive = "boolean";
+    } else if (type.isObjectType()) {
+      primitive = "object";
+    }
+    if (primitive) {
+      if (seen[primitive]) {
+        return null;
+      }
+      seen[primitive] = true;
+      strategies.push(primitive);
+      continue;
+    }
+    return null; // TODO:
+  }
+
+  return strategies;
+}
+
+/** This is an arbitrary classifier to allow consistent sorting for distinguishing arguments */
+function typeDistinguishmentWeight(type: TypeImpl): number {
+  if (type.kind === "undefined") {
+    return 100;
+  }
+
+  if (type.isObjectType()) {
+    return 10;
+  }
+
+  if (type.isStringType()) {
+    return 5;
+  }
+
+  if (type.isNumberType()) {
+    return 3;
+  }
+
+  if (type.kind === "boolean") {
+    return -1;
+  }
+
+  return 0;
+}
+
+function getDistinguishCode(strategy: DistinguishStrategy, type: TypeImpl, value: string) {
+  switch (strategy) {
+    case "string":
+      return { condition: `${value}.isString()`, canThrow: false };
+    case "number":
+      return { condition: `${value}.isNumber()`, canThrow: false };
+    case "boolean":
+      return { condition: `${value}.isBoolean()`, canThrow: false };
+    case "object":
+      return { condition: `${value}.isObject()`, canThrow: false };
+    case "undefined":
+      return { condition: `${value}.isUndefined()`, canThrow: false };
+    default:
+      throw new Error(`TODO: getDistinguishCode for ${strategy}`);
+  }
+}
+
+/** The variation selector implementation decides which variation dispatch to call. */
+function emitCppVariationSelector(fn: Func, namespaceVar: string) {
+  let minRequiredArgs = Infinity;
+  let maxArgs = 0;
+
+  const variationsByArgumentCount = new Map<number, Variant[]>();
+
+  const pushToList = (argCount: number, vari: Variant) => {
+    assert(typeof argCount === "number");
+    let list = variationsByArgumentCount.get(argCount);
+    if (!list) {
+      list = [];
+      variationsByArgumentCount.set(argCount, list);
+    }
+    list.push(vari);
+  };
+
+  for (const vari of fn.variants) {
+    const vmra = vari.minRequiredArgs;
+    minRequiredArgs = Math.min(minRequiredArgs, vmra);
+    maxArgs = Math.max(maxArgs, vari.args.length);
+    const allArgCount = vari.args.filter(arg => !arg.type.isVirtualArgument()).length;
+    pushToList(vmra, vari);
+    if (allArgCount != vmra) {
+      pushToList(allArgCount, vari);
+    }
+  }
+
+  cpp.line(`auto& vm = JSC::getVM(global);`);
+  cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
+  if (minRequiredArgs > 0) {
+    cpp.line(`size_t argumentCount = std::min<size_t>(callFrame->argumentCount(), ${maxArgs});`);
+    cpp.line(`if (argumentCount < ${minRequiredArgs}) {`);
+    cpp.line(`    return JSC::throwVMError(global, throwScope, createNotEnoughArgumentsError(global));`);
+    cpp.line(`}`);
+  }
+
+  const sorted = [...variationsByArgumentCount.entries()]
+    .map(([key, value]) => ({ argCount: key, variants: value }))
+    .sort((a, b) => b.argCount - a.argCount);
+  let argCountI = 0;
+  for (const { argCount, variants } of sorted) {
+    argCountI++;
+    const checkArgCount = argCountI < sorted.length && argCount !== minRequiredArgs;
+    if (checkArgCount) {
+      cpp.line(`if (argumentCount >= ${argCount}) {`);
+      cpp.indent();
+    }
+
+    if (variants.length === 1) {
+      cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame);`);
+    } else {
+      let argIndex = 0;
+      let strategies: DistinguishStrategy[] | null = null;
+      while (argIndex < argCount) {
+        strategies = typeCanDistinguish(
+          variants.map(v => v.args.filter(v => !v.type.isVirtualArgument())[argIndex].type),
+        );
+        if (strategies) {
+          break;
+        }
+        argIndex++;
+      }
+      if (!strategies) {
+        const err = new Error(
+          `\x1b[0mVariations with ${argCount} required arguments must have at least one argument that can distinguish between them.\n` +
+            `Variations:\n${variants.map(v => `    ${inspect(v.args.filter(a => !a.type.isVirtualArgument()).map(x => x.type))}`).join("\n")}`,
+        );
+        err.stack = `Error: ${err.message}\n${fn.snapshot}`;
+        throw err;
+      }
+
+      const getArgument = minRequiredArgs > 0 ? "uncheckedArgument" : "argument";
+      cpp.line(`JSC::JSValue distinguishingValue = callFrame->${getArgument}(${argIndex});`);
+      const sortedVariants = variants
+        .map((v, i) => ({
+          variant: v,
+          type: v.args.filter(a => !a.type.isVirtualArgument())[argIndex].type,
+          strategy: strategies[i],
+        }))
+        .sort((a, b) => typeDistinguishmentWeight(a.type) - typeDistinguishmentWeight(b.type));
+      for (const { variant: v, strategy: s } of sortedVariants) {
+        const arg = v.args[argIndex];
+        const { condition, canThrow } = getDistinguishCode(s, arg.type, "distinguishingValue");
+        cpp.line(`if (${condition}) {`);
+        cpp.indent();
+        cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame);`);
+        cpp.dedent();
+        cpp.line(`}`);
+        if (canThrow) {
+          cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+        }
+      }
+    }
+
+    if (checkArgCount) {
+      cpp.dedent();
+      cpp.line(`}`);
+    }
   }
 }
 
@@ -874,12 +1123,6 @@ zigInternal.line("const binding_internals = struct {");
 zigInternal.indent();
 
 cpp.line("namespace Generated {");
-cpp.line();
-cpp.line("template<typename T>");
-cpp.line("static String rangeErrorString(T value, T min, T max)");
-cpp.line("{");
-cpp.line(`    return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');`);
-cpp.line("}");
 cpp.line();
 
 cppInternal.line('// These "Arguments" definitions are for communication between C++ and Zig.');
@@ -962,15 +1205,15 @@ for (const [filename, { functions, typedefs }] of files) {
         `${pascal(namespaceVar)}${pascal(fn.name)}Arguments${fn.variants.length > 1 ? variNum : ""}`,
       );
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
+      const internalDispatchName = extInternalDispatchVariant(namespaceVar, fn.name, variNum);
 
       const args: string[] = [];
 
-      let argNum = 0;
       if (vari.globalObjectArg === "hidden") {
         args.push("JSC::JSGlobalObject*");
       }
       for (const arg of vari.args) {
-        argNum += 1;
+        if (arg.type.isIgnoredUndefinedType()) continue;
         const strategy = arg.loweringStrategy!;
         switch (strategy.type) {
           case "c-abi-pointer":
@@ -998,6 +1241,18 @@ for (const [filename, { functions, typedefs }] of files) {
 
       cpp.line(`extern "C" ${returnStrategyCppType(vari.returnStrategy!)} ${dispatchName}(${args.join(", ")});`);
 
+      if (fn.variants.length > 1) {
+        // Emit separate variant dispatch functions
+        cpp.line(
+          `extern "C" SYSV_ABI JSC::EncodedJSValue ${internalDispatchName}(JSC::JSGlobalObject* global, JSC::CallFrame* callFrame)`,
+        );
+        cpp.line(`{`);
+        cpp.indent();
+        cpp.resetTemporaries();
+        emitCppCallToVariant(fn.name, vari, dispatchName);
+        cpp.dedent();
+        cpp.line(`}`);
+      }
       variNum += 1;
     }
 
@@ -1017,7 +1272,7 @@ for (const [filename, { functions, typedefs }] of files) {
     if (fn.variants.length === 1) {
       emitCppCallToVariant(fn.name, fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
     } else {
-      throw new Error(`TODO: multiple variant dispatch`);
+      emitCppVariationSelector(fn, namespaceVar);
     }
 
     cpp.dedent();
@@ -1045,6 +1300,7 @@ for (const [filename, { functions, typedefs }] of files) {
       }
       let argNum = 0;
       for (const arg of vari.args) {
+        if (arg.type.isIgnoredUndefinedType()) continue;
         let argName = `arg_${snake(arg.name)}`;
         if (vari.globalObjectArg === argNum) {
           if (arg.type.kind !== "globalObject") {
@@ -1102,12 +1358,17 @@ for (const [filename, { functions, typedefs }] of files) {
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
           break;
+        case "void":
+          zigInternal.add(`@as(bun.JSError!void, `);
+          break;
       }
 
       zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
+
+        if (arg.type.isIgnoredUndefinedType()) continue;
 
         if (arg.type.isVirtualArgument()) {
           switch (arg.type.kind) {
@@ -1153,6 +1414,7 @@ for (const [filename, { functions, typedefs }] of files) {
           zigInternal.line(`));`);
           break;
         case "basic-out-param":
+        case "void":
           zigInternal.line(`)) catch |err| switch (err) {`);
           zigInternal.line(`    error.JSError => return false,`);
           zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);

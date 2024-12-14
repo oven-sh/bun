@@ -3163,6 +3163,10 @@ pub fn isPollable(mode: mode_t) bool {
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 
+pub fn getProcessPriority() i32 {
+
+}
+
 const This = @This();
 
 pub const File = struct {

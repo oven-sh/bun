@@ -11,7 +11,7 @@ const libuv = bun.windows.libuv;
 const gen = bun.gen.node_os;
 
 pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.createFromStruct(global, .{
+    return JSC.JSObject.create(global, .{
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),
@@ -24,7 +24,7 @@ pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         .uptime = gen.createUptimeCallback(global),
         .userInfo = gen.createUserInfoCallback(global),
         .version = gen.createVersionCallback(global),
-        .setPriority = JSC.NewRuntimeFunction(global, JSC.ZigString.static("setPriority"), 0, setPriority, false, false, null),
+        .setPriority = gen.createSetPriorityCallback(global),
     }).toJS();
 }
 
@@ -289,8 +289,7 @@ pub fn freemem() u64 {
 }
 
 pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
-    const priority = C.getProcessPriority(pid);
-    if (priority == -1) {
+    return C.getProcessPriority(pid) orelse {
         const err = JSC.SystemError{
             .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
             .code = bun.String.static("ERR_SYSTEM_ERROR"),
@@ -298,9 +297,7 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             .syscall = bun.String.static("uv_os_getpriority"),
         };
         return global.throwValue(err.toErrorInstance(global));
-    }
-
-    return priority;
+    };
 }
 
 pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
@@ -717,79 +714,38 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
 
 pub fn release() bun.String {
     var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-    return bun.String.init(C.getRelease(&name_buffer));
+    return bun.String.createUTF8(C.getRelease(&name_buffer));
 }
 
-pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var args_ = callframe.arguments_old(2);
-    var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
-
-    if (arguments.len == 0) {
-        const err = JSC.toTypeError(
-            .ERR_INVALID_ARG_TYPE,
-            "The \"priority\" argument must be of type number. Received undefined",
-            .{},
-            globalThis,
-        );
-        return globalThis.throwValue(err);
-    }
-
-    const pid: i32 = if (arguments.len == 2) brk: {
-        const pid_f64 = arguments[0].coerce(f64, globalThis);
-        if (pid_f64 > std.math.maxInt(i32) or
-            pid_f64 < std.math.minInt(i32) or
-            @mod(pid_f64, 1) != 0)
-        {
-            const err = JSC.toTypeError(
-                .ERR_OUT_OF_RANGE,
-                "The value of \"pid\" is out of range.",
-                .{},
-                globalThis,
-            );
-            return globalThis.throwValue(err);
-        }
-        break :brk @intFromFloat(pid_f64);
-    } else 0;
-    const priority = if (arguments.len == 2) arguments[1].coerce(i32, globalThis) else arguments[0].coerce(i32, globalThis);
-
-    if (priority < -20 or priority > 19) {
-        const err = JSC.toTypeError(
-            .ERR_OUT_OF_RANGE,
-            "The value of \"priority\" is out of range. It must be >= -20 && <= 19",
-            .{},
-            globalThis,
-        );
-        return globalThis.throwValue(err);
-    }
-
+pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void {
     const errcode = C.setProcessPriority(pid, priority);
     switch (errcode) {
         .SRCH => {
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
                 .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
-                //.info = info,
                 .errno = -3,
                 .syscall = bun.String.static("uv_os_setpriority"),
             };
 
-            return globalThis.throwValue(err.toErrorInstance(globalThis));
+            return global.throwValue(err.toErrorInstance(global));
         },
-        .ACCES => {
+        .PERM => {
             const err = JSC.SystemError{
-                .message = bun.String.static("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
+                .message = bun.String.static("A system error occurred: uv_os_setpriority returned EPERM (operation not permitted)"),
                 .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
-                //.info = info,
                 .errno = -13,
                 .syscall = bun.String.static("uv_os_setpriority"),
             };
 
-            return globalThis.throwValue(err.toErrorInstance(globalThis));
+            return global.throwValue(err.toErrorInstance(global));
         },
         else => {},
     }
+}
 
-    return .undefined;
+pub fn setPriority2(global: *JSC.JSGlobalObject, priority: i32) !void {
+    return setPriority1(global, 0, priority);
 }
 
 pub fn totalmem() u64 {

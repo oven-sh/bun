@@ -61,7 +61,10 @@ This function declaration is equivalent to:
 declare function add(a: number, b: number = 1): number;
 ```
 
-The code generator will provide `bun.gen.math.jsAdd`, which is the native function implementation. To pass to JavaScript, use `bun.gen.math.createAddCallback(global)`
+The code generator will provide `bun.gen.math.jsAdd`, which is the native
+function implementation. To pass to JavaScript, use
+`bun.gen.math.createAddCallback(global)`. JS files in `src/js/` may use
+`$bindgenFn("math.bind.ts", "add")` to get a handle to the implementation.
 
 ## Strings
 
@@ -104,7 +107,7 @@ export const action = fn({
 
 In Zig, each variant gets a number, based on the order the schema defines.
 
-```
+```zig
 fn action1(a: i32) i32 {
   return a;
 }

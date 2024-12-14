@@ -47,6 +47,8 @@ export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
 /** Each variant gets a dispatcher function. */
 export const extDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: number) =>
   `bindgen_${cap(namespaceVar)}_dispatch${cap(fnLabel)}${variantNumber}`;
+export const extInternalDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: string | number) =>
+  `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}_v${variantNumber}`;
 
 interface TypeDataDefs {
   /** The name */
@@ -90,6 +92,8 @@ export interface DictionaryField {
 }
 
 export declare const isType: unique symbol;
+
+const numericTypes = new Set(["f64", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize"]);
 
 /**
  * Implementation of the Type interface.  All types are immutable and hashable.
@@ -431,6 +435,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           }
         }
         break;
+      case "undefined":
+        assert(value === undefined, `Expected undefined, got ${inspect(value)}`);
+        break;
       default:
         throw new Error(`TODO: set default value on type ${this.kind}`);
     }
@@ -479,6 +486,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           throw new Error(`TODO: non-empty string default`);
         }
         break;
+      case "undefined":
+        throw new Error("Zero-sized type");
       default:
         throw new Error(`TODO: set default value on type ${this.kind}`);
     }
@@ -491,25 +500,31 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     throw new Error("TODO: generate non-extern struct for representing this data type");
   }
 
-  default(def: any) {
-    if ("default" in this.flags) {
-      throw new Error("This type already has a default value");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive default on a required type");
-    }
-    this.assertDefaultIsValid(def);
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      default: def,
-    });
+  isIgnoredUndefinedType() {
+    return this.kind === "undefined";
+  }
+
+  isStringType() {
+    return (
+      this.kind === "DOMString" || this.kind === "ByteString" || this.kind === "USVString" || this.kind === "UTF8String"
+    );
+  }
+
+  isNumberType() {
+    return numericTypes.has(this.kind);
+  }
+
+  isObjectType() {
+    return this.kind === "externalClass" || this.kind === "dictionary";
   }
 
   [Symbol.toStringTag] = "Type";
   [Bun.inspect.custom](depth, options, inspect) {
     return (
       `${options.stylize("Type", "special")} ${
-        this.nameDeduplicated ? options.stylize(JSON.stringify(this.nameDeduplicated), "string") + " " : ""
+        this.lowersToNamedType() && this.nameDeduplicated
+          ? options.stylize(JSON.stringify(this.nameDeduplicated), "string") + " "
+          : ""
       }${options.stylize(
         `[${this.kind}${["required", "optional", "nullable"]
           .filter(k => this.flags[k])
@@ -571,6 +586,20 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     return new TypeImpl(this.kind, this.data, {
       ...this.flags,
       required: true,
+    });
+  }
+
+  default(def: any) {
+    if ("default" in this.flags) {
+      throw new Error("This type already has a default value");
+    }
+    if (this.flags.required) {
+      throw new Error("Cannot derive default on a required type");
+    }
+    this.assertDefaultIsValid(def);
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      default: def,
     });
   }
 
@@ -756,6 +785,8 @@ export type ArgStrategyChildItem =
 export type ReturnStrategy =
   // JSValue is special cased because it encodes exception as 0x0
   | { type: "jsvalue" }
+  // Return value doesnt exist. function returns a boolean indicating success/error.
+  | { type: "void" }
   // For primitives and simple structures where direct assignment into a
   // pointer is possible. function returns a boolean indicating success/error.
   | { type: "basic-out-param"; abiType: CAbiType };
@@ -786,7 +817,8 @@ export function registerFunction(opts: FuncOptions) {
     for (const variant of opts.variants) {
       const { minRequiredArgs } = validateVariant(variant);
       variants.push({
-        ...variant,
+        args: Object.entries(variant.args).map(([name, type]) => ({ name, type })) as Arg[],
+        ret: variant.ret as TypeImpl,
         suffix: `${i}`,
         minRequiredArgs,
       } as unknown as Variant);

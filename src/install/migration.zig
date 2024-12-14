@@ -10,6 +10,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const logger = bun.logger;
+const File = bun.sys.File;
 
 const Install = @import("./install.zig");
 const Resolution = @import("./resolution.zig").Resolution;
@@ -25,7 +26,7 @@ const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
 
 const Lockfile = @import("./lockfile.zig");
-const LoadFromDiskResult = Lockfile.LoadFromDiskResult;
+const LoadResult = Lockfile.LoadResult;
 
 const JSAst = bun.JSAst;
 const Expr = JSAst.Expr;
@@ -38,32 +39,21 @@ const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
+    dir: bun.FD,
     manager: *Install.PackageManager,
     allocator: Allocator,
     log: *logger.Log,
-    bun_lockfile_path: stringZ,
-) LoadFromDiskResult {
-    const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
+) LoadResult {
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
-    var buf: bun.PathBuffer = undefined;
-    @memcpy(buf[0..dirname.len], dirname);
 
     npm: {
-        const npm_lockfile_name = "package-lock.json";
-        @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
-        buf[dirname.len + npm_lockfile_name.len] = 0;
         var timer = std.time.Timer.start() catch unreachable;
-        const lockfile = bun.sys.openat(
-            bun.FD.cwd(),
-            buf[0 .. dirname.len + npm_lockfile_name.len :0],
-            bun.O.RDONLY,
-            0,
-        ).unwrap() catch break :npm;
-        defer _ = bun.sys.close(lockfile);
+        const lockfile = File.openat(dir, "package-lock.json", bun.O.RDONLY, 0).unwrap() catch break :npm;
+        defer lockfile.close();
         var lockfile_path_buf: bun.PathBuffer = undefined;
-        const lockfile_path = bun.getFdPathZ(lockfile, &lockfile_path_buf) catch break :npm;
-        const data = bun.sys.File.from(lockfile).readToEnd(allocator).unwrap() catch break :npm;
+        const lockfile_path = bun.getFdPathZ(lockfile.handle, &lockfile_path_buf) catch break :npm;
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :npm;
         const migrate_result = migrateNPMLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
                 Output.prettyErrorln(
@@ -81,7 +71,12 @@ pub fn detectAndLoadOtherLockfile(
                 Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }
-            return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "package-lock.json",
+                .format = .binary,
+            } };
         };
 
         if (migrate_result == .ok) {
@@ -94,7 +89,7 @@ pub fn detectAndLoadOtherLockfile(
         return migrate_result;
     }
 
-    return LoadFromDiskResult{ .not_found = {} };
+    return LoadResult{ .not_found = {} };
 }
 
 const ResolvedURLsMap = bun.StringHashMapUnmanaged(string);
@@ -130,7 +125,7 @@ pub fn migrateNPMLockfile(
     log: *logger.Log,
     data: string,
     abs_path: string,
-) !LoadFromDiskResult {
+) !LoadResult {
     debug("begin lockfile migration", .{});
 
     this.initEmpty(allocator);
@@ -553,7 +548,7 @@ pub fn migrateNPMLockfile(
                 } else .false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
-                    try Integrity.parse(
+                    Integrity.parse(
                         integrity.asString(this.allocator) orelse
                             return error.InvalidNPMLockfile,
                     )
@@ -1068,7 +1063,7 @@ pub fn migrateNPMLockfile(
     // }
 
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
-    // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
+    // This operation is neccecary because callers of `loadFromCwd` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
     this.* = (try this.cleanWithLogger(manager, &.{}, log, false, .silent)).*;
 
@@ -1084,11 +1079,13 @@ pub fn migrateNPMLockfile(
 
     this.meta_hash = try this.generateMetaHash(false, this.packages.len);
 
-    return LoadFromDiskResult{
+    return LoadResult{
         .ok = .{
             .lockfile = this,
             .was_migrated = true,
+            .loaded_from_binary_lockfile = false,
             .serializer_result = .{},
+            .format = .text,
         },
     };
 }

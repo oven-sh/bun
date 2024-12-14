@@ -1426,7 +1426,7 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
 
         if (subsetProp.isObject() and prop.isObject()) {
-            // if this is called from inside an objectContaining asymmetric matcher, it should behave slighlty differently:
+            // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
             // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
             // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
             if (enableAsymmetricMatchers && isMatchingObjectContaining) {
@@ -1675,9 +1675,9 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
-            LChar* data = nullptr;
+            std::span<LChar> data;
             auto value = String::createUninitialized(header.value.len, data);
-            memcpy(data, header.value.ptr, header.value.len);
+            memcpy(data.data(), header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 
@@ -1709,10 +1709,10 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 
     for (const auto& header : req) {
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
-        LChar* data = nullptr;
+        std::span<LChar> data;
         auto value = String::createUninitialized(header.second.length(), data);
         if (header.second.length() > 0)
-            memcpy(data, header.second.data(), header.second.length());
+            memcpy(data.data(), header.second.data(), header.second.length());
 
         HTTPHeaderName name;
 
@@ -3202,7 +3202,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
-// This implementation closely mimicks the one in JSC::JSPromise::resolve
+// This implementation closely mimics the one in JSC::JSPromise::resolve
 void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue)
 {
@@ -3223,7 +3223,7 @@ bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)
     return type == JSC::ErrorInstanceType;
 }
 
-// This implementation closely mimicks the one in JSC::JSPromise::reject
+// This implementation closely mimics the one in JSC::JSPromise::reject
 void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue, bool handled)
 {
@@ -3802,12 +3802,12 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
-    // Since Identifier might not ref' the string, we need to ensure it doesn't get deref'd until this function returns
+    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
@@ -4199,7 +4199,9 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // It is key to not clone this data because source code strings are large.
         // Usage of toStringView (non-owning) is safe as we ref the provider.
         provider->ref();
-        ASSERT(*referenced_source_provider == nullptr);
+        if (*referenced_source_provider != nullptr) {
+            (*referenced_source_provider)->deref();
+        }
         *referenced_source_provider = provider;
         source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();
@@ -4886,7 +4888,7 @@ void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
 
 #pragma mark - JSC::VM
 
-JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
+size_t JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
@@ -4919,7 +4921,7 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     }
 #endif
 
-    return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
+    return vm->heap.sizeAfterLastFullCollection();
 }
 
 bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }
@@ -5187,7 +5189,7 @@ JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     auto& vm = globalObject->vm();
     const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
 
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)

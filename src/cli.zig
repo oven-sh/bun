@@ -21,6 +21,7 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -230,6 +231,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -774,6 +776,10 @@ pub const Arguments = struct {
                     } };
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            }
+
+            if (args.flag("--expose-internals")) {
+                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
             }
         }
 
@@ -2128,7 +2134,15 @@ pub const Command = struct {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
-                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                var path_buf: bun.PathBuffer = undefined;
+                                @memcpy(path_buf[0..ctx.args.entry_points[0].len], ctx.args.entry_points[0]);
+                                path_buf[ctx.args.entry_points[0].len] = 0;
+                                const lockfile_path = path_buf[0..ctx.args.entry_points[0].len :0];
+                                const file = File.open(lockfile_path, bun.O.RDONLY, 0).unwrap() catch |err| {
+                                    Output.err(err, "failed to open lockfile", .{});
+                                    Global.crash();
+                                };
+                                try PackageManagerCommand.printHash(ctx, file);
                                 return;
                             }
                         }

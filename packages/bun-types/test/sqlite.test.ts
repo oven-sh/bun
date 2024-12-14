@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Changes, Database } from "bun:sqlite";
 import { expectType } from "./utilities.test";
 
 const db = new Database(":memory:");
@@ -22,7 +22,7 @@ expectType<Array<{ name: string; dob: number }>>(allResults);
 expectType<{ name: string; dob: number } | null>(getResults);
 // tslint:disable-next-line:invalid-void
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
-expectType<void>(runResults);
+expectType<Changes>(runResults);
 
 const query3 = db.prepare<
   { name: string; dob: number }, // return type first

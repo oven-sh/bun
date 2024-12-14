@@ -1104,7 +1104,7 @@ fn NewPrinter(
                         }
                     }
 
-                    p.printClauseItemAs(item, .@"var");
+                    p.printVarClauseItem(item);
                 }
 
                 if (!import.is_single_line) {
@@ -1944,31 +1944,27 @@ fn NewPrinter(
         }
 
         fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .@"export");
-        }
-
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: enum { @"export", @"var" }) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .@"var") {
+            p.printIdentifier(name);
+
+            if (!strings.eql(name, item.alias)) {
+                p.print(" as ");
+                p.addSourceMapping(item.alias_loc);
                 p.printClauseAlias(item.alias);
+            }
+        }
 
-                if (!strings.eql(name, item.alias)) {
-                    p.print(":");
-                    p.printSpace();
+        fn printVarClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-                    p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"export") {
+            p.printClauseAlias(item.alias);
+
+            if (!strings.eql(name, item.alias)) {
+                p.print(":");
+                p.printSpace();
+
                 p.printIdentifier(name);
-
-                if (!strings.eql(name, item.alias)) {
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
-                    p.printClauseAlias(item.alias);
-                }
-            } else {
-                @compileError("Unknown as");
             }
         }
 
@@ -3874,7 +3870,7 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
 
                     if (p.moduleInfo()) |mi| {
-                        try mi.requested_modules.put(try mi.str(irp), .none);
+                        try mi.requestModule(irp, .none);
                         if (s.alias) |alias| {
                             try mi.exports.append(.{ .namespace = .{ .module_name = try mi.str(irp), .export_name = try mi.str(alias.original_name) } });
                         } else {
@@ -4028,7 +4024,12 @@ fn NewPrinter(
                             p.printIndent();
                         }
 
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
                         p.printExportClauseItem(item);
+
+                        if (p.moduleInfo()) |mi| {
+                            try mi.exports.append(.{ .local = .{ .export_name = try mi.str(item.alias), .local_name = try mi.str(name) } });
+                        }
                     }
 
                     if (!s.is_single_line) {
@@ -4080,8 +4081,18 @@ fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("} from "));
-                    p.printImportRecordPath(import_record);
+                    const irp = try p.fmtImportRecordPath(import_record);
+                    p.printStringLiteralUTF8(irp, false);
                     p.printSemicolonAfterStatement();
+
+                    if (p.moduleInfo()) |mi| {
+                        try mi.requestModule(irp, .none);
+                        for (s.items) |item| {
+                            // how could this be renamed, it's in `export from`?
+                            const name = p.renamer.nameForSymbol(item.name.ref.?);
+                            try mi.exports.append(.{ .indirect = .{ .export_name = try mi.str(item.alias), .import_name = try mi.str(name), .module_name = try mi.str(irp) } });
+                        }
+                    }
                 },
                 .s_local => |s| {
                     switch (s.kind) {
@@ -4422,7 +4433,7 @@ fn NewPrinter(
                                     p.print(",");
                                     p.printSpace();
                                     for (s.items, 0..) |item, i| {
-                                        p.printClauseItemAs(item, .@"var");
+                                        p.printVarClauseItem(item);
 
                                         if (i < s.items.len - 1) {
                                             p.print(",");
@@ -4432,7 +4443,7 @@ fn NewPrinter(
                                 }
                             } else {
                                 for (s.items, 0..) |item, i| {
-                                    p.printClauseItemAs(item, .@"var");
+                                    p.printVarClauseItem(item);
 
                                     if (i < s.items.len - 1) {
                                         p.print(",");
@@ -4614,9 +4625,7 @@ fn NewPrinter(
                     }
 
                     if (p.moduleInfo()) |mi| {
-                        // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
-                        const gpres = try mi.requested_modules.getOrPut(try mi.str(import_record_path));
-                        if (!gpres.found_existing) gpres.value_ptr.* = fetch_parameters;
+                        try mi.requestModule(import_record_path, fetch_parameters);
                     }
 
                     p.printSemicolonAfterStatement();
@@ -5933,6 +5942,8 @@ pub fn printAst(
     }
 
     if (PrinterType.may_have_module_info) {
+        try mi.fixupIndirectExports();
+
         printer.print("\n// <jsc-module-info>\n// ");
         try mi.jsonStringify(printer.writer.stdWriter());
         printer.print("\n// </jsc-module-info>\n");

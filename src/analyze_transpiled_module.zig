@@ -69,6 +69,28 @@ pub const ModuleInfo = struct {
     pub fn starDefault(self: *ModuleInfo) !StringID {
         return try self.str("*default*");
     }
+    pub fn requestModule(self: *ModuleInfo, import_record_path: []const u8, fetch_parameters: FetchParameters) !void {
+        // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+        const gpres = try self.requested_modules.getOrPut(try self.str(import_record_path));
+        if (!gpres.found_existing) gpres.value_ptr.* = fetch_parameters;
+    }
+
+    /// find any exports marked as 'local' that are actually 'indirect' and fix them
+    pub fn fixupIndirectExports(self: *ModuleInfo) !void {
+        var local_name_to_module_name = std.AutoArrayHashMap(StringID, StringID).init(self.strings.allocator);
+        defer local_name_to_module_name.deinit();
+        for (self.imports.items) |*ip| {
+            try local_name_to_module_name.put(ip.local_name, ip.module_name);
+        }
+
+        for (self.exports.items) |*xp| {
+            if (xp.* == .local) {
+                if (local_name_to_module_name.get(xp.local.local_name)) |im| {
+                    xp.* = .{ .indirect = .{ .export_name = xp.local.export_name, .import_name = xp.local.local_name, .module_name = im } };
+                }
+            }
+        }
+    }
 
     const JsonStringifyableModuleInfo = struct {
         strings: []const struct {

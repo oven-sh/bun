@@ -714,7 +714,7 @@ fn NewPrinter(
         const may_have_module_info = is_bun_platform and !rewrite_esm_to_cjs;
         const TopLevelAndIsExport = if (!may_have_module_info) struct {} else struct {
             is_export: bool = false,
-            is_top_level: bool = false,
+            is_top_level: ?ModuleInfo.VarKind = null,
         };
         const TopLevel = if (!may_have_module_info) struct {
             pub inline fn init(_: bool) @This() {
@@ -3508,7 +3508,7 @@ fn NewPrinter(
                     p.printIdentifier(local_name);
 
                     if (p.moduleInfo()) |mi| {
-                        if (tlm.is_top_level) mi.lexical_variables.append(mi.str(local_name) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        if (tlm.is_top_level) |vk| mi.addVar(local_name, vk) catch bun.outOfMemory();
                         if (tlm.is_export) mi.exports.append(.{ .local = .{ .export_name = mi.str(local_name) catch bun.outOfMemory(), .local_name = mi.str(local_name) catch bun.outOfMemory() } }) catch bun.outOfMemory();
                     }
                 },
@@ -3710,7 +3710,7 @@ fn NewPrinter(
                     p.printFunc(s.func);
 
                     if (p.moduleInfo()) |mi| {
-                        try mi.lexical_variables.append(try mi.str(local_name));
+                        try mi.addVar(local_name, .lexical);
                         if (s.func.flags.contains(.is_export)) {
                             try mi.exports.append(.{ .local = .{ .export_name = try mi.str(local_name), .local_name = try mi.str(local_name) } });
                         }
@@ -3816,7 +3816,7 @@ fn NewPrinter(
                                     if (p.moduleInfo()) |mi| {
                                         const local_name = if (func_name) |f| try mi.str(f) else try mi.starDefault();
                                         try mi.exports.append(.{ .local = .{ .export_name = try mi.str("default"), .local_name = local_name } });
-                                        try mi.lexical_variables.append(local_name);
+                                        try mi.addVarStrID(local_name, .lexical);
                                     }
                                 },
                                 .s_class => |class| {
@@ -3837,7 +3837,7 @@ fn NewPrinter(
                                     if (p.moduleInfo()) |mi| {
                                         const local_name = if (class_name) |f| try mi.str(f) else try mi.starDefault();
                                         try mi.exports.append(.{ .local = .{ .export_name = try mi.str("default"), .local_name = local_name } });
-                                        try mi.lexical_variables.append(local_name);
+                                        try mi.addVarStrID(local_name, .lexical);
                                     }
                                 },
                                 else => {
@@ -4484,7 +4484,7 @@ fn NewPrinter(
                         item_count += 1;
 
                         if (p.moduleInfo()) |mi| {
-                            try mi.lexical_variables.append(try mi.str(local_name));
+                            try mi.addVar(local_name, .lexical);
                             try mi.imports.append(.{
                                 .kind = .single,
                                 .module_name = try mi.str(import_record_path),
@@ -4531,7 +4531,7 @@ fn NewPrinter(
                             }
 
                             if (p.moduleInfo()) |mi| {
-                                try mi.lexical_variables.append(try mi.str(local_name));
+                                try mi.addVar(local_name, .lexical);
                                 try mi.imports.append(.{
                                     .kind = .single,
                                     .module_name = try mi.str(import_record_path),
@@ -4566,7 +4566,7 @@ fn NewPrinter(
                         item_count += 1;
 
                         if (p.moduleInfo()) |mi| {
-                            try mi.lexical_variables.append(try mi.str(local_name));
+                            try mi.addVar(local_name, .lexical);
                             try mi.imports.append(.{
                                 .kind = .namespace,
                                 .module_name = try mi.str(import_record_path),
@@ -5066,7 +5066,10 @@ fn NewPrinter(
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
-            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info and tlmtlo.is_top_level) .{ .is_export = is_export and !rewrite_esm_to_cjs, .is_top_level = true } else .{});
+            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info and tlmtlo.is_top_level) .{
+                .is_export = is_export and !rewrite_esm_to_cjs,
+                .is_top_level = if (comptime std.mem.eql(u8, keyword, "var")) .declared else .lexical,
+            } else .{});
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
                 for (decls) |decl| {

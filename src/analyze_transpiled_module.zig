@@ -39,6 +39,18 @@ pub const ModuleInfo = struct {
         host_defined: StringID,
     };
 
+    pub const VarKind = enum { declared, lexical };
+    pub fn addVar(self: *ModuleInfo, name: []const u8, kind: VarKind) !void {
+        const id = try self.str(name);
+        try self.addVarStrID(id, kind);
+    }
+    pub fn addVarStrID(self: *ModuleInfo, id: StringID, kind: VarKind) !void {
+        switch (kind) {
+            .declared => try self.declared_variables.append(id),
+            .lexical => try self.lexical_variables.append(id),
+        }
+    }
+
     pub fn init(allocator: std.mem.Allocator) ModuleInfo {
         return .{
             .strings = bun.StringArrayHashMap(void).init(allocator),

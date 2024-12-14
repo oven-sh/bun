@@ -859,7 +859,9 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.writeByte(']');
+                            try writer.print(", {}]", .{
+                                bun.fmt.formatJSONStringUTF8(repo.resolved.slice(buf), .{ .quote = true }),
+                            });
                         },
                         else => unreachable,
                     }
@@ -1565,6 +1567,23 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     pkg.meta.integrity = Integrity.parse(integrity_str);
+                },
+                inline .git, .github => |tag| {
+                    // .bun-tag
+                    if (i >= pkg_info.len) {
+                        try log.addError(source, value.loc, "Missing git dependency tag");
+                        return error.InvalidPackageInfo;
+                    }
+
+                    const bun_tag = pkg_info.at(i);
+                    i += 1;
+
+                    const bun_tag_str = bun_tag.asString(allocator) orelse {
+                        try log.addError(source, bun_tag.loc, "Expected a string");
+                        return error.InvalidPackageInfo;
+                    };
+
+                    @field(res.value, @tagName(tag)).resolved = try string_buf.append(bun_tag_str);
                 },
                 else => {},
             }

@@ -996,11 +996,11 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm) continue;
+                            if (res.tag != .npm or update.version.tag != .npm) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const len = switch (exact_versions) {
+                            const len = switch (exact_versions or update.version.value.npm.version.isExact()) {
                                 false => std.fmt.count("^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
                                 true => std.fmt.count("{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
                             };
@@ -1031,11 +1031,11 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm) continue;
+                            if (res.tag != .npm or update.version.tag != .npm) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const buf = switch (exact_versions) {
+                            const buf = switch (exact_versions or update.version.value.npm.version.isExact()) {
                                 false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
                                 true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
                             };

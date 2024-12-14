@@ -495,7 +495,7 @@ pub const Tree = struct {
         },
     };
 
-    const SubtreeError = error{ OutOfMemory, DependencyLoop };
+    const SubtreeError = OOM || error{DependencyLoop};
 
     // max number of node_modules folders
     pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
@@ -663,6 +663,7 @@ pub const Tree = struct {
         log: *logger.Log,
         lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
+        sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -711,6 +712,7 @@ pub const Tree = struct {
                 }
             }
             this.queue.deinit();
+            this.sort_buf.deinit(this.allocator);
 
             return dependency_ids;
         }
@@ -746,10 +748,37 @@ pub const Tree = struct {
         const max_package_id = @as(PackageID, @truncate(name_hashes.len));
         const resolutions = builder.lockfile.packages.items(.resolution);
 
-        var dep_id = resolution_list.off;
-        const end = dep_id + resolution_list.len;
+        builder.sort_buf.clearRetainingCapacity();
+        try builder.sort_buf.ensureUnusedCapacity(builder.allocator, resolution_list.len);
 
-        while (dep_id < end) : (dep_id += 1) {
+        for (resolution_list.begin()..resolution_list.end()) |dep_id| {
+            builder.sort_buf.appendAssumeCapacity(@intCast(dep_id));
+        }
+
+        const DepSorter = struct {
+            lockfile: *const Lockfile,
+
+            pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
+                const deps_buf = sorter.lockfile.buffers.dependencies.items;
+                const string_buf = sorter.lockfile.buffers.string_bytes.items;
+
+                const l_dep_name = deps_buf[l].name.slice(string_buf);
+                const r_dep_name = deps_buf[r].name.slice(string_buf);
+
+                return strings.order(l_dep_name, r_dep_name) == .lt;
+            }
+        };
+
+        std.sort.pdq(
+            DependencyID,
+            builder.sort_buf.items,
+            DepSorter{
+                .lockfile = builder.lockfile,
+            },
+            DepSorter.isLessThan,
+        );
+
+        for (builder.sort_buf.items) |dep_id| {
             const pid = builder.resolutions[dep_id];
             // Skip unresolved packages, e.g. "peerDependencies"
             if (pid >= max_package_id) continue;
@@ -968,6 +997,9 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm) continue;
+
+                            // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+
                             const len = switch (exact_versions) {
                                 false => std.fmt.count("^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
                                 true => std.fmt.count("{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
@@ -1000,6 +1032,9 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm) continue;
+
+                            // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+
                             const buf = switch (exact_versions) {
                                 false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
                                 true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,

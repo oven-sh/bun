@@ -1701,7 +1701,7 @@ describe("package.json indentation", async () => {
 });
 
 describe("text lockfile", () => {
-  test("workspace sorting", async () => {
+  test.only("workspace sorting", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),

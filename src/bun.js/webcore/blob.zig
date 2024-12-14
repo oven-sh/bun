@@ -3530,10 +3530,12 @@ pub const Blob = struct {
                 .not_found => {
                     this.promise.resolve(this.globalThis, .false);
                 },
-                .success => |stat| {
-                    if (this.blob.size == Blob.max_size) {
-                        this.blob.size = @truncate(stat.size);
-                    }
+                .success => |_| {
+                    // calling .exists() should not prevent it to download a bigger file
+                    // this would make it download a slice of the actual value, if the file changes before we download it
+                    // if (this.blob.size == Blob.max_size) {
+                    //     this.blob.size = @truncate(stat.size);
+                    // }
                     this.promise.resolve(this.globalThis, .true);
                 },
                 .failure => |err| {
@@ -3637,6 +3639,12 @@ pub const Blob = struct {
 
         if (store.data != .file) {
             return globalThis.throwInvalidArguments("Blob is read-only", .{});
+        }
+        if (this.isS3()) {
+            const env = globalThis.bunVM().bundler.env;
+            const credentials = env.getAWSCredentials();
+            const url = bun.URL.parse(store.data.file.pathlike.path.slice());
+            return try credentials.s3WritableStream(url.s3Path(), globalThis, if (env.getHttpProxy(url)) |proxy| proxy.href else null);
         }
 
         if (Environment.isWindows) {

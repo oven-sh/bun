@@ -1093,7 +1093,7 @@ pub const Fetch = struct {
 
                 const globalThis = this.global_this;
                 var response_stream = FetchTaskletStream.new(.{
-                    .task = this,
+                    .task = .{ .fetch = this },
                     .buffer = .{},
                     .globalThis = globalThis,
                 }).toSink();

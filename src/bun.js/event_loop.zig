@@ -18,7 +18,9 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
-const S3HttpSimpleTask = @import("../s3.zig").AWSCredentials.S3HttpSimpleTask;
+const AWS = @import("../s3.zig").AWSCredentials;
+const S3HttpSimpleTask = AWS.S3HttpSimpleTask;
+const S3HttpStreamUpload = AWS.S3HttpStreamUpload;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -409,6 +411,7 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     S3HttpSimpleTask,
+    S3HttpStreamUpload,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
@@ -995,6 +998,10 @@ pub const EventLoop = struct {
                 },
                 .S3HttpSimpleTask => {
                     var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
+                },
+                .S3HttpStreamUpload => {
+                    var s3_task: *S3HttpStreamUpload = task.get(S3HttpStreamUpload).?;
                     s3_task.onResponse();
                 },
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {

@@ -43,6 +43,7 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
+const AWS = @import("../../s3.zig").AWSCredentials;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -2603,7 +2604,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
 pub const FetchTaskletChunkedRequestSink = struct {
-    task: ?*JSC.WebCore.Fetch.FetchTasklet = null,
+    task: ?HTTPWritableStream = null,
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
     highWaterMark: Blob.SizeType = 2048,
@@ -2613,7 +2614,10 @@ pub const FetchTaskletChunkedRequestSink = struct {
     auto_flusher: AutoFlusher = AutoFlusher{},
 
     pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
-
+    const HTTPWritableStream = union(enum) {
+        fetch: *JSC.WebCore.Fetch.FetchTasklet,
+        s3_upload: *AWS.S3HttpStreamUpload,
+    };
     fn unregisterAutoFlusher(this: *@This()) void {
         if (this.auto_flusher.registered)
             AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
@@ -2671,9 +2675,23 @@ pub const FetchTaskletChunkedRequestSink = struct {
         this.buffer = .{};
         buffer.deinit();
 
+        this.detachWritable();
+    }
+
+    fn detachWritable(this: *@This()) void {
         if (this.task) |task| {
             this.task = null;
-            task.deref();
+            switch (task) {
+                inline .fetch, .s3_upload => |writable| {
+                    writable.deref();
+                },
+            }
+        }
+    }
+
+    fn sendRequestData(writable: HTTPWritableStream, data: []const u8, is_last: bool) void {
+        switch (writable) {
+            inline .fetch, .s3_upload => |task| task.sendRequestData(data, is_last),
         }
     }
 
@@ -2684,17 +2702,17 @@ pub const FetchTaskletChunkedRequestSink = struct {
             if (is_last) this.done = true;
 
             if (data.len == 0) {
-                task.sendRequestData(bun.http.end_of_chunked_http1_1_encoding_response_body, true);
+                sendRequestData(task, bun.http.end_of_chunked_http1_1_encoding_response_body, true);
                 return;
             }
 
             // chunk encoding is really simple
             if (is_last) {
                 const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
-                task.sendRequestData(chunk, true);
+                sendRequestData(task, chunk, true);
             } else {
                 const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
-                task.sendRequestData(chunk, false);
+                sendRequestData(task, chunk, false);
             }
         }
     }
@@ -2868,6 +2886,9 @@ pub const FetchTaskletChunkedRequestSink = struct {
         }
         _ = this.end(null);
         return .{ .result = JSC.JSValue.jsNumber(0) };
+    }
+    pub fn toJS(this: *@This(), globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this, 0);
     }
     const name = "FetchTaskletChunkedRequestSink";
     pub const JSSink = NewJSSink(@This(), name);

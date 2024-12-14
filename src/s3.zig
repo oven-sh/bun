@@ -367,7 +367,9 @@ pub const AWSCredentials = struct {
         fn fail(this: @This()) void {
             var code: []const u8 = "UnknownError";
             var message: []const u8 = "an unexpected error has occurred";
-            if (this.result.body) |body| {
+            if (this.result.fail) |err| {
+                code = @errorName(err);
+            } else if (this.result.body) |body| {
                 const bytes = body.list.items;
                 if (bytes.len > 0) {
                     message = bytes[0..];
@@ -388,6 +390,10 @@ pub const AWSCredentials = struct {
 
         pub fn onResponse(this: *@This()) void {
             defer this.deinit();
+            if (!this.result.isSuccess()) {
+                this.fail();
+                return;
+            }
             bun.assert(this.result.metadata != null);
             const response = this.result.metadata.?.response;
             switch (this.callback) {
@@ -564,5 +570,463 @@ pub const AWSCredentials = struct {
 
     pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
         this.executeSimpleS3Request(path, .POST, .{ .upload = callback }, callback_context, proxy_url, content, null);
+    }
+
+    pub const S3HttpStreamUpload = struct {
+        http: bun.http.AsyncHTTP,
+        vm: *JSC.VirtualMachine,
+        sign_result: SignResult,
+        headers: JSC.WebCore.Headers,
+        callback_context: *anyopaque,
+        callback: *const fn (S3UploadResult, *anyopaque) void,
+        response_buffer: bun.MutableString = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        },
+        result: bun.http.HTTPClientResult = .{},
+        concurrent_task: JSC.ConcurrentTask = .{},
+        stream_started: bool = false,
+        stream_ended: bool = false,
+        ended: bool = false,
+        sink: ?*FetchTaskletStream.JSSink = null,
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+        signal_store: bun.http.Signals.Store = .{},
+
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+        request_body: bun.ByteList = .{},
+
+        pub usingnamespace bun.NewThreadSafeRefCounted(S3HttpStreamUpload, S3HttpStreamUpload.deinit);
+        pub const FetchTaskletStream = JSC.WebCore.FetchTaskletChunkedRequestSink;
+
+        pub fn sendRequestData(this: *@This(), data: []const u8, ended: bool) void {
+            this.stream_ended = ended;
+            if (this.stream_started) {
+                if (this.ended and data.len != 3) {
+                    bun.default_allocator.free(data);
+                    return;
+                }
+                bun.http.http_thread.scheduleRequestWrite(&this.http, data, ended);
+            } else {
+                // we need to buffer because the stream did not start yet this can only happen if someone is writing in the JS writable
+                this.request_body.append(bun.default_allocator, data) catch bun.outOfMemory();
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            if (this.request_body.cap > 0) {
+                this.request_body.deinitWithAllocator(bun.default_allocator);
+            }
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+            }
+
+            this.response_buffer.deinit();
+            this.headers.deinit();
+            this.sign_result.deinit();
+            this.http.clearData();
+
+            if (this.result.metadata) |*metadata| {
+                metadata.deinit(bun.default_allocator);
+            }
+            this.destroy();
+        }
+
+        fn fail(this: @This()) void {
+            var code: []const u8 = "UnknownError";
+            var message: []const u8 = "an unexpected error has occurred";
+            if (this.result.fail) |err| {
+                code = @errorName(err);
+            } else if (this.result.body) |body| {
+                const bytes = body.list.items;
+                if (bytes.len > 0) {
+                    message = bytes[0..];
+                    if (strings.indexOf(bytes, "<Code>")) |start| {
+                        if (strings.indexOf(bytes, "</Code>")) |end| {
+                            code = bytes[start + "<Code>".len .. end];
+                        }
+                    }
+                    if (strings.indexOf(bytes, "<Message>")) |start| {
+                        if (strings.indexOf(bytes, "</Message>")) |end| {
+                            message = bytes[start + "<Message>".len .. end];
+                        }
+                    }
+                }
+            }
+            this.callback(.{
+                .failure = .{
+                    .code = code,
+                    .message = message,
+                },
+            }, this.callback_context);
+            if (this.sink) |wrapper| {
+                wrapper.sink.abort();
+                return;
+            }
+        }
+
+        fn failWithJSValue(this: *@This(), reason: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+            if (!this.ended) {
+                this.ended = true;
+                reason.ensureStillAlive();
+                if (reason.toStringOrNull(globalThis)) |message| {
+                    var slice = message.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    this.callback(.{
+                        .failure = .{
+                            .code = "ERR_ABORTED",
+                            .message = slice.slice(),
+                        },
+                    }, this.callback_context);
+                } else {
+                    // TODO: do better
+                    this.fail();
+                }
+            }
+            this.abortTask();
+            if (this.sink) |wrapper| {
+                wrapper.sink.abort();
+                return;
+            }
+        }
+        pub fn abortTask(this: *@This()) void {
+            this.signal_store.aborted.store(true, .monotonic);
+            bun.http.http_thread.scheduleShutdown(&this.http);
+        }
+
+        fn clearSink(this: *@This()) void {
+            if (this.sink) |wrapper| {
+                this.sink = null;
+
+                wrapper.sink.done = true;
+                wrapper.sink.ended = true;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                wrapper.sink.finalizeAndDestroy();
+            }
+        }
+        pub fn onResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var args = callframe.arguments_old(2);
+            var this: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            var readable_stream_ref = this.readable_stream_ref;
+            this.readable_stream_ref = .{};
+            defer readable_stream_ref.deinit();
+            if (readable_stream_ref.get()) |stream| {
+                stream.done(globalThis);
+                this.clearSink();
+            }
+
+            return .undefined;
+        }
+
+        pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const args = callframe.arguments_old(2);
+            var this = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            const err = args.ptr[0];
+            var readable_stream_ref = this.readable_stream_ref;
+            this.readable_stream_ref = .{};
+            defer readable_stream_ref.deinit();
+            if (readable_stream_ref.get()) |stream| {
+                stream.cancel(globalThis);
+                this.clearSink();
+            }
+
+            this.failWithJSValue(err, globalThis);
+
+            return .undefined;
+        }
+        pub const shim = JSC.Shimmer("Bun", "S3HttpStreamUpload", @This());
+
+        pub const Export = shim.exportFunctions(.{
+            .onResolveRequestStream = onResolveRequestStream,
+            .onRejectRequestStream = onRejectRequestStream,
+        });
+        comptime {
+            const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
+            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
+            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        }
+
+        fn startRequestStream(this: *@This()) void {
+            this.stream_started = true;
+            if (this.request_body.len > 0) {
+                // we have buffered data lets allow it to flow
+                var body = this.request_body;
+                this.request_body = .{};
+                this.sendRequestData(body.slice(), this.stream_ended);
+            }
+            if (this.readable_stream_ref.get()) |stream| {
+                var response_stream = brk: {
+                    if (this.sink) |s| break :brk s;
+                    this.ref(); // + 1 for the stream
+
+                    var response_stream = S3HttpStreamUpload.FetchTaskletStream.new(.{
+                        .task = .{ .s3_upload = this },
+                        .buffer = .{},
+                        .globalThis = this.readable_stream_ref.globalThis().?,
+                    }).toSink();
+                    var signal = &response_stream.sink.signal;
+                    this.sink = response_stream;
+
+                    signal.* = S3HttpStreamUpload.FetchTaskletStream.JSSink.SinkSignal.init(.zero);
+
+                    // explicitly set it to a dead pointer
+                    // we use this memory address to disable signals being sent
+                    signal.clear();
+                    bun.assert(signal.isDead());
+                    break :brk response_stream;
+                };
+                const globalThis = this.readable_stream_ref.globalThis().?;
+                const signal = &response_stream.sink.signal;
+                // We are already corked!
+                const assignment_result = FetchTaskletStream.JSSink.assignToStream(
+                    globalThis,
+                    stream.value,
+                    response_stream,
+                    @as(**anyopaque, @ptrCast(&signal.ptr)),
+                );
+
+                assignment_result.ensureStillAlive();
+
+                // assert that it was updated
+                bun.assert(!signal.isDead());
+
+                if (assignment_result.toError()) |err_value| {
+                    response_stream.detach();
+                    this.sink = null;
+                    response_stream.sink.finalizeAndDestroy();
+                    return this.failWithJSValue(err_value, globalThis);
+                }
+
+                if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+                    this.vm.drainMicrotasks();
+
+                    assignment_result.ensureStillAlive();
+                    // it returns a Promise when it goes through ReadableStreamDefaultReader
+                    if (assignment_result.asAnyPromise()) |promise| {
+                        switch (promise.status(globalThis.vm())) {
+                            .pending => {
+                                this.ref(); // + 1 for the promise
+                                assignment_result.then(
+                                    globalThis,
+                                    this,
+                                    onResolveRequestStream,
+                                    onRejectRequestStream,
+                                );
+                            },
+                            .fulfilled => {
+                                var readable_stream_ref = this.readable_stream_ref;
+                                this.readable_stream_ref = .{};
+                                defer {
+                                    stream.done(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+                            },
+                            .rejected => {
+                                var readable_stream_ref = this.readable_stream_ref;
+                                this.readable_stream_ref = .{};
+
+                                defer {
+                                    stream.cancel(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+
+                                this.failWithJSValue(promise.result(globalThis.vm()), globalThis);
+                            },
+                        }
+                        return;
+                    } else {
+                        // if is not a promise we treat it as Error
+                        response_stream.detach();
+                        this.sink = null;
+                        response_stream.sink.finalizeAndDestroy();
+                        this.ended = true;
+                        return this.failWithJSValue(assignment_result, globalThis);
+                    }
+                }
+            }
+        }
+
+        pub fn onResponse(this: *@This()) void {
+            const result = this.result;
+            const has_more = result.has_more;
+            if (has_more) {
+                if (result.can_stream and !this.stream_started and !this.ended) {
+                    // start streaming
+                    this.startRequestStream();
+                }
+            } else {
+                defer this.deref();
+                if (this.ended) {
+                    // if the stream rejects we do not call the callback again just ignore the result and deref
+                    return;
+                }
+
+                this.ended = true;
+                if (!result.isSuccess()) {
+                    this.fail();
+                } else {
+                    bun.assert(result.metadata != null);
+                    const response = result.metadata.?.response;
+
+                    switch (response.status_code) {
+                        200 => {
+                            this.callback(.{ .success = {} }, this.callback_context);
+                        },
+                        else => {
+                            this.fail();
+                        },
+                    }
+                }
+            }
+        }
+
+        pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
+            const is_done = !result.has_more;
+            this.result = result;
+            this.http = async_http.*;
+            // at this point we always have 2 refs at least, we only deref the main thread when this task is received and processed
+            if (is_done) this.deref();
+            this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        }
+    };
+
+    /// consumes the readable stream and upload to s3
+    pub fn s3UploadStream(this: *const @This(), path: []const u8, readable_stream: *JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+        var result = this.signRequest(path, .PUT, null, null) catch |sign_err| {
+            return switch (sign_err) {
+                error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
+                error.InvalidMethod => callback.fail("MissingCredentials", "method must be GET, PUT, DELETE or HEAD when using s3 protocol", callback_context),
+                error.InvalidPath => callback.fail("InvalidPath", "invalid s3 bucket, key combination", callback_context),
+                else => callback.fail("SignError", "failed to retrieve s3 content check your credentials", callback_context),
+            };
+        };
+
+        const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+        const task = S3HttpStreamUpload.new(.{
+            .http = undefined,
+            .sign_result = result,
+            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
+            .callback_context = callback_context,
+            .callback = callback,
+            .headers = headers,
+            .vm = JSC.VirtualMachine.get(),
+        });
+
+        const url = bun.URL.parse(result.url);
+
+        task.http = bun.http.AsyncHTTP.init(
+            bun.default_allocator,
+            .PUT,
+            url,
+            task.headers.entries,
+            task.headers.buf.items,
+            &task.response_buffer,
+            "",
+            bun.http.HTTPClientResult.Callback.New(
+                *S3HttpStreamUpload,
+                S3HttpStreamUpload.http_callback,
+            ).init(task),
+            .follow,
+            .{
+                .http_proxy = if (proxy_url) |proxy| bun.URL.parse(proxy) else null,
+            },
+        );
+        task.http.client.flags.is_streaming_request_body = true;
+        task.http.request_body = .{
+            .stream = .{
+                .buffer = .{},
+                .ended = false,
+            },
+        };
+        // queue http request
+        bun.http.HTTPThread.init(&.{});
+        var batch = bun.ThreadPool.Batch{};
+        task.http.schedule(bun.default_allocator, &batch);
+        task.ref(); // +1 for the http thread
+        bun.http.http_thread.schedule(batch);
+    }
+    /// returns a writable stream that writes to the s3 path
+    pub fn s3WritableStream(this: *const @This(), path: []const u8, globalThis: *JSC.JSGlobalObject, proxy_url: ?[]const u8) bun.JSError!JSC.JSValue {
+        var result = this.signRequest(path, .PUT, null, null) catch |sign_err| {
+            return switch (sign_err) {
+                error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
+                error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
+                error.InvalidPath => globalThis.throwError(sign_err, "invalid s3 bucket, key combination"),
+                else => globalThis.throwError(error.SignError, "failed to retrieve s3 content check your credentials"),
+            };
+        };
+
+        const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+        // we dont really care about the callback it self, we only care about the WritableStream
+        const Wrapper = struct {
+            pub fn callback(_: S3UploadResult, _: *anyopaque) void {}
+        };
+        const task = S3HttpStreamUpload.new(.{
+            .http = undefined,
+            .sign_result = result,
+            .readable_stream_ref = .{},
+            .callback_context = undefined,
+            .callback = Wrapper.callback,
+            .headers = headers,
+            .vm = JSC.VirtualMachine.get(),
+        });
+        task.ref(); // + 1 for the stream
+        var response_stream = S3HttpStreamUpload.FetchTaskletStream.new(.{
+            .task = .{ .s3_upload = task },
+            .buffer = .{},
+            .globalThis = globalThis,
+        }).toSink();
+        var signal = &response_stream.sink.signal;
+        task.sink = response_stream;
+
+        signal.* = S3HttpStreamUpload.FetchTaskletStream.JSSink.SinkSignal.init(.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        bun.assert(signal.isDead());
+
+        const url = bun.URL.parse(result.url);
+
+        task.http = bun.http.AsyncHTTP.init(
+            bun.default_allocator,
+            .PUT,
+            url,
+            task.headers.entries,
+            task.headers.buf.items,
+            &task.response_buffer,
+            "",
+            bun.http.HTTPClientResult.Callback.New(
+                *S3HttpStreamUpload,
+                S3HttpStreamUpload.http_callback,
+            ).init(task),
+            .follow,
+            .{
+                .http_proxy = if (proxy_url) |proxy| bun.URL.parse(proxy) else null,
+            },
+        );
+        task.http.client.flags.is_streaming_request_body = true;
+        task.http.request_body = .{
+            .stream = .{
+                .buffer = .{},
+                .ended = false,
+            },
+        };
+        // queue http request
+        bun.http.HTTPThread.init(&.{});
+        var batch = bun.ThreadPool.Batch{};
+        task.http.schedule(bun.default_allocator, &batch);
+        task.ref(); // +1 for the http thread
+        bun.http.http_thread.schedule(batch);
+
+        return response_stream.sink.toJS(globalThis);
     }
 };

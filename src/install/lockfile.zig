@@ -996,16 +996,11 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm) continue;
-                            if (update.version.tag != .npm and update.version.tag != .dist_tag) continue;
+                            if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const len = switch (switch (update.version.tag) {
-                                .dist_tag => exact_versions,
-                                .npm => exact_versions or update.version.value.npm.version.isExact(),
-                                else => unreachable,
-                            }) {
+                            const len = switch (exact_versions) {
                                 else => |exact| std.fmt.count("{s}{}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
@@ -1039,16 +1034,11 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            if (res.tag != .npm) continue;
-                            if (update.version.tag != .npm and update.version.tag != .dist_tag) continue;
+                            if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                            const buf = switch (switch (update.version.tag) {
-                                .dist_tag => exact_versions,
-                                .npm => exact_versions or update.version.value.npm.version.isExact(),
-                                else => unreachable,
-                            }) {
+                            const buf = switch (exact_versions) {
                                 else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),

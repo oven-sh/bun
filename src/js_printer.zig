@@ -3860,19 +3860,27 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (s.alias != null)
-                        p.printWhitespacer(comptime ws("export *").append(" as "))
-                    else
-                        p.printWhitespacer(comptime ws("export * from "));
-
                     if (s.alias) |alias| {
+                        p.printWhitespacer(comptime ws("export *").append(" as "));
                         p.printClauseAlias(alias.original_name);
                         p.print(" ");
                         p.printWhitespacer(ws("from "));
+                    } else {
+                        p.printWhitespacer(comptime ws("export * from "));
                     }
 
-                    p.printImportRecordPath(p.importRecord(s.import_record_index));
+                    const irp = try p.fmtImportRecordPath(p.importRecord(s.import_record_index));
+                    p.printStringLiteralUTF8(irp, false);
                     p.printSemicolonAfterStatement();
+
+                    if (p.moduleInfo()) |mi| {
+                        try mi.requested_modules.put(try mi.str(irp), .none);
+                        if (s.alias) |alias| {
+                            try mi.exports.append(.{ .namespace = .{ .module_name = try mi.str(irp), .export_name = try mi.str(alias.original_name) } });
+                        } else {
+                            try mi.exports.append(.{ .star = .{ .module_name = try mi.str(irp) } });
+                        }
+                    }
                 },
                 .s_export_clause => |s| {
                     if (rewrite_esm_to_cjs) {

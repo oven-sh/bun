@@ -784,7 +784,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.folder.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.writeByte(']');
                         },
@@ -794,7 +794,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.local_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.writeByte(']');
                         },
@@ -804,7 +804,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.writeByte(']');
                         },
@@ -814,7 +814,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.symlink.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.writeByte(']');
                         },
@@ -832,7 +832,7 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
@@ -846,7 +846,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(workspace_path, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.writeByte(']');
                         },
@@ -857,7 +857,7 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf, &lockfile.buffers.extern_strings);
 
                             try writer.print(", {}]", .{
                                 bun.fmt.formatJSONStringUTF8(repo.resolved.slice(buf), .{ .quote = true }),
@@ -889,8 +889,10 @@ pub const Stringifier = struct {
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
         meta: *const Meta,
+        bin: *const Install.Bin,
         buf: string,
         optional_peers_buf: *std.ArrayList(String),
+        extern_strings: *const Install.Lockfile.ExternalStringBuffer,
     ) OOM!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
@@ -984,6 +986,77 @@ pub const Stringifier = struct {
                 \\ "cpu": 
             );
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
+        }
+
+        switch (bin.tag) {
+            .none => {},
+            .file => {
+                if (any) {
+                    try writer.writeByte(',');
+                } else {
+                    any = true;
+                }
+                try writer.print(
+                    \\ "bin": "{s}"
+                , .{
+                    bin.value.file.slice(buf),
+                });
+            },
+            .named_file => {
+                if (any) {
+                    try writer.writeByte(',');
+                } else {
+                    any = true;
+                }
+                try writer.writeAll(
+                    \\ "bin": {
+                );
+                try writer.print(
+                    \\ "{s}": "{s}"
+                , .{
+                    bin.value.named_file[0].slice(buf),
+                    bin.value.named_file[1].slice(buf),
+                });
+                try writer.writeByte('}');
+            },
+            .dir => {
+                if (any) {
+                    try writer.writeByte(',');
+                } else {
+                    any = true;
+                }
+                try writer.print(
+                    \\ "bin": "{s}"
+                , .{
+                    bin.value.dir.slice(buf),
+                });
+            },
+            .map => {
+                if (any) {
+                    try writer.writeByte(',');
+                } else {
+                    any = true;
+                }
+                try writer.writeAll(
+                    \\ "bin": {
+                );
+                const list = bin.value.map.get(extern_strings);
+                var first = true;
+                var i: usize = 0;
+                while (i < list.len) : (i += 2) {
+                    if (!first) {
+                        try writer.writeAll(",");
+                    }
+                    first = false;
+                    try writer.print(
+                        \\ "{s}": "{s}"
+                    , .{
+                        list[i].slice(buf),
+                        list[i + 1].slice(buf),
+                    });
+                }
+                try writer.writeByte('}');
+            },
         }
 
         if (any) {
@@ -1518,29 +1591,33 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    const deps_os_cpu_libc_obj = pkg_info.at(i);
+                    const deps_os_cpu_libc_obj_bin = pkg_info.at(i);
                     i += 1;
-                    if (!deps_os_cpu_libc_obj.isObject()) {
-                        try log.addError(source, deps_os_cpu_libc_obj.loc, "Expected an object");
+                    if (!deps_os_cpu_libc_obj_bin.isObject()) {
+                        try log.addError(source, deps_os_cpu_libc_obj_bin.loc, "Expected an object");
                         return error.InvalidPackageInfo;
                     }
 
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_obj, &string_buf, log, source, &optional_peers_buf);
+                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_obj_bin, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
 
                     if (res.tag != .workspace) {
-                        if (deps_os_cpu_libc_obj.get("os")) |os| {
+                        if (deps_os_cpu_libc_obj_bin.get("os")) |os| {
                             pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
                         }
-                        if (deps_os_cpu_libc_obj.get("cpu")) |arch| {
+                        if (deps_os_cpu_libc_obj_bin.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
                         // TODO(dylan-conway)
                         // if (os_cpu_libc_obj.get("libc")) |libc| {
                         //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
                         // }
+
+                        if (deps_os_cpu_libc_obj_bin.get("bin")) |bin| {
+                            pkg.bin = Install.Bin.parseAppend(allocator, bin, &string_buf, &lockfile.buffers.extern_strings) catch bun.outOfMemory();
+                        }
                     }
                 },
                 else => {},

@@ -1377,7 +1377,7 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, const len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source, &optional_peers_buf);
+        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source, &optional_peers_buf);
 
         var pkg: BinaryLockfile.Package = .{};
         pkg.meta.id = 0;
@@ -1386,6 +1386,33 @@ pub fn parseIntoBinaryLockfile(
             const name_hash = String.Builder.stringHash(name);
             pkg.name = try string_buf.appendWithHash(name, name_hash);
             pkg.name_hash = name_hash;
+        }
+
+        workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
+            for (workspaces.data.e_object.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                const path = key.asString(allocator).?;
+                if (!strings.eqlLong(path, workspace_path.slice(string_buf.bytes.items), true)) continue;
+
+                const name = value.get("name").?.asString(allocator).?;
+                const name_hash = String.Builder.stringHash(name);
+
+                var dep: Dependency = .{};
+                dep.name = try string_buf.appendWithHash(name, name_hash);
+                dep.name_hash = name_hash;
+                dep.behavior = Dependency.Behavior.workspace;
+                dep.version = .{
+                    .tag = .workspace,
+                    .value = .{
+                        .workspace = try string_buf.append(path),
+                    },
+                };
+
+                try lockfile.buffers.dependencies.append(allocator, dep);
+                len += 1;
+                continue :workspaces;
+            }
         }
 
         pkg.dependencies = .{ .off = off, .len = len };

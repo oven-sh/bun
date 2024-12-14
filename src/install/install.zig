@@ -15184,7 +15184,7 @@ pub const bun_install_js_bindings = struct {
         const cwd = try args[0].toSliceOrNull(globalObject);
         defer cwd.deinit();
 
-        var dir = bun.openDirAbsolute(cwd.slice()) catch |err| {
+        var dir = bun.openDirAbsoluteNotForDeletingOrRenaming(cwd.slice()) catch |err| {
             return globalObject.throw("failed to open: {s}, '{s}'", .{ @errorName(err), cwd.slice() });
         };
         defer dir.close();

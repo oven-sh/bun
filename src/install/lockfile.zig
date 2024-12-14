@@ -3367,7 +3367,7 @@ pub const Package = extern struct {
             this: *Package.Scripts,
             log: *logger.Log,
             lockfile: *Lockfile,
-            node_modules: std.fs.Dir,
+            node_modules: *PackageManager.LazyPackageDestinationDir,
             abs_node_modules_path: string,
             folder_name: string,
             resolution: *const Resolution,
@@ -3427,13 +3427,13 @@ pub const Package = extern struct {
             allocator: std.mem.Allocator,
             string_builder: *Lockfile.StringBuilder,
             log: *logger.Log,
-            node_modules: std.fs.Dir,
+            node_modules: *PackageManager.LazyPackageDestinationDir,
             folder_name: string,
         ) !void {
             const json = brk: {
                 const json_src = brk2: {
                     const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
-                    const buf = try bun.sys.File.readFrom(node_modules, json_path, allocator).unwrap();
+                    const buf = try bun.sys.File.readFrom(try node_modules.getDir(), json_path, allocator).unwrap();
                     break :brk2 logger.Source.initPathString(json_path, buf);
                 };
 
@@ -3455,7 +3455,7 @@ pub const Package = extern struct {
             this: *Package.Scripts,
             log: *logger.Log,
             lockfile: *Lockfile,
-            node_modules: std.fs.Dir,
+            node_modules: *PackageManager.LazyPackageDestinationDir,
             abs_folder_path: string,
             folder_name: string,
             resolution_tag: Resolution.Tag,

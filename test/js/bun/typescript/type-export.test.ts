@@ -83,7 +83,7 @@ for (const b_file of b_files) {
           expect(JSON.parse(result.stdout.toString().trim())).toEqual({ my_value: "2", my_only: "3" });
         };
 
-        test.todoIf(b_file.name !== "export star")("run", () => {
+        test.todoIf(b_file.name !== "export star" && b_file.name !== "export merge")("run", () => {
           runAndVerify("c.ts");
         });
 

@@ -76,8 +76,10 @@ pub const Bin = extern struct {
                 if (l_list.len != r_list.len) return false;
 
                 // assuming these maps are small without duplicate keys
-                outer: for (0..l_list.len / 2) |i| {
-                    for (0..r_list.len / 2) |j| {
+                var i: usize = 0;
+                outer: while (i < l_list.len) : (i += 2) {
+                    var j: usize = 0;
+                    while (j < r_list.len) : (j += 2) {
                         if (l_list[i].hash == r_list[j].hash) {
                             if (l_list[i + 1].hash != r_list[j + 1].hash) {
                                 return false;

@@ -28,15 +28,10 @@ const Lockfile = Install.Lockfile;
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
-    unset: u8 = 0,
-    _padding_tag: [2]u8 = .{0} ** 2,
+    _padding_tag: [3]u8 = .{0} ** 3,
 
     // Largest member must be zero initialized
     value: Value = Value{ .map = ExternalStringList{} },
-
-    pub fn isUnset(this: *const Bin) bool {
-        return this.unset != 0;
-    }
 
     pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
@@ -64,21 +59,18 @@ pub const Bin = extern struct {
             .none => {
                 return Bin{
                     .tag = .none,
-                    .unset = this.unset,
                     .value = Value.init(.{ .none = {} }),
                 };
             },
             .file => {
                 return Bin{
                     .tag = .file,
-                    .unset = this.unset,
                     .value = Value.init(.{ .file = builder.append(String, this.value.file.slice(buf)) }),
                 };
             },
             .named_file => {
                 return Bin{
                     .tag = .named_file,
-                    .unset = this.unset,
                     .value = Value.init(
                         .{
                             .named_file = [2]String{
@@ -92,7 +84,6 @@ pub const Bin = extern struct {
             .dir => {
                 return Bin{
                     .tag = .dir,
-                    .unset = this.unset,
                     .value = Value.init(.{ .dir = builder.append(String, this.value.dir.slice(buf)) }),
                 };
             },
@@ -103,7 +94,6 @@ pub const Bin = extern struct {
 
                 return Bin{
                     .tag = .map,
-                    .unset = this.unset,
                     .value = Value.init(.{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) }),
                 };
             },
@@ -118,7 +108,6 @@ pub const Bin = extern struct {
 
         const cloned: Bin = .{
             .tag = this.tag,
-            .unset = this.unset,
 
             .value = switch (this.tag) {
                 .none => Value.init(.{ .none = {} }),

@@ -1095,7 +1095,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         fn verifyPatchHash(
             this: *@This(),
             root_node_modules_dir: std.fs.Dir,
-        ) VerifyResult {
+        ) bool {
             bun.debugAssert(!this.patch.isNull());
 
             // hash from the .patch file, to be checked against bun tag
@@ -1108,22 +1108,21 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 bunhashtag,
             }, .posix);
 
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return .{};
+            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
             defer {
                 if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
             }
 
             if (comptime bun.Environment.isPosix) {
-                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return .{};
+                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return false;
             } else {
                 switch (bun.sys.openat(bun.toFD(destination_dir.fd), patch_tag_path, bun.O.RDONLY, 0)) {
-                    .err => return .{},
+                    .err => return false,
                     .result => |fd| _ = bun.sys.close(fd),
                 }
             }
-            return .{
-                .valid = true,
-            };
+
+            return true;
         }
 
         // 1. verify that .bun-tag exists (was it installed from bun?)
@@ -1132,7 +1131,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             this: *@This(),
             repo: *const Repository,
             root_node_modules_dir: std.fs.Dir,
-        ) VerifyResult {
+        ) bool {
             bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
             this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
             const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
@@ -1140,7 +1139,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             const allocator = git_tag_stack_fallback.get();
 
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return .{};
+            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
             defer {
                 if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
             }
@@ -1149,51 +1148,42 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 destination_dir,
                 bun_tag_path,
                 allocator,
-            ).unwrap() catch return .{};
+            ).unwrap() catch return false;
             defer allocator.free(bun_tag_file);
 
-            return .{
-                .valid = strings.eqlLong(repo.resolved.slice(this.lockfile.buffers.string_bytes.items), bun_tag_file, true),
-            };
+            return strings.eqlLong(repo.resolved.slice(this.lockfile.buffers.string_bytes.items), bun_tag_file, true);
         }
 
         pub fn verify(
             this: *@This(),
             resolution: *const Resolution,
             root_node_modules_dir: std.fs.Dir,
-            bin: *Bin,
-        ) VerifyResult {
+        ) bool {
             const verified =
                 switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, root_node_modules_dir),
                 .github => this.verifyGitResolution(&resolution.value.github, root_node_modules_dir),
                 .root => this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
                 .folder => if (this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id))
-                    this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag, bin)
+                    this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag)
                 else
                     this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
-                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag, bin),
+                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
             };
             if (comptime kind == .patch) return verified;
             if (this.patch.isNull()) return verified;
-            if (!verified.valid) return verified;
+            if (!verified) return false;
             return this.verifyPatchHash(root_node_modules_dir);
         }
 
         // Only check for destination directory in node_modules. We can't use package.json because
         // it might not exist
-        fn verifyTransitiveSymlinkedFolder(this: *@This(), root_node_modules_dir: std.fs.Dir) VerifyResult {
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return .{};
+        fn verifyTransitiveSymlinkedFolder(this: *@This(), root_node_modules_dir: std.fs.Dir) bool {
+            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
             defer destination_dir.close();
 
-            const exists = bun.sys.directoryExistsAt(destination_dir.fd, this.destination_dir_subpath).unwrap() catch return .{};
-            return if (exists) .{ .valid = true } else .{};
+            return bun.sys.directoryExistsAt(destination_dir.fd, this.destination_dir_subpath).unwrap() catch false;
         }
-
-        const VerifyResult = struct {
-            valid: bool = false,
-            update_lockfile_pointers: bool = false,
-        };
 
         fn getInstalledPackageJsonSource(
             this: *PackageInstall,
@@ -1246,7 +1236,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             return logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
         }
 
-        fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir, resolution_tag: Resolution.Tag, bin: *Bin) VerifyResult {
+        fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir, resolution_tag: Resolution.Tag) bool {
             var body_pool = Npm.Registry.BodyPool.get(this.allocator);
             var mutable: MutableString = body_pool.data;
             defer {
@@ -1259,7 +1249,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // Don't keep it open while we're parsing the JSON.
             // The longer the file stays open, the more likely it causes issues for
             // other processes on Windows.
-            const source = this.getInstalledPackageJsonSource(root_node_modules_dir, &mutable, resolution_tag) orelse return .{};
+            const source = this.getInstalledPackageJsonSource(root_node_modules_dir, &mutable, resolution_tag) orelse return false;
 
             var log = logger.Log.init(this.allocator);
             defer log.deinit();
@@ -1270,12 +1260,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 this.allocator,
                 &source,
                 &log,
-                if (bin.isUnset()) .check_for_bin else .ignore_bin,
-            ) catch return .{};
-            _ = package_json_checker.parseExpr(false, false) catch return .{};
-            if (log.errors > 0 or !package_json_checker.has_found_name) return .{};
+            ) catch return false;
+            _ = package_json_checker.parseExpr() catch return false;
+            if (log.errors > 0 or !package_json_checker.has_found_name) return false;
             // workspaces aren't required to have a version
-            if (!package_json_checker.has_found_version and resolution_tag != .workspace) return .{};
+            if (!package_json_checker.has_found_version and resolution_tag != .workspace) return false;
 
             const found_version = package_json_checker.found_version;
 
@@ -1308,43 +1297,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     }
                     // If we didn't find any of these characters, there's no point in checking the version again.
                     // it will never match.
-                    return .{};
+                    return false;
                 };
 
-                if (!strings.eql(found_version[offset..], this.package_version)) return .{};
+                if (!strings.eql(found_version[offset..], this.package_version)) return false;
             }
 
             // lastly, check the name.
-            if (strings.eql(package_json_checker.found_name, this.package_name.slice(this.lockfile.buffers.string_bytes.items))) {
-                // only want to set bins if up-to-date
-                if (bin.isUnset() and package_json_checker.has_found_bin) {
-                    var string_buf = this.lockfile.stringBuf();
-                    defer string_buf.apply(this.lockfile);
-
-                    switch (package_json_checker.found_bin) {
-                        .bin => |expr| {
-                            bin.* = Bin.parseAppend(this.lockfile.allocator, expr, &string_buf, &this.lockfile.buffers.extern_strings) catch bun.outOfMemory();
-                        },
-                        .dir => |expr| {
-                            bin.* = Bin.parseAppendFromDirectories(this.lockfile.allocator, expr, &string_buf) catch bun.outOfMemory();
-                        },
-                    }
-
-                    return .{
-                        .valid = true,
-                        .update_lockfile_pointers = true,
-                    };
-                } else if (bin.isUnset()) {
-                    // It's not unset. There's no bin.
-                    bin.unset = 0;
-                }
-
-                return .{
-                    .valid = true,
-                };
-            }
-
-            return .{};
+            return strings.eql(package_json_checker.found_name, this.package_name.slice(this.lockfile.buffers.string_bytes.items));
         }
 
         pub const Result = union(Tag) {
@@ -12223,7 +12183,7 @@ pub const PackageManager = struct {
         metas: []const Lockfile.Package.Meta,
         names: []const String,
         pkg_name_hashes: []const PackageNameHash,
-        bins: []Bin,
+        bins: []const Bin,
         resolutions: []Resolution,
         node: *Progress.Node,
         destination_dir_subpath_buf: bun.PathBuffer = undefined,
@@ -13002,19 +12962,10 @@ pub const PackageManager = struct {
                 },
             }
 
-            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or remove_patch or verify: {
-                const verified = installer.verify(
-                    resolution,
-                    this.root_node_modules_folder,
-                    &this.bins[package_id],
-                );
-
-                if (verified.update_lockfile_pointers) {
-                    this.fixCachedLockfilePackageSlices();
-                }
-
-                break :verify !verified.valid;
-            };
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or remove_patch or !installer.verify(
+                resolution,
+                this.root_node_modules_folder,
+            );
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
@@ -13186,17 +13137,6 @@ pub const PackageManager = struct {
                             this.node.completeOne();
                         }
 
-                        if (this.bins[package_id].isUnset()) {
-                            this.bins[package_id] = this.getPackageBin(
-                                &installer,
-                                pkg_name.slice(this.lockfile.buffers.string_bytes.items),
-                                pkg_name_hash,
-                                resolution,
-                            ) catch |err| switch (err) {
-                                error.OutOfMemory => bun.outOfMemory(),
-                            };
-                        }
-
                         if (this.bins[package_id].tag != .none) {
                             this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
                         }
@@ -13335,16 +13275,6 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
-                if (this.bins[package_id].isUnset()) {
-                    this.bins[package_id] = this.getPackageBin(
-                        &installer,
-                        pkg_name.slice(this.lockfile.buffers.string_bytes.items),
-                        pkg_name_hash,
-                        resolution,
-                    ) catch |err| switch (err) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                    };
-                }
                 if (this.bins[package_id].tag != .none) {
                     this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
                 }
@@ -13400,69 +13330,69 @@ pub const PackageManager = struct {
             }
         }
 
-        fn getPackageBin(
-            this: *PackageInstaller,
-            installer: *PackageInstall,
-            pkg_name: string,
-            pkg_name_hash: PackageNameHash,
-            resolution: *const Resolution,
-        ) OOM!Bin {
-            defer this.fixCachedLockfilePackageSlices();
+        // fn getPackageBin(
+        //     this: *PackageInstaller,
+        //     installer: *PackageInstall,
+        //     pkg_name: string,
+        //     pkg_name_hash: PackageNameHash,
+        //     resolution: *const Resolution,
+        // ) OOM!Bin {
+        //     defer this.fixCachedLockfilePackageSlices();
 
-            if (resolution.tag == .npm) {
-                var expired = false;
-                if (this.manager.manifests.byNameHashAllowExpired(
-                    this.manager,
-                    this.manager.scopeForPackageName(pkg_name),
-                    pkg_name_hash,
-                    &expired,
-                    // Do not fallback to disk. These files are much larger than the package.json
-                    .load_from_memory,
-                )) |manifest| {
-                    if (manifest.findByVersion(resolution.value.npm.version)) |find| {
-                        return find.package.bin.cloneAppend(manifest.string_buf, manifest.extern_strings_bin_entries, this.lockfile);
-                    }
-                }
-            }
+        //     if (resolution.tag == .npm) {
+        //         var expired = false;
+        //         if (this.manager.manifests.byNameHashAllowExpired(
+        //             this.manager,
+        //             this.manager.scopeForPackageName(pkg_name),
+        //             pkg_name_hash,
+        //             &expired,
+        //             // Do not fallback to disk. These files are much larger than the package.json
+        //             .load_from_memory,
+        //         )) |manifest| {
+        //             if (manifest.findByVersion(resolution.value.npm.version)) |find| {
+        //                 return find.package.bin.cloneAppend(manifest.string_buf, manifest.extern_strings_bin_entries, this.lockfile);
+        //             }
+        //         }
+        //     }
 
-            // get it from package.json
-            var body_pool = Npm.Registry.BodyPool.get(this.lockfile.allocator);
-            var mutable = body_pool.data;
-            defer {
-                body_pool.data = mutable;
-                Npm.Registry.BodyPool.release(body_pool);
-            }
+        //     // get it from package.json
+        //     var body_pool = Npm.Registry.BodyPool.get(this.lockfile.allocator);
+        //     var mutable = body_pool.data;
+        //     defer {
+        //         body_pool.data = mutable;
+        //         Npm.Registry.BodyPool.release(body_pool);
+        //     }
 
-            const source = installer.getInstalledPackageJsonSource(this.root_node_modules_folder, &mutable, resolution.tag) orelse return .{};
+        //     const source = installer.getInstalledPackageJsonSource(this.root_node_modules_folder, &mutable, resolution.tag) orelse return .{};
 
-            initializeStore();
+        //     initializeStore();
 
-            var log = logger.Log.init(this.lockfile.allocator);
-            defer log.deinit();
+        //     var log = logger.Log.init(this.lockfile.allocator);
+        //     defer log.deinit();
 
-            var bin_finder = JSON.PackageJSONVersionChecker.init(
-                this.lockfile.allocator,
-                &source,
-                &log,
-                .only_bin,
-            ) catch return .{};
-            _ = bin_finder.parseExpr(false, false) catch return .{};
+        //     var bin_finder = JSON.PackageJSONVersionChecker.init(
+        //         this.lockfile.allocator,
+        //         &source,
+        //         &log,
+        //         .only_bin,
+        //     ) catch return .{};
+        //     _ = bin_finder.parseExpr(false, false) catch return .{};
 
-            if (bin_finder.has_found_bin) {
-                var string_buf = this.lockfile.stringBuf();
-                defer {
-                    string_buf.apply(this.lockfile);
-                    this.fixCachedLockfilePackageSlices();
-                }
+        //     if (bin_finder.has_found_bin) {
+        //         var string_buf = this.lockfile.stringBuf();
+        //         defer {
+        //             string_buf.apply(this.lockfile);
+        //             this.fixCachedLockfilePackageSlices();
+        //         }
 
-                return switch (bin_finder.found_bin) {
-                    .bin => |bin| try Bin.parseAppend(this.lockfile.allocator, bin, &string_buf, &this.lockfile.buffers.extern_strings),
-                    .dir => |dir| try Bin.parseAppendFromDirectories(this.lockfile.allocator, dir, &string_buf),
-                };
-            }
+        //         return switch (bin_finder.found_bin) {
+        //             .bin => |bin| try Bin.parseAppend(this.lockfile.allocator, bin, &string_buf, &this.lockfile.buffers.extern_strings),
+        //             .dir => |dir| try Bin.parseAppendFromDirectories(this.lockfile.allocator, dir, &string_buf),
+        //         };
+        //     }
 
-            return .{};
-        }
+        //     return .{};
+        // }
 
         // returns true if scripts are enqueued
         fn enqueueLifecycleScripts(

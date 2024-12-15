@@ -3000,7 +3000,7 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return e;
@@ -3012,7 +3012,7 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;

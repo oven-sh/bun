@@ -891,7 +891,7 @@ describe("whoami", async () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
-    test("two .npmrc", async () => {
+  test("two .npmrc", async () => {
     const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
@@ -1697,6 +1697,146 @@ describe("package.json indentation", async () => {
     });
     expect(await exited).toBe(0);
     expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
+  });
+});
+
+describe("text lockfile", () => {
+  test("workspace sorting", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "b", "package.json"),
+        JSON.stringify({
+          name: "b",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "c", "package.json"),
+        JSON.stringify({
+          name: "c",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    ).toMatchSnapshot();
+
+    // now add workspace 'a'
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "a",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+
+    const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+  });
+
+  test("--frozen-lockfile", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "^1.0.0",
+            "a-dep": "^1.0.2",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "package1",
+          dependencies: {
+            "peer-deps-too": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    expect(firstLockfile.replace(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      "a-dep",
+      "no-deps",
+      "package1",
+      "peer-deps-too",
+    ]);
+
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
   });
 });
 

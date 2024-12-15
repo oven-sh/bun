@@ -792,6 +792,10 @@ install_nodejs_from_tar() {
 		execute_sudo ln -sf "$nodejs_bin_dir/$binary" "/usr/bin/$binary"
 		execute_sudo chmod +x "/usr/bin/$binary"
 	done
+
+	# Skip downloading v8 headers
+	execute_sudo cp -r /usr/local/include/node /usr/include
+	append_to_profile "export npm_config_nodedir=/usr"
 }
 
 install_nodejs_headers() {
@@ -801,6 +805,9 @@ install_nodejs_headers() {
 
 	nodejs_headers_include="$nodejs_headers_dir/node-v$(nodejs_version_exact)/include"
 	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+
+	# Skip downloading v8 headers
+	append_to_profile "export npm_config_nodedir=/usr"
 }
 
 bun_version_exact() {

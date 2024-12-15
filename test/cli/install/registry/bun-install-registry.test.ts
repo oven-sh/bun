@@ -3583,7 +3583,7 @@ describe("binaries", () => {
     );
     expect(firstLockfile).toMatchSnapshot();
 
-    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo.js"));
+    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo", "fooooo.js"));
   });
 
   async function runBin(binName: string, expected: string, global: boolean) {

@@ -3108,6 +3108,15 @@ pub const Package = extern struct {
         postprepare: String = .{},
         filled: bool = false,
 
+        pub fn eql(l: *const Package.Scripts, r: *const Package.Scripts, l_buf: string, r_buf: string) bool {
+            return l.preinstall.eql(r.preinstall, l_buf, r_buf) and
+                l.install.eql(r.install, l_buf, r_buf) and
+                l.postinstall.eql(r.postinstall, l_buf, r_buf) and
+                l.preprepare.eql(r.preprepare, l_buf, r_buf) and
+                l.prepare.eql(r.prepare, l_buf, r_buf) and
+                l.postprepare.eql(r.postprepare, l_buf, r_buf);
+        }
+
         pub const List = struct {
             items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
             first_index: u8,
@@ -6702,13 +6711,12 @@ pub const EqlSorter = struct {
     pkg_names: []const String,
 
     // Basically placement id
-    pub const IdPair = struct {
+    pub const PathToId = struct {
         pkg_id: PackageID,
-        tree_id: Tree.Id,
         tree_path: string,
     };
 
-    pub fn isLessThan(this: @This(), l: IdPair, r: IdPair) bool {
+    pub fn isLessThan(this: @This(), l: PathToId, r: PathToId) bool {
         switch (strings.order(l.tree_path, r.tree_path)) {
             .lt => return true,
             .gt => return false,
@@ -6723,7 +6731,8 @@ pub const EqlSorter = struct {
     }
 };
 
-pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator) OOM!bool {
+/// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
+pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, allocator: std.mem.Allocator) OOM!bool {
     const l_hoisted_deps = l.buffers.hoisted_dependencies.items;
     const r_hoisted_deps = r.buffers.hoisted_dependencies.items;
     const l_string_buf = l.buffers.string_bytes.items;
@@ -6734,7 +6743,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
 
     if (l_len != r_len) return false;
 
-    const sort_buf = try allocator.alloc(EqlSorter.IdPair, l_len + r_len);
+    const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
     defer l.allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
     var r_buf = sort_buf[r_len..];
@@ -6749,10 +6758,9 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
         for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
             if (l_dep_id == invalid_dependency_id) continue;
             const l_pkg_id = l.buffers.resolutions.items[l_dep_id];
-            if (l_pkg_id == invalid_package_id) continue;
+            if (l_pkg_id == invalid_package_id or l_pkg_id >= cut_off_pkg_id) continue;
             l_buf[i] = .{
                 .pkg_id = l_pkg_id,
-                .tree_id = l_tree.id,
                 .tree_path = tree_path,
             };
             i += 1;
@@ -6767,10 +6775,9 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
         for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
             if (r_dep_id == invalid_dependency_id) continue;
             const r_pkg_id = r.buffers.resolutions.items[r_dep_id];
-            if (r_pkg_id == invalid_package_id) continue;
+            if (r_pkg_id == invalid_package_id or r_pkg_id >= cut_off_pkg_id) continue;
             r_buf[i] = .{
                 .pkg_id = r_pkg_id,
-                .tree_id = r_tree.id,
                 .tree_path = tree_path,
             };
             i += 1;
@@ -6786,7 +6793,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
     const r_pkg_names = r_pkgs.items(.name);
 
     std.sort.pdq(
-        EqlSorter.IdPair,
+        EqlSorter.PathToId,
         l_buf,
         EqlSorter{
             .pkg_names = l_pkg_names,
@@ -6796,7 +6803,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
     );
 
     std.sort.pdq(
-        EqlSorter.IdPair,
+        EqlSorter.PathToId,
         r_buf,
         EqlSorter{
             .pkg_names = r_pkg_names,
@@ -6807,8 +6814,15 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
 
     const l_pkg_name_hashes = l_pkgs.items(.name_hash);
     const l_pkg_resolutions = l_pkgs.items(.resolution);
+    const l_pkg_bins = l_pkgs.items(.bin);
+    const l_pkg_scripts = l_pkgs.items(.scripts);
     const r_pkg_name_hashes = r_pkgs.items(.name_hash);
     const r_pkg_resolutions = r_pkgs.items(.resolution);
+    const r_pkg_bins = r_pkgs.items(.bin);
+    const r_pkg_scripts = r_pkgs.items(.scripts);
+
+    const l_extern_strings = l.buffers.extern_strings.items;
+    const r_extern_strings = r.buffers.extern_strings.items;
 
     for (l_buf, r_buf) |l_ids, r_ids| {
         const l_pkg_id = l_ids.pkg_id;
@@ -6824,6 +6838,20 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
                 return false;
             }
         } else if (!l_res.eql(&r_res, l_string_buf, r_string_buf)) {
+            return false;
+        }
+
+        if (!l_pkg_bins[l_pkg_id].eql(
+            &r_pkg_bins[r_pkg_id],
+            l_string_buf,
+            l_extern_strings,
+            r_string_buf,
+            r_extern_strings,
+        )) {
+            return false;
+        }
+
+        if (!l_pkg_scripts[l_pkg_id].eql(&r_pkg_scripts[r_pkg_id], l_string_buf, r_string_buf)) {
             return false;
         }
     }

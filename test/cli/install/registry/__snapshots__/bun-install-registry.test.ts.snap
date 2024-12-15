@@ -238,3 +238,49 @@ exports[`text lockfile --frozen-lockfile 1`] = `
 }
 "
 `;
+
+exports[`binaries each type of binary serializes correctly to text lockfile 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "dir-bin": "./dir-bin",
+        "file-bin": "./file-bin",
+        "map-bin": "./map-bin",
+        "named-file-bin": "./named-file-bin",
+      },
+    },
+  },
+  "packages": {
+    "dir-bin": ["dir-bin@file:dir-bin", { "binDir": "./bins" }],
+
+    "file-bin": ["file-bin@file:file-bin", { "bin": "./file-bin.js" }],
+
+    "map-bin": ["map-bin@file:map-bin", { "bin": { "map-bin-1": "./map-bin-1.js", "map-bin-2": "./map-bin-2.js" } }],
+
+    "named-file-bin": ["named-file-bin@file:named-file-bin", { "bin": { "named-file-bin": "./named-file-bin.js" } }],
+  }
+}
+"
+`;
+
+exports[`binaries root resolution bins 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "fooooo": ".",
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "fooooo": ["fooooo@root:", { "bin": "fooooo.js" }],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;

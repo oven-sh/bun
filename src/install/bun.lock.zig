@@ -36,6 +36,8 @@ const Negatable = Npm.Negatable;
 const DependencyID = Install.DependencyID;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const DependencyIDSlice = BinaryLockfile.DependencyIDSlice;
+const Bin = Install.Bin;
+const ExternalString = Semver.ExternalString;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -421,6 +423,7 @@ pub const Stringifier = struct {
         const pkg_names: []String = pkgs.items(.name);
         const pkg_name_hashes: []PackageNameHash = pkgs.items(.name_hash);
         const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
+        const pkg_bins = pkgs.items(.bin);
 
         var temp_buf: std.ArrayListUnmanaged(u8) = .{};
         defer temp_buf.deinit(allocator);
@@ -744,8 +747,9 @@ pub const Stringifier = struct {
                         dep_name,
                     });
 
-                    const pkg_name = pkg_names[pkg_id].slice(buf);
+                    const pkg_name = pkg_names[pkg_id];
                     const pkg_meta = pkg_metas[pkg_id];
+                    const pkg_bin = pkg_bins[pkg_id];
                     const pkg_deps_list = pkg_dep_lists[pkg_id];
 
                     pkg_deps_sort_buf.clearRetainingCapacity();
@@ -767,60 +771,69 @@ pub const Stringifier = struct {
                     // folder      -> [ "name@path", deps..., ... ]
                     // workspace   -> [ "name@workspace:path", version or "", deps..., ... ]
                     // tarball     -> [ "name@tarball", deps..., ... ]
-                    // root        -> [ "name@root:" ]
+                    // root        -> [ "name@root:", bins ]
                     // git         -> [ "name@git+repo", deps..., ... ]
                     // github      -> [ "name@github:user/repo", deps..., ... ]
 
                     switch (res.tag) {
                         .root => {
-                            try writer.print("[\"{}@root:\"]", .{
-                                bun.fmt.formatJSONStringUTF8(pkg_name, .{ .quote = false }),
+                            try writer.print("[\"{}@root:\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
                                 // we don't read the root package version into the binary lockfile
                             });
+
+                            try writer.writeByte('{');
+                            if (pkg_bin.tag != .none) {
+                                try writer.writeAll(if (pkg_bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
+                                try pkg_bin.toSingleLineJson(buf, lockfile.buffers.extern_strings.items, writer);
+                                try writer.writeAll(" }]");
+                            } else {
+                                try writer.writeAll("}]");
+                            }
                         },
                         .folder => {
-                            try writer.print("[\"{s}@file:{}\", ", .{
-                                pkg_name,
-                                bun.fmt.formatJSONStringUTF8(res.value.folder.slice(buf), .{ .quote = false }),
+                            try writer.print("[\"{}@file:{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.folder.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
                         .local_tarball => {
-                            try writer.print("[\"{s}@{}\", ", .{
-                                pkg_name,
-                                bun.fmt.formatJSONStringUTF8(res.value.local_tarball.slice(buf), .{ .quote = false }),
+                            try writer.print("[\"{}@{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.local_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
                         .remote_tarball => {
-                            try writer.print("[\"{s}@{}\", ", .{
-                                pkg_name,
-                                bun.fmt.formatJSONStringUTF8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
+                            try writer.print("[\"{}@{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.remote_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
                         .symlink => {
-                            try writer.print("[\"{s}@link:{}\", ", .{
-                                pkg_name,
-                                bun.fmt.formatJSONStringUTF8(res.value.symlink.slice(buf), .{ .quote = false }),
+                            try writer.print("[\"{}@link:{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.symlink.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
                         .npm => {
-                            try writer.print("[\"{s}@{}\", ", .{
-                                pkg_name,
+                            try writer.print("[\"{}@{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.npm.version.fmt(buf),
                             });
 
@@ -832,35 +845,33 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
                             });
                         },
                         .workspace => {
-                            const workspace_path = res.value.workspace.slice(buf);
-
-                            try writer.print("[\"{s}@workspace:{}\", ", .{
-                                pkg_name,
-                                bun.fmt.formatJSONStringUTF8(workspace_path, .{ .quote = false }),
+                            try writer.print("[\"{}@workspace:{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.workspace.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
                         inline .git, .github => |tag| {
                             const repo: Repository = @field(res.value, @tagName(tag));
-                            try writer.print("[\"{s}@{}\", ", .{
-                                pkg_name,
+                            try writer.print("[\"{}@{}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
+                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.print(", {}]", .{
-                                bun.fmt.formatJSONStringUTF8(repo.resolved.slice(buf), .{ .quote = true }),
+                                repo.resolved.fmtJson(buf, .{}),
                             });
                         },
                         else => unreachable,
@@ -881,16 +892,17 @@ pub const Stringifier = struct {
         return writer_buf.list.items;
     }
 
-    /// Writes a single line object.
+    /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
-    fn writePackageDepsAndMeta(
+    fn writePackageInfoObject(
         writer: anytype,
-        _: DependencyID,
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
         meta: *const Meta,
+        bin: *const Install.Bin,
         buf: string,
         optional_peers_buf: *std.ArrayList(String),
+        extern_strings: []const ExternalString,
     ) OOM!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
@@ -984,6 +996,16 @@ pub const Stringifier = struct {
                 \\ "cpu": 
             );
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
+        }
+
+        if (bin.tag != .none) {
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+            try writer.writeAll(if (bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
+            try bin.toSingleLineJson(buf, extern_strings, writer);
         }
 
         if (any) {
@@ -1518,29 +1540,53 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    const deps_os_cpu_libc_obj = pkg_info.at(i);
+                    const deps_os_cpu_libc_bin_obj = pkg_info.at(i);
                     i += 1;
-                    if (!deps_os_cpu_libc_obj.isObject()) {
-                        try log.addError(source, deps_os_cpu_libc_obj.loc, "Expected an object");
+                    if (!deps_os_cpu_libc_bin_obj.isObject()) {
+                        try log.addError(source, deps_os_cpu_libc_bin_obj.loc, "Expected an object");
                         return error.InvalidPackageInfo;
                     }
 
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_obj, &string_buf, log, source, &optional_peers_buf);
+                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_bin_obj, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
 
+                    if (deps_os_cpu_libc_bin_obj.get("bin")) |bin| {
+                        pkg.bin = try Bin.parseAppend(allocator, bin, &string_buf, &lockfile.buffers.extern_strings);
+                    } else if (deps_os_cpu_libc_bin_obj.get("binDir")) |bin_dir| {
+                        pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_dir, &string_buf);
+                    }
+
                     if (res.tag != .workspace) {
-                        if (deps_os_cpu_libc_obj.get("os")) |os| {
+                        if (deps_os_cpu_libc_bin_obj.get("os")) |os| {
                             pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
                         }
-                        if (deps_os_cpu_libc_obj.get("cpu")) |arch| {
+                        if (deps_os_cpu_libc_bin_obj.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
                         // TODO(dylan-conway)
                         // if (os_cpu_libc_obj.get("libc")) |libc| {
                         //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
                         // }
+                    }
+                },
+                .root => {
+                    if (i >= pkg_info.len) {
+                        try log.addError(source, value.loc, "Missing package binaries object");
+                        return error.InvalidPackageInfo;
+                    }
+                    const bin_obj = pkg_info.at(i);
+                    i += 1;
+                    if (!bin_obj.isObject()) {
+                        try log.addError(source, bin_obj.loc, "Expected an object");
+                        return error.InvalidPackageInfo;
+                    }
+
+                    if (bin_obj.get("bin")) |bin| {
+                        pkg.bin = try Bin.parseAppend(allocator, bin, &string_buf, &lockfile.buffers.extern_strings);
+                    } else if (bin_obj.get("binDir")) |bin_dir| {
+                        pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_dir, &string_buf);
                     }
                 },
                 else => {},
@@ -1585,11 +1631,6 @@ pub fn parseIntoBinaryLockfile(
             pkg.name = name;
             pkg.name_hash = name_hash;
             pkg.resolution = res;
-
-            // set later
-            pkg.bin = .{
-                .unset = 1,
-            };
             pkg.scripts = .{};
 
             const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);

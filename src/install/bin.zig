@@ -598,8 +598,62 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
+                const pm = Install.PackageManager.get();
+                const task = CRLFNormalizerTask.init(abs_target, pm);
+                _ = pm.incrementPendingTasks(1);
+                _ = pm.pending_linking_tasks.fetchAdd(1, .monotonic);
+                pm.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
+            }
+        }
+
+        const ChmodTask = struct {
+            abs_target: [:0]const u8,
+            package_manager: *bun.install.PackageManager,
+            task: bun.ThreadPool.Task = .{ .callback = run },
+
+            pub usingnamespace bun.New(@This());
+
+            pub fn init(abs_target: [:0]const u8, package_manager: *bun.install.PackageManager) *ChmodTask {
+                return ChmodTask.new(.{
+                    .abs_target = bun.default_allocator.dupeZ(u8, abs_target) catch bun.outOfMemory(),
+                    .package_manager = package_manager,
+                });
+            }
+
+            pub fn run(task: *bun.ThreadPool.Task) void {
+                const this: *ChmodTask = @fieldParentPtr("task", task);
+                defer this.deinit();
+                _ = bun.sys.chmod(this.abs_target, umask | 0o777);
+            }
+
+            pub fn deinit(this: *ChmodTask) void {
+                _ = this.package_manager.decrementPendingTasks();
+                _ = this.package_manager.pending_linking_tasks.fetchSub(1, .monotonic);
+                this.package_manager.wake();
+                bun.default_allocator.free(this.abs_target);
+                this.destroy();
+            }
+        };
+
+        const CRLFNormalizerTask = struct {
+            abs_target: [:0]const u8,
+            package_manager: *bun.install.PackageManager,
+            task: bun.ThreadPool.Task = .{ .callback = run },
+
+            pub usingnamespace bun.New(@This());
+
+            pub fn init(abs_target: [:0]const u8, package_manager: *bun.install.PackageManager) *CRLFNormalizerTask {
+                return CRLFNormalizerTask.new(.{
+                    .abs_target = bun.default_allocator.dupeZ(u8, abs_target) catch bun.outOfMemory(),
+                    .package_manager = package_manager,
+                });
+            }
+
+            pub fn run(task: *bun.ThreadPool.Task) void {
+                const this: *CRLFNormalizerTask = @fieldParentPtr("task", task);
+                defer this.deinit();
                 // any error here is ignored
-                const bin = bun.sys.File.openat(bun.invalid_fd, abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
+                const bin = bun.sys.File.openat(bun.invalid_fd, this.abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
                 defer bin.close();
 
                 var shebang_buf: [1024]u8 = undefined;
@@ -617,7 +671,16 @@ pub const Bin = extern struct {
                     }
                 }
             }
-        }
+
+            pub fn deinit(this: *CRLFNormalizerTask) void {
+                _ = this.package_manager.decrementPendingTasks();
+                _ = this.package_manager.pending_linking_tasks.fetchSub(1, .monotonic);
+                this.package_manager.wake();
+
+                bun.default_allocator.free(this.abs_target);
+                this.destroy();
+            }
+        };
 
         fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
@@ -708,7 +771,10 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
-                    _ = bun.sys.chmod(abs_target, umask | 0o777);
+                    const task = ChmodTask.init(abs_target, Install.PackageManager.get());
+                    _ = task.package_manager.pending_linking_tasks.fetchAdd(1, .monotonic);
+                    _ = task.package_manager.incrementPendingTasks(1);
+                    task.package_manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
                 }
             }
 

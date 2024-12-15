@@ -2692,6 +2692,7 @@ pub const PackageManager = struct {
     /// every single time, because someone could edit the patchfile at anytime
     pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    pending_linking_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
     preallocated_resolve_tasks: PreallocatedTaskStore = PreallocatedTaskStore.init(bun.default_allocator),
@@ -14010,7 +14011,9 @@ pub const PackageManager = struct {
 
             // need to make sure bins are linked before completing any remaining scripts.
             // this can happen if a package fails to download
+
             installer.linkRemainingBins(log_level);
+            this.sleepUntilLinkingFinishes();
             installer.completeRemainingScripts(log_level);
 
             while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
@@ -14031,6 +14034,15 @@ pub const PackageManager = struct {
 
     pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
         return manager.pending_tasks.load(.monotonic);
+    }
+
+    pub fn sleepUntilLinkingFinishes(manager: *PackageManager) void {
+        const Closure = struct {
+            pub fn isDone(pm: *PackageManager) bool {
+                return pm.pending_linking_tasks.load(.monotonic) == 0;
+            }
+        };
+        manager.sleepUntil(manager, &Closure.isDone);
     }
 
     pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {

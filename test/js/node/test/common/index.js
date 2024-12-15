@@ -119,6 +119,10 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--expose-gc" && process.versions.bun) {
+        globalThis.gc ??= Bun.gc;
+        continue;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),

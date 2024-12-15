@@ -972,6 +972,7 @@ pub const VirtualMachine = struct {
     pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
+        pub var main_thread_vm: *VirtualMachine = undefined;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
             if (vm) |vm_instance| {
                 vm_instance.global = global;
@@ -992,6 +993,10 @@ pub const VirtualMachine = struct {
 
     pub inline fn get() *VirtualMachine {
         return VMHolder.vm.?;
+    }
+
+    pub fn getMainThreadVM() *VirtualMachine {
+        return VMHolder.main_thread_vm;
     }
 
     pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.http.MimeType {
@@ -1957,6 +1962,7 @@ pub const VirtualMachine = struct {
 
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
+        is_main_thread: bool = false,
     };
 
     pub var is_smol_mode = false;
@@ -1982,7 +1988,9 @@ pub const VirtualMachine = struct {
             opts.env_loader,
         );
         var vm = VMHolder.vm.?;
-
+        if (opts.is_main_thread) {
+            VMHolder.main_thread_vm = vm;
+        }
         vm.* = VirtualMachine{
             .global = undefined,
             .transpiler_store = RuntimeTranspilerStore.init(),
@@ -2992,7 +3000,7 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return e;
@@ -3004,7 +3012,7 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;

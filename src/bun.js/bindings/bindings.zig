@@ -32,6 +32,65 @@ pub const JSObject = extern struct {
         return JSValue.fromCell(obj);
     }
 
+    /// Marshall a struct instance into a JSObject, copying its properties.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
+    }
+    /// Marshall a struct into a JSObject, copying its properties. It's
+    /// `__proto__` will be `null`.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This is roughly equivalent to creating an object with
+    /// `Object.create(null)` and adding properties to it.
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
+    }
+
+    /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    ///
+    /// The object's prototype with either be `null` or `ObjectPrototype`
+    /// depending on whether `null_prototype` is set. Prefer using the object
+    /// prototype (`null_prototype = false`) unless you have a good reason not
+    /// to.
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+        const info: std.builtin.Type.Struct = @typeInfo(T).Struct;
+
+        const obj = obj: {
+            const val = if (comptime null_prototype)
+                JSValue.createEmptyObjectWithNullPrototype(global)
+            else
+                JSValue.createEmptyObject(global, comptime info.fields.len);
+            bun.debugAssert(val.isObject());
+            break :obj val.uncheckedPtrCast(JSObject);
+        };
+
+        const cell = toJS(obj);
+        inline for (info.fields) |field| {
+            const property = @field(pojo, field.name);
+            cell.put(
+                global,
+                field.name,
+                JSC.toJS(global, @TypeOf(property), property, .temporary),
+            );
+        }
+
+        return obj;
+    }
+
     pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
         obj.toJS().put(global, key, value);
     }
@@ -3489,16 +3548,6 @@ pub const JSGlobalObject = opaque {
         }
         if (this.hasException()) return null;
         return default;
-    }
-
-    pub inline fn createObjectFromStruct(global: *JSGlobalObject, properties: anytype) *JSObject {
-        const obj = JSValue.createEmptyObject(global, comptime std.meta.fields(@TypeOf(properties)).len).uncheckedPtrCast(JSObject);
-        obj.putAllFromStruct(global, properties) catch {
-            // empty object has no setters. this must be a low-allocation OOM,
-            // wherethrowing will be nearly impossible to handle correctly.
-            bun.outOfMemory();
-        };
-        return obj;
     }
 
     pub inline fn createHostFunction(

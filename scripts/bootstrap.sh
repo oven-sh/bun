@@ -789,10 +789,8 @@ install_nodejs_from_tar() {
 	# Create symlinks if they don't exist
 	nodejs_bin_dir="/usr/local/bin"
 	for binary in node npm npx corepack; do
-		if [ -f "$nodejs_bin_dir/$binary" ]; then
-			execute_sudo ln -sf "$nodejs_bin_dir/$binary" "/usr/bin/$binary"
-			execute_sudo chmod +x "/usr/bin/$binary"
-		fi
+		execute_sudo ln -sf "$nodejs_bin_dir/$binary" "/usr/bin/$binary"
+		execute_sudo chmod +x "/usr/bin/$binary"
 	done
 }
 

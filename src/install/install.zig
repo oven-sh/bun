@@ -1140,20 +1140,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             const allocator = git_tag_stack_fallback.get();
 
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return .{};
-            defer {
-                if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
-            }
-
-            const bun_tag_file = File.readFrom(
-                destination_dir,
+            var bun_tag_file = this.node_modules.readSmallFile(
+                root_node_modules_dir,
                 bun_tag_path,
                 allocator,
-            ).unwrap() catch return .{};
-            defer allocator.free(bun_tag_file);
+            ) catch return .{};
+            defer bun_tag_file.bytes.deinit();
 
             return .{
-                .valid = strings.eqlLong(repo.resolved.slice(this.lockfile.buffers.string_bytes.items), bun_tag_file, true),
+                .valid = strings.eqlLong(repo.resolved.slice(this.lockfile.buffers.string_bytes.items), bun_tag_file.bytes.items, true),
             };
         }
 
@@ -1183,11 +1178,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         // Only check for destination directory in node_modules. We can't use package.json because
         // it might not exist
         fn verifyTransitiveSymlinkedFolder(this: *@This(), root_node_modules_dir: std.fs.Dir) VerifyResult {
-            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return .{};
-            defer destination_dir.close();
-
-            const exists = bun.sys.directoryExistsAt(destination_dir.fd, this.destination_dir_subpath).unwrap() catch return .{};
-            return if (exists) .{ .valid = true } else .{};
+            return .{
+                .valid = this.node_modules.directoryExistsAt(root_node_modules_dir, this.destination_dir_subpath),
+            };
         }
 
         const VerifyResult = struct {
@@ -1210,7 +1203,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
             defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-            var package_json_file = this.node_modules.openPackageJSON(root_node_modules_dir, package_json_path) catch return null;
+            var package_json_file = this.node_modules.openFile(root_node_modules_dir, package_json_path) catch return null;
             defer package_json_file.close();
 
             // Heuristic: most package.jsons will be less than 2048 bytes.
@@ -12121,16 +12114,49 @@ pub const PackageManager = struct {
             this.path.clearAndFree();
         }
 
-        noinline fn openPackageJSONFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, package_json_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
+        // Since the stack size of these functions are rather large, let's not let them be inlined.
+        noinline fn directoryExistsAtWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
             var path_buf: bun.PathBuffer = undefined;
-            const parts: [2][]const u8 = .{ this.path.items, package_json_path };
+            const parts: [2][]const u8 = .{ this.path.items, file_path };
+            return bun.sys.directoryExistsAt(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
+        }
+
+        pub fn directoryExistsAt(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
+            if (file_path.len + this.path.items.len * 2 < bun.MAX_PATH_BYTES) {
+                return this.directoryExistsAtWithoutOpeningDirectories(root_node_modules_dir, file_path);
+            }
+
+            const dir = this.openDir(root_node_modules_dir) catch return false;
+            defer {
+                _ = bun.sys.close(bun.toFD(dir));
+            }
+
+            return bun.sys.directoryExistsAt(bun.toFD(dir), file_path).unwrapOr(false);
+        }
+
+        // Since the stack size of these functions are rather large, let's not let them be inlined.
+        noinline fn openFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
+            var path_buf: bun.PathBuffer = undefined;
+            const parts: [2][]const u8 = .{ this.path.items, file_path };
             return bun.sys.File.openat(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
         }
 
-        pub fn openPackageJSON(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, package_json_path: [:0]const u8) !bun.sys.File {
-            if (this.path.items.len + package_json_path.len * 2 < bun.MAX_PATH_BYTES) {
+        pub fn readFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8, allocator: std.mem.Allocator) !bun.sys.File.ReadToEndResult {
+            const file = try this.openFile(root_node_modules_dir, file_path);
+            defer file.close();
+            return file.readToEnd(allocator);
+        }
+
+        pub fn readSmallFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8, allocator: std.mem.Allocator) !bun.sys.File.ReadToEndResult {
+            const file = try this.openFile(root_node_modules_dir, file_path);
+            defer file.close();
+            return file.readToEndSmall(allocator);
+        }
+
+        pub fn openFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) !bun.sys.File {
+            if (this.path.items.len + file_path.len * 2 < bun.MAX_PATH_BYTES) {
                 // If we do not run the risk of ENAMETOOLONG, then let's just avoid opening the extra directories altogether.
-                switch (this.openPackageJSONFileWithoutOpeningDirectories(root_node_modules_dir, package_json_path)) {
+                switch (this.openFileWithoutOpeningDirectories(root_node_modules_dir, file_path)) {
                     .err => |e| {
                         switch (e.getErrno()) {
                             // Just incase we're wrong, let's try the fallback
@@ -12149,7 +12175,7 @@ pub const PackageManager = struct {
                 _ = bun.sys.close(bun.toFD(dir));
             }
 
-            return try bun.sys.File.openat(bun.toFD(dir), package_json_path, bun.O.RDONLY, 0).unwrap();
+            return try bun.sys.File.openat(bun.toFD(dir), file_path, bun.O.RDONLY, 0).unwrap();
         }
 
         pub fn openDir(this: *const NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
@@ -12284,18 +12310,13 @@ pub const PackageManager = struct {
 
             this.completed_trees.set(tree_id);
 
-            if (maybe_destination_dir) |maybe| {
-                if (maybe.getDir() catch null) |_destination_dir| {
-                    var destination_dir = _destination_dir;
-                    defer {
-                        if (maybe_destination_dir == null) {
-                            destination_dir.close();
-                        }
-                    }
+            // Avoid opening this directory if we don't need to.
+            if (tree.binaries.count() > 0) {
+                // Don't close this directory in here. It will be closed by the caller.
+                if (maybe_destination_dir) |maybe| {
+                    if (maybe.getDir() catch null) |destination_dir| {
+                        this.seen_bin_links.clearRetainingCapacity();
 
-                    this.seen_bin_links.clearRetainingCapacity();
-
-                    if (tree.binaries.count() > 0) {
                         var link_target_buf: bun.PathBuffer = undefined;
                         var link_dest_buf: bun.PathBuffer = undefined;
                         var link_rel_buf: bun.PathBuffer = undefined;

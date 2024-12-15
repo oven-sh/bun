@@ -771,16 +771,25 @@ pub const Stringifier = struct {
                     // folder      -> [ "name@path", deps..., ... ]
                     // workspace   -> [ "name@workspace:path", version or "", deps..., ... ]
                     // tarball     -> [ "name@tarball", deps..., ... ]
-                    // root        -> [ "name@root:" ]
+                    // root        -> [ "name@root:", bins ]
                     // git         -> [ "name@git+repo", deps..., ... ]
                     // github      -> [ "name@github:user/repo", deps..., ... ]
 
                     switch (res.tag) {
                         .root => {
-                            try writer.print("[\"{}@root:\"]", .{
+                            try writer.print("[\"{}@root:\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 // we don't read the root package version into the binary lockfile
                             });
+
+                            try writer.writeByte('{');
+                            if (pkg_bin.tag != .none) {
+                                try writer.writeAll(if (pkg_bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
+                                try pkg_bin.toSingleLineJson(buf, lockfile.buffers.extern_strings.items, writer);
+                                try writer.writeAll(" }]");
+                            } else {
+                                try writer.writeAll("}]");
+                            }
                         },
                         .folder => {
                             try writer.print("[\"{}@file:{}\", ", .{
@@ -989,75 +998,14 @@ pub const Stringifier = struct {
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
         }
 
-        switch (bin.tag) {
-            .none => {},
-            .file => {
-                if (any) {
-                    try writer.writeByte(',');
-                } else {
-                    any = true;
-                }
-                try writer.print(
-                    \\ "bin": {}
-                , .{
-                    bin.value.file.fmtJson(buf, .{}),
-                });
-            },
-            .named_file => {
-                if (any) {
-                    try writer.writeByte(',');
-                } else {
-                    any = true;
-                }
-                try writer.writeAll(
-                    \\ "bin": {
-                );
-                try writer.print(
-                    \\ {}: {}
-                , .{
-                    bin.value.named_file[0].fmtJson(buf, .{}),
-                    bin.value.named_file[1].fmtJson(buf, .{}),
-                });
-                try writer.writeByte('}');
-            },
-            .dir => {
-                if (any) {
-                    try writer.writeByte(',');
-                } else {
-                    any = true;
-                }
-                try writer.print(
-                    \\ "binDir": {}
-                , .{
-                    bin.value.dir.fmtJson(buf, .{}),
-                });
-            },
-            .map => {
-                if (any) {
-                    try writer.writeByte(',');
-                } else {
-                    any = true;
-                }
-                try writer.writeAll(
-                    \\ "bin": {
-                );
-                const list = bin.value.map.get(extern_strings);
-                var first = true;
-                var i: usize = 0;
-                while (i < list.len) : (i += 2) {
-                    if (!first) {
-                        try writer.writeAll(",");
-                    }
-                    first = false;
-                    try writer.print(
-                        \\ {}: {}
-                    , .{
-                        list[i].value.fmtJson(buf, .{}),
-                        list[i + 1].value.fmtJson(buf, .{}),
-                    });
-                }
-                try writer.writeByte('}');
-            },
+        if (bin.tag != .none) {
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+            try writer.writeAll(if (bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
+            try bin.toSingleLineJson(buf, extern_strings, writer);
         }
 
         if (any) {
@@ -1621,6 +1569,24 @@ pub fn parseIntoBinaryLockfile(
                         // if (os_cpu_libc_obj.get("libc")) |libc| {
                         //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
                         // }
+                    }
+                },
+                .root => {
+                    if (i >= pkg_info.len) {
+                        try log.addError(source, value.loc, "Missing package binaries object");
+                        return error.InvalidPackageInfo;
+                    }
+                    const bin_obj = pkg_info.at(i);
+                    i += 1;
+                    if (!bin_obj.isObject()) {
+                        try log.addError(source, bin_obj.loc, "Expected an object");
+                        return error.InvalidPackageInfo;
+                    }
+
+                    if (bin_obj.get("bin")) |bin| {
+                        pkg.bin = try Bin.parseAppend(allocator, bin, &string_buf, &lockfile.buffers.extern_strings);
+                    } else if (bin_obj.get("binDir")) |bin_dir| {
+                        pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_dir, &string_buf);
                     }
                 },
                 else => {},

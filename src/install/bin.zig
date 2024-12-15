@@ -54,6 +54,48 @@ pub const Bin = extern struct {
         return 0;
     }
 
+    pub fn eql(
+        l: *const Bin,
+        r: *const Bin,
+        l_buf: string,
+        l_extern_strings: []const ExternalString,
+        r_buf: string,
+        r_extern_strings: []const ExternalString,
+    ) bool {
+        if (l.tag != r.tag) return false;
+
+        return switch (l.tag) {
+            .none => true,
+            .file => l.value.file.eql(r.value.file, l_buf, r_buf),
+            .dir => l.value.dir.eql(r.value.dir, l_buf, r_buf),
+            .named_file => l.value.named_file[0].eql(r.value.named_file[0], l_buf, r_buf) and
+                l.value.named_file[1].eql(r.value.named_file[1], l_buf, r_buf),
+            .map => {
+                const l_list = l.value.map.get(l_extern_strings);
+                const r_list = r.value.map.get(r_extern_strings);
+                if (l_list.len != r_list.len) return false;
+
+                // assuming these maps are small without duplicate keys
+                outer: for (0..l_list.len / 2) |i| {
+                    for (0..r_list.len / 2) |j| {
+                        if (l_list[i].hash == r_list[j].hash) {
+                            if (l_list[i + 1].hash != r_list[j + 1].hash) {
+                                return false;
+                            }
+
+                            continue :outer;
+                        }
+                    }
+
+                    // not found
+                    return false;
+                }
+
+                return true;
+            },
+        };
+    }
+
     pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         switch (this.tag) {
             .none => {
@@ -223,6 +265,46 @@ pub const Bin = extern struct {
             };
         }
         return .{};
+    }
+
+    /// Writes value of bin to a single line, either as a string or object. Cannot be `.none` because a value is expected to be
+    /// written to the json, as a property value or array value.
+    pub fn toSingleLineJson(this: *const Bin, buf: string, extern_strings: []const ExternalString, writer: anytype) @TypeOf(writer).Error!void {
+        bun.debugAssert(this.tag != .none);
+        switch (this.tag) {
+            .none => {},
+            .file => {
+                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+            },
+            .named_file => {
+                try writer.writeByte('{');
+                try writer.print(" {}: {} ", .{
+                    this.value.named_file[0].fmtJson(buf, .{}),
+                    this.value.named_file[1].fmtJson(buf, .{}),
+                });
+                try writer.writeByte('}');
+            },
+            .dir => {
+                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+            },
+            .map => {
+                try writer.writeByte('{');
+                const list = this.value.map.get(extern_strings);
+                var first = true;
+                var i: usize = 0;
+                while (i < list.len) : (i += 2) {
+                    if (!first) {
+                        try writer.writeByte(',');
+                    }
+                    first = false;
+                    try writer.print(" {}: {}", .{
+                        list[i].value.fmtJson(buf, .{}),
+                        list[i + 1].value.fmtJson(buf, .{}),
+                    });
+                }
+                try writer.writeAll(" }");
+            },
+        }
     }
 
     pub fn init() Bin {

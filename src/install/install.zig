@@ -13330,70 +13330,6 @@ pub const PackageManager = struct {
             }
         }
 
-        // fn getPackageBin(
-        //     this: *PackageInstaller,
-        //     installer: *PackageInstall,
-        //     pkg_name: string,
-        //     pkg_name_hash: PackageNameHash,
-        //     resolution: *const Resolution,
-        // ) OOM!Bin {
-        //     defer this.fixCachedLockfilePackageSlices();
-
-        //     if (resolution.tag == .npm) {
-        //         var expired = false;
-        //         if (this.manager.manifests.byNameHashAllowExpired(
-        //             this.manager,
-        //             this.manager.scopeForPackageName(pkg_name),
-        //             pkg_name_hash,
-        //             &expired,
-        //             // Do not fallback to disk. These files are much larger than the package.json
-        //             .load_from_memory,
-        //         )) |manifest| {
-        //             if (manifest.findByVersion(resolution.value.npm.version)) |find| {
-        //                 return find.package.bin.cloneAppend(manifest.string_buf, manifest.extern_strings_bin_entries, this.lockfile);
-        //             }
-        //         }
-        //     }
-
-        //     // get it from package.json
-        //     var body_pool = Npm.Registry.BodyPool.get(this.lockfile.allocator);
-        //     var mutable = body_pool.data;
-        //     defer {
-        //         body_pool.data = mutable;
-        //         Npm.Registry.BodyPool.release(body_pool);
-        //     }
-
-        //     const source = installer.getInstalledPackageJsonSource(this.root_node_modules_folder, &mutable, resolution.tag) orelse return .{};
-
-        //     initializeStore();
-
-        //     var log = logger.Log.init(this.lockfile.allocator);
-        //     defer log.deinit();
-
-        //     var bin_finder = JSON.PackageJSONVersionChecker.init(
-        //         this.lockfile.allocator,
-        //         &source,
-        //         &log,
-        //         .only_bin,
-        //     ) catch return .{};
-        //     _ = bin_finder.parseExpr(false, false) catch return .{};
-
-        //     if (bin_finder.has_found_bin) {
-        //         var string_buf = this.lockfile.stringBuf();
-        //         defer {
-        //             string_buf.apply(this.lockfile);
-        //             this.fixCachedLockfilePackageSlices();
-        //         }
-
-        //         return switch (bin_finder.found_bin) {
-        //             .bin => |bin| try Bin.parseAppend(this.lockfile.allocator, bin, &string_buf, &this.lockfile.buffers.extern_strings),
-        //             .dir => |dir| try Bin.parseAppendFromDirectories(this.lockfile.allocator, dir, &string_buf),
-        //         };
-        //     }
-
-        //     return .{};
-        // }
-
         // returns true if scripts are enqueued
         fn enqueueLifecycleScripts(
             this: *PackageInstaller,
@@ -14756,7 +14692,7 @@ pub const PackageManager = struct {
 
         if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
             if (load_result.loadedFromTextLockfile()) {
-                if (manager.lockfile.eql(lockfile_before_clean, manager.allocator) catch bun.outOfMemory()) {
+                if (manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator) catch bun.outOfMemory()) {
                     break :frozen_lockfile;
                 }
             } else {
@@ -14771,6 +14707,8 @@ pub const PackageManager = struct {
             }
             Global.crash();
         }
+
+        const lockfile_before_install = manager.lockfile;
 
         var install_summary = PackageInstall.Summary{
             .lockfile_used_for_install = manager.lockfile,
@@ -14790,10 +14728,13 @@ pub const PackageManager = struct {
         const did_meta_hash_change =
             // If the lockfile was frozen, we already checked it
             !manager.options.enable.frozen_lockfile and
+            if (load_result.loadedFromTextLockfile())
+            !try manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator)
+        else
             try manager.lockfile.hasMetaHashChanged(
-            PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
-            @min(packages_len_before_install, manager.lockfile.packages.len),
-        );
+                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+                @min(packages_len_before_install, manager.lockfile.packages.len),
+            );
 
         const should_save_lockfile = did_meta_hash_change or
             had_any_diffs or
@@ -14859,8 +14800,14 @@ pub const PackageManager = struct {
             manager.lockfile.saveToDisk(save_format, manager.options.log_level.isVerbose());
 
             if (comptime Environment.allow_assert) {
-                if (manager.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
-                    Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                if (load_result.loadedFromTextLockfile()) {
+                    if (!try manager.lockfile.eql(lockfile_before_install, packages_len_before_install, manager.allocator)) {
+                        Output.panic("Lockfile non-deterministic after saving", .{});
+                    }
+                } else {
+                    if (manager.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
+                        Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                    }
                 }
             }
 

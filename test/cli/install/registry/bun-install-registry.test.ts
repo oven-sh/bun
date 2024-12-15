@@ -3557,7 +3557,7 @@ describe("binaries", () => {
       "localhost:1234",
     );
 
-    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo.js"));
+    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo", "fooooo.js"));
 
     await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
 

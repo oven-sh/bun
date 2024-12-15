@@ -4780,6 +4780,64 @@ describe("hoisting", async () => {
       });
     });
   });
+
+  test("text lockfile is hoisted", async () => {
+    // Each dependency depends on 'hoist-lockfile-shared'.
+    // 1 - "*"
+    // 2 - "^1.0.1"
+    // 3 - ">=1.0.1"
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "hoist-lockfile-1": "1.0.0",
+          "hoist-lockfile-2": "1.0.0",
+          "hoist-lockfile-3": "1.0.0",
+        },
+      }),
+    );
+
+    let { exited, stderr } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "ignore",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const lockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+    expect(lockfile).toMatchSnapshot();
+
+    // second install should not save the lockfile
+    // with a different set of resolutions
+    ({ exited, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "ignore",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+      lockfile,
+    );
+  });
 });
 
 describe("workspaces", async () => {

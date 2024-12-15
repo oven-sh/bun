@@ -279,7 +279,7 @@ exports[`binaries root resolution bins 1`] = `
   "packages": {
     "fooooo": ["fooooo@root:", { "bin": "fooooo.js" }],
 
-    "no-deps": ["no-deps@1.0.0", "http://localhost:37292/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
   }
 }
 "

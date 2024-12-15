@@ -3354,7 +3354,10 @@ describe("binaries", () => {
 
     expect(await exited).toBe(0);
 
-    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
 
     expect(join(packageDir, "node_modules", ".bin", "file-bin")).toBeValidBin(join("..", "file-bin", "file-bin.js"));
     expect(join(packageDir, "node_modules", ".bin", "named-file-bin")).toBeValidBin(
@@ -3383,7 +3386,9 @@ describe("binaries", () => {
 
     expect(await exited).toBe(0);
 
-    expect(firstLockfile).toBe(await Bun.file(join(packageDir, "bun.lock")).text());
+    expect(firstLockfile).toBe(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    );
     expect(firstLockfile).toMatchSnapshot();
 
     expect(join(packageDir, "node_modules", ".bin", "file-bin")).toBeValidBin(join("..", "file-bin", "file-bin.js"));
@@ -3435,7 +3440,10 @@ describe("binaries", () => {
 
     expect(await exited).toBe(0);
 
-    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
 
     expect(join(packageDir, "node_modules", ".bin", "change-bin-1")).toBeValidBin(
       join("..", "change-bin", "change-bin-1.js"),
@@ -3472,7 +3480,10 @@ describe("binaries", () => {
 
     expect(await exited).toBe(0);
 
-    const secondLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    const secondLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
     expect(firstLockfile).not.toBe(secondLockfile);
 
     expect(secondLockfile).toMatchSnapshot();
@@ -3540,7 +3551,11 @@ describe("binaries", () => {
     expect(out).toContain("no-deps@1.0.0");
 
     expect(await exited).toBe(0);
-    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
 
     expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo.js"));
 
@@ -3563,7 +3578,9 @@ describe("binaries", () => {
 
     expect(await exited).toBe(0);
 
-    expect(firstLockfile).toBe(await Bun.file(join(packageDir, "bun.lock")).text());
+    expect(firstLockfile).toBe(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    );
     expect(firstLockfile).toMatchSnapshot();
 
     expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo.js"));

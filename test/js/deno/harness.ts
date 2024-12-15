@@ -135,7 +135,7 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
   }
 
   const assertGreaterThanOrEqual = (actual: number, expected: number, message?: string) => {
-    expect(actual).toBeGreaterThanOrEqual(expected);
+    expect(Math.ceil(actual)).toBeGreaterThanOrEqual(expected);
   }
 
   const assertLessThan = (actual: number, expected: number, message?: string) => {

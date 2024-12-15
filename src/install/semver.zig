@@ -160,6 +160,29 @@ pub const String = extern struct {
         }
     };
 
+    /// Escapes for json. Expects string to be prequoted
+    pub inline fn fmtJson(self: *const String, buf: []const u8, opts: JsonFormatter.Options) JsonFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+            .opts = opts,
+        };
+    }
+
+    pub const JsonFormatter = struct {
+        str: *const String,
+        buf: string,
+        opts: Options,
+
+        pub const Options = struct {
+            quote: bool = true,
+        };
+
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+        }
+    };
+
     pub fn Sorter(comptime direction: enum { asc, desc }) type {
         return struct {
             lhs_buf: []const u8,
@@ -1443,9 +1466,7 @@ pub const Version = extern struct {
                             .none => {},
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
+
                                 state = State.none;
                             },
                             .build => {

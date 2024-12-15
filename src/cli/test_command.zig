@@ -1261,6 +1261,7 @@ pub const TestCommand = struct {
                 .store_fd = true,
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
+                .is_main_thread = true,
             },
         );
         vm.argv = ctx.passthrough;

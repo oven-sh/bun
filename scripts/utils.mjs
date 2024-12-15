@@ -243,7 +243,7 @@ export async function spawn(command, options = {}) {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [stdin ? "pipe" : "ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -355,7 +355,7 @@ export function spawnSync(command, options = {}) {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
     input: stdin,
     ...options,
   };
@@ -379,8 +379,8 @@ export function spawnSync(command, options = {}) {
   } else {
     exitCode = status ?? 1;
     signalCode = signal || undefined;
-    stdout = stdoutBuffer?.toString();
-    stderr = stderrBuffer?.toString();
+    stdout = stdoutBuffer?.toString?.() ?? "";
+    stderr = stderrBuffer?.toString?.() ?? "";
   }
 
   if (exitCode !== 0 && isWindows) {
@@ -1862,6 +1862,34 @@ export function getUsername() {
 }
 
 /**
+ * @param {string} distro
+ * @returns {string}
+ */
+export function getUsernameForDistro(distro) {
+  if (/windows/i.test(distro)) {
+    return "administrator";
+  }
+
+  if (/alpine|centos/i.test(distro)) {
+    return "root";
+  }
+
+  if (/debian/i.test(distro)) {
+    return "admin";
+  }
+
+  if (/ubuntu/i.test(distro)) {
+    return "ubuntu";
+  }
+
+  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
+    return "ec2-user";
+  }
+
+  throw new Error(`Unsupported distro: ${distro}`);
+}
+
+/**
  * @typedef {object} User
  * @property {string} username
  * @property {number} uid
@@ -2723,7 +2751,7 @@ export function getLoggedInUserCountOrDetails() {
       return 0;
     }
 
-    let message = users.length + " currently logged in users:";
+    let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
       message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
@@ -2743,6 +2771,7 @@ const emojiMap = {
   alpine: ["🐧", "alpine"],
   aws: ["☁️", "aws"],
   amazonlinux: ["🐧", "aws"],
+  nix: ["🐧", "nix"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
@@ -2771,4 +2800,109 @@ export function getEmoji(emoji) {
 export function getBuildkiteEmoji(emoji) {
   const [, name] = emojiMap[emoji] || [];
   return name ? `:${name}:` : "";
+}
+
+/**
+ * @param {SshOptions} options
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ */
+export async function spawnSshSafe(options, spawnOptions = {}) {
+  return spawnSsh(options, { throwOnError: true, ...spawnOptions });
+}
+
+/**
+ * @param {SshOptions} options
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ */
+export async function spawnSsh(options, spawnOptions = {}) {
+  const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
+
+  if (!hostname.includes("@")) {
+    await waitForPort({
+      hostname,
+      port: port || 22,
+    });
+  }
+
+  const logPath = mkdtemp("ssh-", "ssh.log");
+  const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no"];
+  if (!password) {
+    command.push("-o", "BatchMode=yes");
+  }
+  if (port) {
+    command.push("-p", port);
+  }
+  if (username) {
+    command.push("-l", username);
+  }
+  if (password) {
+    const sshPass = which("sshpass", { required: true });
+    command.unshift(sshPass, "-p", password);
+  } else if (identityPaths) {
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
+  }
+  const stdio = spawnCommand ? "pipe" : "inherit";
+  if (spawnCommand) {
+    command.push(...spawnCommand);
+  }
+
+  /** @type {import("./utils.mjs").SpawnResult} */
+  let result;
+  for (let i = 0; i < retries; i++) {
+    result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
+
+    const { exitCode } = result;
+    if (exitCode !== 255) {
+      break;
+    }
+
+    const sshLogs = readFile(logPath, { encoding: "utf-8" });
+    if (sshLogs.includes("Authenticated")) {
+      break;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 15000));
+  }
+
+  if (spawnOptions?.throwOnError) {
+    const { error } = result;
+    if (error) {
+      throw error;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * @param {MachineOptions} options
+ * @returns {Promise<Machine>}
+ */
+export async function setupUserData(machine, options) {
+  const { os, userData } = options;
+  if (!userData) {
+    return;
+  }
+
+  // Write user data to a temporary file
+  const tmpFile = mkdtemp("user-data-", os === "windows" ? "setup.ps1" : "setup.sh");
+  await writeFile(tmpFile, userData);
+
+  try {
+    // Upload the script
+    const remotePath = os === "windows" ? "C:\\Windows\\Temp\\setup.ps1" : "/tmp/setup.sh";
+    await machine.upload(tmpFile, remotePath);
+
+    // Execute the script
+    if (os === "windows") {
+      await machine.spawnSafe(["powershell", remotePath], { stdio: "inherit" });
+    } else {
+      await machine.spawnSafe(["bash", remotePath], { stdio: "inherit" });
+    }
+  } finally {
+    // Clean up the temporary file
+    rm(tmpFile);
+  }
 }

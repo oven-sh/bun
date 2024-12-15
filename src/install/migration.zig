@@ -1085,7 +1085,7 @@ pub fn migrateNPMLockfile(
             .was_migrated = true,
             .loaded_from_binary_lockfile = false,
             .serializer_result = .{},
-            .format = .text,
+            .format = .binary,
         },
     };
 }

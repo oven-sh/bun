@@ -39,8 +39,8 @@ namespace Bun {
 
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
 extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
-#define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
-#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
+#define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
+#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
 /// These are callbacks defined in Zig and to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);

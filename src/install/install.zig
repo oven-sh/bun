@@ -1143,7 +1143,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 root_node_modules_dir,
                 bun_tag_path,
                 allocator,
-            ) catch return .{};
+            ) catch return false;
             defer bun_tag_file.bytes.deinit();
 
             return strings.eqlLong(repo.resolved.slice(this.lockfile.buffers.string_bytes.items), bun_tag_file.bytes.items, true);

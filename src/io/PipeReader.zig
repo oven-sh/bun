@@ -806,7 +806,7 @@ const PosixBufferedReader = struct {
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
-            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer()).unwrap() catch |err| {
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), false).unwrap() catch |err| {
                 bun.Output.debugWarn("error reading from memfd\n{}", .{err});
                 return this.buffer();
             };

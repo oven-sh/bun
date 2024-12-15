@@ -724,6 +724,29 @@ nodejs_version() {
 }
 
 install_nodejs() {
+	if [ "$os" = "linux" ]; then
+		if [ "$arch" = "x64" ]; then
+			if [ "$abi" = "musl" ]; then
+				# Use the version of Node.js compiled specifically for musl
+				nodejs_url="https://unofficial-builds.nodejs.org/download/release/v22.9.0/node-v22.9.0-linux-x64-musl.tar.xz"
+				install_nodejs_from_tar "$nodejs_url"
+				return
+			elif [ "$abi" = "gnu" ]; then
+				# Use a Node.js version that will work with very old versions of glibc, so we don't have to worry about it.
+				nodejs_url="https://unofficial-builds.nodejs.org/download/release/v22.9.0/node-v22.9.0-linux-x64-glibc-217.tar.xz"
+				install_nodejs_from_tar "$nodejs_url"
+				return
+			fi
+		elif [ "$arch" = "aarch64" ]; then
+			if [ "$abi" = "musl" ]; then
+				nodejs_url="https://pub-63496db56c0141b88a12fb16f0e966b5.r2.dev/node-v22.9.0-linux-arm64-musl.tar.xz"
+				install_nodejs_from_tar "$nodejs_url"
+				return
+			fi
+			# unofficial-builds.nodejs.org does not have a Node.js version for old glibc on aarch64
+		fi
+	fi
+
 	case "$pm" in
 	dnf | yum)
 		bash="$(require bash)"
@@ -753,6 +776,24 @@ install_nodejs() {
 		install_nodejs_headers
 		;;
 	esac
+}
+
+install_nodejs_from_tar() {
+	nodejs_url="$1"
+	nodejs_tar="$(download_file "$nodejs_url")"
+	nodejs_dir="$(dirname "$nodejs_tar")"
+	
+	# Extract to /usr/local
+	execute_sudo tar -xJf "$nodejs_tar" -C /usr/local --strip-components=1
+	
+	# Create symlinks if they don't exist
+	nodejs_bin_dir="/usr/local/bin"
+	for binary in node npm npx corepack; do
+		if [ -f "$nodejs_bin_dir/$binary" ]; then
+			execute_sudo ln -sf "$nodejs_bin_dir/$binary" "/usr/bin/$binary"
+			execute_sudo chmod +x "/usr/bin/$binary"
+		fi
+	done
 }
 
 install_nodejs_headers() {

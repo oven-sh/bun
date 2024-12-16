@@ -3811,6 +3811,10 @@ fn NewPrinter(
                             p.export_default_start = p.writer.written;
                             p.printExpr(expr, .comma, ExprFlag.None());
                             p.printSemicolonAfterStatement();
+                            if (p.moduleInfo()) |mi| {
+                                try mi.exports.append(.{ .local = .{ .export_name = try mi.str("default"), .local_name = try mi.starDefault() } });
+                                try mi.addVarStrID(try mi.starDefault(), .lexical);
+                            }
                             return;
                         },
 

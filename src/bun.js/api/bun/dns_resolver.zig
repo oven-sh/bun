@@ -959,17 +959,19 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
 
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
+            const syscall = comptime "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..];
+
             if (err_) |err| {
                 var promise = this.promise;
                 const globalThis = this.globalThis;
-                promise.rejectTask(globalThis, err.toJS(globalThis));
+                promise.rejectTask(globalThis, err.toJSWithSyscallAndHostname(globalThis, syscall, this.name));
                 this.deinit();
                 return;
             }
             if (result == null) {
                 var promise = this.promise;
                 const globalThis = this.globalThis;
-                promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
+                promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJSWithSyscallAndHostname(globalThis, syscall, this.name));
                 this.deinit();
                 return;
             }
@@ -2718,7 +2720,7 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
             },
         };
 

@@ -497,7 +497,17 @@ const ZlibContext = struct {
         return .{
             .msg = message,
             .err = @intFromEnum(this.err),
-            .code = @tagName(this.err),
+            .code = switch (this.err) {
+                .Ok => "Z_OK",
+                .StreamEnd => "Z_STREAM_END",
+                .NeedDict => "Z_NEED_DICT",
+                .ErrNo => "Z_ERRNO",
+                .StreamError => "Z_STREAM_ERROR",
+                .DataError => "Z_DATA_ERROR",
+                .MemError => "Z_MEM_ERROR",
+                .BufError => "Z_BUF_ERROR",
+                .VersionError => "Z_VERSION_ERROR",
+            },
         };
     }
 

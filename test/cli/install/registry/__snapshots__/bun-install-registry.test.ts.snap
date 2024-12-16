@@ -159,7 +159,9 @@ exports[`text lockfile workspace sorting 1`] = `
   },
   "packages": {
     "b": ["b@workspace:packages/b", { "dependencies": { "no-deps": "1.0.0" } }],
+
     "c": ["c@workspace:packages/c", { "dependencies": { "no-deps": "1.0.0" } }],
+
     "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
   }
 }
@@ -196,8 +198,87 @@ exports[`text lockfile workspace sorting 2`] = `
   },
   "packages": {
     "a": ["a@workspace:packages/a", { "dependencies": { "no-deps": "1.0.0" } }],
+
     "b": ["b@workspace:packages/b", { "dependencies": { "no-deps": "1.0.0" } }],
+
     "c": ["c@workspace:packages/c", { "dependencies": { "no-deps": "1.0.0" } }],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`text lockfile --frozen-lockfile 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "a-dep": "^1.0.2",
+        "no-deps": "^1.0.0",
+      },
+    },
+    "packages/pkg1": {
+      "name": "package1",
+      "dependencies": {
+        "peer-deps-too": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+    "no-deps": ["no-deps@1.1.0", "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz", {}, "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w=="],
+
+    "package1": ["package1@workspace:packages/pkg1", { "dependencies": { "peer-deps-too": "1.0.0" } }],
+
+    "peer-deps-too": ["peer-deps-too@1.0.0", "http://localhost:1234/peer-deps-too/-/peer-deps-too-1.0.0.tgz", { "peerDependencies": { "no-deps": "*" } }, "sha512-sBx0TKrsB8FkRN2lzkDjMuctPGEKn1TmNUBv3dJOtnZM8nd255o5ZAPRpAI2XFLHZAavBlK/e73cZNwnUxlRog=="],
+  }
+}
+"
+`;
+
+exports[`binaries each type of binary serializes correctly to text lockfile 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "dir-bin": "./dir-bin",
+        "file-bin": "./file-bin",
+        "map-bin": "./map-bin",
+        "named-file-bin": "./named-file-bin",
+      },
+    },
+  },
+  "packages": {
+    "dir-bin": ["dir-bin@file:dir-bin", { "binDir": "./bins" }],
+
+    "file-bin": ["file-bin@file:file-bin", { "bin": "./file-bin.js" }],
+
+    "map-bin": ["map-bin@file:map-bin", { "bin": { "map-bin-1": "./map-bin-1.js", "map-bin-2": "./map-bin-2.js" } }],
+
+    "named-file-bin": ["named-file-bin@file:named-file-bin", { "bin": { "named-file-bin": "./named-file-bin.js" } }],
+  }
+}
+"
+`;
+
+exports[`binaries root resolution bins 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "fooooo": ".",
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "fooooo": ["fooooo@root:", { "bin": "fooooo.js" }],
+
     "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
   }
 }

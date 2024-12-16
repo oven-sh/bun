@@ -3617,6 +3617,10 @@ fn NewPrinter(
                                                 switch (property.value.data) {
                                                     .b_identifier => |id| {
                                                         if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
+                                                            if (p.moduleInfo()) |mi| {
+                                                                if (tlm.is_top_level) |vk| mi.addVar(str.data, vk) catch bun.outOfMemory();
+                                                                if (tlm.is_export) mi.exports.append(.{ .local = .{ .export_name = mi.str(str.data) catch bun.outOfMemory(), .local_name = mi.str(str.data) catch bun.outOfMemory() } }) catch bun.outOfMemory();
+                                                            }
                                                             p.maybePrintDefaultBindingValue(property);
                                                             continue;
                                                         }
@@ -3634,6 +3638,11 @@ fn NewPrinter(
                                             switch (property.value.data) {
                                                 .b_identifier => |id| {
                                                     if (strings.utf16EqlString(str.slice16(), p.renamer.nameForSymbol(id.ref))) {
+                                                        if (p.moduleInfo()) |mi| {
+                                                            const str8 = str.slice(p.options.allocator);
+                                                            if (tlm.is_top_level) |vk| mi.addVar(str8, vk) catch bun.outOfMemory();
+                                                            if (tlm.is_export) mi.exports.append(.{ .local = .{ .export_name = mi.str(str8) catch bun.outOfMemory(), .local_name = mi.str(str8) catch bun.outOfMemory() } }) catch bun.outOfMemory();
+                                                        }
                                                         p.maybePrintDefaultBindingValue(property);
                                                         continue;
                                                     }

@@ -792,7 +792,7 @@ estimateDirectMemoryUsageOf(req);
 // => 167
 
 const array = Array(1024).fill({ a: 1 });
-// Arrays are usually not stored contiguously in memory, so this will not return a useful value.
+// Arrays are usually not stored contiguously in memory, so this will not return a useful value (which isn't a bug).
 estimateDirectMemoryUsageOf(array);
 // => 16
 ```

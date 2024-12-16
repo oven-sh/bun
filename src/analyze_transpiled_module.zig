@@ -225,8 +225,6 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     source_len: usize,
     failure_reason: *c_int,
 ) ?*JSModuleRecord {
-    const stderr = std.io.getStdErr().writer();
-
     const source = source_ptr[0..source_len];
     const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return fail(failure_reason, 1);
     const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return fail(failure_reason, 1);
@@ -241,9 +239,6 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     const json_part = source[l1 + "\n// ".len .. l2];
     var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return fail(failure_reason, 2);
     defer res.deinit();
-
-    res.jsonStringify(stderr) catch {};
-    stderr.print("\n", .{}) catch {};
 
     var identifiers = IdentifierArray.create(res.strings.keys().len);
     defer identifiers.destroy();

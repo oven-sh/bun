@@ -312,7 +312,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         sortedEntries.append(line.toString());
     }
     std::sort(sortedEntries.begin(), sortedEntries.end(), [](const String& a, const String& b) {
-        return a.impl()->tryGetUTF8()->toStdString() < b.impl()->tryGetUTF8()->toStdString();
+        return a.utf8().toStdString() < b.utf8().toStdString();
     });
     for (const auto& entry : sortedEntries)
         stream.print(entry);

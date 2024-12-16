@@ -31,6 +31,13 @@ pub const Lifetime = enum {
     allocated,
     temporary,
 };
+
+/// Marshall a zig value into a JSValue using comptime reflection.
+///
+/// - Primitives are converted to their JS equivalent.
+/// - Types with `toJS` or `toJSNewlyCreated` methods have them called
+/// - Slices are converted to JS arrays
+/// - Enums are converted to 32-bit numbers.
 pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSC.JSValue {
     const Type = comptime brk: {
         var CurrentType = ValueType;
@@ -92,6 +99,11 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
             if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
                 return value.toJS(globalObject);
+            }
+
+            // must come after toJS check in case this enum implements its own serializer.
+            if (@typeInfo(Type) == .Enum) {
+                return JSC.JSValue.jsNumberWithType(Type, @intFromEnum(value));
             }
 
             @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");

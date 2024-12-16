@@ -4,8 +4,7 @@
 //!
 //! This file has tests defined in it which _cannot_ be run if `@import("root")` is used!
 //!
-//! During testing, "root" refers to the test harness, which does not have the
-//! Bun object. If and when we fix this, we can remove this constraint.
+//! Run tests with `:zig test %`
 const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
@@ -14,16 +13,67 @@ const stackFallback = std.heap.stackFallback;
 const assert = std.debug.assert;
 const print = std.debug.print;
 
+/// Comptime diff configuration. Defaults are usually sufficient.
 pub const Options = struct {
-    // assumptions
+    /// Guesstimate for the number of bytes `expected` and `actual` will be.
+    /// Defaults to 256.
+    ///
+    /// Used to reserve space on the stack for the edit graph.
     avg_input_size: comptime_int = 256,
+    /// How much stack space to reserve for edit trace frames. Defaults to 64.
     initial_trace_capacity: comptime_int = 64,
+    /// When `true`, string lines that are only different by a trailing comma
+    /// are considered equal. Not used when comparing chars. Defaults to
+    /// `false`.
     check_comma_disparity: bool = false,
-    // todo: make u32 vs usize configurable?
 };
 
+// By limiting maximum string and buffer lengths, we can store u32s in the
+// edit graph instead of usize's, halving our memory footprint. The
+// downside is that `(2 * (actual.len + expected.len))` must be less than
+// 4Gb. If this becomes a problem in real user scenarios, we can adjust this.
+//
+// Note that overflows are much more likely to occur in real user scenarios
+// than in our own testing, so overflow checks _must_ be handled. Do _not_
+// use `assert` unless you also use `@setRuntimeSafety(true)`.
+//
+// TODO: make this configurable in `Options`?
+const MAXLEN = std.math.maxInt(u32);
+// Type aliasing to make future refactors easier
+const uint = u32;
+const int = i64; // must be large enough to hold all valid values of `uint` w/o overflow.
+
+/// diffs two sets of lines, returning the minimal number of edits needed to
+/// make them equal.
+///
+/// Lines may be string slices or chars. Derived from node's implementation of
+/// the Myers' diff algorithm.
+///
+/// ## Example
+/// ```zig
+/// const myers_diff = @import("inode/assert/myers_diff.zig");
+/// const StrDiffer = myers_diff.Differ([]const u8, .{});
+/// const actual = &[_][]const u8{
+///   "foo",
+///   "bar",
+///   "baz",
+/// };
+/// const expected = &[_][]const u8{
+///   "foo",
+///   "barrr",
+///   "baz",
+/// };
+/// const diff = try StrDiffer.diff(allocator, actual, expected);
+/// ```
+///
+/// TODO: support non-ASCII UTF-8 characters.
+///
+/// ## References
+/// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
+/// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
 pub fn Differ(comptime Line: type, comptime opts: Options) type {
     const eql: LineCmp(Line) = switch (Line) {
+        // char-by-char comparison. u32 is for utf8
         u8, u32 => blk: {
             const gen = struct {
                 pub fn eql(a: Line, b: Line) bool {
@@ -46,19 +96,8 @@ pub fn Differ(comptime Line: type, comptime opts: Options) type {
     return DifferWithEql(Line, opts, eql);
 }
 
+/// Like `Differ`, but allows the user to provide a custom equality function.
 pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLinesEql: LineCmp(Line)) type {
-    // By limiting maximum string and buffer lengths, we can store u32s in the
-    // edit graph instead of usize's, halving our memory footprint. The
-    // downside is that `(2 * (actual.len + expected.len))` must be less than
-    // 4Gb. If this becomes a problem in real user scenarios, we can adjust this.
-    //
-    // Note that overflows are much more likely to occur in real user scenarios
-    // than in our own testing, so overflow checks _must_ be handled. Do _not_
-    // use `assert` unless you also use `@setRuntimeSafety(true)`.
-    const MAXLEN = std.math.maxInt(u32);
-    // Type aliasing to make future refactors easier
-    const uint = u32;
-    const int = i64; // must be large enough to hold all valid values of `uint` w/o overflow.
 
     // `V = [-MAX, MAX]`.
     const graph_initial_size = comptime guess: {
@@ -71,7 +110,13 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
         pub const eql = areLinesEql;
         pub const LineType = Line;
 
+        /// Compute the shortest edit path (diff) between two sets of lines.
+        ///
+        /// Returned `Diff` objects borrow from the input slices. Both `actual`
+        /// and `expected` must outlive them.
+        ///
         /// ## References
+        /// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
         /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
         pub fn diff(bun_allocator: Allocator, actual: []const Line, expected: []const Line) Error!DiffList(Line) {
 
@@ -137,9 +182,6 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                     // else
                     //     x ← V[k-1] + 1
                     assert(diag_idx + max >= 0); // sanity check. Fine to be stripped in release.
-                    // const adjusted_index: usize = u(diag_idx + max);
-                    // const prev = adjusted_index - 1;
-                    // const next = adjusted_index + 1;
                     const k: uint = u(diag_idx + max);
 
                     var x = if (diag_idx == diag_start or
@@ -167,7 +209,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                 }
             }
 
-            @panic("todo");
+            @panic("unreachable. Diffing should always reach the end of either `actual` or `expected` first.");
         }
 
         fn backtrack(
@@ -271,6 +313,10 @@ pub fn printDiff(T: type, diffs: std.ArrayList(Diff(T))) !void {
     }
 }
 
+// =============================================================================
+// ============================ EQUALITY FUNCTIONS ============================
+// =============================================================================
+
 fn areCharsEqual(comptime T: type, a: T, b: T) bool {
     return a == b;
 }
@@ -300,10 +346,14 @@ fn areStrLinesEqual(comptime T: type, a: T, b: T, comptime check_comma_disparity
     const largest, const smallest = if (a.len > b.len) .{ a, b } else .{ b, a };
     return switch (largest.len - smallest.len) {
         inline 0 => mem.eql(ChildType, a, b),
-        inline 1 => largest[largest.len - 1] == ',',
+        inline 1 => largest[largest.len - 1] == ',', // 'foo,' == 'foo'
         else => false,
     };
 }
+
+// =============================================================================
+// =================================== TYPES ===================================
+// =============================================================================
 
 /// Generic equality function. Returns `true` if two lines are equal.
 pub fn LineCmp(Line: type) type {
@@ -318,9 +368,9 @@ const Error = error{
 const TraceFrame = std.ArrayListUnmanaged(u8);
 
 pub const DiffKind = enum {
-    equal,
     insert,
     delete,
+    equal,
 };
 
 pub fn Diff(comptime T: type) type {
@@ -338,6 +388,8 @@ pub fn Diff(comptime T: type) type {
 pub fn DiffList(comptime T: type) type {
     return std.ArrayList(Diff(T));
 }
+
+// =============================================================================
 
 const t = std.testing;
 test areLinesEqual {

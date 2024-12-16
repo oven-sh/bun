@@ -21,7 +21,6 @@ const { isError } = require("internal/util");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
-// const { isErrorStackTraceLimitWritable } = require('internal/errors');
 const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff");
 
 const kReadableOperator = {

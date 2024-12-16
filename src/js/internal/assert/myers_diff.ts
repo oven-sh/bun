@@ -8,8 +8,8 @@ const enum Operation {
   Equal = 2,
 }
 interface Diff {
-  operation: Operation;
-  text: string;
+  kind: Operation;
+  value: string;
 }
 
 declare namespace Internal {
@@ -24,8 +24,8 @@ function printSimpleMyersDiff(diff: Diff[]) {
   let message = "";
 
   for (let diffIdx = diff.length - 1; diffIdx >= 0; diffIdx--) {
-    const { operation: type, text: value } = diff[diffIdx];
-    switch (type) {
+    const { kind, value } = diff[diffIdx];
+    switch (kind) {
       case Operation.Insert:
         message += `${colors.green}${value}${colors.white}`;
         break;
@@ -36,7 +36,7 @@ function printSimpleMyersDiff(diff: Diff[]) {
         message += `${colors.white}${value}${colors.white}`;
         break;
       default:
-        throw new TypeError(`Invalid diff operation kind: ${type}`); // should be unreachable
+        throw new TypeError(`Invalid diff operation kind: ${kind}`); // should be unreachable
     }
   }
 
@@ -49,27 +49,27 @@ function printMyersDiff(diff: Diff[], simple = false) {
   let nopCount = 0;
 
   for (let diffIdx = diff.length - 1; diffIdx >= 0; diffIdx--) {
-    const { operation: type, text: value } = diff[diffIdx];
-    const previousType = diffIdx < diff.length - 1 ? diff[diffIdx + 1].operation : null;
-    const typeChanged = previousType && type !== previousType;
+    const { kind, value } = diff[diffIdx];
+    const previousType = diffIdx < diff.length - 1 ? diff[diffIdx + 1].kind : null;
+    const typeChanged = previousType && kind !== previousType;
 
     if (typeChanged && previousType === Operation.Equal) {
       // Avoid grouping if only one line would have been grouped otherwise
       if (nopCount === kNopLinesToCollapse + 1) {
-        message += `${colors.white}  ${diff[diffIdx + 1].operation}\n`;
+        message += `${colors.white}  ${diff[diffIdx + 1].value}\n`;
       } else if (nopCount === kNopLinesToCollapse + 2) {
-        message += `${colors.white}  ${diff[diffIdx + 2].operation}\n`;
-        message += `${colors.white}  ${diff[diffIdx + 1].operation}\n`;
+        message += `${colors.white}  ${diff[diffIdx + 2].value}\n`;
+        message += `${colors.white}  ${diff[diffIdx + 1].value}\n`;
       }
       if (nopCount >= kNopLinesToCollapse + 3) {
         message += `${colors.blue}...${colors.white}\n`;
-        message += `${colors.white}  ${diff[diffIdx + 1].operation}\n`;
+        message += `${colors.white}  ${diff[diffIdx + 1].value}\n`;
         skipped = true;
       }
       nopCount = 0;
     }
 
-    switch (type) {
+    switch (kind) {
       case Operation.Insert:
         message += `${colors.green}+${colors.white} ${value}\n`;
         break;
@@ -83,7 +83,7 @@ function printMyersDiff(diff: Diff[], simple = false) {
         nopCount++;
         break;
       default:
-        throw new TypeError(`Invalid diff operation kind: ${type}`); // should be unreachable
+        throw new TypeError(`Invalid diff operation kind: ${kind}`); // should be unreachable
     }
   }
 

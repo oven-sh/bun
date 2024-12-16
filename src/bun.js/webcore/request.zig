@@ -77,6 +77,10 @@ pub const Request = struct {
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
     pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
 
+    pub fn memoryCost(this: *const Request) usize {
+        return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
+    }
+
     pub export fn Request__getUWSRequest(
         this: *Request,
     ) ?*uws.Request {

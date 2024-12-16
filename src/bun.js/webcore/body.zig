@@ -414,6 +414,16 @@ pub const Body = struct {
             };
         }
 
+        pub fn memoryCost(this: *const Value) usize {
+            return switch (this.*) {
+                .InternalBlob => this.InternalBlob.bytes.items.len,
+                .WTFStringImpl => this.WTFStringImpl.memoryCost(),
+                .Locked => this.Locked.sizeHint(),
+                // .InlineBlob => this.InlineBlob.sliceConst().len,
+                else => 0,
+            };
+        }
+
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,

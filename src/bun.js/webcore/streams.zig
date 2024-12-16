@@ -2615,11 +2615,8 @@ pub const FetchTaskletChunkedRequestSink = struct {
     buffer: bun.io.StreamBuffer,
     ended: bool = false,
     done: bool = false,
-    aws_check_sum: bool = false,
 
     auto_flusher: AutoFlusher = AutoFlusher{},
-
-    hasher: std.hash.Crc32 = std.hash.Crc32.init(),
 
     pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
     const HTTPWritableStream = union(enum) {
@@ -2711,37 +2708,15 @@ pub const FetchTaskletChunkedRequestSink = struct {
             if (is_last) this.done = true;
 
             if (data.len == 0) {
-                if (this.aws_check_sum) {
-                    const final = this.hasher.final();
-                    var encoded_buf: [8]u8 = undefined;
-                    const checksum = std.base64.standard.Encoder.encode(&encoded_buf, std.mem.asBytes(&final));
-                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\nx-amz-checksum-crc32:{s}\r\n\r\n", .{ data.len, data, checksum }) catch return error.OOM;
-
-                    sendRequestData(task, chunk, true);
-                } else {
-                    sendRequestData(task, bun.http.end_of_chunked_http1_1_encoding_response_body, true);
-                }
+                sendRequestData(task, bun.http.end_of_chunked_http1_1_encoding_response_body, true);
                 return;
             }
 
             // chunk encoding is really simple
             if (is_last) {
-                if (this.aws_check_sum) {
-                    this.hasher.update(data);
-                    const final = this.hasher.final();
-                    var encoded_buf: [8]u8 = undefined;
-                    const checksum = std.base64.standard.Encoder.encode(&encoded_buf, std.mem.asBytes(&final));
-
-                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\nx-amz-checksum-crc32:{s}\r\n\r\n", .{ data.len, data, checksum }) catch return error.OOM;
-                    sendRequestData(task, chunk, true);
-                } else {
-                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
-                    sendRequestData(task, chunk, true);
-                }
+                const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
+                sendRequestData(task, chunk, true);
             } else {
-                if (this.aws_check_sum) {
-                    this.hasher.update(data);
-                }
                 const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
                 sendRequestData(task, chunk, false);
             }

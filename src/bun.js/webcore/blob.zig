@@ -3686,7 +3686,7 @@ pub const Blob = struct {
             const credentials = this.store.?.data.s3.getCredentials();
             const path = this.store.?.data.s3.path();
 
-            const result = credentials.signRequest(path, method, null, .{ .expires = expires }, false) catch |sign_err| {
+            const result = credentials.signRequest(path, method, null, .{ .expires = expires }) catch |sign_err| {
                 return switch (sign_err) {
                     error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                     error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),

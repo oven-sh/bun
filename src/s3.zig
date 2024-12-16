@@ -62,33 +62,32 @@ pub const AWSCredentials = struct {
     threadlocal var SIGNATURE_CACHE: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = undefined;
     threadlocal var SIGNATURE_CACHE_DATE: u64 = 0;
 
-    pub fn SignResult(comptime chunked_encoding: bool) type {
-        return struct {
-            amz_date: []const u8,
-            host: []const u8,
-            authorization: []const u8,
-            url: []const u8,
-            headers: [if (chunked_encoding) 6 else 4]picohttp.Header,
+    pub const SignResult = struct {
+        amz_date: []const u8,
+        host: []const u8,
+        authorization: []const u8,
+        url: []const u8,
+        headers: [4]picohttp.Header,
 
-            pub fn deinit(this: *const @This()) void {
-                if (this.amz_date.len > 0) {
-                    bun.default_allocator.free(this.amz_date);
-                }
-
-                if (this.host.len > 0) {
-                    bun.default_allocator.free(this.host);
-                }
-
-                if (this.authorization.len > 0) {
-                    bun.default_allocator.free(this.authorization);
-                }
-
-                if (this.url.len > 0) {
-                    bun.default_allocator.free(this.url);
-                }
+        pub fn deinit(this: *const @This()) void {
+            if (this.amz_date.len > 0) {
+                bun.default_allocator.free(this.amz_date);
             }
-        };
-    }
+
+            if (this.host.len > 0) {
+                bun.default_allocator.free(this.host);
+            }
+
+            if (this.authorization.len > 0) {
+                bun.default_allocator.free(this.authorization);
+            }
+
+            if (this.url.len > 0) {
+                bun.default_allocator.free(this.url);
+            }
+        }
+    };
+
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
     };
@@ -104,7 +103,7 @@ pub const AWSCredentials = struct {
         return "us-east-1";
     }
 
-    pub fn signRequest(this: *const @This(), full_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions, comptime chunked_encoded: bool) !SignResult(chunked_encoded) {
+    pub fn signRequest(this: *const @This(), full_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
         const expires = if (signQueryOption) |options| options.expires else 0;
@@ -115,10 +114,6 @@ pub const AWSCredentials = struct {
             .HEAD => "HEAD",
             else => return error.InvalidMethod,
         };
-
-        // this would require the user of the presign query to send the check sum with her self
-        // in this case is better to use bun or some front-end library
-        if (signQuery and chunked_encoded) return error.CannotUseChunkedWithSignQuery;
 
         const region = if (this.region.len > 0) this.region else guessRegion(this.endpoint);
         var path: []const u8 = full_path;
@@ -147,7 +142,7 @@ pub const AWSCredentials = struct {
         errdefer bun.default_allocator.free(amz_date);
 
         const amz_day = amz_date[0..8];
-        const signedHeaders = if (signQuery) "host" else if (chunked_encoded) "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-trailer" else "host;x-amz-content-sha256;x-amz-date";
+        const signedHeaders = if (signQuery) "host" else "host;x-amz-content-sha256;x-amz-date";
 
         // detect service name and host from region or endpoint
         const host = brk_host: {
@@ -161,7 +156,7 @@ pub const AWSCredentials = struct {
 
         errdefer bun.default_allocator.free(host);
 
-        const aws_content_hash = if (content_hash) |hash| hash else (if (chunked_encoded) "STREAMING-UNSIGNED-PAYLOAD-TRAILER" else "UNSIGNED-PAYLOAD");
+        const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
         var tmp_buffer: [2048]u8 = undefined;
 
         const authorization = brk: {
@@ -216,13 +211,7 @@ pub const AWSCredentials = struct {
                     .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             } else {
-                const canonical = brk_canonical: {
-                    if (chunked_encoded) {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n\ncontent-encoding:aws-chunked\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-trailer:x-amz-checksum-crc32\n\n{s}\n{s}", .{ method_name, normalizedPath, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
-                    } else {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
-                    }
-                };
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
 
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -254,52 +243,35 @@ pub const AWSCredentials = struct {
         };
         errdefer bun.default_allocator.free(authorization);
 
-        if (chunked_encoded) {
-            return SignResult(true){
-                .amz_date = amz_date,
-                .host = host,
-                .authorization = authorization,
-                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}", .{ host, normalizedPath }),
-                .headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                    .{ .name = "x-amz-date", .value = amz_date },
-                    .{ .name = "Authorization", .value = authorization[0..] },
-                    .{ .name = "Host", .value = host },
-                    .{ .name = "Content-Encoding", .value = "aws-chunked" },
-                    .{ .name = "x-amz-trailer", .value = "x-amz-checksum-crc32" },
-                },
-            };
-        } else {
-            if (signQuery) {
-                defer bun.default_allocator.free(host);
-                defer bun.default_allocator.free(amz_date);
+        if (signQuery) {
+            defer bun.default_allocator.free(host);
+            defer bun.default_allocator.free(amz_date);
 
-                return SignResult(false){
-                    .amz_date = "",
-                    .host = "",
-                    .authorization = "",
-                    .url = authorization,
-                    .headers = .{
-                        .{ .name = "x-amz-content-sha256", .value = "" },
-                        .{ .name = "x-amz-date", .value = "" },
-                        .{ .name = "Authorization", .value = "" },
-                        .{ .name = "Host", .value = "" },
-                    },
-                };
-            }
-            return SignResult(false){
-                .amz_date = amz_date,
-                .host = host,
-                .authorization = authorization,
-                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}", .{ host, normalizedPath }),
+            return SignResult{
+                .amz_date = "",
+                .host = "",
+                .authorization = "",
+                .url = authorization,
                 .headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                    .{ .name = "x-amz-date", .value = amz_date },
-                    .{ .name = "Authorization", .value = authorization[0..] },
-                    .{ .name = "Host", .value = host },
+                    .{ .name = "x-amz-content-sha256", .value = "" },
+                    .{ .name = "x-amz-date", .value = "" },
+                    .{ .name = "Authorization", .value = "" },
+                    .{ .name = "Host", .value = "" },
                 },
             };
         }
+        return SignResult{
+            .amz_date = amz_date,
+            .host = host,
+            .authorization = authorization,
+            .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}", .{ host, normalizedPath }),
+            .headers = .{
+                .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
+                .{ .name = "x-amz-date", .value = amz_date },
+                .{ .name = "Authorization", .value = authorization[0..] },
+                .{ .name = "Host", .value = host },
+            },
+        };
     }
     pub const S3Error = struct {
         code: []const u8,
@@ -342,7 +314,7 @@ pub const AWSCredentials = struct {
     pub const S3HttpSimpleTask = struct {
         http: bun.http.AsyncHTTP,
         vm: *JSC.VirtualMachine,
-        sign_result: SignResult(false),
+        sign_result: SignResult,
         headers: JSC.WebCore.Headers,
         callback_context: *anyopaque,
         callback: Callback,
@@ -509,7 +481,7 @@ pub const AWSCredentials = struct {
     };
 
     pub fn executeSimpleS3Request(this: *const @This(), path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8) void {
-        var result = this.signRequest(path, method, null, null, false) catch |sign_err| {
+        var result = this.signRequest(path, method, null, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
 
             return switch (sign_err) {
@@ -604,7 +576,7 @@ pub const AWSCredentials = struct {
     pub const S3HttpStreamUpload = struct {
         http: bun.http.AsyncHTTP,
         vm: *JSC.VirtualMachine,
-        sign_result: SignResult(true),
+        sign_result: SignResult,
         headers: JSC.WebCore.Headers,
         callback_context: *anyopaque,
         callback: *const fn (S3UploadResult, *anyopaque) void,
@@ -801,7 +773,6 @@ pub const AWSCredentials = struct {
                         .task = .{ .s3_upload = this },
                         .buffer = .{},
                         .globalThis = this.readable_stream_ref.globalThis().?,
-                        .aws_check_sum = true,
                     }).toSink();
                     var signal = &response_stream.sink.signal;
                     this.sink = response_stream;
@@ -933,7 +904,7 @@ pub const AWSCredentials = struct {
 
     /// consumes the readable stream and upload to s3
     pub fn s3UploadStream(this: *const @This(), path: []const u8, readable_stream: *JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        var result = this.signRequest(path, .PUT, null, null, true) catch |sign_err| {
+        var result = this.signRequest(path, .PUT, null, null) catch |sign_err| {
             return switch (sign_err) {
                 error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
                 error.InvalidMethod => callback.fail("MissingCredentials", "method must be GET, PUT, DELETE or HEAD when using s3 protocol", callback_context),
@@ -989,7 +960,7 @@ pub const AWSCredentials = struct {
     }
     /// returns a writable stream that writes to the s3 path
     pub fn s3WritableStream(this: *const @This(), path: []const u8, globalThis: *JSC.JSGlobalObject, proxy_url: ?[]const u8) bun.JSError!JSC.JSValue {
-        var result = this.signRequest(path, .PUT, null, null, true) catch |sign_err| {
+        var result = this.signRequest(path, .PUT, null, null) catch |sign_err| {
             return switch (sign_err) {
                 error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                 error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
@@ -1018,7 +989,6 @@ pub const AWSCredentials = struct {
             .task = .{ .s3_upload = task },
             .buffer = .{},
             .globalThis = globalThis,
-            .aws_check_sum = true,
         }).toSink();
         var signal = &response_stream.sink.signal;
         task.sink = response_stream;

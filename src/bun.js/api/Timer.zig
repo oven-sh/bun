@@ -396,6 +396,7 @@ pub const TimeoutObject = struct {
         // internals are initialized by init()
         const timeout = TimeoutObject.new(.{ .internals = undefined });
         const js = timeout.toJS(globalThis);
+        defer js.ensureStillAlive();
         timeout.internals.init(
             js,
             globalThis,
@@ -463,8 +464,10 @@ pub const ImmediateObject = struct {
         callback: JSValue,
         arguments_array_or_zero: JSValue,
     ) struct { *ImmediateObject, JSValue } {
+        // internals are initialized by init()
         const immediate = ImmediateObject.new(.{ .internals = undefined });
         const js = immediate.toJS(globalThis);
+        defer js.ensureStillAlive();
         immediate.internals.init(
             js,
             globalThis,

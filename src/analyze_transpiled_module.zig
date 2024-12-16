@@ -199,6 +199,17 @@ const ExportInfo = union(enum) {
     },
 };
 
+export fn zig__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, received_ptr: [*:0]const u8, received_len: usize, globalThis: *bun.JSC.JSGlobalObject) void {
+    const DiffFormatter = @import("bun.js/test/diff_format.zig").DiffFormatter;
+    const formatter = DiffFormatter{
+        .received_string = received_ptr[0..received_len],
+        .expected_string = expected_ptr[0..expected_len],
+        .globalThis = globalThis,
+    };
+    const stderr = std.io.getStdErr().writer();
+    stderr.print("DIFF:\n{}\n", .{formatter}) catch {};
+}
+
 fn fail(result: *c_int, code: c_int) ?*JSModuleRecord {
     result.* = code;
     return null;

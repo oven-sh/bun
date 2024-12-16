@@ -75,6 +75,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord);
 
 struct ModuleInfo;
 extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len, int* failure_reason);
+extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
 {
@@ -249,12 +250,8 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 
-            dataLog("\n\n  \x1b[91m<Actual Record Info>\x1b(B\x1b[m\n  ------", "\n");
-            dataLog("value", actual.utf8().data(), "\n");
-            dataLog("\n  \x1b[91m</Actual Record Info>\x1b(B\x1b[m", "\n");
-            dataLog("\n\n  \x1b[92m<Expected Record Info>\x1b(B\x1b[m\n  ------", "\n");
-            dataLog("value", expected.utf8().data(), "\n");
-            dataLog("\n  \x1b[92m</Expected Record Info>\x1b(B\x1b[m", "\n");
+            zig__renderDiff(expected.utf8().data(), expected.utf8().length(), actual.utf8().data(), actual.utf8().length(), globalObject);
+
             RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
         }
     }

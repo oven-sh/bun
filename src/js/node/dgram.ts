@@ -257,7 +257,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   const state = this[kStateSymbol];
 
-  if (state.bindState !== BIND_STATE_UNBOUND) throw new ERR_SOCKET_ALREADY_BOUND();
+  if (state.bindState !== BIND_STATE_UNBOUND) {
+    this.emit("error", new ERR_SOCKET_ALREADY_BOUND());
+    return;
+  }
 
   state.bindState = BIND_STATE_BINDING;
 
@@ -341,40 +344,44 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
     // TODO flags
     const family = this.type === "udp4" ? "IPv4" : "IPv6";
-    Bun.udpSocket({
-      hostname: ip,
-      port: port || 0,
-      socket: {
-        data: (_socket, data, port, address) => {
-          this.emit("message", data, {
-            port: port,
-            address: address,
-            size: data.length,
-            // TODO check if this is correct
-            family,
-          });
+    try {
+      Bun.udpSocket({
+        hostname: ip,
+        port: port || 0,
+        socket: {
+          data: (_socket, data, port, address) => {
+            this.emit("message", data, {
+              port: port,
+              address: address,
+              size: data.length,
+              // TODO check if this is correct
+              family,
+            });
+          },
+          error: (_socket, error) => {
+            this.emit("error", error);
+          },
         },
-        error: (_socket, error) => {
-          this.emit("error", error);
-        },
-      },
-    }).$then(
-      socket => {
-        if (state.unrefOnBind) {
-          socket.unref();
-          state.unrefOnBind = false;
-        }
-        state.handle.socket = socket;
-        state.receiving = true;
-        state.bindState = BIND_STATE_BOUND;
+      }).$then(
+        socket => {
+          if (state.unrefOnBind) {
+            socket.unref();
+            state.unrefOnBind = false;
+          }
+          state.handle.socket = socket;
+          state.receiving = true;
+          state.bindState = BIND_STATE_BOUND;
 
-        this.emit("listening");
-      },
-      err => {
-        state.bindState = BIND_STATE_UNBOUND;
-        this.emit("error", err);
-      },
-    );
+          this.emit("listening");
+        },
+        err => {
+          state.bindState = BIND_STATE_UNBOUND;
+          this.emit("error", err);
+        },
+      );
+    } catch (err) {
+      this.emit("error", err);
+    }
   });
 
   return this;

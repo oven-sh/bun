@@ -2501,6 +2501,82 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     return napi_generic_failure;
 }
 
+static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "All NAPI bigint functions assume that bigint words are 64 bits");
+#if USE(BIGINT32)
+#error All NAPI bigint functions assume that BIGINT32 is disabled
+#endif
+
+extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value value, int64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+    JSValue jsValue = toJS(value);
+    if (jsValue.isEmpty() || !result) {
+        return napi_invalid_arg;
+    }
+    if (!jsValue.isHeapBigInt()) {
+        return napi_bigint_expected;
+    }
+
+    JSBigInt* bigint = jsValue.asHeapBigInt();
+
+    if (bigint->isZero()) {
+        *result = 0;
+        if (lossless != nullptr) *lossless = true;
+    } else {
+        uint64_t digit = bigint->digit(0);
+        uint64_t signed_digit = digit;
+        if (bigint->sign()) {
+            // negate, while keeping it unsigned because i don't trust signed overflow
+            signed_digit = ~signed_digit + 1;
+        }
+        memcpy(result, &signed_digit, sizeof(signed_digit));
+
+        if (lossless != nullptr) {
+            if (bigint->length() > 1) {
+                *lossless = false;
+            } else if (bigint->sign()) {
+                // negative
+                // lossless if numeric value is >= -2^63,
+                // for which digit will be <= 2^63
+                *lossless = (digit <= (1ull << 63));
+            } else {
+                // positive
+                // lossless if numeric value is <= 2^63 - 1
+                *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
+            }
+        }
+    }
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value value, uint64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+    JSValue jsValue = toJS(value);
+    if (jsValue.isEmpty() || !result) {
+        return napi_invalid_arg;
+    }
+    if (!jsValue.isHeapBigInt()) {
+        return napi_bigint_expected;
+    }
+
+    JSBigInt* bigint = jsValue.asHeapBigInt();
+
+    if (bigint->isZero()) {
+        *result = 0;
+        if (lossless != nullptr) *lossless = true;
+    } else {
+        *result = bigint->digit(0);
+        if (lossless != nullptr) {
+            // lossless if and only if only one digit and positive
+            *lossless = (bigint->length() == 1 && bigint->sign() == false);
+        }
+    }
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     napi_value value,
     int* sign_bit,

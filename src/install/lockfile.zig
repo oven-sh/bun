@@ -841,7 +841,7 @@ pub const Tree = struct {
         trees: []Tree,
         builder: *Builder,
     ) !HoistResult {
-        const this_dependencies = this.dependencies.mut(dependency_lists[this.id].items);
+        const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
         for (0..this_dependencies.len) |i| {
             const dep_id = this_dependencies[i];
             const dep = builder.dependencies[dep_id];
@@ -894,21 +894,6 @@ pub const Tree = struct {
                     dependency.version.literal.fmt(builder.buf()),
                 });
                 return error.DependencyLoop;
-            }
-
-            if (dependency.version.tag == .npm and dep.version.tag == .npm) {
-
-                // if the dependency is wildcard, use the existing dependency
-                // in the parent
-                if (dependency.version.value.npm.version.@"is *"()) {
-                    return .hoisted;
-                }
-
-                // if the parent dependency is wildcard, replace with the
-                // current dependency
-                if (dep.version.value.npm.version.@"is *"()) {
-                    return .{ .replace = .{ .dest_id = this.id, .dep_id = dep_id } }; // 4
-                }
             }
 
             return .dependency_loop; // 3

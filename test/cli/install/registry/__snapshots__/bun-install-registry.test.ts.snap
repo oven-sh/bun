@@ -304,9 +304,9 @@ exports[`hoisting text lockfile is hoisted 1`] = `
 
     "hoist-lockfile-3": ["hoist-lockfile-3@1.0.0", "http://localhost:1234/hoist-lockfile-3/-/hoist-lockfile-3-1.0.0.tgz", { "dependencies": { "hoist-lockfile-shared": ">=1.0.1" } }, "sha512-iGz7jH7jxz/zq4OZM8hhT7kUX2Ye1m+45SoyMVcWTM7ZB+cY306Ff1mQePKTjkn84/pJMITMdRgDv/qF8PuQUw=="],
 
-    "hoist-lockfile-shared": ["hoist-lockfile-shared@1.0.2", "http://localhost:1234/hoist-lockfile-shared/-/hoist-lockfile-shared-1.0.2.tgz", {}, "sha512-p7IQ/BbkTRLG/GUx6j2cDQ+vTUc/v9OW9Ss9igh/GFysbr0Qjriz/DiETnISkxYaTFitqOkUSOUkEKyeLNJsfQ=="],
+    "hoist-lockfile-shared": ["hoist-lockfile-shared@2.0.2", "http://localhost:1234/hoist-lockfile-shared/-/hoist-lockfile-shared-2.0.2.tgz", {}, "sha512-xPWoyP8lv+/JrbClRzhJx1eUsHqDflSTmWOxx82xvMIEs6mbiIuvIp3/L+Ojc6mqex6y426h7L5j0hjLZE3V9w=="],
 
-    "hoist-lockfile-3/hoist-lockfile-shared": ["hoist-lockfile-shared@2.0.2", "http://localhost:1234/hoist-lockfile-shared/-/hoist-lockfile-shared-2.0.2.tgz", {}, "sha512-xPWoyP8lv+/JrbClRzhJx1eUsHqDflSTmWOxx82xvMIEs6mbiIuvIp3/L+Ojc6mqex6y426h7L5j0hjLZE3V9w=="],
+    "hoist-lockfile-2/hoist-lockfile-shared": ["hoist-lockfile-shared@1.0.2", "http://localhost:1234/hoist-lockfile-shared/-/hoist-lockfile-shared-1.0.2.tgz", {}, "sha512-p7IQ/BbkTRLG/GUx6j2cDQ+vTUc/v9OW9Ss9igh/GFysbr0Qjriz/DiETnISkxYaTFitqOkUSOUkEKyeLNJsfQ=="],
   }
 }
 "

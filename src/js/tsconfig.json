@@ -4,7 +4,7 @@
     // Path remapping
     "baseUrl": ".",
     "paths": {
-      "internal/*": ["./js/internal/*"] //deprecated
+      "internal/*": ["./internal/*"] //deprecated
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "./builtins.d.ts", "./private.d.ts"]

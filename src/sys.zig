@@ -3411,15 +3411,19 @@ pub const File = struct {
         return .{ .result = buf[0..read_amount] };
     }
 
-    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
-        const size = switch (this.getEndPos()) {
-            .err => |err| {
-                return .{ .err = err };
-            },
-            .result => |s| s,
-        };
-
-        list.ensureTotalCapacityPrecise(size + 16) catch bun.outOfMemory();
+    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
+        if (probably_small) {
+            list.ensureUnusedCapacity(64) catch bun.outOfMemory();
+        } else {
+            list.ensureTotalCapacityPrecise(
+                switch (this.getEndPos()) {
+                    .err => |err| {
+                        return .{ .err = err };
+                    },
+                    .result => |s| s,
+                } + 16,
+            ) catch bun.outOfMemory();
+        }
 
         var total: i64 = 0;
         while (true) {
@@ -3447,9 +3451,22 @@ pub const File = struct {
 
         return .{ .result = @intCast(total) };
     }
+
+    /// Use this function on potentially large files.
+    /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
     pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list)) {
+        return switch (readToEndWithArrayList(this, &list, false)) {
+            .err => |err| .{ .err = err, .bytes = list },
+            .result => .{ .err = null, .bytes = list },
+        };
+    }
+
+    /// Use this function on small files < 1024 bytes.
+    /// This will skip the fstat() call.
+    pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        var list = std.ArrayList(u8).init(allocator);
+        return switch (readToEndWithArrayList(this, &list, true)) {
             .err => |err| .{ .err = err, .bytes = list },
             .result => .{ .err = null, .bytes = list },
         };

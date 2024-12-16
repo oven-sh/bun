@@ -43,17 +43,26 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
 
+const ciEnv = { ...bunEnv };
+
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
+    delete ciEnv[key];
     delete bunEnv[key];
   }
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete ciEnv[key];
     delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUILDKITE")) {
+    delete bunEnv[key];
+    delete process.env[key];
   }
 }
 
@@ -539,6 +548,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -578,6 +591,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     // workspaces don't need a version
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
@@ -1322,6 +1339,7 @@ export function getSecret(name: string): string | undefined {
     const { exitCode, stdout } = spawnSync({
       cmd: ["buildkite-agent", "secret", "get", name],
       stdout: "pipe",
+      env: ciEnv,
       stderr: "inherit",
     });
     if (exitCode === 0) {

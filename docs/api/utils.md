@@ -774,7 +774,7 @@ Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API
 
 ## `estimateDirectMemoryUsageOf` in `bun:jsc`
 
-The `estimateDirectMemoryUsageOf` function is a best-effort estimate of the memory usage of an object, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
+The `estimateDirectMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
 
 ```js
 import { estimateDirectMemoryUsageOf } from "bun:jsc";
@@ -796,5 +796,3 @@ const array = Array(1024).fill({ a: 1 });
 estimateDirectMemoryUsageOf(array);
 // => 16
 ```
-
-It returns the byte size of the object's memory.

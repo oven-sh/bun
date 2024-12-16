@@ -168,7 +168,7 @@ async function runTests() {
       result = await startGroup(
         attempt === 1
           ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
-          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} [attempt #${attempt}]`,
+          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
         fn,
       );
 

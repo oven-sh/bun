@@ -125,8 +125,8 @@ public:
         }
 
         // if (waitingForConnection) {
-            // waitingForConnection = false;
-            // Debugger__didConnect();
+        // waitingForConnection = false;
+        // Debugger__didConnect();
         // }
 
         this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
@@ -159,8 +159,8 @@ public:
             }
 
             // if (waitingForConnection) {
-                // waitingForConnection = false;
-                // Debugger__didConnect();
+            // waitingForConnection = false;
+            // Debugger__didConnect();
             // }
         });
     }

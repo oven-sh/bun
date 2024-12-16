@@ -26,7 +26,7 @@ pub const PrinterOptions = struct {
     /// An optional project root path, used to generate relative paths for sources used in CSS module hashes.
     project_root: ?[]const u8 = null,
     /// Targets to output the CSS for.
-    targets: Targets = .{},
+    targets: Targets = Targets.bundlerDefault(),
     /// Whether to analyze dependencies (i.e. `@import` and `url()`).
     /// If true, the dependencies are returned as part of the
     /// [ToCssResult](super::stylesheet::ToCssResult).

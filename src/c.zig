@@ -44,7 +44,7 @@ pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet, conside using bun.sys.lstat()");
+        @compileError("Not implemented yet, consider using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
@@ -494,3 +494,15 @@ pub extern "C" fn bun_restore_stdio() void;
 pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
 
 pub extern fn strlen(ptr: [*c]const u8) usize;
+
+pub const passwd = extern struct {
+    pw_name: ?[*:0]const u8, // username
+    pw_passwd: ?[*:0]const u8, // user password
+    pw_uid: std.c.uid_t, // user ID
+    pw_gid: std.c.gid_t, // group ID
+    pw_gecos: ?[*:0]const u8, // user information
+    pw_dir: ?[*:0]const u8, // home directory
+    pw_shell: ?[*:0]const u8, // shell program
+};
+
+pub extern "c" fn getpwuid_r(uid: std.c.uid_t, pw: *passwd, buf: [*]u8, buflen: usize, pwretp: *?*passwd) c_int;

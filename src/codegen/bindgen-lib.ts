@@ -18,9 +18,16 @@ export type Type<
   K extends TypeKind = TypeKind,
   /** F = "flags" defining if the value is optional. null = not set, false = required, true = optional. */
   F extends TypeFlag = null,
-> = F extends null ? Props<T, K> : { [isType]: true | [T, K, F] };
+> = F extends null
+  ? Props<T, K>
+  : F extends true
+    ? {
+        [isType]: true | [T, K, F];
+        nonNull: Type<T, K, "opt-nonnull">;
+      }
+    : { [isType]: true | [T, K, F] };
 
-type TypeFlag = boolean | null;
+type TypeFlag = boolean | "opt-nonnull" | null;
 
 interface BaseTypeProps<T, K extends TypeKind> {
   [isType]: true | [T, K];

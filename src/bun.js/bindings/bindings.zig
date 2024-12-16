@@ -74,7 +74,8 @@ pub const JSObject = extern struct {
                 JSValue.createEmptyObjectWithNullPrototype(global)
             else
                 JSValue.createEmptyObject(global, comptime info.fields.len);
-            bun.debugAssert(val.isObject());
+            if (bun.Environment.isDebug)
+                bun.assert(val.isObject());
             break :obj val.uncheckedPtrCast(JSObject);
         };
 
@@ -1739,10 +1740,6 @@ pub const SystemError = extern struct {
         return @enumFromInt(this.errno * -1);
     }
 
-    pub fn toAnyhowError(this: SystemError) bun.anyhow.Error {
-        return bun.anyhow.Error.newSys(this);
-    }
-
     pub fn deref(this: *const SystemError) void {
         this.path.deref();
         this.code.deref();
@@ -1766,6 +1763,36 @@ pub const SystemError = extern struct {
         }
 
         return shim.cppFn("toErrorInstance", .{ this, global });
+    }
+
+    /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
+    /// property containing the details of the system error:
+    ///
+    /// SystemError [ERR_SYSTEM_ERROR]: A system error occurred: {syscall} returned {errno} ({message})
+    /// {
+    ///     name: "ERR_SYSTEM_ERROR",
+    ///     info: {
+    ///         errno: -{errno},
+    ///         code: {code},        // string
+    ///         message: {message},  // string
+    ///         syscall: {syscall},  // string
+    ///     },
+    ///     errno: -{errno},
+    ///     syscall: {syscall},
+    /// }
+    ///
+    /// Before using this function, consider if the Node.js API it is
+    /// implementing follows this convention. It is exclusively used
+    /// to match the error code that `node:os` throws.
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+            this.syscall.deref();
+        }
+
+        return shim.cppFn("toErrorInstanceWithInfoObject", .{ this, global });
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -2009,6 +2036,7 @@ pub const JSPromiseRejectionOperation = enum(u32) {
     Handle = 1,
 };
 
+// TODO(@paperdave): delete and inline these functions
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
         const importNotImpl = "Import not implemented";

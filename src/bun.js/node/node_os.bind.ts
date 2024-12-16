@@ -15,7 +15,7 @@ export const freemem = fn({
 export const getPriority = fn({
   args: {
     global: t.globalObject,
-    pid: t.i32.validateInt32().default(0),
+    pid: t.i32.validateInt32().default(0).nonNull,
   },
   ret: t.i32,
 });
@@ -67,21 +67,22 @@ export const version = fn({
   args: {},
   ret: t.DOMString,
 });
+const PRI_MIN = -20;
+const PRI_MAX = 19;
 export const setPriority = fn({
   variants: [
     {
       args: {
         global: t.globalObject,
         pid: t.i32.validateInt32(),
-        priority: t.i32.validateInt32(),
+        priority: t.i32.validateInt32(PRI_MIN, PRI_MAX),
       },
       ret: t.undefined,
     },
     {
       args: {
         global: t.globalObject,
-        priority: t.i32.validateInt32(),
-        _: t.undefined.default(undefined),
+        priority: t.i32.validateInt32(PRI_MIN, PRI_MAX),
       },
       ret: t.undefined,
     },

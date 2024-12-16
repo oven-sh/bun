@@ -11,7 +11,7 @@ const libuv = bun.windows.libuv;
 const gen = bun.gen.node_os;
 
 pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.create(global, .{
+    return JSC.JSObject.create(.{
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),
@@ -25,7 +25,7 @@ pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         .userInfo = gen.createUserInfoCallback(global),
         .version = gen.createVersionCallback(global),
         .setPriority = gen.createSetPriorityCallback(global),
-    }).toJS();
+    }, global).toJS();
 }
 
 const CPUTimes = struct {
@@ -291,9 +291,12 @@ pub fn freemem() u64 {
 pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
     return C.getProcessPriority(pid) orelse {
         const err = JSC.SystemError{
-            .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
-            .code = bun.String.static("ERR_SYSTEM_ERROR"),
-            .errno = -3,
+            .message = bun.String.static("no such process"),
+            .code = bun.String.static("SRCH"),
+            .errno = switch (bun.Environment.os) {
+                else => @intFromEnum(std.posix.E.SRCH),
+                .windows => -libuv.UV_ESRCH,
+            },
             .syscall = bun.String.static("uv_os_getpriority"),
         };
         return global.throwValue(err.toErrorInstance(global));
@@ -314,11 +317,8 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         // The posix implementation of uv_os_homedir first checks the HOME
         // environment variable, then falls back to reading the passwd entry.
         if (bun.getenvZ("HOME")) |home| {
-            return bun.String.init(home);
-        }
-
-        {
-            @panic("TODO");
+            if (home.len > 0)
+                return bun.String.init(home);
         }
 
         // From libuv:
@@ -328,19 +328,19 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         // Instead of always using an allocation, first try a stack allocation
         // of 4096, then fallback to heap.
         var stack_string_bytes: [4096]u8 = undefined;
-        var string_bytes: []const u8 = &stack_string_bytes;
+        var string_bytes: []u8 = &stack_string_bytes;
         defer if (string_bytes.ptr != &stack_string_bytes)
             bun.default_allocator.free(string_bytes);
 
-        var pw: std.c.passwd = undefined;
-        var result: ?*std.c.passwd = null;
+        var pw: bun.C.passwd = undefined;
+        var result: ?*bun.C.passwd = null;
 
         const ret = while (true) {
-            const ret = std.c.getpwuid_r(
+            const ret = bun.C.getpwuid_r(
                 bun.C.geteuid(),
                 &pw,
-                string_bytes.items.ptr,
-                string_bytes.items.len,
+                string_bytes.ptr,
+                string_bytes.len,
                 &result,
             );
 
@@ -363,7 +363,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 @enumFromInt(ret),
                 .uv_os_homedir,
-            ).toJS(global));
+            ).toJSC(global));
         }
 
         if (result == null) {
@@ -371,10 +371,13 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 .NOENT,
                 .uv_os_homedir,
-            ).toJS(global));
+            ).toJSC(global));
         }
 
-        return bun.String.createUTF8(bun.span(pw.pw_dir));
+        return if (pw.pw_dir) |dir|
+            bun.String.createUTF8(bun.span(dir))
+        else
+            bun.String.empty;
     }
 }
 
@@ -725,6 +728,16 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
                 .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
                 .errno = -3,
+                .syscall = bun.String.static("uv_os_setpriority"),
+            };
+
+            return global.throwValue(err.toErrorInstance(global));
+        },
+        .ACCES => {
+            const err = JSC.SystemError{
+                .message = bun.String.static("A system error occurred: uv_os_setpriority returned ACCES (permission denied)"),
+                .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
+                .errno = -13,
                 .syscall = bun.String.static("uv_os_setpriority"),
             };
 

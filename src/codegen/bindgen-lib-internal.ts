@@ -80,7 +80,7 @@ interface Flags {
   nodeValidator?: NodeValidator;
   optional?: boolean;
   required?: boolean;
-  nullable?: boolean;
+  nonNull?: boolean;
   default?: any;
   range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
   finite?: boolean;
@@ -556,13 +556,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     });
   }
 
-  get nullable() {
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      nullable: true,
-    });
-  }
-
   get finite() {
     if (this.kind !== "f64") {
       throw new Error("finite can only be used on f64");
@@ -609,6 +602,16 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
 
   enforceRange(min?: number | bigint, max?: number | bigint) {
     return this.#rangeModifier(min, max, "enforce");
+  }
+
+  get nonNull() {
+    if (this.flags.nonNull) {
+      throw new Error("Cannot derive nonNull on a nonNull type");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      nonNull: true,
+    });
   }
 
   validateInt32(min?: number, max?: number) {
@@ -677,9 +680,6 @@ export function oneOfImpl(types: TypeImpl[]): TypeImpl {
     if (type.kind === "oneOf") {
       out.push(...type.data);
     } else {
-      if (type.flags.nullable) {
-        throw new Error("Union type cannot include nullable");
-      }
       if (type.flags.default) {
         throw new Error(
           "Union type cannot include a default value. Instead, set a default value on the union type itself",

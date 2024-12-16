@@ -55,7 +55,7 @@ function resolveVariantStrategies(vari: Variant, name: string) {
     argIndex += 1;
 
     // If `extern struct` can represent this type, that is the simplest way to cross the C-ABI boundary.
-    const isNullable = (arg.type.flags.optional && !("default" in arg.type.flags)) || arg.type.flags.nullable;
+    const isNullable = arg.type.flags.optional && !("default" in arg.type.flags);
     const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
@@ -114,7 +114,7 @@ function resolveNullableArgumentStrategy(
   prefix: string,
   communicationStruct: Struct,
 ): ArgStrategyChildItem[] {
-  assert((type.flags.optional && !("default" in type.flags)) || type.flags.nullable);
+  assert(type.flags.optional && !("default" in type.flags));
   communicationStruct.add(`${prefix}Set`, "bool");
   return resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
 }
@@ -196,21 +196,22 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
     const jsValueRef = `arg${i}.value()`;
 
     /** If JavaScript may pass null or undefined */
-    const isOptionalToUser = type.flags.nullable || type.flags.optional || "default" in type.flags;
+    const isOptionalToUser = type.flags.optional || "default" in type.flags;
     /** If the final representation may include null */
-    const isNullable = type.flags.nullable || (type.flags.optional && !("default" in type.flags));
+    const isNullable = type.flags.optional && !("default" in type.flags);
 
     if (isOptionalToUser) {
       if (needDeclare) {
         addHeaderForType(type);
         cpp.line(`${type.cppName()} ${storageLocation};`);
       }
+      const isUndefinedOrNull = type.flags.nonNull ? "isUndefined" : "isUndefinedOrNull";
       if (isNullable) {
         assert(strategy.type === "uses-communication-buffer");
-        cpp.line(`if ((${storageLocation}Set = !${jsValueRef}.isUndefinedOrNull())) {`);
+        cpp.line(`if ((${storageLocation}Set = !${jsValueRef}.${isUndefinedOrNull}())) {`);
         storageLocation = `${storageLocation}Value`;
       } else {
-        cpp.line(`if (!${jsValueRef}.isUndefinedOrNull()) {`);
+        cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
       emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
@@ -1399,7 +1400,7 @@ for (const [filename, { functions, typedefs }] of files) {
           case "uses-communication-buffer":
             const prefix = `buf.${snake(arg.name)}`;
             const type = arg.type;
-            const isNullable = (type.flags.optional && !("default" in type.flags)) || type.flags.nullable;
+            const isNullable = type.flags.optional && !("default" in type.flags);
             if (isNullable) emitNullableZigDecoder(zigInternal, prefix, type, strategy.children);
             else emitComplexZigDecoder(zigInternal, prefix, type, strategy.children);
             zigInternal.line(`,`);

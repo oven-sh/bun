@@ -401,7 +401,7 @@ pub const Run = struct {
 
                     vm.eventLoop().tickPossiblyForever();
                 }
-                vm.handlePendingInternalPromiseRejection();
+                // vm.handlePendingInternalPromiseRejection();
 
                 // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                 //     prev_promise = this.vm.pending_internal_promise;

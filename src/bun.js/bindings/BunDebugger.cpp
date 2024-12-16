@@ -54,6 +54,10 @@ public:
     }
     void unpauseForInitializedInspector() override
     {
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        }
     }
 };
 
@@ -120,10 +124,10 @@ public:
             };
         }
 
-        if (waitingForConnection) {
-            waitingForConnection = false;
-            Debugger__didConnect();
-        }
+        // if (waitingForConnection) {
+            // waitingForConnection = false;
+            // Debugger__didConnect();
+        // }
 
         this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
     }
@@ -154,10 +158,10 @@ public:
             }
             }
 
-            if (waitingForConnection) {
-                waitingForConnection = false;
-                Debugger__didConnect();
-            }
+            // if (waitingForConnection) {
+                // waitingForConnection = false;
+                // Debugger__didConnect();
+            // }
         });
     }
 

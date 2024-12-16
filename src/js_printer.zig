@@ -1043,7 +1043,9 @@ fn NewPrinter(
 
             if (import.star_name_loc != null) {
                 p.print("var ");
-                p.printSymbol(import.namespace_ref);
+                const name = p.renamer.nameForSymbol(import.namespace_ref);
+                p.printIdentifier(name);
+                if (p.moduleInfo()) |mi| mi.addVar(name, .declared) catch bun.outOfMemory();
                 p.printSpace();
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
@@ -1066,7 +1068,9 @@ fn NewPrinter(
 
             if (import.default_name) |default| {
                 p.print("var ");
-                p.printSymbol(default.ref.?);
+                const default_name = p.renamer.nameForSymbol(default.ref.?);
+                p.printIdentifier(default_name);
+                if (p.moduleInfo()) |mi| mi.addVar(default_name, .declared) catch bun.outOfMemory();
                 if (comptime Statement == void) {
                     p.@"print = "();
                     p.printRequireOrImportExpr(
@@ -1105,6 +1109,10 @@ fn NewPrinter(
                     }
 
                     p.printVarClauseItem(item);
+                    if (p.moduleInfo()) |mi| {
+                        const varname = p.renamer.nameForSymbol(item.name.ref.?);
+                        mi.addVar(varname, .declared) catch bun.outOfMemory();
+                    }
                 }
 
                 if (!import.is_single_line) {
@@ -3742,6 +3750,7 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     const nameRef = s.class.class_name.?.ref.?;
+                    const nameStr = p.renamer.nameForSymbol(nameRef);
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
@@ -3750,8 +3759,15 @@ fn NewPrinter(
 
                     p.print("class ");
                     p.addSourceMapping(s.class.class_name.?.loc);
-                    p.printSymbol(nameRef);
+                    p.printIdentifier(nameStr);
                     p.printClass(s.class);
+
+                    if (p.moduleInfo()) |mi| {
+                        if (s.is_export) {
+                            try mi.exports.append(.{ .local = .{ .export_name = try mi.str(nameStr), .local_name = try mi.str(nameStr) } });
+                        }
+                        try mi.addVar(nameStr, .lexical);
+                    }
 
                     if (rewrite_esm_to_cjs and s.is_export) {
                         p.printSemicolonAfterStatement();

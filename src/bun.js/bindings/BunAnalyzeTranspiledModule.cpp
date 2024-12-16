@@ -23,7 +23,6 @@
 // #include "JavaScriptCore/IdentifierInlines.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSModuleRecord.h"
-#include "JavaScriptCore/ModuleScopeData.h"
 #include "JavaScriptCore/ExceptionScope.h"
 // #include "JavaScriptCore/StrongInlines.h"
 
@@ -72,11 +71,7 @@ private:
 
 namespace JSC {
 
-void dumpRecordInfo(JSModuleRecord* moduleRecord);
-
-extern "C" void zig_log_u8(const char* m1, const unsigned char* m2, size_t m2_size);
-extern "C" void zig_log_cstr(const char* m1, const char* m2);
-extern "C" void zig_log_ushort(const char* m1, unsigned short value);
+String dumpRecordInfo(JSModuleRecord* moduleRecord);
 
 struct ModuleInfo;
 extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len, int* failure_reason);
@@ -189,10 +184,6 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         return promise;
     };
 
-    zig_log_cstr("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  ---code---\n\n", sourceCode.toUTF8().data());
-    zig_log_cstr("  ------", "");
-    zig_log_cstr("  BunAnalyzeTranspiledModule:", "");
-
     auto sourceCodeStdString = sourceCode.toUTF8().toStdString();
 
     VariableEnvironment declaredVariables = VariableEnvironment();
@@ -214,9 +205,6 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
     bool compare = true;
-    zig_log_cstr("\n\n  \x1b[91m<Actual Record Info>\x1b(B\x1b[m\n  ------", "");
-    dumpRecordInfo(moduleRecord);
-    zig_log_cstr("\n  \x1b[91m</Actual Record Info>\x1b(B\x1b[m", "");
 
     if (compare) {
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
@@ -252,50 +240,83 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     }
 
     JSModuleRecord* moduleRecord = result.value();
-    zig_log_cstr("\n\n  \x1b[92m<Expected Record Info>\x1b(B\x1b[m\n  ------", "");
-    dumpRecordInfo(moduleRecord);
-    zig_log_cstr("\n  \x1b[92m</Expected Record Info>\x1b(B\x1b[m", "");
+
+    if (resultValue != nullptr) {
+        auto actual = dumpRecordInfo(resultValue);
+        auto expected = dumpRecordInfo(moduleRecord);
+        if (actual != expected) {
+            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  ---code---\n\n", sourceCode.toUTF8().data(), "\n");
+            dataLog("  ------", "\n");
+            dataLog("  BunAnalyzeTranspiledModule:", "\n");
+
+            dataLog("\n\n  \x1b[91m<Actual Record Info>\x1b(B\x1b[m\n  ------", "\n");
+            dataLog("value", actual.utf8().data(), "\n");
+            dataLog("\n  \x1b[91m</Actual Record Info>\x1b(B\x1b[m", "\n");
+            dataLog("\n\n  \x1b[92m<Expected Record Info>\x1b(B\x1b[m\n  ------", "\n");
+            dataLog("value", expected.utf8().data(), "\n");
+            dataLog("\n  \x1b[92m</Expected Record Info>\x1b(B\x1b[m", "\n");
+            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
+        }
+    }
 
     scope.release();
     promise->fulfillWithNonPromise(globalObject, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 
-void dumpRecordInfo(JSModuleRecord* moduleRecord)
+String dumpRecordInfo(JSModuleRecord* moduleRecord)
 {
+    WTF::StringPrintStream stream;
 
-    zig_log_cstr("  varDeclarations:", "");
-    {
-        auto iter = moduleRecord->m_declaredVariables.begin();
-        auto end = moduleRecord->m_declaredVariables.end();
-        while (iter != end) {
-            auto& pair = *iter;
+    stream.print("  varDeclarations:\n");
+    for (const auto& pair : moduleRecord->m_declaredVariables) {
+        stream.print("  - ", pair.key, "\n");
+    }
 
-            zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
+    stream.print("  lexicalVariables:\n");
+    for (const auto& pair : moduleRecord->m_lexicalVariables) {
+        stream.print("  - ", pair.key, "\n");
+    }
 
-            ++iter;
+    stream.print("  features: ");
+    stream.print(moduleRecord->m_features);
+    stream.print("\n");
+
+    stream.print("\nAnalyzing ModuleRecord key(", moduleRecord->moduleKey().impl(), ")\n");
+
+    stream.print("    Dependencies: ", moduleRecord->requestedModules().size(), " modules\n");
+    for (const auto& request : moduleRecord->requestedModules())
+        stream.print("      module(", request.m_specifier, "),attributes(", RawPointer(request.m_attributes.get()), ")\n");
+
+    stream.print("    Import: ", moduleRecord->importEntries().size(), " entries\n");
+    for (const auto& pair : moduleRecord->importEntries()) {
+        auto& importEntry = pair.value;
+        stream.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")\n");
+    }
+
+    stream.print("    Export: ", moduleRecord->exportEntries().size(), " entries\n");
+    for (const auto& pair : moduleRecord->exportEntries()) {
+        auto& exportEntry = pair.value;
+        switch (exportEntry.type) {
+        case AbstractModuleRecord::ExportEntry::Type::Local:
+            stream.print("      [Local] ", "export(", exportEntry.exportName, "), local(", exportEntry.localName, ")\n");
+            break;
+
+        case AbstractModuleRecord::ExportEntry::Type::Indirect:
+            stream.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, ")\n");
+            break;
+
+        case AbstractModuleRecord::ExportEntry::Type::Namespace:
+            stream.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, ")\n");
+            break;
         }
     }
-    zig_log_cstr("  lexicalVariables:", "");
-    {
-        auto iter = moduleRecord->m_lexicalVariables.begin();
-        auto end = moduleRecord->m_lexicalVariables.end();
-        while (iter != end) {
-            auto& pair = *iter;
+    for (const auto& moduleName : moduleRecord->starExportEntries())
+        stream.print("      [Star] module(", moduleName.get(), ")\n");
 
-            zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
+    stream.print("  -> done\n");
 
-            ++iter;
-        }
-    }
-    // zig_log
-    zig_log_ushort("  features: ", moduleRecord->m_features);
-
-    moduleRecord->dump();
-    zig_log_cstr("  -> done", "");
-
-    // declaredVariables.add();
-    // features |= ImportMetaFeature;
+    return stream.toString();
 }
 
 }

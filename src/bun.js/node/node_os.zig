@@ -75,7 +75,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     if (try std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
         defer file.close();
 
-        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .all).unwrap();
         defer file_buf.clearRetainingCapacity();
         const contents = file_buf.items[0..read];
 
@@ -115,7 +115,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
         defer file.close();
 
-        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
         defer file_buf.clearRetainingCapacity();
         const contents = file_buf.items[0..read];
 
@@ -166,7 +166,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         if (std.fs.openFileAbsolute(path, .{})) |file| {
             defer file.close();
 
-            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
             defer file_buf.clearRetainingCapacity();
             const contents = file_buf.items[0..read];
 

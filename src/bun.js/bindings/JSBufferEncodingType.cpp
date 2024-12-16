@@ -31,7 +31,8 @@ using namespace JSC;
 
 String convertEnumerationToString(BufferEncodingType enumerationValue)
 {
-    static const NeverDestroyed<String> values[] = {
+
+    static const std::array<NeverDestroyed<String>, 8> values = {
         MAKE_STATIC_STRING_IMPL("utf8"),
         MAKE_STATIC_STRING_IMPL("ucs2"),
         MAKE_STATIC_STRING_IMPL("utf16le"),
@@ -56,7 +57,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     if (UNLIKELY(!arg.isString())) {
         return std::nullopt;
     }
-    return parseEnumeration2(lexicalGlobalObject, asString(arg)->getString(&lexicalGlobalObject));
+    return parseEnumeration2(lexicalGlobalObject, arg.toWTFString(&lexicalGlobalObject));
 }
 
 std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, WTF::String encoding)

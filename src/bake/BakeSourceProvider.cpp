@@ -21,7 +21,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
 
   String string = "bake://server-runtime.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
+  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -54,7 +54,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
 
   String string = "bake://server.patch.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
+  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -117,7 +117,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   String string = virtualPathName.toWTFString();
   JSC::JSString* key = JSC::jsString(vm, string);
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
+  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),

@@ -118,11 +118,15 @@ it("process.chdir() on root dir", () => {
   }
 });
 
-it("process.hrtime()", () => {
+it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);
-  const end2 = process.hrtime();
   expect(end[0]).toBe(0);
+
+  // Flaky on Ubuntu & Windows.
+  await Bun.sleep(16);
+  const end2 = process.hrtime();
+
   expect(end2[1] > start[1]).toBe(true);
 });
 

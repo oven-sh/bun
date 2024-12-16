@@ -1,5 +1,3 @@
-export {};
-
 type _ReadableStream<T> = typeof globalThis extends {
   onerror: any;
   ReadableStream: infer T;
@@ -140,16 +138,6 @@ type _Body = typeof globalThis extends { onerror: any }
 import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
-
-declare module "*.txt" {
-  var text: string;
-  export = text;
-}
-
-declare module "*.toml" {
-  var contents: any;
-  export = contents;
-}
 
 declare global {
   var Bun: typeof import("bun");
@@ -1835,10 +1823,10 @@ declare global {
     readonly main: boolean;
 
     /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-    readonly dirname: string;
+    dirname: string;
 
     /** Alias of `import.meta.path`. Exists for Node.js compatibility */
-    readonly filename: string;
+    filename: string;
   }
 
   /**

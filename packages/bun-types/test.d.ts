@@ -1296,6 +1296,57 @@ declare module "bun:test" {
      */
     toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
     /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect("Hello").toMatchInlineSnapshot();
+     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(value?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) });
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
+     * {
+     *   "v": Any<Date>,
+     * }
+     * `);
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingSnapshot();
+     * expect(fail).toThrowErrorMatchingSnapshot("This one should say Oops!");
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingSnapshot(hint?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingInlineSnapshot();
+     * expect(fail).toThrowErrorMatchingInlineSnapshot(`"Oops!"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingInlineSnapshot(value?: string): void;
+    /**
      * Asserts that an object matches a subset of properties.
      *
      * @example

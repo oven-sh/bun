@@ -8196,14 +8196,13 @@ pub const Macro = struct {
                     .String => this.coerce(value, .String),
                     .Promise => this.coerce(value, .Promise),
                     else => brk: {
-                        var name = value.getClassInfoName() orelse bun.String.init("unknown");
-                        defer name.deref();
+                        const name = value.getClassInfoName() orelse "unknown";
 
                         this.log.addErrorFmt(
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {} ({s}) to Bun's AST. Please return a simpler type",
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
                             .{ name, @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;

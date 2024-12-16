@@ -415,7 +415,7 @@ pub const PostgresSQLQuery = struct {
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLQuery {
         _ = callframe;
-        return globalThis.throw2("PostgresSQLQuery cannot be constructed directly", .{});
+        return globalThis.throw("PostgresSQLQuery cannot be constructed directly", .{});
     }
 
     pub fn estimatedSize(this: *PostgresSQLQuery) usize {
@@ -430,19 +430,16 @@ pub const PostgresSQLQuery = struct {
         const columns = arguments[3];
 
         if (!query.isString()) {
-            globalThis.throw("query must be a string", .{});
-            return .zero;
+            return globalThis.throw("query must be a string", .{});
         }
 
         if (values.jsType() != .Array) {
-            globalThis.throw("values must be an array", .{});
-            return .zero;
+            return globalThis.throw("values must be an array", .{});
         }
 
         const pending_value = arguments[2];
         if (!pending_value.jsType().isArrayLike()) {
-            globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
-            return .zero;
+            return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
         }
 
         var ptr = try bun.default_allocator.create(PostgresSQLQuery);
@@ -481,14 +478,12 @@ pub const PostgresSQLQuery = struct {
         var arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
-            globalObject.throw("connection must be a PostgresSQLConnection", .{});
-            return error.JSError;
+            return globalObject.throw("connection must be a PostgresSQLConnection", .{});
         };
         var query = arguments[1];
 
         if (!query.isObject()) {
-            globalObject.throwInvalidArgumentType("run", "query", "Query");
-            return error.JSError;
+            return globalObject.throwInvalidArgumentType("run", "query", "Query");
         }
 
         this.target.set(globalObject, query);
@@ -1356,7 +1351,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLConnection {
         _ = callframe;
-        return globalObject.throw2("PostgresSQLConnection cannot be constructed directly", .{});
+        return globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
     }
 
     comptime {
@@ -1414,20 +1409,18 @@ pub const PostgresSQLConnection = struct {
             var err: uws.create_bun_socket_error_t = .none;
             tls_ctx = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
                 if (err != .none) {
-                    globalObject.throw("failed to create TLS context", .{});
+                    return globalObject.throw("failed to create TLS context", .{});
                 } else {
-                    globalObject.throwValue(err.toJS(globalObject));
+                    return globalObject.throwValue(err.toJS(globalObject));
                 }
-                return .zero;
             };
 
             if (err != .none) {
                 tls_config.deinit();
-                globalObject.throwValue(err.toJS(globalObject));
                 if (tls_ctx) |ctx| {
                     ctx.deinit(true);
                 }
-                return .zero;
+                return globalObject.throwValue(err.toJS(globalObject));
             }
 
             uws.NewSocketHandler(true).configure(tls_ctx.?, true, *PostgresSQLConnection, SocketHandler(true));
@@ -2609,7 +2602,7 @@ const QueryBindingIterator = union(enum) {
                 this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i));
                 if (this.current_row.isEmptyOrUndefinedOrNull()) {
                     if (!globalObject.hasException())
-                        globalObject.throw("Expected a row to be returned at index {d}", .{row_i});
+                        return globalObject.throw("Expected a row to be returned at index {d}", .{row_i}) catch null;
                     this.any_failed = true;
                     return null;
                 }
@@ -2626,7 +2619,7 @@ const QueryBindingIterator = union(enum) {
             const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i));
             if (property == .zero or property == .undefined) {
                 if (!globalObject.hasException())
-                    globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i });
+                    return globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i }) catch null;
                 this.any_failed = true;
                 return null;
             }
@@ -2634,7 +2627,7 @@ const QueryBindingIterator = union(enum) {
             const value = this.current_row.getOwnByValue(globalObject, property);
             if (value == .zero or value == .undefined) {
                 if (!globalObject.hasException())
-                    globalObject.throw("Expected a value at index {d} in row {d}", .{ cell_i, row_i });
+                    return globalObject.throw("Expected a value at index {d} in row {d}", .{ cell_i, row_i }) catch null;
                 this.any_failed = true;
                 return null;
             }

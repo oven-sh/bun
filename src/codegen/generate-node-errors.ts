@@ -45,8 +45,8 @@ fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) ty
       args: Args,
 
       // Throw this error as a JS exception
-      pub inline fn throw(this: @This()) void {
-        code.throw(this.globalThis, fmt, this.args);
+      pub inline fn throw(this: @This()) bun.JSError {
+        return code.throw(this.globalThis, fmt, this.args);
       }
 
       /// Turn this into a JSValue
@@ -67,7 +67,8 @@ pub const Error = enum(u8) {
 
 let i = 0;
 let listForUsingNamespace = "";
-for (const [code, constructor, name] of NodeErrors) {
+for (let [code, constructor, name] of NodeErrors) {
+  if (name == null) name = constructor.name;
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
   zig += `    ${code} = ${i},\n`;
@@ -109,8 +110,8 @@ zig += `
     return toJS(this, globalThis, &message);
   }
 
-  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) void {
-    globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
+  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) bun.JSError {
+    return globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
   }
 
 };

@@ -104,6 +104,7 @@ pub const Features = struct {
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
+    pub var text_lockfile: usize = 0;
     pub var macros: usize = 0;
     pub var no_avx2: usize = 0;
     pub var no_avx: usize = 0;

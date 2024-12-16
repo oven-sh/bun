@@ -102,11 +102,10 @@ pub const PackCommand = struct {
         Output.flush();
 
         var lockfile: Lockfile = undefined;
-        const load_from_disk_result = lockfile.loadFromDisk(
+        const load_from_disk_result = lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             false,
         );
 
@@ -2301,8 +2300,7 @@ pub const bindings = struct {
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();
         if (args.len < 1 or !args[0].isString()) {
-            global.throw("expected tarball path string argument", .{});
-            return .zero;
+            return global.throw("expected tarball path string argument", .{});
         }
 
         const tarball_path_str = args[0].toBunString(global);
@@ -2312,14 +2310,12 @@ pub const bindings = struct {
         defer tarball_path.deinit();
 
         const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
-            global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         });
         defer tarball_file.close();
 
         const tarball = tarball_file.readToEnd(bun.default_allocator).unwrap() catch |err| {
-            global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         };
         defer bun.default_allocator.free(tarball);
 
@@ -2353,38 +2349,33 @@ pub const bindings = struct {
 
         switch (archive.readSupportFormatTar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support tar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support tar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFormatGnutar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gnutar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gnutar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFilterGzip()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readSetOptions("read_concatenated_archives")) {
             .failed, .fatal, .warn => {
-                global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readOpenMemory(tarball)) {
             .failed, .fatal, .warn => {
-                global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
             },
             else => {},
         }
@@ -2400,8 +2391,7 @@ pub const bindings = struct {
                 .eof => unreachable,
                 .retry => continue,
                 .failed, .fatal => {
-                    global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
-                    return .zero;
+                    return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
                     const pathname = archive_entry.pathname();
@@ -2421,11 +2411,10 @@ pub const bindings = struct {
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            global.throw("failed to read archive entry \"{}\": {s}", .{
+                            return global.throw("failed to read archive entry \"{}\": {s}", .{
                                 bun.fmt.fmtPath(u8, pathname, .{}),
                                 Archive.errorString(@ptrCast(archive)),
                             });
-                            return .zero;
                         }
                         read_buf.items.len = @intCast(read);
                         entry_info.contents = String.createUTF8(read_buf.items);
@@ -2438,15 +2427,13 @@ pub const bindings = struct {
 
         switch (archive.readClose()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readFree()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }

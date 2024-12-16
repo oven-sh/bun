@@ -20,8 +20,7 @@ pub fn throwErrInvalidArgValue(
     args: anytype,
 ) bun.JSError {
     @setCold(true);
-    globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
-    return error.JSError;
+    return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgTypeWithMessage(
@@ -30,8 +29,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     args: anytype,
 ) bun.JSError {
     @setCold(true);
-    globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
-    return error.JSError;
+    return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgType(
@@ -52,8 +50,7 @@ pub fn throwRangeError(
     args: anytype,
 ) bun.JSError {
     @setCold(true);
-    globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
-    return error.JSError;
+    return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
 }
 
 pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {

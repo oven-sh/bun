@@ -1513,8 +1513,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!uid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                 }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
@@ -1526,8 +1525,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!gid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                 }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
@@ -2411,12 +2409,10 @@ pub const Arguments = struct {
             const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             };
             if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             }
 
             var args = Write{
@@ -2506,8 +2502,7 @@ pub const Arguments = struct {
             const buffer = Buffer.fromJS(ctx, buffer_value orelse {
                 return ctx.throwInvalidArguments("buffer is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
             arguments.eat();
 
@@ -2564,8 +2559,7 @@ pub const Arguments = struct {
 
             if (defined_length and args.length > 0 and buffer.slice().len == 0) {
                 var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
-                return error.JSError;
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
             }
 
             return args;
@@ -3250,6 +3244,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .close,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Close).success;
@@ -3754,7 +3749,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
             .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err },
+            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(path) },
         };
     }
 
@@ -4009,6 +4004,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .open,
                 .path = args.path.slice(),
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
@@ -4079,6 +4075,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .read,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4091,6 +4088,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .readv,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4115,6 +4113,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .write,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
@@ -4127,6 +4126,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .writev,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) });
@@ -4777,8 +4777,8 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    bun.O.RDONLY | bun.O.NOCTTY,
-                    0,
+                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    default_permission,
                 )) {
                     .err => |err| return .{
                         .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
@@ -5203,12 +5203,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_realpath(
-                bun.Async.Loop.get(),
-                &req,
-                args.path.sliceZ(&this.sync_error_buf).ptr,
-                null,
-            );
+            const rc = uv.uv_fs_realpath(bun.Async.Loop.get(), &req, args.path.sliceZ(&this.sync_error_buf).ptr, null);
 
             if (rc.errno()) |errno|
                 return .{ .err = Syscall.Error{
@@ -5463,7 +5458,8 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        return switch (Syscall.stat(path)) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
@@ -5471,7 +5467,7 @@ pub const NodeFS = struct {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
-                break :brk .{ .err = err };
+                break :brk .{ .err = err.withPath(path) };
             },
         };
     }
@@ -5483,13 +5479,8 @@ pub const NodeFS = struct {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
             // UV does not normalize slashes in symlink targets, but Node does
             // See https://github.com/oven-sh/bun/issues/8273
-            //
-            // TODO: investigate if simd can be easily used here
-            for (target) |*c| {
-                if (c.* == '/') {
-                    c.* = '\\';
-                }
-            }
+            bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target);
+
             return Syscall.symlinkUV(
                 target,
                 args.new_path.sliceZ(&to_buf),
@@ -5557,7 +5548,7 @@ pub const NodeFS = struct {
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
+            }).toErrorInstance(args.global_this)) catch {};
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };
@@ -6042,7 +6033,7 @@ pub const NodeFS = struct {
 
             const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
                 .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
             };
 
             if (!posix.S.ISREG(stat_.mode)) {

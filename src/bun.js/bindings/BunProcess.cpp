@@ -40,6 +40,7 @@
 #include "ErrorCode.h"
 
 #include "napi_handle_scope.h"
+#include "napi_external.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -359,6 +360,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 #endif
 
+    globalObject->m_pendingNapiModuleDlopenHandle = handle;
+
     Bun__process_dlopen_count++;
 
     if (!handle) {
@@ -425,10 +428,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
+    if (auto resultObject = resultValue.getObject()) {
+#if OS(DARWIN) || OS(LINUX)
+        // If this is a native bundler plugin we want to store the handle from dlopen
+        // as we are going to call `dlsym()` on it later to get the plugin implementation.
+        const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
+#elif OS(WINDOWS)
+        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
+#endif
+        if (pointer_to_plugin_name) {
+            // TODO: think about the finalizer here
+            // currently we do not dealloc napi modules so we don't have to worry about it right now
+            auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+            bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+            ASSERT(success);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 
     globalObject->m_pendingNapiModuleAndExports[0].clear();
     globalObject->m_pendingNapiModuleAndExports[1].clear();
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -801,6 +823,19 @@ bool isSignalName(WTF::String input)
     return signalNameToNumberMap->contains(input);
 }
 
+extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
+{
+    Process* process = jsCast<Process*>(globalObject->processObject());
+
+    String signalName = signalNumberToNameMap->get(signalNumber);
+    Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+    MarkedArgumentBuffer args;
+    args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
+    args.append(jsNumber(signalNumber));
+
+    process->wrapped().emitForBindings(signalNameIdentifier, args);
+}
+
 #if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
@@ -812,28 +847,20 @@ void signalHandler(int signalNumber)
 void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
+#if OS(WINDOWS)
     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
-
     // signal handlers can be run on any thread
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
-        JSGlobalObject* lexicalGlobalObject = context.jsGlobalObject();
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-        Process* process = jsCast<Process*>(globalObject->processObject());
-
-        String signalName = signalNumberToNameMap->get(signalNumber);
-        Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
-        MarkedArgumentBuffer args;
-        args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
-        args.append(jsNumber(signalNumber));
-
-        process->wrapped().emitForBindings(signalNameIdentifier, args);
+        Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
+#else
+
+#endif
 };
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
@@ -912,7 +939,8 @@ extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
         process->scriptExecutionContext()->unrefEventLoop();
     }
 }
-
+extern "C" void Bun__ensureSignalHandler();
+extern "C" void Bun__onPosixSignal(int signalNumber);
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (eventEmitter.scriptExecutionContext()->isMainThread()) {
@@ -1034,11 +1062,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
                         };
 #if !OS(WINDOWS)
+                        Bun__ensureSignalHandler();
                         struct sigaction action;
                         memset(&action, 0, sizeof(struct sigaction));
 
                         // Set the handler in the action struct
-                        action.sa_handler = signalHandler;
+                        action.sa_handler = [](int signalNumber) {
+                            Bun__onPosixSignal(signalNumber);
+                        };
 
                         // Clear the sa_mask
                         sigemptyset(&action.sa_mask);
@@ -1081,6 +1112,11 @@ Process::~Process()
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+#if OS(WINDOWS)
+    // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
+    // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
+    _exit(134);
+#endif
     abort();
 }
 
@@ -1552,7 +1588,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         {
             char cwd[PATH_MAX] = { 0 };
-            getcwd(cwd, PATH_MAX);
+
+            if (getcwd(cwd, PATH_MAX) == nullptr) {
+                cwd[0] = '.';
+                cwd[1] = '\0';
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(cwd), strlen(cwd) })), 0);
         }
@@ -1568,7 +1608,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         {
             // uname
             struct utsname buf;
-            uname(&buf);
+            if (uname(&buf) != 0) {
+                memset(&buf, 0, sizeof(buf));
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "osName"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.sysname), strlen(buf.sysname) })), 0);
             header->putDirect(vm, JSC::Identifier::fromString(vm, "osRelease"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.release), strlen(buf.release) })), 0);
@@ -1580,7 +1622,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         {
             // TODO: use HOSTNAME_MAX
             char host[1024] = { 0 };
-            gethostname(host, 1024);
+            if (gethostname(host, 1024) != 0) {
+                host[0] = '0';
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(host), strlen(host) })), 0);
         }
@@ -2013,7 +2057,7 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
 static JSValue constructPpid(VM& vm, JSObject* processObject)
 {
 #if OS(WINDOWS)
-    return jsNumber(0);
+    return jsNumber(uv_os_getppid());
 #else
     return jsNumber(getppid());
 #endif
@@ -2100,24 +2144,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-
-    gid_t egid = getegid();
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, static_cast<unsigned int>(ngroups));
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
     Vector<gid_t> groupVector(ngroups);
-    getgroups(1, &egid);
-    bool needsEgid = true;
+    getgroups(ngroups, groupVector.data());
     for (unsigned i = 0; i < ngroups; i++) {
-        auto current = groupVector[i];
-        if (current == needsEgid) {
-            needsEgid = false;
-        }
-
-        groups->putDirectIndex(globalObject, i, jsNumber(current));
+        groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }
-
-    if (needsEgid)
-        groups->push(globalObject, jsNumber(egid));
-
     return JSValue::encode(groups);
 }
 #endif

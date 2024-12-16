@@ -229,7 +229,6 @@ pub extern fn JSC__JSValue__bigIntSum(arg0: *bindings.JSGlobalObject, arg1: JSC_
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsFromPath(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
 pub extern fn JSC__JSValue__getLengthIfPropertyExistsInternal(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) f64;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
@@ -321,7 +320,7 @@ pub extern fn JSC__VM__notifyNeedShellTimeoutCheck(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__notifyNeedTermination(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__notifyNeedWatchdogCheck(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__releaseWeakRefs(arg0: *bindings.VM) void;
-pub extern fn JSC__VM__runGC(arg0: *bindings.VM, arg1: bool) JSC__JSValue;
+pub extern fn JSC__VM__runGC(arg0: *bindings.VM, arg1: bool) usize;
 pub extern fn JSC__VM__setControlFlowProfiler(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void;
@@ -379,6 +378,13 @@ pub extern fn FileSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usi
 pub extern fn FileSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn FileSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn FileSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__detachPtr(JSValue0: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usize) void;
+pub extern fn FetchTaskletChunkedRequestSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
+pub extern fn FetchTaskletChunkedRequestSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;
 
 pub const JSC__GetterSetter = bindings.GetterSetter;

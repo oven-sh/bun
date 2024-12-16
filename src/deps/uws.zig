@@ -10,6 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
+pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -2309,7 +2312,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 0, @sizeOf(Type));
+        return us_create_timer(loop, 0, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d}", .{std.c._errno().*});
     }
 
     pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
@@ -2318,7 +2321,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 1, @sizeOf(Type));
+        return us_create_timer(loop, 1, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d}", .{std.c._errno().*});
     }
 
     pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
@@ -2354,6 +2357,11 @@ pub const SocketContext = opaque {
 
     fn _deinit(this: *SocketContext) void {
         us_socket_context_free(@as(i32, 0), this);
+    }
+
+    pub fn ref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_ref(@intFromBool(ssl), this);
+        return this;
     }
 
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
@@ -2598,7 +2606,7 @@ pub const PosixLoop = extern struct {
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
-extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
+extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) ?*Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
 extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
 extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;

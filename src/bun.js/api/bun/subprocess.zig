@@ -234,10 +234,7 @@ pub const Subprocess = struct {
         return this.createResourceUsageObject(globalObject);
     }
 
-    pub fn createResourceUsageObject(
-        this: *Subprocess,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn createResourceUsageObject(this: *Subprocess, globalObject: *JSGlobalObject) JSValue {
         const pid_rusage = this.pid_rusage orelse brk: {
             if (Environment.isWindows) {
                 if (this.process.poller == .uv) {
@@ -254,8 +251,7 @@ pub const Subprocess = struct {
         };
 
         var result = bun.default_allocator.create(ResourceUsage) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
+            return globalObject.throwOutOfMemoryValue();
         };
         result.* = resource_usage;
         return result.toJS(globalObject);
@@ -387,7 +383,7 @@ pub const Subprocess = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
-        return globalObject.throw2("Cannot construct Subprocess", .{});
+        return globalObject.throw("Cannot construct Subprocess", .{});
     }
 
     const Readable = union(enum) {
@@ -499,7 +495,7 @@ pub const Subprocess = struct {
             _ = exited; // autofix
             switch (this.*) {
                 // should only be reachable when the entire output is buffered.
-                .memfd => return this.toBufferedValue(globalThis),
+                .memfd => return this.toBufferedValue(globalThis) catch .zero,
 
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -525,7 +521,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
             switch (this.*) {
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -598,8 +594,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // Signal 9 should always be fine, but just in case that somehow fails.
-                global.throwValue(err.toJSC(global));
-                return .zero;
+                return global.throwValue(err.toJSC(global));
             },
         }
 
@@ -656,8 +651,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
         }
 
@@ -714,11 +708,10 @@ pub const Subprocess = struct {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
-                global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
+                return global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
             } else {
-                global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+                return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
             }
-            return .zero;
         });
 
         if (callFrame.argumentsCount() == 0) {
@@ -1738,10 +1731,7 @@ pub const Subprocess = struct {
                 if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
                     const argv0_str = argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
-                        argv0 = argv0_str.toOwnedSliceZ(allocator) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+                        argv0 = try argv0_str.toOwnedSliceZ(allocator);
                     }
                 }
 
@@ -1749,10 +1739,7 @@ pub const Subprocess = struct {
                 if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
                     const cwd_str = cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
-                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+                        cwd = try cwd_str.toOwnedSliceZ(allocator);
                     }
                 }
             }
@@ -1761,10 +1748,7 @@ pub const Subprocess = struct {
                 var cmds_array = cmd_value.arrayIterator(globalThis);
                 // + 1 for argv0
                 // + 1 for null terminator
-                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                argv = try @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2);
 
                 if (cmd_value.isEmptyOrUndefinedOrNull()) {
                     return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
@@ -1782,27 +1766,18 @@ pub const Subprocess = struct {
                     if (argv0 == null) {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
-                        argv0 = allocator.dupeZ(u8, resolved) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+                        argv0 = try allocator.dupeZ(u8, resolved);
                     } else {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
-                        argv0 = allocator.dupeZ(u8, resolved) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+                        argv0 = try allocator.dupeZ(u8, resolved);
                     }
 
-                    argv.appendAssumeCapacity(allocator.dupeZ(u8, arg0.slice()) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    });
+                    argv.appendAssumeCapacity(try allocator.dupeZ(u8, arg0.slice()));
                 }
 
                 while (cmds_array.next()) |value| {
@@ -1812,10 +1787,7 @@ pub const Subprocess = struct {
                     if (arg.len == 0) {
                         continue;
                     }
-                    argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    });
+                    argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
                 }
 
                 if (argv.items.len == 0) {
@@ -1839,7 +1811,7 @@ pub const Subprocess = struct {
                                         };
                                     } else {
                                         if (!globalThis.hasException()) {
-                                            globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
+                                            return globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
                                         }
                                         return .zero;
                                     }
@@ -1891,10 +1863,7 @@ pub const Subprocess = struct {
                     // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                     PATH = "";
                     var envp_managed = env_array.toManaged(allocator);
-                    appendEnvpFromJS(globalThis, object, &envp_managed, &PATH) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    };
+                    try appendEnvpFromJS(globalThis, object, &envp_managed, &PATH);
                     env_array = envp_managed.moveToUnmanaged();
                 }
                 if (try args.get(globalThis, "stdio")) |stdio_val| {
@@ -1922,10 +1891,7 @@ pub const Subprocess = struct {
                                 if (opt == .ipc) {
                                     ipc_channel = @intCast(extra_fds.items.len);
                                 }
-                                extra_fds.append(opt) catch {
-                                    globalThis.throwOutOfMemory();
-                                    return .zero;
-                                };
+                                try extra_fds.append(opt);
                             }
                         } else {
                             return globalThis.throwInvalidArguments("stdio must be an array", .{});
@@ -2019,10 +1985,7 @@ pub const Subprocess = struct {
                     const fd: u32 = @intCast(ipc_channel + 3);
                     switch (ipc_extra_fd_default.asSpawnOption(fd)) {
                         .result => |opt| {
-                            extra_fds.append(opt) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                            try extra_fds.append(opt);
                         },
                         .err => |e| {
                             return e.throwJS(globalThis);
@@ -2039,8 +2002,7 @@ pub const Subprocess = struct {
                 "NODE_CHANNEL_FD={d}",
                 .{ipc_fd},
             ) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
+                return globalThis.throwOutOfMemory();
             };
             env_array.appendAssumeCapacity(pipe_env);
 
@@ -2049,14 +2011,8 @@ pub const Subprocess = struct {
             });
         };
 
-        env_array.append(allocator, null) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
-        argv.append(null) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        try env_array.append(allocator, null);
+        try argv.append(null);
 
         if (comptime is_sync) {
             for (&stdio, 0..) |*io, i| {
@@ -2099,8 +2055,7 @@ pub const Subprocess = struct {
         }) {
             .err => |err| {
                 spawn_options.deinit();
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
             .result => |result| result,
         };
@@ -2142,9 +2097,8 @@ pub const Subprocess = struct {
                 subprocess,
                 spawned.stdin,
             ) catch {
-                globalThis.throwOutOfMemory();
                 subprocess.deref();
-                return .zero;
+                return globalThis.throwOutOfMemory();
             },
             .stdout = Readable.init(
                 stdio[1],
@@ -2216,8 +2170,7 @@ pub const Subprocess = struct {
                     subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
                 ).asErr()) |err| {
                     subprocess.deref();
-                    globalThis.throwValue(err.toJSC(globalThis));
-                    return .zero;
+                    return globalThis.throwValue(err.toJSC(globalThis));
                 }
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
             }
@@ -2338,8 +2291,8 @@ pub const Subprocess = struct {
 
         const signalCode = subprocess.getSignalCode(globalThis);
         const exitCode = subprocess.getExitCode(globalThis);
-        const stdout = subprocess.stdout.toBufferedValue(globalThis);
-        const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        const stdout = try subprocess.stdout.toBufferedValue(globalThis);
+        const stderr = try subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
         subprocess.finalize();
 
@@ -2359,6 +2312,15 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
 
         return sync_value;
+    }
+
+    fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
+        const message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory();
+        defer message.deref();
+        const err = message.toZigString().toErrorInstance(globalThis);
+        err.putZigString(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init("ENOENT").toJS(globalThis));
+        err.putZigString(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(command).toJS(globalThis));
+        return globalThis.throwValue(err);
     }
 
     const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");

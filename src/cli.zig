@@ -21,6 +21,7 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -230,6 +231,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -288,8 +290,10 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>    Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
+        clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
     } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
@@ -773,6 +777,10 @@ pub const Arguments = struct {
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+
+            if (args.flag("--expose-internals")) {
+                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -797,6 +805,8 @@ pub const Arguments = struct {
                 ctx.bundler_options.bake = true;
                 ctx.bundler_options.bake_debug_dump_server = bun.FeatureFlags.bake_debugging_features and
                     args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_disable_minify = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-no-minify");
             }
 
             // TODO: support --format=esm
@@ -844,6 +854,24 @@ pub const Arguments = struct {
                     opts.packages = .external;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
+            }
+
+            if (args.option("--env")) |env| {
+                if (strings.indexOfChar(env, '*')) |asterisk| {
+                    if (asterisk == 0) {
+                        ctx.bundler_options.env_behavior = .load_all;
+                    } else {
+                        ctx.bundler_options.env_behavior = .prefix;
+                        ctx.bundler_options.env_prefix = env[0..asterisk];
+                    }
+                } else if (strings.eqlComptime(env, "inline") or strings.eqlComptime(env, "1")) {
+                    ctx.bundler_options.env_behavior = .load_all;
+                } else if (strings.eqlComptime(env, "disable") or strings.eqlComptime(env, "0")) {
+                    ctx.bundler_options.env_behavior = .load_all_without_inlining;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character", .{});
                     Global.crash();
                 }
             }
@@ -1457,6 +1485,10 @@ pub const Command = struct {
 
             bake: bool = false,
             bake_debug_dump_server: bool = false,
+            bake_debug_disable_minify: bool = false,
+
+            env_behavior: Api.DotEnvBehavior = .disable,
+            env_prefix: []const u8 = "",
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -2102,7 +2134,15 @@ pub const Command = struct {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
-                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                var path_buf: bun.PathBuffer = undefined;
+                                @memcpy(path_buf[0..ctx.args.entry_points[0].len], ctx.args.entry_points[0]);
+                                path_buf[ctx.args.entry_points[0].len] = 0;
+                                const lockfile_path = path_buf[0..ctx.args.entry_points[0].len :0];
+                                const file = File.open(lockfile_path, bun.O.RDONLY, 0).unwrap() catch |err| {
+                                    Output.err(err, "failed to open lockfile", .{});
+                                    Global.crash();
+                                };
+                                try PackageManagerCommand.printHash(ctx, file);
                                 return;
                             }
                         }
@@ -2533,19 +2573,25 @@ pub const Command = struct {
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Install the latest stable version<r>
+                        \\  <d>Install the latest {s} version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Install the most recent canary version of Bun<r>
-                        \\  <b><green>bun upgrade --canary<r>
+                        \\  <d>{s}<r>
+                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;
+
+                    const args = comptime switch (Environment.is_canary) {
+                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                    };
+
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    Output.pretty(outro_text, .{});
+                    Output.pretty(outro_text, args);
                     Output.flush();
                 },
                 Command.Tag.ReplCommand => {

@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                bun.fmt.formatJSONStringUTF8(specifier),
-                bun.fmt.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
+                bun.fmt.formatJSONStringUTF8(specifier, .{}),
+                bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -2412,7 +2412,8 @@ pub const ModuleLoader = struct {
         else
             specifier[@min(namespace.len + 1, specifier.len)..];
 
-        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse return JSValue.zero;
+        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse
+            return JSValue.zero;
     }
 
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
@@ -2459,6 +2460,15 @@ pub const ModuleLoader = struct {
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);
+                },
+
+                .@"internal/test/binding" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"internal:test/binding", specifier);
                 },
 
                 // These are defined in src/js/*
@@ -2674,7 +2684,6 @@ pub const HardcodedModule = enum {
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sql",
     @"bun:sqlite",
-    @"bun:internal-for-testing",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2735,6 +2744,9 @@ pub const HardcodedModule = enum {
     @"node:diagnostics_channel",
     @"node:dgram",
     @"node:cluster",
+    // these are gated behind '--expose-internals'
+    @"bun:internal-for-testing",
+    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2814,6 +2826,8 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
+
+            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
@@ -2955,6 +2969,8 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
+
+            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
         const bun_extra_alias_kvs = .{

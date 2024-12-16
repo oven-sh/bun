@@ -92,8 +92,8 @@ function lookup(domain, options, callback) {
     callback = options;
   }
 
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
+  if (typeof callback !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("callback must be a function");
   }
 
   if (typeof options == "number") {
@@ -110,7 +110,7 @@ function lookup(domain, options, callback) {
     return;
   }
 
-  dns.lookup(domain, options).then(res => {
+  dns.lookup(domain, translateLookupOptions(options)).then(res => {
     throwIfEmpty(res);
     res.sort((a, b) => a.family - b.family);
 
@@ -124,8 +124,12 @@ function lookup(domain, options, callback) {
 }
 
 function lookupService(address, port, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
+  if (arguments.length !== 3) {
+    throw $ERR_MISSING_ARGS('The "address", "port", and "callback" arguments must be specified');
+  }
+
+  if (typeof callback !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
   }
 
   dns.lookupService(address, port, callback).then(
@@ -155,8 +159,8 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolve(hostname).then(
@@ -183,8 +187,8 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.lookup(hostname, { family: 4 }).then(
@@ -203,8 +207,8 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.lookup(hostname, { family: 6 }).then(
@@ -222,8 +226,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveCname(hostname, callback).then(
@@ -237,8 +241,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveMx(hostname, callback).then(
@@ -252,8 +256,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveNaptr(hostname, callback).then(
@@ -267,8 +271,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveNs(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveNs(hostname, callback).then(
@@ -282,8 +286,8 @@ var InternalResolver = class Resolver {
   }
 
   resolvePtr(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolvePtr(hostname, callback).then(
@@ -297,8 +301,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveSrv(hostname, callback).then(
@@ -312,8 +316,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveCaa(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveCaa(hostname, callback).then(
@@ -327,8 +331,8 @@ var InternalResolver = class Resolver {
   }
 
   resolveTxt(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveTxt(hostname, callback).then(
@@ -341,8 +345,8 @@ var InternalResolver = class Resolver {
     );
   }
   resolveSoa(hostname, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.resolveSoa(hostname, callback).then(
@@ -356,8 +360,8 @@ var InternalResolver = class Resolver {
   }
 
   reverse(ip, callback) {
-    if (typeof callback != "function") {
-      throw new TypeError("callback must be a function");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
     dns.reverse(ip, callback).then(
@@ -436,16 +440,33 @@ const promisifyResolveX = res => {
   return res?.map(mapResolveX);
 };
 
+const translateLookupOptions = ({ family, order, verbatim, hints: flags, all }) => ({
+  family,
+  flags,
+  all,
+  order,
+  verbatim,
+});
+
 // promisified versions
 const promises = {
   lookup(domain, options) {
-    if (options?.all) {
+    if (!options || typeof options !== "object") {
+      options = {};
+    }
+
+    options = translateLookupOptions(options);
+
+    if (options.all) {
       return translateErrorCode(dns.lookup(domain, options).then(promisifyLookupAll));
     }
     return translateErrorCode(dns.lookup(domain, options).then(promisifyLookup));
   },
 
   lookupService(address, port) {
+    if (arguments.length !== 2) {
+      throw $ERR_MISSING_ARGS('The "address" and "port" arguments must be specified');
+    }
     return translateErrorCode(dns.lookupService(address, port));
   },
 

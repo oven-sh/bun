@@ -3017,6 +3017,15 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
+        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, value.toFmt(&formatter) }).throw();
+    }
+
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -4112,6 +4121,16 @@ pub const JSValue = enum(i64) {
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };
+    }
+
+    extern fn JSC__JSValue__toNumber(v: JSValue, global: *JSGlobalObject, val: *f64) bool;
+
+    pub fn toNumber(this: JSValue, global: *JSGlobalObject) !f64 {
+        var x: f64 = 0;
+        if (JSC__JSValue__toNumber(this, global, &x)) {
+            return x;
+        }
+        return error.JSError;
     }
 
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {

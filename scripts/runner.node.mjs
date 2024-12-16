@@ -102,6 +102,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    ["retries"]: {
+      type: "string",
+      default: isCI ? "2" : "0",
+    },
   },
 });
 
@@ -141,7 +145,11 @@ async function runTests() {
 
   let i = 0;
   let total = vendorTotal + tests.length + 2;
-  const results = [];
+
+  const okResults = [];
+  const flakyResults = [];
+  const failedResults = [];
+  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   /**
    * @param {string} title
@@ -149,43 +157,79 @@ async function runTests() {
    * @returns {Promise<TestResult>}
    */
   const runTest = async (title, fn) => {
-    const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
-    const result = await startGroup(label, fn);
-    results.push(result);
+    const index = ++i;
 
-    if (isBuildkite) {
-      const { ok, error, stdoutPreview } = result;
-      if (title.startsWith("vendor")) {
-        const markdown = formatTestToMarkdown({ ...result, testPath: title });
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
-        }
-      } else {
-        const markdown = formatTestToMarkdown(result);
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
-        }
+    let result, failure, flaky;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      if (!ok) {
-        const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-        startGroup(label, () => {
-          process.stderr.write(stdoutPreview);
-        });
+      result = await startGroup(
+        attempt === 1
+          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
+          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} [attempt #${attempt}]`,
+        fn,
+      );
+
+      const { ok, stdoutPreview, error } = result;
+      if (ok) {
+        if (failure) {
+          flakyResults.push(failure);
+        } else {
+          okResults.push(result);
+        }
+        break;
+      }
+
+      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      startGroup(label, () => {
+        process.stderr.write(stdoutPreview);
+      });
+
+      failure ||= result;
+      flaky ||= true;
+
+      if (attempt >= maxAttempts) {
+        flaky = false;
+        failedResults.push(failure);
+      }
+    }
+
+    if (!failure) {
+      return result;
+    }
+
+    if (isBuildkite) {
+      // Group flaky tests together, regardless of the title
+      const context = flaky ? "flaky" : title;
+      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+
+      if (title.startsWith("vendor")) {
+        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
+      } else {
+        const content = formatTestToMarkdown(failure);
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
       }
     }
 
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(result);
+        const longMarkdown = formatTestToMarkdown(failure);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(result, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true);
       appendFileSync("comment.md", shortMarkdown);
     }
 
-    if (options["bail"] && !result.ok) {
+    if (options["bail"]) {
       process.exit(getExitCode("fail"));
     }
 
@@ -199,7 +243,7 @@ async function runTests() {
     }
   }
 
-  if (results.every(({ ok }) => ok)) {
+  if (!failedResults.length) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       if (title.startsWith("test/js/node/test/parallel/")) {
@@ -270,21 +314,37 @@ async function runTests() {
     }
   }
 
-  const failedTests = results.filter(({ ok }) => !ok);
   if (isGithubAction) {
-    reportOutputToGitHubAction("failing_tests_count", failedTests.length);
-    const markdown = formatTestToMarkdown(failedTests);
+    reportOutputToGitHubAction("failing_tests_count", failedResults.length);
+    const markdown = formatTestToMarkdown(failedResults);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) {
-    !isQuiet && console.log("-------");
-    !isQuiet && console.log("passing", results.length - failedTests.length, "/", results.length);
-    for (const { testPath } of failedTests) {
-      !isQuiet && console.log("-", testPath);
+  if (!isCI && !isQuiet) {
+    console.table({
+      "Total Tests": okResults.length + failedResults.length + flakyResults.length,
+      "Passed Tests": okResults.length,
+      "Failing Tests": failedResults.length,
+      "Flaky Tests": flakyResults.length,
+    });
+
+    if (failedResults.length) {
+      console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
+      for (const { testPath } of failedResults) {
+        console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
+      }
+    }
+
+    if (flakyResults.length) {
+      console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
+      for (const { testPath } of flakyResults) {
+        console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
+      }
     }
   }
-  return results;
+
+  // Exclude flaky tests from the final results
+  return [...okResults, ...failedResults];
 }
 
 /**
@@ -1293,6 +1353,7 @@ function listArtifactsFromBuildKite(glob, step) {
 
 /**
  * @typedef {object} BuildkiteAnnotation
+ * @property {string} [context]
  * @property {string} label
  * @property {string} content
  * @property {"error" | "warning" | "info"} [style]
@@ -1303,10 +1364,10 @@ function listArtifactsFromBuildKite(glob, step) {
 /**
  * @param {BuildkiteAnnotation} annotation
  */
-function reportAnnotationToBuildKite({ label, content, style = "error", priority = 3, attempt = 0 }) {
+function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
   const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],

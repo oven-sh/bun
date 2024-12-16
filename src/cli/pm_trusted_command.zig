@@ -97,11 +97,11 @@ pub const UntrustedCommand = struct {
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy: PackageManager.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
@@ -262,11 +262,11 @@ pub const TrustCommand = struct {
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy = PackageManager.LazyPackageDestinationDir{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,

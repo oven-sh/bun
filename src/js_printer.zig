@@ -3726,12 +3726,10 @@ fn NewPrinter(
                     p.printIdentifier(local_name);
                     p.printFunc(s.func);
 
-                    if (may_have_module_info and tlmtlo.is_top_level) if (p.moduleInfo()) |mi| {
-                        try mi.addVar(local_name, .lexical);
-                        if (s.func.flags.contains(.is_export)) {
-                            try mi.exports.append(.{ .local = .{ .export_name = try mi.str(local_name), .local_name = try mi.str(local_name) } });
-                        }
-                    };
+                    if (p.moduleInfo()) |mi| {
+                        if (tlmtlo.is_top_level) try mi.addVar(local_name, .lexical);
+                        if (s.func.flags.contains(.is_export)) try mi.exports.append(.{ .local = .{ .export_name = try mi.str(local_name), .local_name = try mi.str(local_name) } });
+                    }
 
                     // if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                     //     p.printSemicolonAfterStatement();
@@ -3771,12 +3769,10 @@ fn NewPrinter(
                     p.printIdentifier(nameStr);
                     p.printClass(s.class);
 
-                    if (may_have_module_info and tlmtlo.is_top_level) if (p.moduleInfo()) |mi| {
-                        if (s.is_export) {
-                            try mi.exports.append(.{ .local = .{ .export_name = try mi.str(nameStr), .local_name = try mi.str(nameStr) } });
-                        }
-                        try mi.addVar(nameStr, .lexical);
-                    };
+                    if (p.moduleInfo()) |mi| {
+                        if (s.is_export) try mi.exports.append(.{ .local = .{ .export_name = try mi.str(nameStr), .local_name = try mi.str(nameStr) } });
+                        if (tlmtlo.is_top_level) try mi.addVar(nameStr, .lexical);
+                    }
 
                     if (rewrite_esm_to_cjs and s.is_export) {
                         p.printSemicolonAfterStatement();

@@ -2095,7 +2095,7 @@ pub const VirtualMachine = struct {
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = connect_to,
-                        .wait_for_connection = .off,
+                        .wait_for_connection = .shortly,
                         .set_breakpoint_on_first_line = false,
                         .mode = .connect,
                     };

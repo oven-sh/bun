@@ -1341,7 +1341,26 @@ pub const Error = enum(i32) {
         error_value.put(
             globalThis,
             JSC.ZigString.static("syscall"),
-            JSC.ZigString.static(syscall).toJS(globalThis),
+            JSC.ZigString.static((syscall ++ "\x00")[0..syscall.len :0]).toJS(globalThis),
+        );
+        return error_value;
+    }
+
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
+        const error_value = this.toJSWithSyscall(globalThis, syscall);
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("hostname"),
+            JSC.ZigString.init(hostname).toJS(globalThis),
+        );
+
+        const message = std.mem.concat(bun.default_allocator, u8, &[_][]const u8{ syscall ++ " ", @tagName(this), " ", hostname }) catch bun.outOfMemory();
+        defer bun.default_allocator.free(message);
+
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("message"),
+            JSC.ZigString.init(message).toJS(globalThis),
         );
         return error_value;
     }

@@ -435,7 +435,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }

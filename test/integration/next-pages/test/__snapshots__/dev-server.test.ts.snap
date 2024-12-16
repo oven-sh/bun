@@ -20772,7 +20772,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 374,
         },
         "array-includes": {
-          "id": 806,
+          "id": 445,
           "package_id": 384,
         },
         "array-union": {
@@ -20792,7 +20792,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 382,
         },
         "array.prototype.flatmap": {
-          "id": 808,
+          "id": 448,
           "package_id": 380,
         },
         "array.prototype.toreversed": {
@@ -21068,11 +21068,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 316,
         },
         "es-errors": {
-          "id": 858,
+          "id": 690,
           "package_id": 312,
         },
         "es-iterator-helpers": {
-          "id": 812,
+          "id": 740,
           "package_id": 409,
         },
         "es-object-atoms": {
@@ -21084,7 +21084,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 369,
         },
         "es-shim-unscopables": {
-          "id": 860,
+          "id": 692,
           "package_id": 381,
         },
         "es-to-primitive": {
@@ -21120,7 +21120,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 302,
         },
         "eslint-module-utils": {
-          "id": 452,
+          "id": 438,
           "package_id": 376,
         },
         "eslint-plugin-import": {
@@ -21164,7 +21164,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 279,
         },
         "estraverse": {
-          "id": 432,
+          "id": 415,
           "package_id": 166,
         },
         "esutils": {
@@ -21248,7 +21248,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 51,
         },
         "function-bind": {
-          "id": 761,
+          "id": 55,
           "package_id": 21,
         },
         "function.prototype.name": {
@@ -21412,7 +21412,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 329,
         },
         "is-core-module": {
-          "id": 454,
+          "id": 675,
           "package_id": 19,
         },
         "is-data-view": {
@@ -21556,7 +21556,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 174,
         },
         "jsx-ast-utils": {
-          "id": 814,
+          "id": 742,
           "package_id": 408,
         },
         "keyv": {
@@ -21680,11 +21680,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 355,
         },
         "object.entries": {
-          "id": 816,
+          "id": 745,
           "package_id": 405,
         },
         "object.fromentries": {
-          "id": 817,
+          "id": 457,
           "package_id": 375,
         },
         "object.groupby": {
@@ -21696,7 +21696,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 434,
         },
         "object.values": {
-          "id": 819,
+          "id": 459,
           "package_id": 310,
         },
         "once": {
@@ -21924,7 +21924,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 112,
         },
         "semver": {
-          "id": 822,
+          "id": 460,
           "package_id": 309,
         },
         "set-function-length": {
@@ -22260,29 +22260,14 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "dependencies": {
-        "@types/node": {
-          "id": 863,
-          "package_id": 183,
+        "debug": {
+          "id": 674,
+          "package_id": 377,
         },
       },
       "depth": 1,
       "id": 3,
-      "path": "node_modules/@types/ws/node_modules",
-    },
-    {
-      "dependencies": {
-        "doctrine": {
-          "id": 811,
-          "package_id": 379,
-        },
-        "resolve": {
-          "id": 821,
-          "package_id": 431,
-        },
-      },
-      "depth": 1,
-      "id": 4,
-      "path": "node_modules/eslint-plugin-react/node_modules",
+      "path": "node_modules/eslint-import-resolver-node/node_modules",
     },
     {
       "dependencies": {
@@ -22296,19 +22281,23 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 5,
+      "id": 4,
       "path": "node_modules/eslint-plugin-import/node_modules",
     },
     {
       "dependencies": {
-        "debug": {
-          "id": 674,
-          "package_id": 377,
+        "doctrine": {
+          "id": 811,
+          "package_id": 379,
+        },
+        "resolve": {
+          "id": 821,
+          "package_id": 431,
         },
       },
       "depth": 1,
-      "id": 6,
-      "path": "node_modules/eslint-import-resolver-node/node_modules",
+      "id": 5,
+      "path": "node_modules/eslint-plugin-react/node_modules",
     },
     {
       "dependencies": {
@@ -22322,7 +22311,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 7,
+      "id": 6,
       "path": "node_modules/@puppeteer/browsers/node_modules",
     },
     {
@@ -22333,7 +22322,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 8,
+      "id": 7,
       "path": "node_modules/chokidar/node_modules",
     },
     {
@@ -22344,7 +22333,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 9,
+      "id": 8,
       "path": "node_modules/fast-glob/node_modules",
     },
     {
@@ -22355,19 +22344,8 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 10,
+      "id": 9,
       "path": "node_modules/postcss-load-config/node_modules",
-    },
-    {
-      "dependencies": {
-        "debug": {
-          "id": 672,
-          "package_id": 377,
-        },
-      },
-      "depth": 1,
-      "id": 11,
-      "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
       "dependencies": {
@@ -22377,7 +22355,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 12,
+      "id": 10,
       "path": "node_modules/glob/node_modules",
     },
     {
@@ -22392,8 +22370,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 13,
+      "id": 11,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
+    },
+    {
+      "dependencies": {
+        "debug": {
+          "id": 672,
+          "package_id": 377,
+        },
+      },
+      "depth": 1,
+      "id": 12,
+      "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
       "dependencies": {
@@ -22403,7 +22392,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 2,
-      "id": 14,
+      "id": 13,
       "path": "node_modules/@puppeteer/browsers/node_modules/semver/node_modules",
     },
     {
@@ -22414,7 +22403,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 15,
+      "id": 14,
       "path": "node_modules/rimraf/node_modules",
     },
     {
@@ -22425,7 +22414,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 2,
-      "id": 16,
+      "id": 15,
       "path": "node_modules/glob/node_modules/minimatch/node_modules",
     },
     {
@@ -22436,8 +22425,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 17,
+      "id": 16,
       "path": "node_modules/path-scurry/node_modules",
+    },
+    {
+      "dependencies": {
+        "brace-expansion": {
+          "id": 720,
+          "package_id": 70,
+        },
+      },
+      "depth": 2,
+      "id": 17,
+      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
     },
     {
       "dependencies": {
@@ -22452,35 +22452,13 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "dependencies": {
-        "brace-expansion": {
-          "id": 720,
-          "package_id": 70,
-        },
-      },
-      "depth": 2,
-      "id": 19,
-      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
-    },
-    {
-      "dependencies": {
-        "@types/node": {
-          "id": 254,
-          "package_id": 183,
-        },
-      },
-      "depth": 1,
-      "id": 20,
-      "path": "node_modules/@types/yauzl/node_modules",
-    },
-    {
-      "dependencies": {
         "emoji-regex": {
           "id": 123,
           "package_id": 80,
         },
       },
       "depth": 1,
-      "id": 21,
+      "id": 19,
       "path": "node_modules/string-width/node_modules",
     },
     {
@@ -22499,7 +22477,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 22,
+      "id": 20,
       "path": "node_modules/@isaacs/cliui/node_modules",
     },
     {
@@ -22510,7 +22488,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 23,
+      "id": 21,
       "path": "node_modules/@babel/highlight/node_modules",
     },
     {
@@ -22521,7 +22499,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 1,
-      "id": 24,
+      "id": 22,
       "path": "node_modules/string-width-cjs/node_modules",
     },
     {
@@ -22532,7 +22510,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 2,
-      "id": 25,
+      "id": 23,
       "path": "node_modules/@isaacs/cliui/node_modules/strip-ansi/node_modules",
     },
     {
@@ -22543,7 +22521,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 2,
-      "id": 26,
+      "id": 24,
       "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi/node_modules",
     },
     {
@@ -22562,7 +22540,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 2,
-      "id": 27,
+      "id": 25,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules",
     },
     {
@@ -22573,7 +22551,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 3,
-      "id": 28,
+      "id": 26,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules",
     },
     {
@@ -22584,7 +22562,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 3,
-      "id": 29,
+      "id": 27,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/supports-color/node_modules",
     },
     {
@@ -22595,7 +22573,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         },
       },
       "depth": 4,
-      "id": 30,
+      "id": 28,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules/color-convert/node_modules",
     },
   ],

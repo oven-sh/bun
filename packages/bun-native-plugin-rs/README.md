@@ -1,4 +1,4 @@
-> ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems proramming and the C ABI. Use with caution.
+> ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems programming and the C ABI. Use with caution.
 
 # Bun Native Plugins
 
@@ -42,7 +42,7 @@ use napi_derive::napi;
 /// Define the plugin and its name
 define_bun_plugin!("replace-foo-with-bar");
 
-/// Here we'll implement `onBeforeParse` with code that replaces all occurences of
+/// Here we'll implement `onBeforeParse` with code that replaces all occurrences of
 /// `foo` with `bar`.
 ///
 /// We use the #[bun] macro to generate some of the boilerplate code.

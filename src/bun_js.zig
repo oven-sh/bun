@@ -308,7 +308,6 @@ pub const Run = struct {
             if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
                 promise.setHandled(vm.global.vm());
-                //
 
                 if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
@@ -371,10 +370,6 @@ pub const Run = struct {
         {
             if (this.vm.isWatcherEnabled()) {
                 vm.handlePendingInternalPromiseRejection();
-                // var prev_promise = this.vm.pending_internal_promise;
-                // if (prev_promise.status(vm.global.vm()) == .rejected) {
-                //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                // }
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
@@ -382,11 +377,6 @@ pub const Run = struct {
 
                         // Report exceptions in hot-reloaded modules
                         vm.handlePendingInternalPromiseRejection();
-                        // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                        //     prev_promise = this.vm.pending_internal_promise;
-                        //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                        //     continue;
-                        // }
 
                         vm.eventLoop().autoTickActive();
                     }
@@ -394,19 +384,9 @@ pub const Run = struct {
                     vm.onBeforeExit();
 
                     vm.handlePendingInternalPromiseRejection();
-                    // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                    //     prev_promise = this.vm.pending_internal_promise;
-                    //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                    // }
 
                     vm.eventLoop().tickPossiblyForever();
                 }
-                // vm.handlePendingInternalPromiseRejection();
-
-                // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                //     prev_promise = this.vm.pending_internal_promise;
-                //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                // }
             } else {
                 while (vm.isEventLoopAlive()) {
                     vm.tick();

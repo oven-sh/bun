@@ -276,7 +276,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
     }
 
     stream.print("  features: ");
-    stream.print(moduleRecord->m_features);
+    stream.print(moduleRecord->m_features & ImportMetaFeature);
     stream.print("\n");
 
     stream.print("\nAnalyzing ModuleRecord key(", moduleRecord->moduleKey().impl(), ")\n");
@@ -292,22 +292,31 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
     }
 
     stream.print("    Export: ", moduleRecord->exportEntries().size(), " entries\n");
+    Vector<String> sortedEntries;
     for (const auto& pair : moduleRecord->exportEntries()) {
+        WTF::StringPrintStream line;
         auto& exportEntry = pair.value;
         switch (exportEntry.type) {
         case AbstractModuleRecord::ExportEntry::Type::Local:
-            stream.print("      [Local] ", "export(", exportEntry.exportName, "), local(", exportEntry.localName, ")\n");
+            line.print("      [Local] ", "export(", exportEntry.exportName, "), local(", exportEntry.localName, ")\n");
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Indirect:
-            stream.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, ")\n");
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Namespace:
-            stream.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, ")\n");
             break;
         }
+        sortedEntries.append(line.toString());
     }
+    std::sort(sortedEntries.begin(), sortedEntries.end(), [](const String& a, const String& b) {
+        return a.impl()->tryGetUTF8()->toStdString() < b.impl()->tryGetUTF8()->toStdString();
+    });
+    for (const auto& entry : sortedEntries)
+        stream.print(entry);
+
     for (const auto& moduleName : moduleRecord->starExportEntries())
         stream.print("      [Star] module(", moduleName.get(), ")\n");
 

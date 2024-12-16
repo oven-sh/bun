@@ -72,20 +72,25 @@ var promisify = function promisify(original) {
 };
 promisify.custom = kCustomPromisifiedSymbol;
 
-// Lazily load node:timers/promises promisified functions onto the global timers.
+// Load node:timers/promises promisified functions onto the global timers.
 {
   const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
+  const {
+    setTimeout: timeoutPromise,
+    setImmediate: immediatePromise,
+    setInterval: intervalPromise,
+  } = require("node:timers/promises");
 
   if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, require("node:timers/promises").setTimeout);
+    defineCustomPromisify(timeout, timeoutPromise);
   }
 
   if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, require("node:timers/promises").setImmediate);
+    defineCustomPromisify(immediate, immediatePromise);
   }
 
   if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, require("node:timers/promises").setInterval);
+    defineCustomPromisify(interval, intervalPromise);
   }
 }
 

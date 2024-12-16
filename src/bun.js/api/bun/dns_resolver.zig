@@ -2403,7 +2403,7 @@ pub const DNSResolver = struct {
             const address_key = JSC.ZigString.init("address").withEncoding();
             const family_key = JSC.ZigString.init("family").withEncoding();
             const object = JSValue.createObject2(globalThis, &address_key, &family_key, .null, JSC.jsNumber(4));
-            promise.resolve(globalThis, object);
+            promise.resolve(globalThis, JSC.JSArray.create(globalThis, &.{object}));
             return promise.asValue(globalThis);
         }
 
@@ -2423,14 +2423,19 @@ pub const DNSResolver = struct {
         var port: u16 = 0;
 
         if (arguments.len > 1 and arguments.ptr[1].isCell()) {
-            if (try arguments.ptr[1].get(globalThis, "port")) |port_value| {
+            const optionsObject = arguments.ptr[1];
+
+            if (try optionsObject.get(globalThis, "port")) |port_value| {
                 if (port_value.isNumber()) {
                     port = port_value.to(u16);
                 }
             }
 
-            options = GetAddrInfo.Options.fromJS(arguments.ptr[1], globalThis) catch |err| {
-                return globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)});
+            options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
+                return switch (err) {
+                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.get(globalThis, "flags") orelse .undefined),
+                    else => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
+                };
             };
         }
 
@@ -2757,6 +2762,7 @@ pub const DNSResolver = struct {
                     .errno = -1,
                     .code = bun.String.static(err.code()),
                     .message = bun.String.static(err.label()),
+                    .syscall = bun.String.ascii(query.name),
                 };
 
                 return globalThis.throwValue(system_error.toErrorInstance(globalThis)) catch .zero;
@@ -2977,15 +2983,27 @@ pub const DNSResolver = struct {
         }
 
         const addr_s = addr_str.getZigString(globalThis).slice();
-        const port: u16 = if (port_value.isNumber()) blk: {
-            break :blk port_value.to(u16);
-        } else {
-            return globalThis.throwInvalidArgumentType("lookupService", "port", "invalid port");
+        const port: u16 = blk: {
+            if (port_value.isNumber()) {
+                const double = try port_value.toNumber(globalThis);
+                if (std.math.isNan(double)) {
+                    return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Invalid port number", .{});
+                }
+
+                const port = port_value.to(i64);
+                if (0 <= port and port <= 65535) {
+                    break :blk @as(u16, @truncate(@max(0, port)));
+                } else {
+                    return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Port number out of range: {d}", .{port});
+                }
+            }
+
+            return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Invalid port number", .{});
         };
 
         var sa: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         if (c_ares.getSockaddr(addr_s, port, @as(*std.posix.sockaddr, @ptrCast(&sa))) != 0) {
-            return globalThis.throwInvalidArgumentType("lookupService", "address", "invalid address");
+            return globalThis.throwInvalidArgumentValue("address", addr_value);
         }
 
         var vm = globalThis.bunVM();

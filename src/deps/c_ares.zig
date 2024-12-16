@@ -1336,6 +1336,16 @@ pub const Error = enum(i32) {
         return error_value;
     }
 
+    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
+        const error_value = this.toJS(globalThis);
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("syscall"),
+            JSC.ZigString.static(syscall).toJS(globalThis),
+        );
+        return error_value;
+    }
+
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815

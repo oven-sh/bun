@@ -2080,7 +2080,7 @@ pub const VirtualMachine = struct {
         const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
 
         const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
-            true => if (notify.len > 0 or connect_to.len > 0) .shortly else .forever,
+            true => .forever,
             false => .off,
         };
 
@@ -2107,8 +2107,8 @@ pub const VirtualMachine = struct {
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = connect_to,
-                        .wait_for_connection = wait_for_connection,
-                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .wait_for_connection = .shortly,
+                        .set_breakpoint_on_first_line = false,
                         .mode = .connect,
                     };
                 }

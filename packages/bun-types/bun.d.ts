@@ -2155,6 +2155,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**

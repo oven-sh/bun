@@ -163,6 +163,8 @@ public:
         updateHasPendingActivity();
     }
 
+    size_t memoryCost() const;
+
 private:
     typedef union AnyWebSocket {
         WebSocketClient* client;

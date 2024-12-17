@@ -2884,6 +2884,13 @@ pub const AnyWebSocket = union(enum) {
         };
     }
 
+    pub fn memoryCost(this: AnyWebSocket) usize {
+        return switch (this) {
+            .ssl => this.ssl.memoryCost(),
+            .tcp => this.tcp.memoryCost(),
+        };
+    }
+
     pub fn close(this: AnyWebSocket) void {
         const ssl_flag = @intFromBool(this == .ssl);
         return uws_ws_close(ssl_flag, this.raw());
@@ -2974,7 +2981,13 @@ pub const AnyWebSocket = union(enum) {
     }
 };
 
-pub const RawWebSocket = opaque {};
+pub const RawWebSocket = opaque {
+    pub fn memoryCost(this: *RawWebSocket, ssl_flag: i32) usize {
+        return uws_ws_memory_cost(ssl_flag, this);
+    }
+
+    extern fn uws_ws_memory_cost(ssl: i32, ws: *RawWebSocket) usize;
+};
 
 pub const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.C) void;
 pub const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
@@ -3960,6 +3973,11 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn sendWithOptions(this: *WebSocket, message: []const u8, opcode: Opcode, compress: bool, fin: bool) SendStatus {
                 return uws_ws_send_with_options(ssl_flag, this.raw(), message.ptr, message.len, opcode, compress, fin);
             }
+
+            pub fn memoryCost(this: *WebSocket) usize {
+                return this.raw().memoryCost(ssl_flag);
+            }
+
             // pub fn sendFragment(this: *WebSocket, message: []const u8) SendStatus {
             //     return uws_ws_send_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
             // }

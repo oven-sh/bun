@@ -771,3 +771,28 @@ console.log(obj); // => { foo: "bar" }
 ```
 
 Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.
+
+## `estimateShallowMemoryUsageOf` in `bun:jsc`
+
+The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
+
+```js
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
+
+const obj = { foo: "bar" };
+const usage = estimateShallowMemoryUsageOf(obj);
+console.log(usage); // => 16
+
+const buffer = Buffer.alloc(1024 * 1024);
+estimateShallowMemoryUsageOf(buffer);
+// => 1048624
+
+const req = new Request("https://bun.sh");
+estimateShallowMemoryUsageOf(req);
+// => 167
+
+const array = Array(1024).fill({ a: 1 });
+// Arrays are usually not stored contiguously in memory, so this will not return a useful value (which isn't a bug).
+estimateShallowMemoryUsageOf(array);
+// => 16
+```

@@ -563,6 +563,7 @@ pub fn migrateNPMLockfile(
             bun.assert(package_id != 0); // root package should not be in it's own workspace
 
             // we defer doing getOrPutID for non-workspace packages because it depends on the resolution being set.
+            this.buffers.string_bytes.items = string_buf.bytes.items;
             try this.getOrPutID(package_id, name_hash);
         }
     }

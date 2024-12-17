@@ -72,10 +72,11 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     defer file_buf.deinit();
 
     // Read /proc/stat to get number of CPUs and times
-    if (try std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
+    {
+        const file = try std.fs.openFileAbsolute("/proc/stat", .{});
         defer file.close();
 
-        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .all).unwrap();
+        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
         defer file_buf.clearRetainingCapacity();
         const contents = file_buf.items[0..read];
 
@@ -308,10 +309,10 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
     if (Environment.isWindows) {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
-        if (libuv.uv_os_homedir(&out, &size).toError()) |err| {
-            return global.throwValue(err.toJS(global));
+        if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
+            return global.throwValue(err.toJSC(global));
         }
-        return bun.String.createUTF8(out);
+        return bun.String.createUTF8(&out);
     } else {
 
         // The posix implementation of uv_os_homedir first checks the HOME
@@ -393,7 +394,9 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var result: std.os.windows.ws2_32.WSADATA = undefined;
         if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
             if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-                return bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                var y = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                defer y.deref();
+                return y.toJS(global);
             }
         }
 

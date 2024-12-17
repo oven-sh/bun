@@ -47,6 +47,10 @@ pub const WTFStringImplStruct = extern struct {
         return this.m_refCount / s_refCountIncrement;
     }
 
+    pub fn memoryCost(this: WTFStringImpl) usize {
+        return this.byteLength();
+    }
+
     pub fn isStatic(this: WTFStringImpl) bool {
         return this.m_refCount & s_refCountIncrement != 0;
     }

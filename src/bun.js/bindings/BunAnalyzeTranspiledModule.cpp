@@ -283,7 +283,11 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 
     stream.print("    Dependencies: ", moduleRecord->requestedModules().size(), " modules\n");
     for (const auto& request : moduleRecord->requestedModules())
-        stream.print("      module(", request.m_specifier, "),attributes(", RawPointer(request.m_attributes.get()), ")\n");
+        if (request.m_attributes == nullptr) {
+            stream.print("      module(", request.m_specifier, ")\n");
+        } else {
+            stream.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")\n");
+        }
 
     stream.print("    Import: ", moduleRecord->importEntries().size(), " entries\n");
     for (const auto& pair : moduleRecord->importEntries()) {

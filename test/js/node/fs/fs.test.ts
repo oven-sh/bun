@@ -2283,7 +2283,7 @@ describe("createWriteStream", () => {
     stream.end();
     await done1;
 
-    const { promise: done2, resolve2, reject2 } = Promise.withResolvers();
+    const { promise: done2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
     const stream2 = createWriteStream(streamPath, { flags: "a" });
     stream2.on("error", reject2);
     stream2.on("finish", resolve2);

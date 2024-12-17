@@ -491,6 +491,34 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     }
   }
 
+  assertCanBeReturned() {
+    for (const modifier of [
+      //
+      "nodeValidator",
+      "optional",
+      "required",
+      "nonNull",
+      "default",
+      "range",
+      "finite",
+    ]) {
+      if (modifier in this.flags) {
+        if (modifier === "nodeValidator" || modifier === "range") {
+          throw new Error("Cannot return a type with a validation modifier.");
+        }
+        throw new Error("Cannot return a type with the '" + modifier + "' modifier.");
+      }
+    }
+
+    switch (this.kind) {
+      case "UTF8String":
+      case "USVString":
+      case "ByteString":
+        throw new Error(`Cannot return t.${this.kind}. Use t.DOMString instead`);
+      default:
+    }
+  }
+
   emitCppDefaultValue(w: CodeWriter) {
     const value = this.flags.default;
     switch (this.kind) {
@@ -866,9 +894,11 @@ export function registerFunction(opts: FnOptions) {
     let i = 1;
     for (const variant of opts.variants) {
       const { minRequiredArgs } = validateVariant(variant);
+      const ret = variant.ret as TypeImpl;
+      ret.assertCanBeReturned();
       variants.push({
         args: Object.entries(variant.args).map(([name, type]) => ({ name, type })) as Arg[],
-        ret: variant.ret as TypeImpl,
+        ret,
         suffix: `${i}`,
         minRequiredArgs,
       } as unknown as Variant);
@@ -876,10 +906,12 @@ export function registerFunction(opts: FnOptions) {
     }
   } else {
     const { minRequiredArgs } = validateVariant(opts);
+    const ret = opts.ret as TypeImpl;
+    ret.assertCanBeReturned();
     variants.push({
       suffix: "",
       args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
-      ret: opts.ret as TypeImpl,
+      ret,
       minRequiredArgs,
     });
   }

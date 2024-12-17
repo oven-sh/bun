@@ -367,10 +367,11 @@ function emitCppCallToVariant(className: string, name: string, variant: Variant,
       }
       switch (variant.ret.kind) {
         case "UTF8String":
-          throw new Error("Memory lifetime is ambiguous when returning UTF8String");
-        case "DOMString":
         case "USVString":
         case "ByteString":
+          // already validated against
+          assert(false);
+        case "DOMString":
           cpp.line(`JSC::JSValue js = JSC::jsString(vm, out.toWTFString());`);
           cpp.line(`out.deref();`);
           cpp.line(`return JSC::JSValue::encode(js);`);

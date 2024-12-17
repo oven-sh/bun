@@ -41,6 +41,10 @@ function getServers() {
 }
 
 function setServers(servers) {
+  return setServersOn(servers, dns);
+}
+
+function setServersOn(servers, object) {
   validateArray(servers, "servers");
 
   const triples = [];
@@ -84,7 +88,7 @@ function setServers(servers) {
     throw ERR_INVALID_IP_ADDRESS(server);
   });
 
-  dns.setServers(triples);
+  object.setServers(triples);
 }
 
 function lookup(domain, options, callback) {
@@ -143,12 +147,16 @@ function lookupService(address, port, callback) {
 }
 
 var InternalResolver = class Resolver {
-  constructor(options) {}
+  #resolver;
+
+  constructor(options) {
+    this.#resolver = dns.newResolver();
+  }
 
   cancel() {}
 
   getServers() {
-    return [];
+    return this.#resolver.getServers();
   }
 
   resolve(hostname, rrtype, callback) {
@@ -374,7 +382,9 @@ var InternalResolver = class Resolver {
     );
   }
 
-  setServers(servers) {}
+  setServers(servers) {
+    return setServersOn(servers, this.#resolver);
+  }
 };
 
 function Resolver(options) {

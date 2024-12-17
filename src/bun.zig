@@ -264,6 +264,38 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return FDImpl.decode(value).toJS(global);
     }
 
+    pub const SocketType = enum(c_int) {
+        unknown,
+        tcp,
+        udp,
+    };
+
+    pub fn getSocketType(fd: FileDescriptor) SocketType {
+        if (comptime Environment.isLinux or Environment.isMac) {
+            const os = if (comptime Environment.isLinux) std.os.linux else std.os.darwin;
+            var socketType: c_int = undefined;
+            var length: os.socklen_t = @sizeOf(c_int);
+
+            if (os.getsockopt(@intCast(fd.cast()), os.SOL.SOCKET, os.SO.TYPE, &socketType, &length) != 0) {
+                return .unknown;
+            }
+
+            return switch (socketType) {
+                os.SOCK.STREAM => .tcp,
+                os.SOCK.DGRAM => .udp,
+                else => .unknown,
+            };
+        } else if (comptime Environment.isWindows) {
+            return switch (windows.libuv.uv_guess_handle(fd.cast())) {
+                .tcp => .tcp,
+                .udp => .udp,
+                else => .unknown,
+            };
+        } else {
+            @compileError("Unknown OS in FileDescriptor.getSocketType");
+        }
+    }
+
     pub fn impl(fd: FileDescriptor) FDImpl {
         return FDImpl.decode(fd);
     }

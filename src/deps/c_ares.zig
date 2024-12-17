@@ -499,6 +499,10 @@ pub const Channel = opaque {
         return null;
     }
 
+    pub fn deinit(this: *Channel) void {
+        ares_destroy(this);
+    }
+
     ///
     ///The ares_getaddrinfo function initiates a host query by name on the name service channel identified by channel. The name and service parameters give the hostname and service as NULL-terminated C strings. The hints parameter is an ares_addrinfo_hints structure:
     ///

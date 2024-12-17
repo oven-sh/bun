@@ -8,7 +8,37 @@ import path from "path";
 import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
 
 describe("css tests", () => {
-  test("edge case", () => {
+  describe("pseudo-class edge case", () => {
+    cssTest(
+      indoc`[type="file"]::file-selector-button:-moz-any() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }`,
+      indoc`[type="file"]::-webkit-file-upload-button:-webkit-any() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }
+    [type="file"]::file-selector-button:is() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }`,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
+  });
+
+  test("calc edge case", () => {
     minifyTest(
       // Problem: the value is being printed as Infinity in our restrict_prec thing but the internal thing actually wants it as 3.40282e38px
       `.rounded-full {

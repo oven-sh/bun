@@ -727,6 +727,19 @@ JSCommonJSModule* JSCommonJSModule::create(
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
 
+size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+    size_t additionalSize = 0;
+    if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
+        additionalSize += thisObject->sourceCode.view().length();
+        if (!thisObject->sourceCode.view().is8Bit()) {
+            additionalSize *= 2;
+        }
+    }
+    return Base::estimatedSize(cell, vm) + additionalSize;
+}
+
 void JSCommonJSModule::destroy(JSC::JSCell* cell)
 {
     static_cast<JSCommonJSModule*>(cell)->JSCommonJSModule::~JSCommonJSModule();
@@ -999,9 +1012,14 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (auto* id = thisObject->m_id.get()) {
         if (!id->isRope()) {
             auto label = id->tryGetValue(false);
-            analyzer.setLabelForCell(cell, label);
+            analyzer.setLabelForCell(cell, makeString("CommonJS Module: "_s, StringView(label)));
+        } else {
+            analyzer.setLabelForCell(cell, "CommonJS Module"_s);
         }
+    } else {
+        analyzer.setLabelForCell(cell, "CommonJS Module"_s);
     }
+
     Base::analyzeHeap(cell, analyzer);
 }
 

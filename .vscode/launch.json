@@ -38,7 +38,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -54,7 +54,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -76,7 +76,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -92,7 +92,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -108,7 +108,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -124,7 +124,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -141,7 +141,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -163,7 +163,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -185,7 +185,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -204,7 +204,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -219,7 +219,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -237,7 +237,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -252,7 +252,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -269,7 +269,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -291,7 +291,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -313,7 +313,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -329,7 +329,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -345,7 +345,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -361,7 +361,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -377,7 +377,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -394,7 +394,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -416,7 +416,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -437,7 +437,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     // bun test [*]
     {
@@ -453,7 +453,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -468,7 +468,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -484,7 +484,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -504,7 +504,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -519,7 +519,7 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     // Windows: bun test [file]
     {
@@ -1141,7 +1141,7 @@
       ],
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
   ],
   "inputs": [

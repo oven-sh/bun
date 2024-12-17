@@ -45,7 +45,7 @@ const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
 
 const adapters = new Map<string, FileDebugSession>();
 
-function semverLessThen(version: string, checkVersion: string) {
+function versionLessThen(version: string, checkVersion: string) {
   const [major, minor, patch] = version.split(".").map(e => parseInt(e))
   const [_major, _minor, _patch] = checkVersion.split(".").map(e => parseInt(e))
 
@@ -76,10 +76,12 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
   );
 
-  if (semverLessThen(vscode.version, "1.96.0")) {
-    context.subscriptions.push(vscode.window.onDidOpenTerminal(injectDebugTerminal))
-  } else {
-    injectDebugTerminal2().then(e => e && context.subscriptions.push(e))
+  if (getConfig("debugTerminal.enabled")) {
+    if (versionLessThen(vscode.version, "1.96.0")) {
+      context.subscriptions.push(vscode.window.onDidOpenTerminal(injectDebugTerminal))
+    } else {
+      injectDebugTerminal2().then(e => e && context.subscriptions.push(e))
+    }
   }
 }
 
@@ -109,8 +111,6 @@ function debugFileCommand(resource?: vscode.Uri) {
 }
 
 async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
-  if (!getConfig("debugTerminal.enabled")) return;
-
   const { name, creationOptions } = terminal;
   if (name !== "JavaScript Debug Terminal") {
     return;
@@ -149,27 +149,22 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   setTimeout(() => terminal.dispose(), 100);
 }
 async function injectDebugTerminal2() {
-  if (!getConfig("debugTerminal.enabled")) return;
-
   const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
-  if (!jsDebugExt) {
-    return
-  }
+  if (!jsDebugExt) return
 
   await jsDebugExt.activate()
   const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
 
+  return jsDebug.registerDebugTerminalOptionsProvider({
+    async provideTerminalOptions(options) {
+      const session = new TerminalDebugSession();
+      await session.initialize();
 
-  const session = new TerminalDebugSession();
-  await session.initialize();
+      const { adapter, signal } = session;
 
-  const { adapter, signal } = session;
+      const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
+      const query = stopOnEntry ? "break=1" : "wait=1";
 
-  const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
-  const query = stopOnEntry ? "break=1" : "wait=1";
-
-  const debug = jsDebug.registerDebugTerminalOptionsProvider({
-    provideTerminalOptions(options) {
       return {
         ...options,
         env: {
@@ -181,8 +176,6 @@ async function injectDebugTerminal2() {
       };
     },
   });
-
-  return debug
 }
 
 class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {

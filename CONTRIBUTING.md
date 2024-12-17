@@ -2,11 +2,6 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, please refer to [this guide](/docs/project/building-windows.md)
 
-{% details summary="For Ubuntu users" %}
-TL;DR: Ubuntu 22.04 is suggested.
-Bun currently requires `glibc >=2.32` in development which means if you're on Ubuntu 20.04 (glibc == 2.31), you may likely meet `error: undefined symbol: __libc_single_threaded `. You need to take extra configurations. Also, according to this [issue](https://github.com/llvm/llvm-project/issues/97314), LLVM 16 is no longer maintained on Ubuntu 24.04 (noble). And instead, you might want `brew` to install LLVM 16 for your Ubuntu 24.04.
-{% /details %}
-
 ## Install Dependencies
 
 Using your system's package manager, install Bun's dependencies:
@@ -58,7 +53,7 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 18 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
@@ -89,7 +84,7 @@ $ sudo zypper install clang16 lld16 llvm16
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
-Make sure Clang/LLVM 16 is in your path:
+Make sure Clang/LLVM 18 is in your path:
 
 ```bash
 $ which clang-16

@@ -80,6 +80,9 @@ pub const JSBundler = struct {
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
 
+        env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
+        env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) JSError!Config {
@@ -229,6 +232,35 @@ pub const JSBundler = struct {
                         "sourcemap",
                         options.SourceMapOption,
                     );
+                }
+            }
+
+            if (try config.get(globalThis, "env")) |env| {
+                if (env != .undefined) {
+                    if (env == .null or env == .false or (env.isNumber() and env.asNumber() == 0)) {
+                        this.env_behavior = .disable;
+                    } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
+                        this.env_behavior = .load_all;
+                    } else if (env.isString()) {
+                        const slice = try env.toSlice2(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        if (strings.eqlComptime(slice.slice(), "inline")) {
+                            this.env_behavior = .load_all;
+                        } else if (strings.eqlComptime(slice.slice(), "disable")) {
+                            this.env_behavior = .disable;
+                        } else if (strings.indexOfChar(slice.slice(), '*')) |asterisk| {
+                            if (asterisk > 0) {
+                                this.env_behavior = .prefix;
+                                try this.env_prefix.appendSliceExact(slice.slice()[0..asterisk]);
+                            } else {
+                                this.env_behavior = .load_all;
+                            }
+                        } else {
+                            return globalThis.throwInvalidArguments("env must be 'inline', 'disable', or a string with a '*' character", .{});
+                        }
+                    } else {
+                        return globalThis.throwInvalidArguments("env must be 'inline', 'disable', or a string with a '*' character", .{});
+                    }
                 }
             }
 
@@ -530,6 +562,7 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+            self.env_prefix.deinit();
             self.footer.deinit();
         }
     };

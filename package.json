@@ -21,7 +21,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
-    "typescript": "^5.4.5",
+    "typescript": "^5.7.2",
     "caniuse-lite": "^1.0.30001620",
     "autoprefixer": "^10.4.19",
     "@mdn/browser-compat-data": "~5.5.28"
@@ -73,6 +73,7 @@
     "prettier": "bun run analysis:no-llvm --target prettier",
     "prettier:check": "bun run analysis:no-llvm --target prettier-check",
     "prettier:extra": "bun run analysis:no-llvm --target prettier-extra",
-    "prettier:diff": "bun run analysis:no-llvm --target prettier-diff"
+    "prettier:diff": "bun run analysis:no-llvm --target prettier-diff",
+    "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests "
   }
 }

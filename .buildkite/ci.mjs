@@ -1115,10 +1115,18 @@ async function getPipeline(options = {}) {
     steps[i] = undefined;
   }
 
-  return {
+  const pipeline = {
     priority,
     steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
   };
+
+  // If you push two builds to main, cancel the previous build.
+  if (isMainBranch() && !isBuildManual() && options.canary) {
+    pipeline.concurrency_group = "canary";
+    pipeline.concurrency = "cancel-all";
+  }
+
+  return pipeline;
 }
 
 async function main() {

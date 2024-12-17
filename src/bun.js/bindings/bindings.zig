@@ -136,16 +136,6 @@ pub const JSObject = extern struct {
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
         return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
     }
-
-    pub inline fn createFromStruct(global: *JSGlobalObject, properties: anytype) *JSObject {
-        const obj = JSValue.createEmptyObject(global, comptime std.meta.fields(@TypeOf(properties)).len).uncheckedPtrCast(JSObject);
-        obj.putAllFromStruct(global, properties) catch {
-            // empty object has no setters. this must be a low-allocation OOM,
-            // wherethrowing will be nearly impossible to handle correctly.
-            bun.outOfMemory();
-        };
-        return obj;
-    }
 };
 
 pub const CachedBytecode = opaque {

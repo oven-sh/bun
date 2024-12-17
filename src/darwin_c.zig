@@ -652,8 +652,6 @@ pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t
 pub extern fn getuid(...) std.posix.uid_t;
 pub extern fn getgid(...) std.posix.gid_t;
 
-pub extern fn geteuid() std.posix.uid_t;
-
 pub fn get_version(buf: []u8) []const u8 {
     @memset(buf, 0);
 

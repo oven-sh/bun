@@ -337,7 +337,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
 
         const ret = while (true) {
             const ret = bun.C.getpwuid_r(
-                bun.C.getuid(),
+                bun.C.geteuid(),
                 &pw,
                 string_bytes.ptr,
                 string_bytes.len,

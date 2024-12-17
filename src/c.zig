@@ -498,4 +498,5 @@ pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
 pub extern fn strlen(ptr: [*c]const u8) usize;
 
 pub const passwd = translated.passwd;
+pub const geteuid = translated.geteuid;
 pub const getpwuid_r = translated.getpwuid_r;

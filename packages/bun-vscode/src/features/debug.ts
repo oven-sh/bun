@@ -45,16 +45,6 @@ const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
 
 const adapters = new Map<string, FileDebugSession>();
 
-function versionLessThen(version: string, checkVersion: string) {
-  const [major, minor, patch] = version.split(".").map(e => parseInt(e))
-  const [_major, _minor, _patch] = checkVersion.split(".").map(e => parseInt(e))
-
-  if (major > _major) return true
-  if (major === _major && minor > _minor) return true
-  if (major === _major && minor === _minor && patch > _patch) return true
-  return false
-}
-
 export function registerDebugger(context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
@@ -77,11 +67,7 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
   );
 
   if (getConfig("debugTerminal.enabled")) {
-    if (versionLessThen(vscode.version, "1.96.0")) {
-      context.subscriptions.push(vscode.window.onDidOpenTerminal(injectDebugTerminal))
-    } else {
-      injectDebugTerminal2().then(e => e && context.subscriptions.push(e))
-    }
+    injectDebugTerminal2().then(context.subscriptions.push)
   }
 }
 
@@ -148,12 +134,18 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   // disposing the terminal.
   setTimeout(() => terminal.dispose(), 100);
 }
+
 async function injectDebugTerminal2() {
   const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
-  if (!jsDebugExt) return
+  if (!jsDebugExt) {
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+  }
 
   await jsDebugExt.activate()
   const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
+  if (!jsDebugExt) {
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+  }
 
   return jsDebug.registerDebugTerminalOptionsProvider({
     async provideTerminalOptions(options) {

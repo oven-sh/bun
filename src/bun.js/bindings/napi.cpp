@@ -2535,48 +2535,29 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
         return napi_bigint_expected;
     }
 
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    *result = jsValue.toBigInt64(toJS(env));
+    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
+    // hit an exception here, but we should check just in case
+    scope.assertNoException();
+
     JSBigInt* bigint = jsValue.asHeapBigInt();
+    uint64_t digit = bigint->length() > 0 ? bigint->digit(0) : 0;
 
-    if (bigint->isZero()) {
-        *result = 0;
-        *lossless = true;
+    if (bigint->length() > 1) {
+        *lossless = false;
+    } else if (bigint->sign()) {
+        // negative
+        // lossless if numeric value is >= -2^63,
+        // for which digit will be <= 2^63
+        *lossless = (digit <= (1ull << 63));
     } else {
-        uint64_t digit = bigint->digit(0);
-
-        // The goal of this code is something like:
-        //
-        //     *result = digit;
-        //     if (bigint->sign()) {
-        //         *result *= -1;
-        //     }
-        //
-        // However, that code has the possibility of overflowing a signed integer. The overflow is
-        // going to come up in cases where the bigint is negative, but its single digit exceeds
-        // the range of int64_t.
-        //
-        // Since signed overflow is undefined behavior in C++, I have chosen instead to negate
-        // `digit` as an unsigned integer (using two's complement) and then copy its bytes into
-        // `result`.
-        //
-        // Yes, clang optimizes this like it should: https://godbolt.org/z/Pa5vEcn8E
-        uint64_t signed_digit = digit;
-        if (bigint->sign()) {
-            signed_digit = ~signed_digit + 1;
-        }
-        memcpy(result, &signed_digit, sizeof(signed_digit));
-
-        if (bigint->length() > 1) {
-            *lossless = false;
-        } else if (bigint->sign()) {
-            // negative
-            // lossless if numeric value is >= -2^63,
-            // for which digit will be <= 2^63
-            *lossless = (digit <= (1ull << 63));
-        } else {
-            // positive
-            // lossless if numeric value is <= 2^63 - 1
-            *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
-        }
+        // positive
+        // lossless if numeric value is <= 2^63 - 1
+        *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
     }
 
     return napi_ok;
@@ -2593,20 +2574,19 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
         return napi_bigint_expected;
     }
 
-    JSBigInt* bigint = jsValue.asHeapBigInt();
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (bigint->isZero()) {
-        *result = 0;
-        *lossless = true;
-    } else {
-        *result = bigint->digit(0);
-        if (bigint->sign()) {
-            // pretend we use two's complement
-            *result = ~*result + 1;
-        }
-        // lossless if and only if only one digit and positive
-        *lossless = (bigint->length() == 1 && bigint->sign() == false);
-    }
+    *result = jsValue.toBigUInt64(toJS(env));
+    // toBigUInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
+    // hit an exception here, but we should check just in case
+    scope.assertNoException();
+
+    // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
+    // value is positive
+    JSBigInt* bigint = jsValue.asHeapBigInt();
+    *lossless = (bigint->length() <= 1 && bigint->sign() == false);
 
     return napi_ok;
 }

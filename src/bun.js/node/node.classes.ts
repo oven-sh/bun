@@ -17,6 +17,10 @@ export default [
         fn: "getServers",
         length: 0,
       },
+      resolve: {
+        fn: "resolve",
+        length: 3,
+      },
     },
   }),
   define({

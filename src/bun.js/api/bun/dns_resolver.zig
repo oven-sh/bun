@@ -2281,7 +2281,13 @@ pub const DNSResolver = struct {
         });
     };
 
-    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolve(globalThis, callframe);
+    }
+
+    pub fn resolve(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolve", 3, arguments.len);
@@ -2324,8 +2330,6 @@ pub const DNSResolver = struct {
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
         //TODO: ANY CASE
         switch (record_type) {
             RecordType.A => {
@@ -2362,7 +2366,7 @@ pub const DNSResolver = struct {
         }
     }
 
-    pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalReverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("reverse", 2, arguments.len);
@@ -2423,7 +2427,7 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn lookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalLookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("lookup", 2, arguments.len);
@@ -2504,7 +2508,7 @@ pub const DNSResolver = struct {
         };
     }
 
-    pub fn resolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSrv", 2, arguments.len);
@@ -2532,7 +2536,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
-    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
@@ -2556,7 +2560,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
-    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
@@ -2584,7 +2588,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
-    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
@@ -2608,7 +2612,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
-    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
@@ -2636,7 +2640,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
-    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
@@ -2664,7 +2668,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
-    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
@@ -2692,7 +2696,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
-    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
@@ -2720,7 +2724,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
-    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalResolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
@@ -3020,7 +3024,7 @@ pub const DNSResolver = struct {
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    pub fn lookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn globalLookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3);
         if (arguments.len < 2) {
             return globalThis.throwNotEnoughArguments("lookupService", 3, arguments.len);
@@ -3113,40 +3117,40 @@ pub const DNSResolver = struct {
     }
 
     comptime {
-        const js_resolve = JSC.toJSHostFunction(resolve);
+        const js_resolve = JSC.toJSHostFunction(globalResolve);
         @export(js_resolve, .{ .name = "Bun__DNS__resolve" });
-        const js_lookup = JSC.toJSHostFunction(lookup);
-        @export(js_lookup, .{ .name = "Bun__DNSResolver__lookup" });
-        const js_resolveTxt = JSC.toJSHostFunction(resolveTxt);
-        @export(js_resolveTxt, .{ .name = "Bun__DNSResolver__resolveTxt" });
-        const js_resolveSoa = JSC.toJSHostFunction(resolveSoa);
-        @export(js_resolveSoa, .{ .name = "Bun__DNSResolver__resolveSoa" });
-        const js_resolveMx = JSC.toJSHostFunction(resolveMx);
-        @export(js_resolveMx, .{ .name = "Bun__DNSResolver__resolveMx" });
-        const js_resolveNaptr = JSC.toJSHostFunction(resolveNaptr);
-        @export(js_resolveNaptr, .{ .name = "Bun__DNSResolver__resolveNaptr" });
-        const js_resolveSrv = JSC.toJSHostFunction(resolveSrv);
-        @export(js_resolveSrv, .{ .name = "Bun__DNSResolver__resolveSrv" });
-        const js_resolveCaa = JSC.toJSHostFunction(resolveCaa);
-        @export(js_resolveCaa, .{ .name = "Bun__DNSResolver__resolveCaa" });
-        const js_resolveNs = JSC.toJSHostFunction(resolveNs);
-        @export(js_resolveNs, .{ .name = "Bun__DNSResolver__resolveNs" });
-        const js_resolvePtr = JSC.toJSHostFunction(resolvePtr);
-        @export(js_resolvePtr, .{ .name = "Bun__DNSResolver__resolvePtr" });
-        const js_resolveCname = JSC.toJSHostFunction(resolveCname);
-        @export(js_resolveCname, .{ .name = "Bun__DNSResolver__resolveCname" });
+        const js_lookup = JSC.toJSHostFunction(globalLookup);
+        @export(js_lookup, .{ .name = "Bun__DNS__lookup" });
+        const js_resolveTxt = JSC.toJSHostFunction(globalResolveTxt);
+        @export(js_resolveTxt, .{ .name = "Bun__DNS__resolveTxt" });
+        const js_resolveSoa = JSC.toJSHostFunction(globalResolveSoa);
+        @export(js_resolveSoa, .{ .name = "Bun__DNS__resolveSoa" });
+        const js_resolveMx = JSC.toJSHostFunction(globalResolveMx);
+        @export(js_resolveMx, .{ .name = "Bun__DNS__resolveMx" });
+        const js_resolveNaptr = JSC.toJSHostFunction(globalResolveNaptr);
+        @export(js_resolveNaptr, .{ .name = "Bun__DNS__resolveNaptr" });
+        const js_resolveSrv = JSC.toJSHostFunction(globalResolveSrv);
+        @export(js_resolveSrv, .{ .name = "Bun__DNS__resolveSrv" });
+        const js_resolveCaa = JSC.toJSHostFunction(globalResolveCaa);
+        @export(js_resolveCaa, .{ .name = "Bun__DNS__resolveCaa" });
+        const js_resolveNs = JSC.toJSHostFunction(globalResolveNs);
+        @export(js_resolveNs, .{ .name = "Bun__DNS__resolveNs" });
+        const js_resolvePtr = JSC.toJSHostFunction(globalResolvePtr);
+        @export(js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
+        const js_resolveCname = JSC.toJSHostFunction(globalResolveCname);
+        @export(js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
         const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
         @export(js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
         const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);
         @export(js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
-        const js_reverse = JSC.toJSHostFunction(reverse);
-        @export(js_reverse, .{ .name = "Bun__DNSResolver__reverse" });
-        const js_lookupService = JSC.toJSHostFunction(lookupService);
-        @export(js_lookupService, .{ .name = "Bun__DNSResolver__lookupService" });
+        const js_reverse = JSC.toJSHostFunction(globalReverse);
+        @export(js_reverse, .{ .name = "Bun__DNS__reverse" });
+        const js_lookupService = JSC.toJSHostFunction(globalLookupService);
+        @export(js_lookupService, .{ .name = "Bun__DNS__lookupService" });
         const js_prefetchFromJS = JSC.toJSHostFunction(InternalDNS.prefetchFromJS);
-        @export(js_prefetchFromJS, .{ .name = "Bun__DNSResolver__prefetch" });
+        @export(js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
         const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
-        @export(js_getDNSCacheStats, .{ .name = "Bun__DNSResolver__getCacheStats" });
+        @export(js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
         const js_newResolver = JSC.toJSHostFunction(newResolver);
         @export(js_newResolver, .{ .name = "Bun__DNSResolver__new" });
     }

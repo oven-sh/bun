@@ -2528,7 +2528,7 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
 {
     NAPI_PREMABLE
     JSValue jsValue = toJS(value);
-    if (jsValue.isEmpty() || !result || !lossless) {
+    if (!env || jsValue.isEmpty() || !result || !lossless) {
         return napi_invalid_arg;
     }
     if (!jsValue.isHeapBigInt()) {
@@ -2586,7 +2586,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
 {
     NAPI_PREMABLE
     JSValue jsValue = toJS(value);
-    if (jsValue.isEmpty() || !result || !lossless) {
+    if (!env || jsValue.isEmpty() || !result || !lossless) {
         return napi_invalid_arg;
     }
     if (!jsValue.isHeapBigInt()) {
@@ -2754,29 +2754,41 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     const uint64_t* words,
     napi_value* result)
 {
-    NAPI_PREMABLE
-
-    if (UNLIKELY(!result)) {
+    NAPI_PREMABLE;
+    // JSBigInt::createWithLength's size argument is unsigned int
+    // words can be nullptr if and only if word_count is zero
+    if (!env || !result || !(word_count == 0 || words) || word_count > UINT_MAX) {
         return napi_invalid_arg;
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-    auto* bigint = JSC::JSBigInt::tryCreateWithLength(vm, word_count);
-    if (UNLIKELY(!bigint)) {
-        return napi_generic_failure;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (word_count == 0) {
+        auto* bigint = JSBigInt::createZero(globalObject);
+        scope.assertNoException();
+        *result = toNapi(bigint, globalObject);
+        return napi_ok;
     }
 
-    // TODO: verify sign bit is consistent
-    bigint->setSign(sign_bit);
+    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
+    // passed an array containing leading zeroes. so we have to cut those off.
+    while (word_count > 0 && words[word_count - 1] == 0) {
+        word_count--;
+    }
 
-    if (words != nullptr) {
-        const uint64_t* word = words;
-        // TODO: add fast path that uses memcpy here instead of setDigit
-        // we need to add this to JSC. V8 has this optimization
-        for (size_t i = 0; i < word_count; i++) {
-            bigint->setDigit(i, *word++);
-        }
+    // throws RangeError if size is larger than JSC's limit
+    auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    ASSERT(bigint);
+
+    bigint->setSign(sign_bit != 0);
+
+    const uint64_t* current_word = words;
+    // TODO: add fast path that uses memcpy here instead of setDigit
+    // we need to add this to JSC. V8 has this optimization
+    for (size_t i = 0; i < word_count; i++) {
+        bigint->setDigit(i, *current_word++);
     }
 
     *result = toNapi(bigint, globalObject);

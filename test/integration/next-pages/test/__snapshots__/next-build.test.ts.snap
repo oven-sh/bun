@@ -22260,13 +22260,24 @@ exports[`next build works: bun 1`] = `
     },
     {
       "dependencies": {
+        "@types/node": {
+          "id": 863,
+          "package_id": 183,
+        },
+      },
+      "depth": 1,
+      "id": 3,
+      "path": "node_modules/@types/ws/node_modules",
+    },
+    {
+      "dependencies": {
         "debug": {
           "id": 674,
           "package_id": 377,
         },
       },
       "depth": 1,
-      "id": 3,
+      "id": 4,
       "path": "node_modules/eslint-import-resolver-node/node_modules",
     },
     {
@@ -22281,7 +22292,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 4,
+      "id": 5,
       "path": "node_modules/eslint-plugin-import/node_modules",
     },
     {
@@ -22296,7 +22307,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 5,
+      "id": 6,
       "path": "node_modules/eslint-plugin-react/node_modules",
     },
     {
@@ -22311,7 +22322,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 6,
+      "id": 7,
       "path": "node_modules/@puppeteer/browsers/node_modules",
     },
     {
@@ -22322,7 +22333,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 7,
+      "id": 8,
       "path": "node_modules/chokidar/node_modules",
     },
     {
@@ -22333,7 +22344,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 8,
+      "id": 9,
       "path": "node_modules/fast-glob/node_modules",
     },
     {
@@ -22344,7 +22355,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 9,
+      "id": 10,
       "path": "node_modules/postcss-load-config/node_modules",
     },
     {
@@ -22355,7 +22366,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 10,
+      "id": 11,
       "path": "node_modules/glob/node_modules",
     },
     {
@@ -22370,7 +22381,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 11,
+      "id": 12,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
     },
     {
@@ -22381,7 +22392,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 12,
+      "id": 13,
       "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
@@ -22392,7 +22403,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 13,
+      "id": 14,
       "path": "node_modules/@puppeteer/browsers/node_modules/semver/node_modules",
     },
     {
@@ -22403,7 +22414,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 14,
+      "id": 15,
       "path": "node_modules/rimraf/node_modules",
     },
     {
@@ -22414,7 +22425,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 15,
+      "id": 16,
       "path": "node_modules/glob/node_modules/minimatch/node_modules",
     },
     {
@@ -22425,7 +22436,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 16,
+      "id": 17,
       "path": "node_modules/path-scurry/node_modules",
     },
     {
@@ -22436,7 +22447,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 17,
+      "id": 18,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
     },
     {
@@ -22447,8 +22458,19 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 18,
+      "id": 19,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
+    },
+    {
+      "dependencies": {
+        "@types/node": {
+          "id": 254,
+          "package_id": 183,
+        },
+      },
+      "depth": 1,
+      "id": 20,
+      "path": "node_modules/@types/yauzl/node_modules",
     },
     {
       "dependencies": {
@@ -22458,7 +22480,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 19,
+      "id": 21,
       "path": "node_modules/string-width/node_modules",
     },
     {
@@ -22477,7 +22499,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 20,
+      "id": 22,
       "path": "node_modules/@isaacs/cliui/node_modules",
     },
     {
@@ -22488,7 +22510,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 21,
+      "id": 23,
       "path": "node_modules/@babel/highlight/node_modules",
     },
     {
@@ -22499,7 +22521,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 22,
+      "id": 24,
       "path": "node_modules/string-width-cjs/node_modules",
     },
     {
@@ -22510,7 +22532,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 23,
+      "id": 25,
       "path": "node_modules/@isaacs/cliui/node_modules/strip-ansi/node_modules",
     },
     {
@@ -22521,7 +22543,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 24,
+      "id": 26,
       "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi/node_modules",
     },
     {
@@ -22540,7 +22562,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 2,
-      "id": 25,
+      "id": 27,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules",
     },
     {
@@ -22551,7 +22573,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 3,
-      "id": 26,
+      "id": 28,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules",
     },
     {
@@ -22562,7 +22584,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 3,
-      "id": 27,
+      "id": 29,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/supports-color/node_modules",
     },
     {
@@ -22573,7 +22595,7 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 4,
-      "id": 28,
+      "id": 30,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules/color-convert/node_modules",
     },
   ],
@@ -44842,13 +44864,24 @@ exports[`next build works: node 1`] = `
     },
     {
       "dependencies": {
+        "@types/node": {
+          "id": 863,
+          "package_id": 183,
+        },
+      },
+      "depth": 1,
+      "id": 3,
+      "path": "node_modules/@types/ws/node_modules",
+    },
+    {
+      "dependencies": {
         "debug": {
           "id": 674,
           "package_id": 377,
         },
       },
       "depth": 1,
-      "id": 3,
+      "id": 4,
       "path": "node_modules/eslint-import-resolver-node/node_modules",
     },
     {
@@ -44863,7 +44896,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 4,
+      "id": 5,
       "path": "node_modules/eslint-plugin-import/node_modules",
     },
     {
@@ -44878,7 +44911,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 5,
+      "id": 6,
       "path": "node_modules/eslint-plugin-react/node_modules",
     },
     {
@@ -44893,7 +44926,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 6,
+      "id": 7,
       "path": "node_modules/@puppeteer/browsers/node_modules",
     },
     {
@@ -44904,7 +44937,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 7,
+      "id": 8,
       "path": "node_modules/chokidar/node_modules",
     },
     {
@@ -44915,7 +44948,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 8,
+      "id": 9,
       "path": "node_modules/fast-glob/node_modules",
     },
     {
@@ -44926,7 +44959,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 9,
+      "id": 10,
       "path": "node_modules/postcss-load-config/node_modules",
     },
     {
@@ -44937,7 +44970,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 10,
+      "id": 11,
       "path": "node_modules/glob/node_modules",
     },
     {
@@ -44952,7 +44985,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 11,
+      "id": 12,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
     },
     {
@@ -44963,7 +44996,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 12,
+      "id": 13,
       "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
@@ -44974,7 +45007,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 13,
+      "id": 14,
       "path": "node_modules/@puppeteer/browsers/node_modules/semver/node_modules",
     },
     {
@@ -44985,7 +45018,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 14,
+      "id": 15,
       "path": "node_modules/rimraf/node_modules",
     },
     {
@@ -44996,7 +45029,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 15,
+      "id": 16,
       "path": "node_modules/glob/node_modules/minimatch/node_modules",
     },
     {
@@ -45007,7 +45040,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 16,
+      "id": 17,
       "path": "node_modules/path-scurry/node_modules",
     },
     {
@@ -45018,7 +45051,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 17,
+      "id": 18,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
     },
     {
@@ -45029,8 +45062,19 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 18,
+      "id": 19,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
+    },
+    {
+      "dependencies": {
+        "@types/node": {
+          "id": 254,
+          "package_id": 183,
+        },
+      },
+      "depth": 1,
+      "id": 20,
+      "path": "node_modules/@types/yauzl/node_modules",
     },
     {
       "dependencies": {
@@ -45040,7 +45084,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 19,
+      "id": 21,
       "path": "node_modules/string-width/node_modules",
     },
     {
@@ -45059,7 +45103,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 20,
+      "id": 22,
       "path": "node_modules/@isaacs/cliui/node_modules",
     },
     {
@@ -45070,7 +45114,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 21,
+      "id": 23,
       "path": "node_modules/@babel/highlight/node_modules",
     },
     {
@@ -45081,7 +45125,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 22,
+      "id": 24,
       "path": "node_modules/string-width-cjs/node_modules",
     },
     {
@@ -45092,7 +45136,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 23,
+      "id": 25,
       "path": "node_modules/@isaacs/cliui/node_modules/strip-ansi/node_modules",
     },
     {
@@ -45103,7 +45147,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 24,
+      "id": 26,
       "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi/node_modules",
     },
     {
@@ -45122,7 +45166,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 2,
-      "id": 25,
+      "id": 27,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules",
     },
     {
@@ -45133,7 +45177,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 3,
-      "id": 26,
+      "id": 28,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules",
     },
     {
@@ -45144,7 +45188,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 3,
-      "id": 27,
+      "id": 29,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/supports-color/node_modules",
     },
     {
@@ -45155,7 +45199,7 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 4,
-      "id": 28,
+      "id": 30,
       "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules/color-convert/node_modules",
     },
   ],

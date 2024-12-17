@@ -1,6 +1,6 @@
-#include <node.h>
-
-#include <napi.h>
+#include "napi_with_version.h"
+#include "utils.h"
+#include "wrap_tests.h"
 
 #include <array>
 #include <cassert>
@@ -28,23 +28,6 @@ napi_value fail_fmt(napi_env env, const char *fmt, ...) {
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   return fail(env, buf);
-}
-
-napi_value ok(napi_env env) {
-  napi_value result;
-  napi_get_undefined(env, &result);
-  return result;
-}
-
-static void run_gc(const Napi::CallbackInfo &info) {
-  info[0].As<Napi::Function>().Call(0, nullptr);
-}
-
-// calls napi_typeof and asserts it returns napi_ok
-static napi_valuetype get_typeof(napi_env env, napi_value value) {
-  napi_valuetype result;
-  assert(napi_typeof(env, value, &result) == napi_ok);
-  return result;
 }
 
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
@@ -595,33 +578,6 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
-static const char *napi_valuetype_to_string(napi_valuetype type) {
-  switch (type) {
-  case napi_undefined:
-    return "undefined";
-  case napi_null:
-    return "null";
-  case napi_boolean:
-    return "boolean";
-  case napi_number:
-    return "number";
-  case napi_string:
-    return "string";
-  case napi_symbol:
-    return "symbol";
-  case napi_object:
-    return "object";
-  case napi_function:
-    return "function";
-  case napi_external:
-    return "external";
-  case napi_bigint:
-    return "bigint";
-  default:
-    return "unknown";
-  }
-}
-
 // calls a function (the sole argument) which must throw. catches and returns
 // the thrown error
 napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
@@ -1079,6 +1035,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("add_tag", Napi::Function::New(env, add_tag));
   exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
   exports.Set("check_tag", Napi::Function::New(env, check_tag));
+
+  napitests::register_wrap_tests(env, exports);
 
   return exports;
 }

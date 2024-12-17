@@ -495,7 +495,7 @@ pub const Tree = struct {
         },
     };
 
-    const SubtreeError = OOM || error{DependencyLoop};
+    pub const SubtreeError = OOM || error{DependencyLoop};
 
     // max number of node_modules folders
     pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
@@ -841,7 +841,7 @@ pub const Tree = struct {
         trees: []Tree,
         builder: *Builder,
     ) !HoistResult {
-        const this_dependencies = this.dependencies.mut(dependency_lists[this.id].items);
+        const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
         for (0..this_dependencies.len) |i| {
             const dep_id = this_dependencies[i];
             const dep = builder.dependencies[dep_id];
@@ -894,21 +894,6 @@ pub const Tree = struct {
                     dependency.version.literal.fmt(builder.buf()),
                 });
                 return error.DependencyLoop;
-            }
-
-            if (dependency.version.tag == .npm and dep.version.tag == .npm) {
-
-                // if the dependency is wildcard, use the existing dependency
-                // in the parent
-                if (dependency.version.value.npm.version.@"is *"()) {
-                    return .hoisted;
-                }
-
-                // if the parent dependency is wildcard, replace with the
-                // current dependency
-                if (dep.version.value.npm.version.@"is *"()) {
-                    return .{ .replace = .{ .dest_id = this.id, .dep_id = dep_id } }; // 4
-                }
             }
 
             return .dependency_loop; // 3
@@ -1371,9 +1356,7 @@ const Cloner = struct {
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
-        while (this.clone_queue.popOrNull()) |to_clone_| {
-            const to_clone: PendingResolution = to_clone_;
-
+        while (this.clone_queue.popOrNull()) |to_clone| {
             const mapping = this.mapping[to_clone.old_resolution];
             if (mapping < max_package_id) {
                 this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = mapping;
@@ -1396,7 +1379,7 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            try this.hoist(this.lockfile);
+            try this.lockfile.hoist(this.log, this.manager.options.local_package_features.dev_dependencies);
         }
 
         // capacity is used for calculating byte size
@@ -1404,38 +1387,38 @@ const Cloner = struct {
         if (this.lockfile.packages.capacity != this.lockfile.packages.len and this.lockfile.packages.len > 0)
             this.lockfile.packages.shrinkAndFree(this.lockfile.allocator, this.lockfile.packages.len);
     }
-
-    fn hoist(this: *Cloner, lockfile: *Lockfile) anyerror!void {
-        const allocator = lockfile.allocator;
-        var slice = lockfile.packages.slice();
-        var builder = Tree.Builder{
-            .name_hashes = slice.items(.name_hash),
-            .queue = TreeFiller.init(allocator),
-            .resolution_lists = slice.items(.resolutions),
-            .resolutions = lockfile.buffers.resolutions.items,
-            .allocator = allocator,
-            .dependencies = lockfile.buffers.dependencies.items,
-            .log = this.log,
-            .lockfile = lockfile,
-            .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
-        };
-
-        try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
-        // This goes breadth-first
-        while (builder.queue.readItem()) |item| {
-            try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, &builder);
-        }
-
-        lockfile.buffers.hoisted_dependencies = try builder.clean();
-        {
-            const final = builder.list.items(.tree);
-            lockfile.buffers.trees = .{
-                .items = final,
-                .capacity = final.len,
-            };
-        }
-    }
 };
+
+pub fn hoist(lockfile: *Lockfile, log: *logger.Log, prefer_dev_dependencies: bool) Tree.SubtreeError!void {
+    const allocator = lockfile.allocator;
+    var slice = lockfile.packages.slice();
+    var builder = Tree.Builder{
+        .name_hashes = slice.items(.name_hash),
+        .queue = TreeFiller.init(allocator),
+        .resolution_lists = slice.items(.resolutions),
+        .resolutions = lockfile.buffers.resolutions.items,
+        .allocator = allocator,
+        .dependencies = lockfile.buffers.dependencies.items,
+        .log = log,
+        .lockfile = lockfile,
+        .prefer_dev_dependencies = prefer_dev_dependencies,
+    };
+
+    try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
+    // This goes breadth-first
+    while (builder.queue.readItem()) |item| {
+        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, &builder);
+    }
+
+    lockfile.buffers.hoisted_dependencies = try builder.clean();
+    {
+        const final = builder.list.items(.tree);
+        lockfile.buffers.trees = .{
+            .items = final,
+            .capacity = final.len,
+        };
+    }
+}
 
 const PendingResolution = struct {
     old_resolution: PackageID,
@@ -3107,6 +3090,15 @@ pub const Package = extern struct {
         prepare: String = .{},
         postprepare: String = .{},
         filled: bool = false,
+
+        pub fn eql(l: *const Package.Scripts, r: *const Package.Scripts, l_buf: string, r_buf: string) bool {
+            return l.preinstall.eql(r.preinstall, l_buf, r_buf) and
+                l.install.eql(r.install, l_buf, r_buf) and
+                l.postinstall.eql(r.postinstall, l_buf, r_buf) and
+                l.preprepare.eql(r.preprepare, l_buf, r_buf) and
+                l.prepare.eql(r.prepare, l_buf, r_buf) and
+                l.postprepare.eql(r.postprepare, l_buf, r_buf);
+        }
 
         pub const List = struct {
             items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
@@ -6702,13 +6694,12 @@ pub const EqlSorter = struct {
     pkg_names: []const String,
 
     // Basically placement id
-    pub const IdPair = struct {
+    pub const PathToId = struct {
         pkg_id: PackageID,
-        tree_id: Tree.Id,
         tree_path: string,
     };
 
-    pub fn isLessThan(this: @This(), l: IdPair, r: IdPair) bool {
+    pub fn isLessThan(this: @This(), l: PathToId, r: PathToId) bool {
         switch (strings.order(l.tree_path, r.tree_path)) {
             .lt => return true,
             .gt => return false,
@@ -6723,7 +6714,8 @@ pub const EqlSorter = struct {
     }
 };
 
-pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator) OOM!bool {
+/// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
+pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, allocator: std.mem.Allocator) OOM!bool {
     const l_hoisted_deps = l.buffers.hoisted_dependencies.items;
     const r_hoisted_deps = r.buffers.hoisted_dependencies.items;
     const l_string_buf = l.buffers.string_bytes.items;
@@ -6734,7 +6726,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
 
     if (l_len != r_len) return false;
 
-    const sort_buf = try allocator.alloc(EqlSorter.IdPair, l_len + r_len);
+    const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
     defer l.allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
     var r_buf = sort_buf[r_len..];
@@ -6749,10 +6741,9 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
         for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
             if (l_dep_id == invalid_dependency_id) continue;
             const l_pkg_id = l.buffers.resolutions.items[l_dep_id];
-            if (l_pkg_id == invalid_package_id) continue;
+            if (l_pkg_id == invalid_package_id or l_pkg_id >= cut_off_pkg_id) continue;
             l_buf[i] = .{
                 .pkg_id = l_pkg_id,
-                .tree_id = l_tree.id,
                 .tree_path = tree_path,
             };
             i += 1;
@@ -6767,10 +6758,9 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
         for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
             if (r_dep_id == invalid_dependency_id) continue;
             const r_pkg_id = r.buffers.resolutions.items[r_dep_id];
-            if (r_pkg_id == invalid_package_id) continue;
+            if (r_pkg_id == invalid_package_id or r_pkg_id >= cut_off_pkg_id) continue;
             r_buf[i] = .{
                 .pkg_id = r_pkg_id,
-                .tree_id = r_tree.id,
                 .tree_path = tree_path,
             };
             i += 1;
@@ -6786,7 +6776,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
     const r_pkg_names = r_pkgs.items(.name);
 
     std.sort.pdq(
-        EqlSorter.IdPair,
+        EqlSorter.PathToId,
         l_buf,
         EqlSorter{
             .pkg_names = l_pkg_names,
@@ -6796,7 +6786,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
     );
 
     std.sort.pdq(
-        EqlSorter.IdPair,
+        EqlSorter.PathToId,
         r_buf,
         EqlSorter{
             .pkg_names = r_pkg_names,
@@ -6807,8 +6797,15 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
 
     const l_pkg_name_hashes = l_pkgs.items(.name_hash);
     const l_pkg_resolutions = l_pkgs.items(.resolution);
+    const l_pkg_bins = l_pkgs.items(.bin);
+    const l_pkg_scripts = l_pkgs.items(.scripts);
     const r_pkg_name_hashes = r_pkgs.items(.name_hash);
     const r_pkg_resolutions = r_pkgs.items(.resolution);
+    const r_pkg_bins = r_pkgs.items(.bin);
+    const r_pkg_scripts = r_pkgs.items(.scripts);
+
+    const l_extern_strings = l.buffers.extern_strings.items;
+    const r_extern_strings = r.buffers.extern_strings.items;
 
     for (l_buf, r_buf) |l_ids, r_ids| {
         const l_pkg_id = l_ids.pkg_id;
@@ -6824,6 +6821,20 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, allocator: std.mem.Allocator)
                 return false;
             }
         } else if (!l_res.eql(&r_res, l_string_buf, r_string_buf)) {
+            return false;
+        }
+
+        if (!l_pkg_bins[l_pkg_id].eql(
+            &r_pkg_bins[r_pkg_id],
+            l_string_buf,
+            l_extern_strings,
+            r_string_buf,
+            r_extern_strings,
+        )) {
+            return false;
+        }
+
+        if (!l_pkg_scripts[l_pkg_id].eql(&r_pkg_scripts[r_pkg_id], l_string_buf, r_string_buf)) {
             return false;
         }
     }

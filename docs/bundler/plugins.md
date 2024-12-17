@@ -309,8 +309,6 @@ Native plugins are NAPI modules which expose lifecycle hooks as C ABI functions.
 
 To create a native plugin, you must export a C ABI function which matches the signature of the native lifecycle hook you want to implement.
 
-ve bundler plugins are NAPI modules, the easiest way to get started is to create a new [napi-rs](https://github.com/napi-rs/napi-rs) project:
-
 ```bash
 bun add -g @napi-rs/cli
 napi new
@@ -356,6 +354,34 @@ pub fn replace_foo_with_bar(handle: &mut OnBeforeParse) -> Result<()> {
 
   Ok(())
 }
+```
+
+And to use it in Bun.build():
+
+```typescript
+import myNativeAddon from "./my-native-addon";
+Bun.build({
+  entrypoints: ["./app.tsx"],
+  plugins: [
+    {
+      name: "my-plugin",
+
+      setup(build) {
+        build.onBeforeParse(
+          {
+            namespace: "file",
+            filter: "**/*.tsx",
+          },
+          {
+            napiModule: myNativeAddon,
+            symbol: "replace_foo_with_bar",
+            // external: myNativeAddon.getSharedState()
+          },
+        );
+      },
+    },
+  ],
+});
 ```
 
 ### `onBeforeParse`

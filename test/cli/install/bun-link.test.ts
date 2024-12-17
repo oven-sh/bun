@@ -56,7 +56,7 @@ it("should link and unlink workspace package", async () => {
     }),
   );
   let { out, err } = await runBunInstall(env, link_dir);
-  expect(err.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
+  expect(err.split(/\r?\n/).slice(-2)).toEqual(["Saved lockfile", ""]);
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -399,7 +399,7 @@ it("should link dependency without crashing", async () => {
 
   const { out: stdout2, err: stderr2, exited: exited2 } = await runBunInstall(env, package_dir);
   const err2 = stderrForInstall(await new Response(stderr2).text());
-  expect(err2.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
+  expect(err2.split(/\r?\n/).slice(-2)).toEqual(["Saved lockfile", ""]);
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),

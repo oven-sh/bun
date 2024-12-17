@@ -2756,13 +2756,13 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 {
     NAPI_PREMABLE;
     // JSBigInt::createWithLength's size argument is unsigned int
-    // words can be nullptr if and only if word_count is zero
-    if (!env || !result || !(word_count == 0 || words) || word_count > UINT_MAX) {
+    if (!env || !result || !words || word_count > UINT_MAX) {
         return napi_invalid_arg;
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     if (word_count == 0) {
         auto* bigint = JSBigInt::createZero(globalObject);
@@ -2792,6 +2792,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     }
 
     *result = toNapi(bigint, globalObject);
+    scope.assertNoException();
     return napi_ok;
 }
 

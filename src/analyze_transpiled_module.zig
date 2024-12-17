@@ -240,7 +240,7 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return fail(failure_reason, 1);
     if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return fail(failure_reason, 1);
     const json_part = source[l1 + "\n// ".len .. l2];
-    var res = ModuleInfo.jsonParse(std.heap.c_allocator, json_part) catch return fail(failure_reason, 2);
+    var res = ModuleInfo.jsonParse(bun.default_allocator, json_part) catch return fail(failure_reason, 2);
     defer res.deinit();
 
     var identifiers = IdentifierArray.create(res.strings.keys().len);
@@ -265,8 +265,8 @@ export fn zig__ModuleInfo__parseFromSourceCode(
             .webassembly => module_record.addRequestedModuleWebAssembly(identifiers, reqk),
             .json => module_record.addRequestedModuleJSON(identifiers, reqk),
             .host_defined => |v| {
-                const tmp_str = std.heap.c_allocator.dupeZ(u8, res.strings.keys()[@intFromEnum(v)]) catch return fail(failure_reason, 2);
-                defer std.heap.c_allocator.free(tmp_str);
+                const tmp_str = bun.default_allocator.dupeZ(u8, res.strings.keys()[@intFromEnum(v)]) catch return fail(failure_reason, 2);
+                defer bun.default_allocator.free(tmp_str);
                 if (std.mem.indexOfScalar(u8, tmp_str, 0) != null) return fail(failure_reason, 2);
                 if (!bun.strings.isAllASCII(tmp_str)) return fail(failure_reason, 2);
                 module_record.addRequestedModuleHostDefined(identifiers, reqk, tmp_str.ptr);
@@ -288,7 +288,7 @@ export fn zig__ModuleInfo__parseFromSourceCode(
 }
 export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
     info.deinit();
-    std.heap.c_allocator.destroy(info);
+    bun.default_allocator.destroy(info);
 }
 
 const VariableEnvironment = opaque {

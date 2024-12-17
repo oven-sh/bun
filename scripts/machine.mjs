@@ -433,6 +433,9 @@ const aws = {
           ...device,
           Ebs: {
             VolumeSize: getDiskSize(options),
+            VolumeType: "gp3",
+            Iops: 6000,
+            Throughput: 250,
           },
         };
       }

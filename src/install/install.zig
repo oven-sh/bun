@@ -946,6 +946,8 @@ pub const Task = struct {
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
             env: DotEnv.Map,
+            dep_id: DependencyID,
+            res: Resolution,
         },
         git_checkout: struct {
             repo_dir: bun.FileDescriptor,
@@ -4838,7 +4840,9 @@ pub const PackageManager = struct {
         task_id: u64,
         name: string,
         repository: *const Repository,
+        dep_id: DependencyID,
         dependency: *const Dependency,
+        res: *const Resolution,
         /// if patched then we need to do apply step after network task is done
         patch_name_and_version_hash: ?u64,
     ) *ThreadPool.Task {
@@ -4860,6 +4864,8 @@ pub const PackageManager = struct {
                         FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
+                    .dep_id = dep_id,
+                    .res = res.*,
                 },
             },
             .id = task_id,
@@ -5452,7 +5458,7 @@ pub const PackageManager = struct {
 
                     if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
-                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, dependency, null)));
+                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, id, dependency, &res, null)));
                 }
             },
             .github => {
@@ -6831,10 +6837,11 @@ pub const PackageManager = struct {
                 },
                 .git_clone => {
                     const clone = &task.request.git_clone;
+                    const repo_fd = task.data.git_clone;
                     const name = clone.name.slice();
                     const url = clone.url.slice();
 
-                    manager.git_repositories.put(manager.allocator, task.id, task.data.git_clone) catch unreachable;
+                    manager.git_repositories.put(manager.allocator, task.id, repo_fd) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -6861,11 +6868,49 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
-                    const dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        // Installing!
+                        // this dependency might be something other than a git dependency! only need the name and
+                        // behavior, use the resolution from the task.
+                        const dep_id = clone.dep_id;
+                        const dep = manager.lockfile.buffers.dependencies.items[dep_id];
+                        const dep_name = dep.name.slice(manager.lockfile.buffers.string_bytes.items);
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                        const git = clone.res.value.git;
+                        const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
+                        const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
+
+                        const resolved = try Repository.findCommit(
+                            manager.allocator,
+                            manager.env,
+                            manager.log,
+                            task.data.git_clone.asDir(),
+                            dep_name,
+                            committish,
+                            task.id,
+                        );
+
+                        const checkout_id = Task.Id.forGitCheckout(repo, resolved);
+
+                        if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
+
+                        manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
+                            checkout_id,
+                            repo_fd,
+                            dep_id,
+                            dep_name,
+                            clone.res,
+                            resolved,
+                            null,
+                        )));
+                    } else {
+                        // Resolving!
+                        const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                        const dependency_list = dependency_list_entry.value_ptr.*;
+                        dependency_list_entry.value_ptr.* = .{};
+
+                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    }
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -13511,7 +13556,15 @@ pub const PackageManager = struct {
 
             if (clone_queue.found_existing) return;
 
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, repository, &this.lockfile.buffers.dependencies.items[dependency_id], null)));
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(
+                clone_id,
+                alias,
+                repository,
+                dependency_id,
+                &this.lockfile.buffers.dependencies.items[dependency_id],
+                resolution,
+                null,
+            )));
         }
     }
 

@@ -803,6 +803,7 @@ pub const Subprocess = struct {
         detached: void,
 
         pub fn memoryCost(this: *const Source) usize {
+            // Memory cost of Source and each of the particular fields is covered by @sizeOf(Subprocess).
             return switch (this.*) {
                 .blob => this.blob.memoryCost(),
                 // ArrayBuffer is owned by GC.

@@ -4777,6 +4777,7 @@ pub const AnyBlob = union(enum) {
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
 
+    /// Assumed that AnyBlob itself is covered by the caller.
     pub fn memoryCost(this: *const AnyBlob) usize {
         return switch (this.*) {
             .Blob => |*blob| if (blob.store) |blob_store| blob_store.memoryCost() else 0,

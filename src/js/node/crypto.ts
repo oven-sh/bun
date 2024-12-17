@@ -28,7 +28,8 @@ const {
   randomInt: _randomInt,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
-  X509Certificate,
+  // TODO: complete after @paperdave's bindgen PR(s) are merged and KeyObject is accessible from zig.
+  // X509Certificate,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 function randomInt(min, max, callback) {
@@ -12051,7 +12052,8 @@ crypto_exports.scryptSync = scryptSync;
 crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
-crypto_exports.X509Certificate = X509Certificate;
+// TODO: complete after @paperdave's bindgen PR(s) are merged and KeyObject is accessible from zig.
+// crypto_exports.X509Certificate = X509Certificate;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

@@ -9,6 +9,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const Progress = bun.Progress;
+const String = bun.Semver.String;
 
 const logger = bun.logger;
 const Loc = logger.Loc;
@@ -80,7 +81,7 @@ pub const PatchTask = struct {
         name_and_version_hash: u64,
         resolution: *const Resolution,
         patchfilepath: []const u8,
-        pkgname: []const u8,
+        pkgname: String,
 
         cache_dir: std.fs.Dir,
         cache_dir_subpath: stringZ,
@@ -103,7 +104,6 @@ pub const PatchTask = struct {
             .apply => {
                 this.manager.allocator.free(this.callback.apply.patchfilepath);
                 this.manager.allocator.free(this.callback.apply.cache_dir_subpath);
-                this.manager.allocator.free(this.callback.apply.pkgname);
                 if (this.callback.apply.install_context) |ictx| ictx.path.deinit();
                 this.callback.apply.logger.deinit();
             },
@@ -564,7 +564,7 @@ pub const PatchTask = struct {
                     .name_and_version_hash = name_and_version_hash,
                     .cache_dir = stuff.cache_dir,
                     .patchfilepath = patchfilepath,
-                    .pkgname = pkg_manager.allocator.dupe(u8, pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
+                    .pkgname = pkg_name,
                     .logger = logger.Log.init(pkg_manager.allocator),
                     // need to dupe this as it's calculated using
                     // `PackageManager.cached_package_folder_name_buf` which may be

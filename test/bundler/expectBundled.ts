@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -210,6 +210,7 @@ export interface BundlerTestInput {
   // pass subprocess.env
   env?: Record<string, any>;
   nodePaths?: string[];
+  dotenv?: "inline" | "disable" | string;
 
   // assertion options
 
@@ -277,8 +278,6 @@ export interface BundlerTestInput {
 
   /** Multiplier for test timeout */
   timeoutScale?: number;
-  /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
-  debugTimeoutScale?: number;
 
   /* determines whether or not anything should be passed to outfile, outdir, etc. */
   generateOutput?: boolean;
@@ -400,8 +399,10 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes('test/bundler/')) {
-    throw new Error(`All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`);
+  if (!new Error().stack!.includes("test/bundler/")) {
+    throw new Error(
+      `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
+    );
   }
 
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
@@ -449,6 +450,7 @@ function expectBundled(
     experimentalCss,
     onAfterBundle,
     outdir,
+    dotenv,
     outfile,
     outputPaths,
     plugins,
@@ -548,6 +550,9 @@ function expectBundled(
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
+  }
+  if (ESBUILD && dotenv) {
+    throw new Error("dotenv not implemented in esbuild");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -695,6 +700,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
@@ -1029,6 +1035,10 @@ function expectBundled(
           experimentalCss,
           drop,
         } as BuildConfig;
+
+        if (dotenv) {
+          buildConfig.env = dotenv as any;
+        }
 
         if (conditions?.length) {
           buildConfig.conditions = conditions;
@@ -1651,8 +1661,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
@@ -1664,8 +1673,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
   );
 };
 

@@ -483,13 +483,14 @@ class InlineSnapshotTester {
 
 describe("inline snapshots", () => {
   const bad = '"bad"';
+  const helper_js = /*js*/ `
+    import {expect} from "bun:test";
+    export function wrongFile(value) {
+      expect(value).toMatchInlineSnapshot();
+    }
+  `;
   const tester = new InlineSnapshotTester({
-    "helper.js": /*js*/ `
-      import {expect} from "bun:test";
-      export function wrongFile(value) {
-        expect(value).toMatchInlineSnapshot();
-      }
-    `,
+    "helper.js": helper_js,
   });
   test("changing inline snapshot", () => {
     tester.test(
@@ -718,7 +719,7 @@ describe("inline snapshots", () => {
     tester.testError(
       {
         update: true,
-        msg: "Matcher error: Inline snapshot matchers must be called from the same file as the test",
+        msg: "Inline snapshot matchers must be called from the test file",
       },
       /*js*/ `
         import {wrongFile} from "./helper";
@@ -727,5 +728,91 @@ describe("inline snapshots", () => {
         });
       `,
     );
+    expect(readFileSync(tester.tmpdir + "/helper.js", "utf-8")).toBe(helper_js);
   });
+  it("is right file", () => {
+    tester.test(
+      v => /*js*/ `
+        import {wrongFile} from "./helper";
+        test("cases", () => {
+          expect("rightfile").toMatchInlineSnapshot(${v("", '"9"', '`"rightfile"`')});
+          expect(wrongFile).toMatchInlineSnapshot(${v("", '"9"', "`[Function: wrongFile]`")});
+        });
+      `,
+    );
+  });
+});
+
+test("error snapshots", () => {
+  expect(() => {
+    throw new Error("hello");
+  }).toThrowErrorMatchingInlineSnapshot(`"hello"`);
+  expect(() => {
+    throw 0;
+  }).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  expect(() => {
+    throw { a: "b" };
+  }).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  expect(() => {
+    throw undefined; // this one doesn't work in jest because it doesn't think the function threw
+  }).toThrowErrorMatchingInlineSnapshot(`undefined`);
+});
+test("error inline snapshots", () => {
+  expect(() => {
+    throw new Error("hello");
+  }).toThrowErrorMatchingSnapshot();
+  expect(() => {
+    throw 0;
+  }).toThrowErrorMatchingSnapshot();
+  expect(() => {
+    throw { a: "b" };
+  }).toThrowErrorMatchingSnapshot();
+  expect(() => {
+    throw undefined;
+  }).toThrowErrorMatchingSnapshot();
+  expect(() => {
+    throw "abcdef";
+  }).toThrowErrorMatchingSnapshot("hint");
+  expect(() => {
+    throw new Error("😊");
+  }).toThrowErrorMatchingInlineSnapshot(`"😊"`);
+});
+
+test("snapshot numbering", () => {
+  function fails() {
+    throw new Error("snap");
+  }
+  expect("item one").toMatchSnapshot();
+  expect(fails).toThrowErrorMatchingSnapshot();
+  expect("1").toMatchInlineSnapshot(`"1"`);
+  expect(fails).toThrowErrorMatchingSnapshot();
+  expect(fails).toThrowErrorMatchingInlineSnapshot(`"snap"`);
+  expect("hello").toMatchSnapshot();
+  expect("hello").toMatchSnapshot("hinted");
+});
+
+test("write snapshot from filter", async () => {
+  const sver = (m: string, a: boolean) => /*js*/ `
+    test("mysnap", () => {
+      expect("${m}").toMatchInlineSnapshot(${a ? '`"' + m + '"`' : ""});
+      expect(() => {throw new Error("${m}!")}).toThrowErrorMatchingInlineSnapshot(${a ? '`"' + m + '!"`' : ""});
+    })
+  `;
+  const dir = tempDirWithFiles("writesnapshotfromfilter", {
+    "mytests": {
+      "snap.test.ts": sver("a", false),
+      "snap2.test.ts": sver("b", false),
+      "more": {
+        "testing.test.ts": sver("TEST", false),
+      },
+    },
+  });
+  await $`cd ${dir} && ${bunExe()} test mytests`;
+  expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
+  expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
+  expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+  await $`cd ${dir} && ${bunExe()} test mytests`;
+  expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
+  expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
+  expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
 });

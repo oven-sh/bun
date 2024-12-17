@@ -530,7 +530,7 @@ const ExternVersionMap = extern struct {
     }
 };
 
-fn Negatable(comptime T: type) type {
+pub fn Negatable(comptime T: type) type {
     return struct {
         added: T = T.none,
         removed: T = T.none,
@@ -578,6 +578,11 @@ fn Negatable(comptime T: type) type {
                 return;
             }
 
+            if (strings.eqlComptime(str, "none")) {
+                this.had_unrecognized_values = true;
+                return;
+            }
+
             const is_not = str[0] == '!';
             const offset: usize = @intFromBool(is_not);
 
@@ -592,6 +597,74 @@ fn Negatable(comptime T: type) type {
             } else {
                 this.* = .{ .added = @enumFromInt(@intFromEnum(this.added) | field), .removed = this.removed };
             }
+        }
+
+        pub fn fromJson(allocator: std.mem.Allocator, expr: JSON.Expr) OOM!T {
+            var this = T.none.negatable();
+            switch (expr.data) {
+                .e_array => |arr| {
+                    const items = arr.slice();
+                    if (items.len > 0) {
+                        for (items) |item| {
+                            if (item.asString(allocator)) |value| {
+                                this.apply(value);
+                            }
+                        }
+                    }
+                },
+                .e_string => |str| {
+                    this.apply(str.data);
+                },
+                else => {},
+            }
+
+            return this.combine();
+        }
+
+        /// writes to a one line json array with a trailing comma and space, or writes a string
+        pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
+            if (field == .none) {
+                // [] means everything, so unrecognized value
+                try writer.writeAll(
+                    \\"none"
+                );
+                return;
+            }
+
+            const kvs = T.NameMap.kvs;
+            var removed: u8 = 0;
+            for (kvs) |kv| {
+                if (!field.has(kv.value)) {
+                    removed += 1;
+                }
+            }
+            const included = kvs.len - removed;
+            const print_included = removed > kvs.len - removed;
+
+            const one = (print_included and included == 1) or (!print_included and removed == 1);
+
+            if (!one) {
+                try writer.writeAll("[ ");
+            }
+
+            for (kvs) |kv| {
+                const has = field.has(kv.value);
+                if (has and print_included) {
+                    try writer.print(
+                        \\"{s}"
+                    , .{kv.key});
+                    if (one) return;
+                    try writer.writeAll(", ");
+                } else if (!has and !print_included) {
+                    try writer.print(
+                        \\"!{s}"
+                    , .{kv.key});
+                    if (one) return;
+                    try writer.writeAll(", ");
+                }
+            }
+
+            try writer.writeByte(']');
         }
     };
 }
@@ -1759,69 +1832,15 @@ pub const PackageManifest = struct {
                     var package_version: PackageVersion = empty_version;
 
                     if (prop.value.?.asProperty("cpu")) |cpu_q| {
-                        var cpu = Architecture.none.negatable();
-
-                        switch (cpu_q.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |cpu_str_| {
-                                            cpu.apply(cpu_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                cpu.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.cpu = cpu.combine();
+                        package_version.cpu = try Negatable(Architecture).fromJson(allocator, cpu_q.expr);
                     }
 
                     if (prop.value.?.asProperty("os")) |os_q| {
-                        var os = OperatingSystem.none.negatable();
-
-                        switch (os_q.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |cpu_str_| {
-                                            os.apply(cpu_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                os.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.os = os.combine();
+                        package_version.os = try Negatable(OperatingSystem).fromJson(allocator, os_q.expr);
                     }
 
                     if (prop.value.?.asProperty("libc")) |libc| {
-                        var libc_ = Libc.none.negatable();
-
-                        switch (libc.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |libc_str_| {
-                                            libc_.apply(libc_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                libc_.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.libc = libc_.combine();
+                        package_version.libc = try Negatable(Libc).fromJson(allocator, libc.expr);
                     }
 
                     if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {
@@ -1973,7 +1992,7 @@ pub const PackageManifest = struct {
 
                                 if (dist.expr.asProperty("integrity")) |shasum| {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
-                                        package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
+                                        package_version.integrity = Integrity.parse(shasum_str);
                                         if (package_version.integrity.tag.isSupported()) break :integrity;
                                     }
                                 }

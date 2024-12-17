@@ -593,12 +593,12 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return globalThis.createObjectFromStruct(.{
-            .default_registry_url = default_registry_url.toJS(globalThis),
-            .default_registry_token = default_registry_token.toJS(globalThis),
-            .default_registry_username = default_registry_username.toJS(globalThis),
-            .default_registry_password = default_registry_password.toJS(globalThis),
-        }).toJS();
+        return JSC.JSObject.create(.{
+            .default_registry_url = default_registry_url,
+            .default_registry_token = default_registry_token,
+            .default_registry_username = default_registry_username,
+            .default_registry_password = default_registry_password,
+        }, globalThis).toJS();
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

@@ -1,4 +1,4 @@
-import { CString, dlopen, FFIType, Pointer, read, suffix } from "bun:ffi";
+import { CString, dlopen, FFIType, JSCallback, Pointer, read, suffix } from "bun:ffi";
 import * as tsd from "./utilities.test";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
@@ -62,12 +62,14 @@ const lib = dlopen(
   },
 );
 
+declare const ptr: Pointer;
+
 tsd.expectType<CString>(lib.symbols.sqlite3_libversion());
 tsd.expectType<number>(lib.symbols.add(1, 2));
 
-tsd.expectType<Pointer | null>(lib.symbols.ptr_type(0));
+tsd.expectType<Pointer | null>(lib.symbols.ptr_type(ptr));
 
-tsd.expectType<Pointer | null>(lib.symbols.fn_type(0));
+tsd.expectType<Pointer | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
 
 function _arg(
   ...params: [
@@ -166,16 +168,16 @@ tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
 tsd.expectTypeEquals<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, undefined>(true);
 tsd.expectTypeEquals<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>(true);
 
-tsd.expectType<number>(read.u8(0));
-tsd.expectType<number>(read.u8(0, 0));
-tsd.expectType<number>(read.i8(0, 0));
-tsd.expectType<number>(read.u16(0, 0));
-tsd.expectType<number>(read.i16(0, 0));
-tsd.expectType<number>(read.u32(0, 0));
-tsd.expectType<number>(read.i32(0, 0));
-tsd.expectType<bigint>(read.u64(0, 0));
-tsd.expectType<bigint>(read.i64(0, 0));
-tsd.expectType<number>(read.f32(0, 0));
-tsd.expectType<number>(read.f64(0, 0));
-tsd.expectType<number>(read.ptr(0, 0));
-tsd.expectType<number>(read.intptr(0, 0));
+tsd.expectType<number>(read.u8(ptr));
+tsd.expectType<number>(read.u8(ptr, 0));
+tsd.expectType<number>(read.i8(ptr, 0));
+tsd.expectType<number>(read.u16(ptr, 0));
+tsd.expectType<number>(read.i16(ptr, 0));
+tsd.expectType<number>(read.u32(ptr, 0));
+tsd.expectType<number>(read.i32(ptr, 0));
+tsd.expectType<bigint>(read.u64(ptr, 0));
+tsd.expectType<bigint>(read.i64(ptr, 0));
+tsd.expectType<number>(read.f32(ptr, 0));
+tsd.expectType<number>(read.f64(ptr, 0));
+tsd.expectType<number>(read.ptr(ptr, 0));
+tsd.expectType<number>(read.intptr(ptr, 0));

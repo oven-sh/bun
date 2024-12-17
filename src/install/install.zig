@@ -7237,6 +7237,10 @@ pub const PackageManager = struct {
                     }
                 }
 
+                if (config.save_text_lockfile) |save_text_lockfile| {
+                    this.save_text_lockfile = save_text_lockfile;
+                }
+
                 if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
                 }
@@ -7395,7 +7399,9 @@ pub const PackageManager = struct {
                     this.do.trust_dependencies_from_args = true;
                 }
 
-                this.save_text_lockfile = cli.save_text_lockfile;
+                if (cli.save_text_lockfile) |save_text_lockfile| {
+                    this.save_text_lockfile = save_text_lockfile;
+                }
 
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
@@ -9498,7 +9504,7 @@ pub const PackageManager = struct {
         ca: []const string = &.{},
         ca_file_name: string = "",
 
-        save_text_lockfile: bool = false,
+        save_text_lockfile: ?bool = null,
 
         const PatchOpts = union(enum) {
             nothing: struct {},

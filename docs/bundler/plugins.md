@@ -42,7 +42,7 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 
 ## Usage
 
-A plugin is defined as simple JavaScript object containing a `name` property and a `setup` function. Register a plugin with Bun using the `plugin` function.
+A plugin is defined as simple JavaScript object containing a `name` property and a `setup` function.
 
 ```tsx#myPlugin.ts
 import type { BunPlugin } from "bun";

@@ -8,7 +8,37 @@ import path from "path";
 import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
 
 describe("css tests", () => {
-  test("edge case", () => {
+  describe("pseudo-class edge case", () => {
+    cssTest(
+      indoc`[type="file"]::file-selector-button:-moz-any() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }`,
+      indoc`[type="file"]::-webkit-file-upload-button:-webkit-any() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }
+    [type="file"]::file-selector-button:is() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }`,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
+  });
+
+  test("calc edge case", () => {
     minifyTest(
       // Problem: the value is being printed as Infinity in our restrict_prec thing but the internal thing actually wants it as 3.40282e38px
       `.rounded-full {
@@ -3532,4 +3562,153 @@ describe("css tests", () => {
       ".foo{background:repeating-conic-gradient(#000 0deg 25%,#fff 0deg 50%)}",
     );
   });
+
+  // describe("transform", () => {
+  //   minifyTest(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
+  //   minifyTest(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
+  //   minifyTest(".foo { transform: translate(0px, 2px)", ".foo{transform:translateY(2px)}");
+  //   minifyTest(".foo { transform: translateX(2px)", ".foo{transform:translate(2px)}");
+  //   minifyTest(".foo { transform: translateY(2px)", ".foo{transform:translateY(2px)}");
+  //   minifyTest(".foo { transform: translateZ(2px)", ".foo{transform:translateZ(2px)}");
+  //   minifyTest(".foo { transform: translate3d(2px, 3px, 4px)", ".foo{transform:translate3d(2px,3px,4px)}");
+  //   minifyTest(".foo { transform: translate3d(10%, 20%, 4px)", ".foo{transform:translate3d(10%,20%,4px)}");
+  //   minifyTest(".foo { transform: translate3d(2px, 0px, 0px)", ".foo{transform:translate(2px)}");
+  //   minifyTest(".foo { transform: translate3d(0px, 2px, 0px)", ".foo{transform:translateY(2px)}");
+  //   minifyTest(".foo { transform: translate3d(0px, 0px, 2px)", ".foo{transform:translateZ(2px)}");
+  //   minifyTest(".foo { transform: translate3d(2px, 3px, 0px)", ".foo{transform:translate(2px,3px)}");
+  //   minifyTest(".foo { transform: scale(2, 3)", ".foo{transform:scale(2,3)}");
+  //   minifyTest(".foo { transform: scale(10%, 20%)", ".foo{transform:scale(.1,.2)}");
+  //   minifyTest(".foo { transform: scale(2, 2)", ".foo{transform:scale(2)}");
+  //   minifyTest(".foo { transform: scale(2, 1)", ".foo{transform:scaleX(2)}");
+  //   minifyTest(".foo { transform: scale(1, 2)", ".foo{transform:scaleY(2)}");
+  //   minifyTest(".foo { transform: scaleX(2)", ".foo{transform:scaleX(2)}");
+  //   minifyTest(".foo { transform: scaleY(2)", ".foo{transform:scaleY(2)}");
+  //   minifyTest(".foo { transform: scaleZ(2)", ".foo{transform:scaleZ(2)}");
+  //   minifyTest(".foo { transform: scale3d(2, 3, 4)", ".foo{transform:scale3d(2,3,4)}");
+  //   minifyTest(".foo { transform: scale3d(2, 1, 1)", ".foo{transform:scaleX(2)}");
+  //   minifyTest(".foo { transform: scale3d(1, 2, 1)", ".foo{transform:scaleY(2)}");
+  //   minifyTest(".foo { transform: scale3d(1, 1, 2)", ".foo{transform:scaleZ(2)}");
+  //   minifyTest(".foo { transform: scale3d(2, 2, 1)", ".foo{transform:scale(2)}");
+  //   minifyTest(".foo { transform: rotate(20deg)", ".foo{transform:rotate(20deg)}");
+  //   minifyTest(".foo { transform: rotateX(20deg)", ".foo{transform:rotateX(20deg)}");
+  //   minifyTest(".foo { transform: rotateY(20deg)", ".foo{transform:rotateY(20deg)}");
+  //   minifyTest(".foo { transform: rotateZ(20deg)", ".foo{transform:rotate(20deg)}");
+  //   minifyTest(".foo { transform: rotate(360deg)", ".foo{transform:rotate(360deg)}");
+  //   minifyTest(".foo { transform: rotate3d(2, 3, 4, 20deg)", ".foo{transform:rotate3d(2,3,4,20deg)}");
+  //   minifyTest(".foo { transform: rotate3d(1, 0, 0, 20deg)", ".foo{transform:rotateX(20deg)}");
+  //   minifyTest(".foo { transform: rotate3d(0, 1, 0, 20deg)", ".foo{transform:rotateY(20deg)}");
+  //   minifyTest(".foo { transform: rotate3d(0, 0, 1, 20deg)", ".foo{transform:rotate(20deg)}");
+  //   minifyTest(".foo { transform: rotate(405deg)}", ".foo{transform:rotate(405deg)}");
+  //   minifyTest(".foo { transform: rotateX(405deg)}", ".foo{transform:rotateX(405deg)}");
+  //   minifyTest(".foo { transform: rotateY(405deg)}", ".foo{transform:rotateY(405deg)}");
+  //   minifyTest(".foo { transform: rotate(-200deg)}", ".foo{transform:rotate(-200deg)}");
+  //   minifyTest(".foo { transform: rotate(0)", ".foo{transform:rotate(0)}");
+  //   minifyTest(".foo { transform: rotate(0deg)", ".foo{transform:rotate(0)}");
+  //   minifyTest(".foo { transform: rotateX(-200deg)}", ".foo{transform:rotateX(-200deg)}");
+  //   minifyTest(".foo { transform: rotateY(-200deg)}", ".foo{transform:rotateY(-200deg)}");
+  //   minifyTest(".foo { transform: rotate3d(1, 1, 0, -200deg)", ".foo{transform:rotate3d(1,1,0,-200deg)}");
+  //   minifyTest(".foo { transform: skew(20deg)", ".foo{transform:skew(20deg)}");
+  //   minifyTest(".foo { transform: skew(20deg, 0deg)", ".foo{transform:skew(20deg)}");
+  //   minifyTest(".foo { transform: skew(0deg, 20deg)", ".foo{transform:skewY(20deg)}");
+  //   minifyTest(".foo { transform: skewX(20deg)", ".foo{transform:skew(20deg)}");
+  //   minifyTest(".foo { transform: skewY(20deg)", ".foo{transform:skewY(20deg)}");
+  //   minifyTest(".foo { transform: perspective(10px)", ".foo{transform:perspective(10px)}");
+  //   minifyTest(".foo { transform: matrix(1, 2, -1, 1, 80, 80)", ".foo{transform:matrix(1,2,-1,1,80,80)}");
+  //   minifyTest(
+  //     ".foo { transform: matrix3d(1, 0, 0, 0, 0, 1, 6, 0, 0, 0, 1, 0, 50, 100, 0, 1.1)",
+  //     ".foo{transform:matrix3d(1,0,0,0,0,1,6,0,0,0,1,0,50,100,0,1.1)}",
+  //   );
+  //   // TODO: Re-enable with a better solution
+  //   //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+  //   // minifyTest(
+  //   //   ".foo{transform:translate(100px,200px) rotate(45deg) skew(10deg) scale(2)}",
+  //   //   ".foo{transform:matrix(1.41421,1.41421,-1.16485,1.66358,100,200)}",
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:translate(200px,300px) translate(100px,200px) scale(2)}",
+  //   //   ".foo{transform:matrix(2,0,0,2,300,500)}",
+  //   // );
+  //   minifyTest(
+  //     ".foo{transform:translate(100px,200px) rotate(45deg)}",
+  //     ".foo{transform:translate(100px,200px)rotate(45deg)}",
+  //   );
+  //   minifyTest(
+  //     ".foo{transform:rotate3d(1, 1, 1, 45deg) translate3d(100px, 100px, 10px)}",
+  //     ".foo{transform:rotate3d(1,1,1,45deg)translate3d(100px,100px,10px)}",
+  //   );
+  //   // TODO: Re-enable with a better solution
+  //   //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+  //   // minifyTest(
+  //   //   ".foo{transform:translate3d(100px, 100px, 10px) skew(10deg) scale3d(2, 3, 4)}",
+  //   //   ".foo{transform:matrix3d(2,0,0,0,.528981,3,0,0,0,0,4,0,100,100,10,1)}",
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:matrix3d(0.804737854124365, 0.5058793634016805, -0.31061721752604554, 0, -0.31061721752604554, 0.804737854124365, 0.5058793634016805, 0, 0.5058793634016805, -0.31061721752604554, 0.804737854124365, 0, 100, 100, 10, 1)}",
+  //   //   ".foo{transform:translate3d(100px,100px,10px)rotate3d(1,1,1,45deg)}"
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:matrix3d(1, 0, 0, 0, 0, 0.7071067811865476, 0.7071067811865475, 0, 0, -0.7071067811865475, 0.7071067811865476, 0, 100, 100, 10, 1)}",
+  //   //   ".foo{transform:translate3d(100px,100px,10px)rotateX(45deg)}"
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:translate3d(100px, 200px, 10px) translate(100px, 100px)}",
+  //   //   ".foo{transform:translate3d(200px,300px,10px)}",
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:rotate(45deg) rotate(45deg)}",
+  //   //   ".foo{transform:rotate(90deg)}",
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:matrix(0.7071067811865476, 0.7071067811865475, -0.7071067811865475, 0.7071067811865476, 100, 100)}",
+  //   //   ".foo{transform:translate(100px,100px)rotate(45deg)}"
+  //   // );
+  //   // minifyTest(
+  //   //   ".foo{transform:translateX(2in) translateX(50px)}",
+  //   //   ".foo{transform:translate(242px)}",
+  //   // );
+  //   minifyTest(".foo{transform:translateX(calc(2in + 50px))}", ".foo{transform:translate(242px)}");
+  //   minifyTest(".foo{transform:translateX(50%)}", ".foo{transform:translate(50%)}");
+  //   minifyTest(".foo{transform:translateX(calc(50% - 100px + 20px))}", ".foo{transform:translate(calc(50% - 80px))}");
+  //   minifyTest(".foo{transform:rotate(calc(10deg + 20deg))}", ".foo{transform:rotate(30deg)}");
+  //   minifyTest(".foo{transform:rotate(calc(10deg + 0.349066rad))}", ".foo{transform:rotate(30deg)}");
+  //   minifyTest(".foo{transform:rotate(calc(10deg + 1.5turn))}", ".foo{transform:rotate(550deg)}");
+  //   minifyTest(".foo{transform:rotate(calc(10deg * 2))}", ".foo{transform:rotate(20deg)}");
+  //   minifyTest(".foo{transform:rotate(calc(-10deg * 2))}", ".foo{transform:rotate(-20deg)}");
+  //   minifyTest(
+  //     ".foo{transform:rotate(calc(10deg + var(--test)))}",
+  //     ".foo{transform:rotate(calc(10deg + var(--test)))}",
+  //   );
+  //   minifyTest(".foo { transform: scale(calc(10% + 20%))", ".foo{transform:scale(.3)}");
+  //   minifyTest(".foo { transform: scale(calc(.1 + .2))", ".foo{transform:scale(.3)}");
+
+  //   minifyTest(".foo { -webkit-transform: scale(calc(10% + 20%))", ".foo{-webkit-transform:scale(.3)}");
+
+  //   minifyTest(".foo { translate: 1px 2px 3px }", ".foo{translate:1px 2px 3px}");
+  //   minifyTest(".foo { translate: 1px 0px 0px }", ".foo{translate:1px}");
+  //   minifyTest(".foo { translate: 1px 2px 0px }", ".foo{translate:1px 2px}");
+  //   minifyTest(".foo { translate: 1px 0px 2px }", ".foo{translate:1px 0 2px}");
+  //   minifyTest(".foo { translate: none }", ".foo{translate:none}");
+  //   minifyTest(".foo { rotate: 10deg }", ".foo{rotate:10deg}");
+  //   minifyTest(".foo { rotate: z 10deg }", ".foo{rotate:10deg}");
+  //   minifyTest(".foo { rotate: 0 0 1 10deg }", ".foo{rotate:10deg}");
+  //   minifyTest(".foo { rotate: x 10deg }", ".foo{rotate:x 10deg}");
+  //   minifyTest(".foo { rotate: 1 0 0 10deg }", ".foo{rotate:x 10deg}");
+  //   minifyTest(".foo { rotate: y 10deg }", ".foo{rotate:y 10deg}");
+  //   minifyTest(".foo { rotate: 0 1 0 10deg }", ".foo{rotate:y 10deg}");
+  //   minifyTest(".foo { rotate: 1 1 1 10deg }", ".foo{rotate:1 1 1 10deg}");
+  //   minifyTest(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:none}");
+  //   minifyTest(".foo { rotate: none }", ".foo{rotate:none}");
+  //   minifyTest(".foo { scale: 1 }", ".foo{scale:1}");
+  //   minifyTest(".foo { scale: 1 1 }", ".foo{scale:1}");
+  //   minifyTest(".foo { scale: 1 1 1 }", ".foo{scale:1}");
+  //   minifyTest(".foo { scale: none }", ".foo{scale:none}");
+  //   minifyTest(".foo { scale: 1 0 }", ".foo{scale:1 0}");
+  //   minifyTest(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
+  //   minifyTest(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
+
+  //   // TODO: Re-enable with a better solution
+  //   //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+  //   // minifyTest(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
+  //   minifyTest(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+  // });
 });

@@ -3744,7 +3744,7 @@ pub const ParseTask = struct {
                         },
                     };
                     if (css_ast.minify(allocator, bun.css.MinifyOptions{
-                        .targets = bun.css.Targets.bundlerDefault(),
+                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
                         .unused_symbols = .{},
                     }).asErr()) |e| {
                         try e.addToLogger(log, &source);
@@ -9109,7 +9109,7 @@ pub const LinkerContext = struct {
                 const printer_options = bun.css.PrinterOptions{
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace,
-                    .targets = bun.css.Targets.bundlerDefault(),
+                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
                 };
                 _ = css.toCssWithWriter(
                     worker.allocator,
@@ -9128,13 +9128,15 @@ pub const LinkerContext = struct {
             },
             .source_index => |idx| {
                 const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+                const printer_options = bun.css.PrinterOptions{
+                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                    // TODO: make this more configurable
+                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                };
                 _ = css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
-                    bun.css.PrinterOptions{
-                        // TODO: make this more configurable
-                        .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
-                    },
+                    printer_options,
                     &c.graph.ast.items(.import_records)[idx.get()],
                 ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");

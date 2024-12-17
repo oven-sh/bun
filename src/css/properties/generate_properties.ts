@@ -1078,6 +1078,7 @@ generateCode({
   "margin-right": {
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "margin", category: "physical" },
+    eval_branch_quota: 5000,
   },
   "margin-block-start": {
     ty: "LengthPercentageOrAuto",

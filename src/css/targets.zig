@@ -18,9 +18,23 @@ pub const Targets = struct {
     exclude: Features = .{},
 
     /// Set a sane default for bundler
-    pub fn bundlerDefault() Targets {
+    pub fn browserDefault() Targets {
         return .{
-            .browsers = Browsers.bundlerDefault,
+            .browsers = Browsers.browserDefault,
+        };
+    }
+
+    /// Set a sane default for bundler
+    pub fn runtimeDefault() Targets {
+        return .{
+            .browsers = null,
+        };
+    }
+
+    pub fn forBundlerTarget(target: bun.bundler.options.Target) Targets {
+        return switch (target) {
+            .node, .bun => runtimeDefault(),
+            .browser, .bun_macro, .bake_server_components_ssr => browserDefault(),
         };
     }
 
@@ -133,7 +147,7 @@ pub const Features = packed struct(u32) {
 
 pub fn BrowsersImpl(comptime T: type) type {
     return struct {
-        pub const bundlerDefault = convertFromString(&.{
+        pub const browserDefault = convertFromString(&.{
             "es2020", // support import.meta.url
             "edge88",
             "firefox78",

@@ -1896,7 +1896,6 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
         result->putDirect(vm, vm.propertyNames->name, code, JSC::PropertyAttribute::DontEnum | 0);
     } else {
-
         result->putDirect(
             vm, vm.propertyNames->name,
             JSC::JSValue(jsString(vm, String("SystemError"_s))),
@@ -1928,6 +1927,60 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     scope.release();
 
     return JSC::JSValue::encode(JSC::JSValue(result));
+}
+
+JSC__JSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0,
+    JSC__JSGlobalObject* globalObject)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    SystemError err = *arg0;
+
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto codeString = err.code.toWTFString();
+    auto syscallString = err.syscall.toWTFString();
+    auto messageString = err.message.toWTFString();
+
+    JSC::JSValue message = JSC::jsString(vm, makeString("A system error occurred: "_s, syscallString, " returned "_s, codeString, " ("_s, messageString, ")"_s));
+
+    JSC::JSValue options = JSC::jsUndefined();
+    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
+    JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+
+    auto clientData = WebCore::clientData(vm);
+
+    result->putDirect(
+        vm, vm.propertyNames->name,
+        JSC::JSValue(jsString(vm, String("SystemError"_s))),
+        JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(
+        vm, clientData->builtinNames().codePublicName(),
+        JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))),
+        JSC::PropertyAttribute::DontEnum | 0);
+
+    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
+
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "info"_s), info, JSC::PropertyAttribute::DontDelete | 0);
+
+    auto syscallJsString = jsString(vm, syscallString);
+    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
+        JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString),
+        JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_),
+        JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(result)));
 }
 
 JSC__JSValue

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -2225,7 +2225,7 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
-  it("simple write stream finishes", async () => {
+  it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();
 

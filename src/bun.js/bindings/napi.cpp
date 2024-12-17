@@ -1025,6 +1025,21 @@ extern "C" void napi_module_register(napi_module* mod)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
+static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    if (auto* napi_instance = jsDynamicCast<NapiPrototype*>(object)) {
+        return napi_instance->napiRef;
+    } else {
+        JSValue contents = object->getDirect(vm, WebCore::builtinNames(vm).napiWrappedContentsPrivateName());
+        if (contents.isEmpty()) {
+            return nullptr;
+        } else {
+            // jsCast asserts: we should not have stored anything but a NapiExternal here
+            return static_cast<NapiRef*>(jsCast<Bun::NapiExternal*>(contents)->value());
+        }
+    }
+}
+
 extern "C" napi_status napi_wrap(napi_env env,
     napi_value js_object,
     void* native_object,
@@ -1039,50 +1054,46 @@ extern "C" napi_status napi_wrap(napi_env env,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
-        return napi_object_expected;
-    }
-
     auto* globalObject = toJS(env);
-
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto& vm = globalObject->vm();
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
     }
-
-    if (!refPtr) {
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
         return napi_object_expected;
     }
 
-    if (*refPtr) {
-        // Calling napi_wrap() a second time on an object will return an error.
-        // To associate another native instance with the object, use
-        // napi_remove_wrap() first.
+    // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
+
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+
+    if (getWrapContentsIfExists(vm, globalObject, jsc_object)) {
+        // already wrapped
         return napi_invalid_arg;
     }
 
+    // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.set(jsc_value, weakValueHandleOwner(), ref);
 
-    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
+    ref->finalizer.finalize_cb = finalize_cb;
+    ref->finalizer.finalize_hint = finalize_hint;
+    ref->data = native_object;
 
-    if (finalize_cb) {
-        ref->finalizer.finalize_cb = finalize_cb;
-        ref->finalizer.finalize_hint = finalize_hint;
+    if (napi_instance) {
+        napi_instance->napiRef = ref;
+    } else {
+        // wrap the ref in an external so that it can serve as a JSValue
+        auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, nullptr);
+        jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
-
-    if (native_object) {
-        ref->data = native_object;
-    }
-
-    *refPtr = ref;
 
     if (result) {
         *result = toNapi(ref);
     }
-
     return napi_ok;
 }
 
@@ -1091,35 +1102,41 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!js_object) {
         return napi_object_expected;
     }
+    // may be null
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
+
+    if (!ref) {
+        return napi_invalid_arg;
     }
 
-    if (!refPtr) {
-        return napi_object_expected;
+    if (napi_instance) {
+        napi_instance->napiRef = nullptr;
+    } else {
+        const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+        jsc_object->deleteProperty(globalObject, propertyName);
     }
-
-    if (!(*refPtr)) {
-        // not sure if this should succeed or return an error
-        return napi_ok;
-    }
-
-    auto* ref = *refPtr;
-    *refPtr = nullptr;
 
     if (result) {
         *result = ref->data;
     }
-    delete ref;
+    ref->finalizer.finalize_cb = nullptr;
 
+    // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
+    // if strong, native addon needs to clean it up.
+    // the external is garbage collected.
     return napi_ok;
 }
 
@@ -1128,23 +1145,24 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-
-    if (!value.isObject()) {
-        return NAPI_OBJECT_EXPECTED;
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
+        return napi_object_expected;
     }
 
-    NapiRef* ref = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        ref = val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        ref = val->napiRef;
-    } else {
-        ASSERT(false);
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
+    if (!ref) {
+        return napi_invalid_arg;
     }
 
-    if (ref && result) {
-        *result = ref ? ref->data : nullptr;
+    if (result) {
+        *result = ref->data;
     }
 
     return napi_ok;

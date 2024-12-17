@@ -717,15 +717,23 @@ fn NewPrinter(
             is_top_level: ?ModuleInfo.VarKind = null,
         };
         const TopLevel = if (!may_have_module_info) struct {
-            pub inline fn init(_: bool) @This() {
+            pub inline fn init(_: IsTopLevel) @This() {
+                return .{};
+            }
+            pub inline fn subVar(_: @This()) @This() {
                 return .{};
             }
         } else struct {
-            is_top_level: bool = false,
-            pub inline fn init(is_top_level: bool) @This() {
+            is_top_level: IsTopLevel = .no,
+            pub inline fn init(is_top_level: IsTopLevel) @This() {
                 return .{ .is_top_level = is_top_level };
             }
+            pub fn subVar(self: @This()) @This() {
+                if (self.is_top_level == .no) return @This().init(.no);
+                return @This().init(.var_only);
+            }
         };
+        const IsTopLevel = enum { yes, var_only, no };
         inline fn moduleInfo(self: *const @This()) ?*ModuleInfo {
             if (!may_have_module_info) return null;
             return self.module_info;
@@ -1184,7 +1192,7 @@ fn NewPrinter(
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc);
+                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc, .{});
                     p.printNewline();
                 },
                 else => {
@@ -1196,20 +1204,20 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBlockBody(p: *Printer, stmts: []const Stmt) void {
+        pub fn printBlockBody(p: *Printer, stmts: []const Stmt, tlmtlo: TopLevel) void {
             for (stmts) |stmt| {
                 p.printSemicolonIfNeeded();
-                p.printStmt(stmt, .{}) catch bun.outOfMemory();
+                p.printStmt(stmt, tlmtlo) catch bun.outOfMemory();
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc, tlmtlo: TopLevel) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
 
             p.indent();
-            p.printBlockBody(stmts);
+            p.printBlockBody(stmts, tlmtlo);
             p.unindent();
             p.needs_semicolon = false;
 
@@ -1226,8 +1234,8 @@ fn NewPrinter(
             p.printNewline();
 
             p.indent();
-            p.printBlockBody(prepend);
-            p.printBlockBody(stmts);
+            p.printBlockBody(prepend, .{});
+            p.printBlockBody(stmts, .{});
             p.unindent();
             p.needs_semicolon = false;
 
@@ -1454,7 +1462,7 @@ fn NewPrinter(
         pub fn printFunc(p: *Printer, func: G.Fn) void {
             p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
-            p.printBlock(func.body.loc, func.body.stmts, null);
+            p.printBlock(func.body.loc, func.body.stmts, null, .{});
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
@@ -1477,7 +1485,7 @@ fn NewPrinter(
                 if (item.kind == .class_static_block) {
                     p.print("static");
                     p.printSpace();
-                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null);
+                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null, .{});
                     p.printNewline();
                     continue;
                 }
@@ -2598,7 +2606,7 @@ fn NewPrinter(
                     }
 
                     if (!wasPrinted) {
-                        p.printBlock(e.body.loc, e.body.stmts, null);
+                        p.printBlock(e.body.loc, e.body.stmts, null, .{});
                     }
 
                     if (wrap) {
@@ -3727,7 +3735,7 @@ fn NewPrinter(
                     p.printFunc(s.func);
 
                     if (p.moduleInfo()) |mi| {
-                        if (tlmtlo.is_top_level) try mi.addVar(local_name, .lexical);
+                        if (tlmtlo.is_top_level == .yes) try mi.addVar(local_name, .lexical);
                         if (s.func.flags.contains(.is_export)) try mi.exports.append(.{ .local = .{ .export_name = try mi.str(local_name), .local_name = try mi.str(local_name) } });
                     }
 
@@ -3771,7 +3779,7 @@ fn NewPrinter(
 
                     if (p.moduleInfo()) |mi| {
                         if (s.is_export) try mi.exports.append(.{ .local = .{ .export_name = try mi.str(nameStr), .local_name = try mi.str(nameStr) } });
-                        if (tlmtlo.is_top_level) try mi.addVar(nameStr, .lexical);
+                        if (tlmtlo.is_top_level == .yes) try mi.addVar(nameStr, .lexical);
                     }
 
                     if (rewrite_esm_to_cjs and s.is_export) {
@@ -4139,7 +4147,7 @@ fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc, .{});
                             p.printSpace();
                         },
                         else => {
@@ -4228,7 +4236,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.print("try");
                     p.printSpace();
-                    p.printBlock(s.body_loc, s.body, null);
+                    p.printBlock(s.body_loc, s.body, null, tlmtlo.subVar());
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
@@ -4240,14 +4248,14 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.loc, catch_.body, null);
+                        p.printBlock(catch_.loc, catch_.body, null, tlmtlo.subVar());
                     }
 
                     if (s.finally) |finally| {
                         p.printSpace();
                         p.print("finally");
                         p.printSpace();
-                        p.printBlock(finally.loc, finally.stmts, null);
+                        p.printBlock(finally.loc, finally.stmts, null, tlmtlo.subVar());
                     }
 
                     p.printNewline();
@@ -4312,7 +4320,7 @@ fn NewPrinter(
                             switch (c.body[0].data) {
                                 .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc, .{});
                                     p.printNewline();
                                     continue;
                                 },
@@ -4657,7 +4665,7 @@ fn NewPrinter(
                 },
                 .s_block => |s| {
                     p.printIndent();
-                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc);
+                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc, .{});
                     p.printNewline();
                 },
                 .s_debugger => {
@@ -4946,7 +4954,7 @@ fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc);
+                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc, .{});
 
                     if (s.no != null) {
                         p.printSpace();
@@ -4994,7 +5002,7 @@ fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null, .{});
                         p.printNewline();
                     },
                     .s_if => {
@@ -5091,9 +5099,9 @@ fn NewPrinter(
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
-            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info and tlmtlo.is_top_level) .{
+            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info) .{
                 .is_export = is_export and !rewrite_esm_to_cjs,
-                .is_top_level = if (comptime std.mem.eql(u8, keyword, "var")) .declared else .lexical,
+                .is_top_level = if (comptime std.mem.eql(u8, keyword, "var")) if (tlmtlo.is_top_level == .no) null else .declared else if (tlmtlo.is_top_level == .yes) .lexical else null,
             } else .{});
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
@@ -5932,7 +5940,7 @@ pub fn printAst(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5942,7 +5950,7 @@ pub fn printAst(
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6163,7 +6171,7 @@ pub fn printWithWriterAndPlatform(
 
         for (parts) |part| {
             for (part.stmts) |stmt| {
-                printer.printStmt(stmt, PrinterType.TopLevel.init(true)) catch |err| {
+                printer.printStmt(stmt, PrinterType.TopLevel.init(.yes)) catch |err| {
                     return .{ .err = err };
                 };
                 if (printer.writer.getError()) {} else |err| {
@@ -6226,7 +6234,7 @@ pub fn printCommonJS(
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6235,7 +6243,7 @@ pub fn printCommonJS(
     }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt, PrinterType.TopLevel.init(true));
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }

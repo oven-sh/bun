@@ -1053,18 +1053,19 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   std::array<napi_value, 5> bigints;
+  std::array<uint64_t, 4> words{{123, 0, 0, 0}};
 
   NODE_API_CALL(env, napi_create_bigint_int64(env, 0, &bigints[0]));
   NODE_API_CALL(env, napi_create_bigint_uint64(env, 0, &bigints[1]));
   // sign is not 0 or 1 (should be interpreted as negative)
-  NODE_API_CALL(
-      env, napi_create_bigint_words(env, 2, 1, (uint64_t[]){5}, &bigints[2]));
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 2, 1, words.data(), &bigints[2]));
   // leading zeroes in word representation
-  NODE_API_CALL(env, napi_create_bigint_words(
-                         env, 0, 4, (uint64_t[]){123, 0, 0, 0}, &bigints[3]));
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 0, 4, words.data(), &bigints[3]));
   // zero
-  NODE_API_CALL(
-      env, napi_create_bigint_words(env, 1, 0, (uint64_t[]){}, &bigints[4]));
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 1, 0, words.data(), &bigints[4]));
 
   napi_value array;
   NODE_API_CALL(env,

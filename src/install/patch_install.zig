@@ -550,6 +550,7 @@ pub const PatchTask = struct {
             resolution,
             &folder_path_buf,
             patch_hash,
+            pkg_manager.lockfile,
         );
 
         const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();

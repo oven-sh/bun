@@ -3993,9 +3993,10 @@ pub const PackageManager = struct {
         resolution: *const Resolution,
         folder_path_buf: *bun.PathBuffer,
         patch_hash: ?u64,
+        lockfile: *Lockfile,
     ) struct { cache_dir: std.fs.Dir, cache_dir_subpath: stringZ } {
         const name = pkg_name;
-        const buf = manager.lockfile.buffers.string_bytes.items;
+        const buf = lockfile.buffers.string_bytes.items;
         var cache_dir = std.fs.cwd();
         var cache_dir_subpath: stringZ = "";
 
@@ -4070,7 +4071,7 @@ pub const PackageManager = struct {
                     var remain: []u8 = folder_path_buf[0..];
                     @memcpy(ptr[0..global_link_dir.len], global_link_dir);
                     remain = remain[global_link_dir.len..];
-                    if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
+                    if (global_link_dir.len > 0 and global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
                         remain[0] = std.fs.path.sep;
                         remain = remain[1..];
                     }
@@ -10901,23 +10902,23 @@ pub const PackageManager = struct {
 
         const name_hash = String.Builder.stringHash(name);
 
-        const strbuf = lockfile.buffers.string_bytes.items;
-
         var buf: [1024]u8 = undefined;
         const dependencies = lockfile.buffers.dependencies.items;
-
-        for (dependencies, 0..) |dep, dep_id| {
-            if (dep.name_hash != name_hash) continue;
-            const pkg_id = lockfile.buffers.resolutions.items[dep_id];
-            if (pkg_id == invalid_package_id) continue;
-            const pkg = lockfile.packages.get(pkg_id);
-            if (version) |v| {
-                const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
-                if (std.mem.eql(u8, label, v)) {
+        {
+            const strbuf = lockfile.buffers.string_bytes.items;
+            for (dependencies, 0..) |dep, dep_id| {
+                if (dep.name_hash != name_hash) continue;
+                const pkg_id = lockfile.buffers.resolutions.items[dep_id];
+                if (pkg_id == invalid_package_id) continue;
+                const pkg = lockfile.packages.get(pkg_id);
+                if (version) |v| {
+                    const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
+                    if (std.mem.eql(u8, label, v)) {
+                        pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+                    }
+                } else {
                     pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
                 }
-            } else {
-                pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
             }
         }
 
@@ -11015,20 +11016,24 @@ pub const PackageManager = struct {
             "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
             .{name},
         );
-        var i: usize = 0;
-        while (i < pairs.items.len) : (i += 1) {
-            _, const pkgid = pairs.items[i];
-            if (pkgid == invalid_package_id)
-                continue;
 
-            const pkg = lockfile.packages.get(pkgid);
+        {
+            var i: usize = 0;
+            const strbuf = lockfile.buffers.string_bytes.items;
+            while (i < pairs.items.len) : (i += 1) {
+                _, const pkgid = pairs.items[i];
+                if (pkgid == invalid_package_id)
+                    continue;
 
-            Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+                const pkg = lockfile.packages.get(pkgid);
 
-            if (i + 1 < pairs.items.len) {
-                for (pairs.items[i + 1 ..]) |*p| {
-                    if (p[1] == pkgid) {
-                        p[1] = invalid_package_id;
+                Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+
+                if (i + 1 < pairs.items.len) {
+                    for (pairs.items[i + 1 ..]) |*p| {
+                        if (p[1] == pkgid) {
+                            p[1] = invalid_package_id;
+                        }
                     }
                 }
             }
@@ -11062,7 +11067,6 @@ pub const PackageManager = struct {
     /// 3. Overwrite the input package with the one from the cache (cuz it could be hardlinked)
     /// 4. Print to user
     fn preparePatch(manager: *PackageManager) !void {
-        const strbuf = manager.lockfile.buffers.string_bytes.items;
         var argument = manager.options.positionals[1];
 
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
@@ -11155,7 +11159,7 @@ pub const PackageManager = struct {
                 const existing_patchfile_hash = existing_patchfile_hash: {
                     var __sfb = std.heap.stackFallback(1024, manager.allocator);
                     const allocator = __sfb.get();
-                    const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
                     defer allocator.free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -11169,6 +11173,7 @@ pub const PackageManager = struct {
                     &actual_package.resolution,
                     &folder_path_buf,
                     existing_patchfile_hash,
+                    manager.lockfile,
                 );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
@@ -11188,12 +11193,12 @@ pub const PackageManager = struct {
                 const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
 
                 const pkg = manager.lockfile.packages.get(pkg_id);
-                const pkg_name = pkg.name.slice(strbuf);
+                const pkg_name = manager.lockfile.str(&pkg.name);
 
                 const existing_patchfile_hash = existing_patchfile_hash: {
                     var __sfb = std.heap.stackFallback(1024, manager.allocator);
                     const sfballoc = __sfb.get();
-                    const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
                     defer sfballoc.free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -11207,6 +11212,7 @@ pub const PackageManager = struct {
                     &pkg.resolution,
                     &folder_path_buf,
                     existing_patchfile_hash,
+                    manager.lockfile,
                 );
 
                 const cache_dir = cache_result.cache_dir;
@@ -11501,8 +11507,8 @@ pub const PackageManager = struct {
         defer root_node_modules.close();
 
         var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
-        var resolution_buf: [1024]u8 = undefined;
-        const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
+        var resolution_buf: [2048]u8 = undefined;
+        const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const pkg_id: PackageID = switch (arg_kind) {
             .path => result: {
                 const package_json_source: logger.Source = brk: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
@@ -11542,20 +11548,20 @@ pub const PackageManager = struct {
                 try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
 
                 const name = lockfile.str(&package.name);
-                const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
+                const resolutions = lockfile.packages.items(.resolution);
+                const actual_package_id = switch (lockfile.package_index.get(package.name_hash) orelse {
                     Output.prettyError(
                         "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
                         .{},
                     );
                     Global.crash();
                 }) {
-                    .id => |id| lockfile.packages.get(id),
+                    .id => |id| id,
                     .ids => |ids| brk: {
                         for (ids.items) |id| {
-                            const pkg = lockfile.packages.get(id);
-                            const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                            const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                             if (std.mem.eql(u8, resolution_label, version)) {
-                                break :brk pkg;
+                                break :brk id;
                             }
                         }
                         Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
@@ -11567,16 +11573,17 @@ pub const PackageManager = struct {
 
                 const cache_result = manager.computeCacheDirAndSubpath(
                     name,
-                    &actual_package.resolution,
+                    &resolutions[actual_package_id],
                     &folder_path_buf,
                     null,
+                    lockfile,
                 );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
 
                 const changes_dir = argument;
 
-                break :result .{ cache_dir, cache_dir_subpath, changes_dir, actual_package };
+                break :result .{ cache_dir, cache_dir_subpath, changes_dir, actual_package_id };
             },
             .name_and_version => brk: {
                 const name, const version = Dependency.splitNameAndMaybeVersion(argument);
@@ -11586,17 +11593,19 @@ pub const PackageManager = struct {
                     node_modules.relative_path,
                     name,
                 }, .auto);
-                const pkg = lockfile.packages.get(pkg_id);
+                const names = lockfile.packages.items(.name);
+                const resolutions = lockfile.packages.items(.resolution);
 
                 const cache_result = manager.computeCacheDirAndSubpath(
-                    pkg.name.slice(lockfile.buffers.string_bytes.items),
-                    &pkg.resolution,
+                    names[pkg_id].slice(lockfile.buffers.string_bytes.items),
+                    &resolutions[pkg_id],
                     &folder_path_buf,
                     null,
+                    lockfile,
                 );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
-                break :brk .{ cache_dir, cache_dir_subpath, changes_dir, pkg };
+                break :brk .{ cache_dir, cache_dir_subpath, changes_dir, pkg_id };
             },
         };
 
@@ -11604,10 +11613,10 @@ pub const PackageManager = struct {
         const cache_dir: std.fs.Dir = _cache_dir;
         const cache_dir_subpath: stringZ = _cache_dir_subpath;
         const changes_dir: []const u8 = _changes_dir;
-        const pkg: Package = _pkg;
 
-        const name = pkg.name.slice(lockfile.buffers.string_bytes.items);
-        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
+        const names = lockfile.packages.items(.name);
+        const resolutions = lockfile.packages.items(.resolution);
+        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ names[pkg_id].slice(lockfile.buffers.string_bytes.items), resolutions[pkg_id].fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
 
         const patchfile_contents = brk: {
             const new_folder = changes_dir;

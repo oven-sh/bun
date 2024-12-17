@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");
 
+pub const translated = @import("translated-c-headers");
+
 const PlatformSpecific = switch (Environment.os) {
     .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
@@ -495,14 +497,5 @@ pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
 
 pub extern fn strlen(ptr: [*c]const u8) usize;
 
-pub const passwd = extern struct {
-    pw_name: ?[*:0]const u8, // username
-    pw_passwd: ?[*:0]const u8, // user password
-    pw_uid: std.c.uid_t, // user ID
-    pw_gid: std.c.gid_t, // group ID
-    pw_gecos: ?[*:0]const u8, // user information
-    pw_dir: ?[*:0]const u8, // home directory
-    pw_shell: ?[*:0]const u8, // shell program
-};
-
-pub extern "c" fn getpwuid_r(uid: std.c.uid_t, pw: *passwd, buf: [*]u8, buflen: usize, pwretp: *?*passwd) c_int;
+pub const passwd = translated.passwd;
+pub const getpwuid_r = translated.getpwuid_r;

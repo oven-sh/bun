@@ -3993,7 +3993,7 @@ pub const VirtualMachine = struct {
 
         if (show.system_code) {
             if (show.syscall) {
-                try writer.writeAll("  ");
+                try writer.writeAll("   ");
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }

@@ -572,7 +572,7 @@ function emitRangeModifierCheck(
 
 function addHeaderForType(type: TypeImpl) {
   if (type.lowersToNamedType() && type.ownerFile) {
-    headers.add(`Generated${cap(type.ownerFile)}.h`);
+    headers.add(`Generated${pascal(type.ownerFile)}.h`);
   }
 }
 

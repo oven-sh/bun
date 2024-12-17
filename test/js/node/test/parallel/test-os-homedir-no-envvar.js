@@ -15,7 +15,6 @@ if (process.argv[2] === 'child') {
   const home = os.homedir();
 
   assert.strictEqual(typeof home, 'string');
-  console.log({home});
   assert(home.includes(path.sep));
 } else {
   if (common.isWindows)
@@ -25,7 +24,6 @@ if (process.argv[2] === 'child') {
 
   const child = cp.spawnSync(process.execPath, [__filename, 'child'], {
     env: process.env,
-    stdio: 'inherit',
   });
 
   assert.strictEqual(child.status, 0);

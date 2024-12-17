@@ -1792,8 +1792,9 @@ pub const SystemError = extern struct {
             this.syscall.deref();
         }
 
-        return shim.cppFn("toErrorInstanceWithInfoObject", .{ this, global });
+        return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
+    extern fn SystemError__toErrorInstanceWithInfoObject(*const SystemError, *JSC.JSGlobalObject) JSValue;
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (!self.path.isEmpty()) {

@@ -57,9 +57,13 @@ export const uptime = fn({
   },
   ret: t.f64,
 });
+export const UserInfoOptions = t.dictionary({
+  encoding: t.DOMString.default(""),
+});
 export const userInfo = fn({
   args: {
     global: t.globalObject,
+    options: UserInfoOptions.default({}),
   },
   ret: t.any,
 });

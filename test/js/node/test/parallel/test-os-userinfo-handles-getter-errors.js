@@ -14,5 +14,6 @@ const script = `os.userInfo({
 
 const node = process.execPath;
 execFile(node, [ '-e', script ], common.mustCall((err, stdout, stderr) => {
-  assert(stderr.includes('Error: xyz'), 'userInfo crashes');
+  // Edited for Bun to lowercase `error`
+  assert(stderr.includes('xyz'), 'userInfo crashes');
 }));

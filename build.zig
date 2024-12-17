@@ -428,13 +428,13 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_plugin_api = b.addTranslateC(.{
-        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c-headers-for-zig.h"),
         .target = opts.target,
         .optimize = opts.optimize,
         .link_libc = true,
     });
-    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
 
     return obj;
 }

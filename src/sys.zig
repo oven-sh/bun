@@ -3163,10 +3163,6 @@ pub fn isPollable(mode: mode_t) bool {
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 
-pub fn getProcessPriority() i32 {
-
-}
-
 const This = @This();
 
 pub const File = struct {
@@ -3467,8 +3463,8 @@ pub const File = struct {
         };
     }
 
-    /// Use this function on small files < 1024 bytes.
-    /// This will skip the fstat() call.
+    /// Use this function on small files <= 1024 bytes.
+    /// This will skip the fstat() call, preallocating 64 bytes instead of the file's size.
     pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
         return switch (readToEndWithArrayList(this, &list, true)) {

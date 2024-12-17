@@ -90,3 +90,44 @@ it("custom deserializers / zigEnum / StringOrBuffer / ArrayBuffer", () => {
     message: `Argument 3 ('c') to bindgen_test.customDeserializer must be one of: "hello", "world"`,
   });
 });
+
+/**
+ * Given `run`, which allocates and frees memory, run it many times and observe
+ * if memory increases.
+ *
+ * Done by sampling the memory usage increase of a couple of warmup runs, and
+ * then runs the sampling runs, with a GC call in between.
+ */
+function simpleMemoryLeakChecker(options: { samples: number; preSamples?: number; run: () => void }) {
+  Bun.gc(true);
+  const memory = process.memoryUsage().rss;
+  Bun.gc(true);
+
+  const { preSamples = 2 } = options;
+  let threshold = 0;
+  for (let i = 0; i < preSamples; i++) {
+    options.run();
+    const firstRun = process.memoryUsage().rss;
+    threshold = Math.max(threshold, firstRun);
+  }
+  Bun.gc(true);
+
+  for (let i = 0; i < options.samples; i++) {
+    options.run();
+    Bun.gc(true);
+  }
+  Bun.gc(true);
+
+  const memoryEnd = process.memoryUsage().rss;
+  expect(memoryEnd, `Memory leak of ${((memoryEnd - memory) / 1024 / 1024).toFixed(2)}mb`).toBeLessThan(threshold);
+}
+
+it("returned bun string gets dereferenced", () => {
+  const referenceString = bindgen.returnBunString(32 * 1000 * 1000);
+  simpleMemoryLeakChecker({
+    samples: 20,
+    run() {
+      expect(bindgen.returnBunString(32 * 1000 * 1000)).toBe(referenceString);
+    },
+  });
+});

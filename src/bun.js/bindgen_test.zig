@@ -11,6 +11,7 @@ pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) JSC.JSValue {
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
         .customDeserializer = gen.createCustomDeserializerCallback(global),
+        .returnBunString = gen.createReturnBunStringCallback(global),
     }, global).toJS();
 }
 
@@ -51,6 +52,12 @@ pub fn customDeserializer(
         std.math.minInt(i32),
         std.math.maxInt(i32),
     ));
+}
+
+pub fn returnBunString(len: u32) !bun.String {
+    const str, const bytes = bun.String.createUninitialized(.latin1, len);
+    @memset(bytes, '_');
+    return str;
 }
 
 const std = @import("std");

@@ -37,7 +37,7 @@ import {
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
-import { CustomZig, CustomZigArg, type IntegerTypeKind } from "bindgen";
+import { CustomZig, CustomZigArg } from "bindgen";
 
 // arg parsing
 let {
@@ -371,9 +371,9 @@ function emitCppCallToVariant(className: string, name: string, variant: Variant,
         case "DOMString":
         case "USVString":
         case "ByteString":
-          cpp.line(
-            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.toWTFString()));`,
-          );
+          cpp.line(`JSC::JSValue js = JSC::jsString(vm, out.toWTFString());`);
+          cpp.line(`out.deref();`);
+          cpp.line(`return JSC::JSValue::encode(js);`);
           break;
       }
       break;
@@ -470,23 +470,9 @@ function emitConvertValue(
         exceptionHandler = getArgumentExceptionHandler(
           type,
           exceptionContext.argumentIndex,
-          exceptionContext.name,
+          exceptionContext.argName,
           exceptionContext.functionName,
         );
-    }
-
-    switch (type.kind) {
-<<<<<<< HEAD
-      case "zigEnum":
-      case "stringEnum": {
-        if (exceptionContext.type === "argument") {
-          const { argumentIndex, argName, className, functionName } = exceptionContext;
-          exceptionHandlerBody = `WebCore::throwArgumentMustBeEnumError(lexicalGlobalObject, scope, ${argumentIndex}, ${str(argName)}_s, ${str(className)}_s, ${str(functionName)}_s, WebCore::expectedEnumerationValues<${type.cppClassName()}>());`;
-        }
-        break;
-      }
-=======
->>>>>>> origin/main
     }
 
     if (decl === "declare") {
@@ -562,7 +548,7 @@ interface ExceptionHandler {
   body: string;
 }
 
-function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name: string, functionName: string) {
+function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, argName: string, functionName: string) {
   const { nodeValidator } = type.flags;
   if (nodeValidator) {
     switch (nodeValidator) {
@@ -570,7 +556,7 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
         headers.add("ErrorCode.h");
         return {
           params: `[]()`,
-          body: `return ${str(name)}_s;`,
+          body: `return ${str(argName)}_s;`,
         };
       default:
         throw new Error(`TODO: implement exception thrower for node validator ${nodeValidator}`);
@@ -585,7 +571,7 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
           `global`,
           `scope`,
           `${argumentIndex}`,
-          `${str(name)}_s`,
+          `${str(argName)}_s`,
           `${str(type.name())}_s`,
           `${str(functionName)}_s`,
           `WebCore::expectedEnumerationValues<${type.cppClassName()}>()`,
@@ -831,7 +817,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line(`{`);
   w.line(`    static constexpr std::pair<ComparableASCIILiteral, ${name}> mappings[] = {`);
   for (const value of sortedValues) {
-    w.line(`        { ${str(value.name)}, ${name}::${pascal(value.name)} },`);
+    w.line(`        { ${str(value.name)}_s, ${name}::${pascal(value.name)} },`);
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
@@ -1005,7 +991,7 @@ function emitComplexZigDecoder(
 function emitZigDeinitializer(w: CodeWriter, name: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
   assert(children.length > 0);
   w.add("defer ");
-  const isOptional = (type.flags.optional && !("default" in type.flags)) || type.flags.nullable;
+  const isOptional = type.flags.optional && !("default" in type.flags);
   if (isOptional) {
     w.add(`if (${name}) |v| `);
     name = "v";
@@ -1508,7 +1494,7 @@ for (const [filename, { functions, typedefs, anonTypedefs }] of files) {
         cpp.line(`{`);
         cpp.indent();
         cpp.resetTemporaries();
-        emitCppCallToVariant(fn.name, vari, dispatchName);
+        emitCppCallToVariant(fn.className, fn.name, vari, dispatchName);
         cpp.dedent();
         cpp.line(`}`);
       }
@@ -1655,7 +1641,7 @@ for (const [filename, { functions, typedefs, anonTypedefs }] of files) {
           decodeWriter = zigInternal;
         }
         const type = arg.type;
-            const isNullable = type.flags.optional && !("default" in type.flags);
+        const isNullable = type.flags.optional && !("default" in type.flags);
         switch (strategy.type) {
           case "c-abi-pointer":
             if (type.kind === "UTF8String") {

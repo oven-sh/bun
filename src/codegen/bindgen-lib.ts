@@ -25,6 +25,10 @@ export type Type<
   : F extends true
     ? {
         [isType]: true | [T, K, F];
+        /**
+         * By default, optional types can be `null` or `undefined`. A non-null
+         * optional only accepts `undefined` as the "none" variant.
+         */
         nonNull: Type<T, K, "opt-nonnull">;
       }
     : { [isType]: true | [T, K, F] };
@@ -459,6 +463,7 @@ export interface FuncVariant {
 export function Fn(opts: FnOptions) {
   return registerFunction(opts) as FuncReference;
 }
+export const fn = Fn;
 
 export interface ClassOptions {
   /** Name of the class */

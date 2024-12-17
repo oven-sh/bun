@@ -28,3 +28,10 @@ export const customDeserializer = Fn({
   },
   ret: t.i32,
 });
+
+export const returnBunString = Fn({
+  args: {
+    len: t.u32.enforceRange(),
+  },
+  ret: t.DOMString,
+});

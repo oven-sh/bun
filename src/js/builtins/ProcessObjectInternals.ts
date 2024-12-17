@@ -341,8 +341,9 @@ export function setMainModule(value) {
 }
 
 type InternalEnvMap = Record<string, string>;
+type EditWindowsEnvVarCb = (key: string, value: null | string) => void;
 
-export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string>) {
+export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string>, editWindowsEnvVar: EditWindowsEnvVarCb) {
   // The use of String(key) here is intentional because Node.js as of v21.5.0 will throw
   // on symbol keys as it seems they assume the user uses string keys:
   //
@@ -371,6 +372,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
+      editWindowsEnvVar(k, value);
       internalEnv[k] = value;
       return true;
     },
@@ -383,6 +385,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
+      editWindowsEnvVar(k, null);
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {

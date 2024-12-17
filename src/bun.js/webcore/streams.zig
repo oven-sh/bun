@@ -1545,6 +1545,7 @@ pub const ArrayBufferSink = struct {
     }
 
     pub fn memoryCost(this: *const ArrayBufferSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         return this.bytes.cap;
     }
 
@@ -2042,6 +2043,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn memoryCost(this: *@This()) usize {
             // TODO: include Socket send buffer size. We can't here because we
             // don't track if it's still accessible.
+            // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
             return this.buffer.cap;
         }
 
@@ -2887,6 +2889,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
     }
 
     pub fn memoryCost(this: *const @This()) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         return this.buffer.memoryCost();
     }
 
@@ -3341,6 +3344,7 @@ pub const FileSink = struct {
     pub const Poll = IOWriter;
 
     pub fn memoryCost(this: *const FileSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
         return this.writer.memoryCost();
     }
 
@@ -4455,6 +4459,7 @@ pub const FileReader = struct {
     }
 
     pub fn memoryCost(this: *const FileReader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
         return this.reader.memoryCost();
     }
 
@@ -4610,6 +4615,7 @@ pub const ByteBlobLoader = struct {
     }
 
     pub fn memoryCost(this: *const ByteBlobLoader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
         if (this.store) |store| {
             return store.memoryCost();
         }
@@ -5033,7 +5039,8 @@ pub const ByteStream = struct {
     }
 
     pub fn memoryCost(this: *const @This()) usize {
-        return @sizeOf(@This()) + this.buffer.capacity;
+        // ReadableStreamSource covers @sizeOf(ByteStream)
+        return this.buffer.capacity;
     }
 
     pub fn deinit(this: *@This()) void {

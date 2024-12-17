@@ -720,6 +720,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.flush();
                     socket.timeout(0);
                     socket.setTimeoutMinutes(5);
+                    _ = socket.pauseStream();
 
                     pending.http_socket = socket;
                     pending.did_have_handshaking_error_while_reject_unauthorized_is_false = did_have_handshaking_error_while_reject_unauthorized_is_false;
@@ -1005,6 +1006,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
+                    _ = sock.resumeStream();
                     client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);
@@ -3615,8 +3617,6 @@ pub fn onData(
                 }
             }
         },
-
-        .fail => {},
         .proxy_headers, .proxy_handshake => {
             this.setTimeout(socket, 5);
             if (this.proxy_tunnel) |proxy| {
@@ -3624,7 +3624,11 @@ pub fn onData(
             }
             return;
         },
-        else => {
+        .fail => {}, // already fail just ignore
+        .done, .proxy_body => {
+            // .proxy_body is a invalid state should only be reachable on request side
+            bun.debugAssert(this.state.response_stage == .done);
+            // we are already done but we receive extra data, the socket may be in a invalid http state after this so we close
             this.state.pending_response = null;
             this.closeAndFail(error.UnexpectedData, is_ssl, socket);
             return;

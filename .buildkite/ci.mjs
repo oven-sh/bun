@@ -1115,19 +1115,10 @@ async function getPipeline(options = {}) {
     steps[i] = undefined;
   }
 
-  const pipeline = {
+  return {
     priority,
     steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
   };
-
-  // If you push two builds to main, cancel the previous build.
-  // This is to reduce wasteful CI runs that slow down in-flight PRs.
-  if (isMainBranch() && !isBuildManual() && options.canary) {
-    pipeline.concurrency_group = "canary";
-    pipeline.concurrency = "cancel-all";
-  }
-
-  return pipeline;
 }
 
 async function main() {

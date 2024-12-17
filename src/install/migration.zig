@@ -563,7 +563,6 @@ pub fn migrateNPMLockfile(
             bun.assert(package_id != 0); // root package should not be in it's own workspace
 
             // we defer doing getOrPutID for non-workspace packages because it depends on the resolution being set.
-            this.buffers.string_bytes.items = string_buf.bytes.items;
             try this.getOrPutID(package_id, name_hash);
         }
     }
@@ -597,7 +596,6 @@ pub fn migrateNPMLockfile(
     // Root resolution isn't hit through dependency tracing.
     resolutions[0] = Resolution.init(.{ .root = {} });
     metas[0].origin = .local;
-    this.buffers.string_bytes.items = string_buf.bytes.items;
     try this.getOrPutID(0, this.packages.items(.name_hash)[0]);
 
     // made it longer than max path just in case something stupid happens
@@ -917,11 +915,7 @@ pub fn migrateNPMLockfile(
                                     else => .npm,
                                 };
 
-                                // update the current string_buf pointer
-                                this.buffers.string_bytes.items = string_buf.bytes.items;
-                                this.buffers.string_bytes.capacity = string_buf.bytes.capacity;
                                 try this.getOrPutID(id, this.packages.items(.name_hash)[id]);
-                                bun.debugAssert(string_buf.bytes.items.ptr == this.buffers.string_bytes.items.ptr);
                             }
 
                             continue :dep_loop;
@@ -979,7 +973,6 @@ pub fn migrateNPMLockfile(
         }
     }
 
-    string_buf.apply(this);
     this.buffers.resolutions.items.len = (@intFromPtr(resolutions_buf.ptr) - @intFromPtr(this.buffers.resolutions.items.ptr)) / @sizeOf(Install.PackageID);
     this.buffers.dependencies.items.len = this.buffers.resolutions.items.len;
 

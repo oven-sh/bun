@@ -1121,6 +1121,7 @@ async function getPipeline(options = {}) {
   };
 
   // If you push two builds to main, cancel the previous build.
+  // This is to reduce wasteful CI runs that slow down in-flight PRs.
   if (isMainBranch() && !isBuildManual() && options.canary) {
     pipeline.concurrency_group = "canary";
     pipeline.concurrency = "cancel-all";

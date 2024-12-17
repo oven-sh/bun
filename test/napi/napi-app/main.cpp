@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cassert>
+#include <cinttypes>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -969,6 +970,84 @@ static napi_value try_add_tag(const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(env, status == napi_ok);
 }
 
+static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    int64_t result = 0;
+    bool lossless = false;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_int64 return for non-bigint: %d\n",
+             napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_int64 result: %" PRId64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    uint64_t result;
+    bool lossless;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_uint64 return for non-bigint: %d\n",
+             napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_uint64 result: %" PRIu64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value bigint;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 5, &bigint));
+
+  int64_t result_signed;
+  uint64_t result_unsigned;
+  bool lossless;
+
+  printf("status (int64, null result) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, nullptr, &lossless));
+  printf("status (int64, null lossless) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, &result_signed, nullptr));
+  printf("status (uint64, null result) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, nullptr, &lossless));
+  printf("status (uint64, null lossless) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, &result_unsigned, nullptr));
+
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1035,6 +1114,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("add_tag", Napi::Function::New(env, add_tag));
   exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
   exports.Set("check_tag", Napi::Function::New(env, check_tag));
+  exports.Set("bigint_to_i64", Napi::Function::New(env, bigint_to_i64));
+  exports.Set("bigint_to_u64", Napi::Function::New(env, bigint_to_u64));
+  exports.Set("bigint_to_64_null", Napi::Function::New(env, bigint_to_64_null));
 
   napitests::register_wrap_tests(env, exports);
 

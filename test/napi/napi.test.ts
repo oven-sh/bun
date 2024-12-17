@@ -349,6 +349,28 @@ describe("napi", () => {
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
     });
   });
+
+  describe("bigint conversion", () => {
+    it("works", () => {
+      const tests = [-1n, 0n, 1n];
+      for (const power of [63, 64]) {
+        for (const sign of [-1, 1]) {
+          const boundary = BigInt(sign) * 2n ** BigInt(power);
+          tests.push(boundary, boundary - 1n, boundary + 1n);
+        }
+      }
+
+      const testsString = "[" + tests.map(bigint => bigint.toString() + "n").join(",") + "]";
+      checkSameOutput("bigint_to_i64", testsString);
+      checkSameOutput("bigint_to_u64", testsString);
+    });
+    it("returns the right error code", () => {
+      const badTypes = '[null, undefined, 5, "123"]';
+      checkSameOutput("bigint_to_i64", badTypes);
+      checkSameOutput("bigint_to_u64", badTypes);
+      checkSameOutput("bigint_to_64_null", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

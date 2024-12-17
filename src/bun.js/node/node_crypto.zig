@@ -31,7 +31,7 @@ pub const X509Certificate = struct {
     ///
     /// `new X509Certificate(buffer)`
     pub fn constructor(global: *JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*X509Certificate {
-        if (frame.argumentsCount() != 1) return global.throwNotEnoughArguments(name, 1, frame.argumentsCount());
+        if (frame.argumentsCount() < 1) return global.throwNotEnoughArguments(name, 1, frame.argumentsCount());
         var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
         const alloc = stack_fallback.get();
 

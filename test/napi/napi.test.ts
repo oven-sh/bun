@@ -350,7 +350,7 @@ describe("napi", () => {
     });
   });
 
-  describe("bigint conversion", () => {
+  describe("bigint conversion to int64/uint64", () => {
     it("works", () => {
       const tests = [-1n, 0n, 1n];
       for (const power of [63, 64]) {
@@ -369,6 +369,12 @@ describe("napi", () => {
       checkSameOutput("bigint_to_i64", badTypes);
       checkSameOutput("bigint_to_u64", badTypes);
       checkSameOutput("bigint_to_64_null", []);
+    });
+  });
+
+  describe("create_bigint_words", () => {
+    it("works", () => {
+      checkSameOutput("test_create_bigint_words", []);
     });
   });
 });

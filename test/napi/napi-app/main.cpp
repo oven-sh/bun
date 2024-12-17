@@ -1048,6 +1048,33 @@ static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
+  // create bigints by passing weird parameters to napi_create_bigint_words
+  napi_env env = info.Env();
+
+  std::array<napi_value, 5> bigints;
+
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 0, &bigints[0]));
+  NODE_API_CALL(env, napi_create_bigint_uint64(env, 0, &bigints[1]));
+  // sign is not 0 or 1 (should be interpreted as negative)
+  NODE_API_CALL(
+      env, napi_create_bigint_words(env, 2, 1, (uint64_t[]){5}, &bigints[2]));
+  // leading zeroes in word representation
+  NODE_API_CALL(env, napi_create_bigint_words(
+                         env, 0, 4, (uint64_t[]){123, 0, 0, 0}, &bigints[3]));
+  // zero
+  NODE_API_CALL(
+      env, napi_create_bigint_words(env, 1, 0, (uint64_t[]){}, &bigints[4]));
+
+  napi_value array;
+  NODE_API_CALL(env,
+                napi_create_array_with_length(env, bigints.size(), &array));
+  for (size_t i = 0; i < bigints.size(); i++) {
+    NODE_API_CALL(env, napi_set_element(env, array, (uint32_t)i, bigints[i]));
+  }
+  return array;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1117,6 +1144,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("bigint_to_i64", Napi::Function::New(env, bigint_to_i64));
   exports.Set("bigint_to_u64", Napi::Function::New(env, bigint_to_u64));
   exports.Set("bigint_to_64_null", Napi::Function::New(env, bigint_to_64_null));
+  exports.Set("create_weird_bigints",
+              Napi::Function::New(env, create_weird_bigints));
 
   napitests::register_wrap_tests(env, exports);
 

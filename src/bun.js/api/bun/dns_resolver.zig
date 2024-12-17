@@ -1732,7 +1732,7 @@ pub const DNSResolver = struct {
 
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
-    polls: PollsMap = undefined,
+    polls: PollsMap,
 
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
@@ -1772,9 +1772,10 @@ pub const DNSResolver = struct {
         pub usingnamespace bun.New(@This());
     };
 
-    pub fn init(vm: *JSC.VirtualMachine) *DNSResolver {
+    pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *DNSResolver {
         return DNSResolver.new(.{
             .vm = vm,
+            .polls = DNSResolver.PollsMap.init(allocator),
         });
     }
 
@@ -2509,6 +2510,12 @@ pub const DNSResolver = struct {
     }
 
     pub fn globalResolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveSrv(globalThis, callframe);
+    }
+
+    pub fn resolveSrv(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSrv", 2, arguments.len);
@@ -2529,14 +2536,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
     pub fn globalResolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveSoa(globalThis, callframe);
+    }
+
+    pub fn resolveSoa(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
@@ -2553,14 +2562,16 @@ pub const DNSResolver = struct {
         };
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
     pub fn globalResolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveCaa(globalThis, callframe);
+    }
+
+    pub fn resolveCaa(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
@@ -2581,14 +2592,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
     pub fn globalResolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveNs(globalThis, callframe);
+    }
+
+    pub fn resolveNs(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
@@ -2605,14 +2618,16 @@ pub const DNSResolver = struct {
         };
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
     pub fn globalResolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolvePtr(globalThis, callframe);
+    }
+
+    pub fn resolvePtr(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
@@ -2633,14 +2648,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
     pub fn globalResolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveCname(globalThis, callframe);
+    }
+
+    pub fn resolveCname(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
@@ -2661,14 +2678,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
     pub fn globalResolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveMx(globalThis, callframe);
+    }
+
+    pub fn resolveMx(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
@@ -2689,14 +2708,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
     pub fn globalResolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveNaptr(globalThis, callframe);
+    }
+
+    pub fn resolveNaptr(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
@@ -2717,14 +2738,16 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
     pub fn globalResolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveTxt(globalThis, callframe);
+    }
+
+    pub fn resolveTxt(resolver: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
@@ -2745,10 +2768,6 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
-
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-
         return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
     }
 
@@ -3018,7 +3037,7 @@ pub const DNSResolver = struct {
     pub fn newResolver(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = callframe;
 
-        return DNSResolver.init(globalThis.bunVM()).toJS(globalThis);
+        return DNSResolver.init(globalThis.allocator(), globalThis.bunVM()).toJS(globalThis);
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.

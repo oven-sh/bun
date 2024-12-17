@@ -136,7 +136,7 @@ function lookupService(address, port, callback) {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
   }
 
-  dns.lookupService(address, port, callback).then(
+  dns.lookupService(address, port).then(
     results => {
       callback(null, ...results);
     },
@@ -236,7 +236,96 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
-    callback(null, []);
+    let results = undefined;
+    let error = null;
+
+    this.resolve4(hostname, {}, (err, records) => {
+      if (err) {
+        error = err;
+      } else {
+        results = (results || []).concat(records.map(record => Object.assign(record, { type: "A" })));
+      }
+      this.resolve6(hostname, {}, (err, records) => {
+        if (err) {
+          error = err;
+        } else {
+          results = (results || []).concat(records.map(record => Object.assign(record, { type: "AAAA" })));
+        }
+        this.resolveCaa(hostname, (err, records) => {
+          if (err) {
+            error = err;
+          } else {
+            results = (results || []).concat(records.map(record => Object.assign(record, { type: "CAA" })));
+          }
+          this.resolveCname(hostname, (err, records) => {
+            if (err) {
+              error = err;
+            } else {
+              results = (results || []).concat(records.map(record => Object.assign(record, { type: "CNAME" })));
+            }
+            this.resolveMx(hostname, (err, records) => {
+              if (err) {
+                error = err;
+              } else {
+                results = (results || []).concat(records.map(record => Object.assign(record, { type: "MX" })));
+              }
+              this.resolveNaptr(hostname, (err, records) => {
+                if (err) {
+                  error = err;
+                } else {
+                  results = (results || []).concat(records.map(record => Object.assign(record, { type: "NAPTR" })));
+                }
+                this.resolveNs(hostname, (err, records) => {
+                  if (err) {
+                    error = err;
+                  } else {
+                    results = (results || []).concat(records.map(record => Object.assign(record, { type: "NS" })));
+                  }
+                  this.resolvePtr(hostname, (err, records) => {
+                    if (err) {
+                      error = err;
+                    } else {
+                      results = (results || []).concat(records.map(record => Object.assign(record, { type: "PTR" })));
+                    }
+                    this.resolveSoa(hostname, (err, record) => {
+                      if (err) {
+                        error = err;
+                      } else {
+                        results = (results || []).concat(
+                          [record].map(record => Object.assign(record, { type: "SOA" })),
+                        );
+                      }
+                      this.resolveSrv(hostname, (err, records) => {
+                        if (err) {
+                          error = err;
+                        } else {
+                          results = (results || []).concat(
+                            records.map(record => Object.assign(record, { type: "SRV" })),
+                          );
+                        }
+                        this.resolveTxt(hostname, (err, records) => {
+                          if (err) {
+                            error = err;
+                          } else {
+                            results = (results || []).concat(
+                              records.map(record => Object.assign(record, { type: "TXT" })),
+                            );
+                          }
+                          if (error) {
+                            error.syscall = "queryAny";
+                          }
+                          callback(error, results);
+                        });
+                      });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
   }
 
   resolveCname(hostname, callback) {
@@ -244,14 +333,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveCname(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveCname(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveMx(hostname, callback) {
@@ -259,14 +350,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveMx(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveMx(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveNaptr(hostname, callback) {
@@ -274,14 +367,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveNaptr(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveNaptr(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveNs(hostname, callback) {
@@ -289,14 +384,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveNs(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveNs(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolvePtr(hostname, callback) {
@@ -304,14 +401,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolvePtr(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolvePtr(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveSrv(hostname, callback) {
@@ -319,14 +418,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveSrv(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveSrv(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveCaa(hostname, callback) {
@@ -334,14 +435,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveCaa(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveCaa(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveTxt(hostname, callback) {
@@ -349,28 +452,32 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveTxt(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveTxt(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
   resolveSoa(hostname, callback) {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolveSoa(hostname, callback).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolveSoa(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   reverse(ip, callback) {
@@ -378,7 +485,7 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.reverse(ip, callback).then(
+    dns.reverse(ip).then(
       results => {
         callback(null, results);
       },
@@ -389,7 +496,7 @@ var InternalResolver = class Resolver {
   }
 
   setServers(servers) {
-    return setServersOn(servers, this.#resolver);
+    return setServersOn(servers, this.#getResolver());
   }
 };
 

@@ -187,7 +187,13 @@ const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 // kept as a static reference
 const exports_string_name: string = "exports";
-const MacroRefs = std.AutoArrayHashMap(Ref, u32);
+
+const MacroRefData = struct {
+    import_record_id: u32,
+    name: string,
+};
+
+const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
 
 pub const AllocatedNamesPool = ObjectPool(
     std.ArrayList(string),
@@ -8938,20 +8944,26 @@ fn NewParser_(
                     const name = p.loadNameFromRef(name_loc.ref.?);
                     const ref = try p.declareSymbol(.other, name_loc.loc, name);
                     try p.is_import_item.put(p.allocator, ref, {});
-                    try p.macro.refs.put(ref, id);
+                    try p.macro.refs.put(ref, .{
+                        .import_record_id = id,
+                        .name = "default",
+                    });
                 }
 
                 for (stmt.items) |item| {
                     const name = p.loadNameFromRef(item.name.ref.?);
                     const ref = try p.declareSymbol(.other, item.name.loc, name);
                     try p.is_import_item.put(p.allocator, ref, {});
-                    try p.macro.refs.put(ref, id);
+                    try p.macro.refs.put(ref, .{
+                        .import_record_id = id,
+                        .name = item.alias,
+                    });
                 }
 
                 return p.s(S.Empty{}, loc);
             }
 
-            const macro_remap = if ((comptime allow_macros) and !is_macro)
+            const macro_remap = if ((comptime allow_macros))
                 p.options.macro_context.getRemap(path.text)
             else
                 null;
@@ -8970,6 +8982,8 @@ fn NewParser_(
                         .import_record_index = stmt.import_record_index,
                     }) catch unreachable;
                 }
+
+                // TODO: macro remap
             } else {
                 var path_name = fs.PathName.init(path.text);
                 const name = try strings.append(p.allocator, "import_", try path_name.nonUniqueNameString(p.allocator));
@@ -9010,7 +9024,10 @@ fn NewParser_(
                 if (macro_remap) |*remap| {
                     if (remap.get("default")) |remapped_path| {
                         const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                        try p.macro.refs.put(ref, new_import_id);
+                        try p.macro.refs.put(ref, .{
+                            .import_record_id = new_import_id,
+                            .name = "default",
+                        });
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
@@ -9029,12 +9046,6 @@ fn NewParser_(
                         .ref = ref,
                         .import_record_index = stmt.import_record_index,
                     }) catch unreachable;
-                }
-
-                if (is_macro) {
-                    try p.macro.refs.put(ref, stmt.import_record_index);
-                    stmt.default_name = null;
-                    break :outer;
                 }
 
                 if (comptime ParsePassSymbolUsageType != void) {
@@ -9072,7 +9083,10 @@ fn NewParser_(
                 if (macro_remap) |*remap| {
                     if (remap.get(item.alias)) |remapped_path| {
                         const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                        try p.macro.refs.put(ref, new_import_id);
+                        try p.macro.refs.put(ref, .{
+                            .import_record_id = new_import_id,
+                            .name = item.alias,
+                        });
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
@@ -16503,8 +16517,7 @@ fn NewParser_(
                             if (e_.tag.?.data == .e_import_identifier and !p.options.features.is_macro_runtime) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
 
-                                if (p.macro.refs.get(ref)) |import_record_id| {
-                                    const name = p.symbols.items[ref.innerIndex()].original_name;
+                                if (p.macro.refs.get(ref)) |macro_ref_data| {
                                     p.ignoreUsage(ref);
                                     if (p.is_control_flow_dead) {
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
@@ -16522,7 +16535,7 @@ fn NewParser_(
                                     }
 
                                     p.macro_call_count += 1;
-                                    const record = &p.import_records.items[import_record_id];
+                                    const record = &p.import_records.items[macro_ref_data.import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
                                         record.path.text,
@@ -16531,7 +16544,7 @@ fn NewParser_(
                                         p.source,
                                         record.range,
                                         expr,
-                                        name,
+                                        macro_ref_data.name,
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -17427,7 +17440,7 @@ fn NewParser_(
                     if (comptime allow_macros) {
                         if (is_macro_ref and !p.options.features.is_macro_runtime) {
                             const ref = e_.target.data.e_import_identifier.ref;
-                            const import_record_id = p.macro.refs.get(ref).?;
+                            const macro_ref_data = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
                             if (p.is_control_flow_dead) {
                                 return p.newExpr(E.Undefined{}, e_.target.loc);
@@ -17443,8 +17456,7 @@ fn NewParser_(
                                 return p.newExpr(E.Undefined{}, expr.loc);
                             }
 
-                            const name = p.symbols.items[ref.innerIndex()].original_name;
-                            const record = &p.import_records.items[import_record_id];
+                            const record = &p.import_records.items[macro_ref_data.import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
                             p.macro_call_count += 1;
@@ -17455,7 +17467,7 @@ fn NewParser_(
                                 p.source,
                                 record.range,
                                 copied,
-                                name,
+                                macro_ref_data.name,
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
                                     if (p.log.msgs.items.len == start_error_count) {

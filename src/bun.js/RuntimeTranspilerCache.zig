@@ -52,6 +52,10 @@ pub const RuntimeTranspilerCache = struct {
         sourcemap_byte_length: u64 = 0,
         sourcemap_hash: u64 = 0,
 
+        esm_record_byte_offset: u64 = 0,
+        esm_record_byte_length: u64 = 0,
+        esm_record_hash: u64 = 0,
+
         pub const size = brk: {
             var count: usize = 0;
             const meta: Metadata = .{};
@@ -78,6 +82,10 @@ pub const RuntimeTranspilerCache = struct {
             try writer.writeInt(u64, this.sourcemap_byte_offset, .little);
             try writer.writeInt(u64, this.sourcemap_byte_length, .little);
             try writer.writeInt(u64, this.sourcemap_hash, .little);
+
+            try writer.writeInt(u64, this.esm_record_byte_offset, .little);
+            try writer.writeInt(u64, this.esm_record_byte_length, .little);
+            try writer.writeInt(u64, this.esm_record_hash, .little);
         }
 
         pub fn decode(this: *Metadata, reader: anytype) !void {
@@ -101,6 +109,10 @@ pub const RuntimeTranspilerCache = struct {
             this.sourcemap_byte_offset = try reader.readInt(u64, .little);
             this.sourcemap_byte_length = try reader.readInt(u64, .little);
             this.sourcemap_hash = try reader.readInt(u64, .little);
+
+            this.esm_record_byte_offset = try reader.readInt(u64, .little);
+            this.esm_record_byte_length = try reader.readInt(u64, .little);
+            this.esm_record_hash = try reader.readInt(u64, .little);
 
             switch (this.module_type) {
                 .esm, .cjs => {},
@@ -201,6 +213,8 @@ pub const RuntimeTranspilerCache = struct {
                         .output_byte_offset = Metadata.size,
                         .output_byte_length = output_bytes.len,
                         .sourcemap_byte_offset = Metadata.size + output_bytes.len,
+                        .esm_record_byte_offset = Metadata.size + output_bytes.len + sourcemap.len,
+                        .esm_record_byte_length = 0,
                     };
 
                     metadata.output_hash = hash(output_bytes);

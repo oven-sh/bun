@@ -1,6 +1,10 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
 import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
+import defaultMacro, {
+  identity as identity1,
+  identity as identity2,
+} from "./macro.ts" assert { type: "macro" };
 
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
@@ -87,6 +91,17 @@ test("escaping", () => {
 
 test("utf16 string", () => {
   expect(identity("😊 Smiling Face with Smiling Eyes Emoji")).toBe("😊 Smiling Face with Smiling Eyes Emoji");
+});
+
+test("default export", () => {
+  expect(defaultMacro()).toBe("defaultdefaultdefault");
+});
+
+test("aliases", () => {
+  expect(identity1({ a: 1 })).toEqual({ a: 1 });
+  expect(identity1([1, 2, 3])).toEqual([1, 2, 3]);
+  expect(identity2({ a: 1 })).toEqual({ a: 1 });
+  expect(identity2([1, 2, 3])).toEqual([1, 2, 3]);
 });
 
 // test("template string ascii", () => {

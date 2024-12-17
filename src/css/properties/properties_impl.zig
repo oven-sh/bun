@@ -19,7 +19,8 @@ pub fn PropertyIdImpl() type {
         pub fn toCss(this: *const PropertyId, comptime W: type, dest: *Printer(W)) PrintErr!void {
             var first = true;
             const name = this.name(this);
-            const prefix_value = this.prefix().noneIfEmpty();
+            const prefix_value = this.prefix().orNone();
+
             inline for (VendorPrefix.FIELDS) |field| {
                 if (@field(prefix_value, field)) {
                     var prefix: VendorPrefix = .{};

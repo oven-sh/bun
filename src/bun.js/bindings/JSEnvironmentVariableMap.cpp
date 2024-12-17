@@ -256,7 +256,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 
 extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
 
-JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject* global, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     ASSERT(callFrame->argumentCount() == 2);

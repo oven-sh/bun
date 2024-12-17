@@ -2,6 +2,7 @@
 #include "wtf/Compiler.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/ArgList.h"
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -386,11 +387,20 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
+ * `object` and `subset` must be objects. In the future we should change the
+ * signature of this function to only take `JSC::JSCell`. For now, panics
+ * if either `object` or `subset` are not `JSCCell`.
+ *
  * @note
  * The sets recording already visited properties (`seenObjProperties` and
  * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
  * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
  * `nullptr`.
+ *
+ * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
+ * properties currently within those stacks. Likely unnecessary, but better to
+ * be safe tnan sorry
+ *
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
@@ -399,6 +409,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @param seenSubsetProperties already visited properties of `subsetValue`.
  * @param globalObject
  * @param Scope
+ * @param gcBuffer
  * @param replacePropsWithAsymmetricMatchers
  * @param isMatchingObjectContaining
  *
@@ -413,6 +424,7 @@ bool Bun__deepMatch(
     std::set<JSC::EncodedJSValue>* seenSubsetProperties,
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope* throwScope,
+    JSC::MarkedArgumentBuffer* gcBuffer,
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 

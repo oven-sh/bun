@@ -529,7 +529,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 // SAFETY: visited property sets are not required when
                 // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
                 // are both true
-                if (Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, &scope, false, true)) {
+                if (Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, &scope, nullptr, false, true)) {
                     return AsymmetricMatcherResult::PASS;
                 }
             }
@@ -1361,10 +1361,14 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
  * @brief `Bun.deepMatch(a, b)`
  *
  * @note
- * The sets recording already visited properties (`seenObjProperties` and
- * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
- * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
- * `nullptr`.
+ * The sets recording already visited properties (`seenObjProperties`,
+ * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
+ * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
+ * this case, it is safe to pass a `nullptr`.
+ *
+ * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
+ * properties currently within those stacks. Likely unnecessary, but better to
+ * be safe tnan sorry
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
@@ -1372,7 +1376,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
  * @param subsetValue
  * @param seenSubsetProperties already visited properties of `subsetValue`.
  * @param globalObject
- * @param Scope
+ * @param throwScope
+ * @param gcBuffer
  * @param replacePropsWithAsymmetricMatchers
  * @param isMatchingObjectContaining
  *
@@ -1387,10 +1392,14 @@ bool Bun__deepMatch(
     std::set<EncodedJSValue>* seenSubsetProperties,
     JSGlobalObject* globalObject,
     ThrowScope* throwScope,
+    MarkedArgumentBuffer* gcBuffer,
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining)
 {
 
+    // Caller must ensure only objects are passed to this function.
+    ASSERT(objValue.isCell());
+    ASSERT(subsetValue.isCell());
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
     VM& vm = globalObject->vm();
@@ -1474,11 +1483,14 @@ bool Bun__deepMatch(
             } else {
                 ASSERT(seenObjProperties != nullptr);
                 ASSERT(seenSubsetProperties != nullptr);
+                ASSERT(gcBuffer != nullptr);
                 auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
                 auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
+                gcBuffer->append(prop);
+                gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
                     return false;
                 }
             }
@@ -2411,7 +2423,8 @@ bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__
 
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
-    return Bun__deepMatch<false>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
+    MarkedArgumentBuffer gcBuffer;
+    return Bun__deepMatch<false>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
 bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
@@ -2423,7 +2436,8 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
-    return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
+    MarkedArgumentBuffer gcBuffer;
+    return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
 extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object,

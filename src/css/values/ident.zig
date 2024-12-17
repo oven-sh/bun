@@ -49,7 +49,7 @@ pub const DashedIdentReference = struct {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         if (dest.css_module) |*css_module| {
             if (css_module.config.dashed_idents) {
-                if (css_module.referenceDashed(this.ident.v, &this.from, dest.loc.source_index)) |name| {
+                if (css_module.referenceDashed(dest.allocator, this.ident.v, &this.from, dest.loc.source_index)) |name| {
                     try dest.writeStr("--");
                     css.serializer.serializeName(name, dest) catch return dest.addFmtError();
                     return;

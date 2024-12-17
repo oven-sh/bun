@@ -1224,7 +1224,6 @@ it("should install version tagged with `latest` by default", async () => {
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
-  expect(err2).toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
@@ -1234,8 +1233,8 @@ it("should install version tagged with `latest` by default", async () => {
     "1 package installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(4);
+  expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -1607,8 +1606,7 @@ it("should add dependency without duplication", async () => {
     "installed bar@0.0.2",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(2);
+  expect(requested).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({

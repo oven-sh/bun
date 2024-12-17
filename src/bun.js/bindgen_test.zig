@@ -7,11 +7,11 @@ pub const SampleEnum = enum {
 };
 
 pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return global.createObjectFromStruct(.{
+    return JSC.JSObject.create(.{
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
         .customDeserializer = gen.createCustomDeserializerCallback(global),
-    }).toJS();
+    }, global).toJS();
 }
 
 // This example should be kept in sync with bindgen's documentation

@@ -143,7 +143,7 @@ async function injectDebugTerminal2() {
 
   await jsDebugExt.activate()
   const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
-  if (!jsDebugExt) {
+  if (!jsDebug) {
     return vscode.window.onDidOpenTerminal(injectDebugTerminal)
   }
 

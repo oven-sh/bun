@@ -21,6 +21,42 @@ export default [
         fn: "resolve",
         length: 3,
       },
+      resolveSrv: {
+        fn: "resolveSrv",
+        length: 1,
+      },
+      resolveTxt: {
+        fn: "resolveTxt",
+        length: 1,
+      },
+      resolveSoa: {
+        fn: "resolveSoa",
+        length: 1,
+      },
+      resolveNaptr: {
+        fn: "resolveNaptr",
+        length: 1,
+      },
+      resolveMx: {
+        fn: "resolveMx",
+        length: 1,
+      },
+      resolveCaa: {
+        fn: "resolveCaa",
+        length: 1,
+      },
+      resolveNs: {
+        fn: "resolveNs",
+        length: 1,
+      },
+      resolvePtr: {
+        fn: "resolvePtr",
+        length: 1,
+      },
+      resolveCname: {
+        fn: "resolveCname",
+        length: 1,
+      },
     },
   }),
   define({

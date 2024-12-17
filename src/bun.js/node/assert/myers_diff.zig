@@ -360,7 +360,7 @@ pub fn LineCmp(Line: type) type {
     return fn (a: Line, b: Line) bool;
 }
 
-const Error = error{
+pub const Error = error{
     DiffTooLarge,
     InputsTooLarge,
 } || Allocator.Error;
@@ -540,8 +540,8 @@ test StrDiffer {
             ,
         },
     }) |thing| {
-        var actual = split(a, thing[0]);
-        var expected = split(a, thing[1]);
+        var actual = try split(a, thing[0]);
+        var expected = try split(a, thing[1]);
         defer {
             actual.deinit(a);
             expected.deinit(a);
@@ -551,13 +551,14 @@ test StrDiffer {
     }
 }
 
-fn split(alloc: Allocator, s: [:0]const u8) std.ArrayListUnmanaged([]const u8) {
+pub fn split(alloc: Allocator, s: []const u8) Allocator.Error!std.ArrayListUnmanaged([]const u8) {
     // thing
     var it = std.mem.splitScalar(u8, s, '\n');
     var lines = std.ArrayListUnmanaged([]const u8){};
-    lines.ensureUnusedCapacity(alloc, s.len >> 4) catch @panic("oom");
+    try lines.ensureUnusedCapacity(alloc, s.len >> 4);
+    errdefer lines.deinit(alloc);
     while (it.next()) |l| {
-        lines.append(alloc, l) catch @panic("oom");
+        try lines.append(alloc, l);
     }
 
     return lines;

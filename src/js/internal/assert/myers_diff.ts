@@ -13,12 +13,20 @@ interface Diff {
 }
 
 declare namespace Internal {
-  export function myersDiff(actual: string[], expected: string[], checkCommaDisparity?: boolean): Diff[];
+  export function myersDiff(
+    actual: string[],
+    expected: string[],
+    checkCommaDisparity?: boolean,
+    lines?: boolean,
+  ): Diff[];
 }
 
 const kNopLinesToCollapse = 5;
 
-const { myersDiff } = $zig("node_assert_binding.zig", "generate") as typeof Internal;
+const { myersDiff: myersDiffInternal } = $zig("node_assert_binding.zig", "generate") as typeof Internal;
+function myersDiff(actual, expected, checkCommaDisparity = true, lines = false) {
+  return myersDiffInternal(actual, expected, checkCommaDisparity, lines);
+}
 
 function printSimpleMyersDiff(diff: Diff[]) {
   let message = "";

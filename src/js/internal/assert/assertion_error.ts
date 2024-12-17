@@ -21,7 +21,26 @@ const { isError } = require("internal/util");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff");
+
+declare namespace Internal {
+  const enum Operation {
+    Insert = 0,
+    Delete = 1,
+    Equal = 2,
+  }
+  interface Diff {
+    kind: Operation;
+    value: string;
+  }
+
+  function myersDiff(actual: string, expected: string, checkCommaDisparity?: boolean, lines?: boolean): string;
+  // todo
+
+  function printMyersDiff(...args: any[]): any;
+  function printSimpleMyersDiff(...args: any[]): any;
+}
+
+const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const kReadableOperator = {
   deepStrictEqual: "Expected values to be strictly deep-equal:",
@@ -94,10 +113,12 @@ function checkOperator(actual, expected, operator) {
 }
 
 function getColoredMyersDiff(actual, expected) {
+  // console.log("getColoredMyersDiff(", actual, expected, ")");
   const header = `${colors.green}actual${colors.white} ${colors.red}expected${colors.white}`;
   const skipped = false;
 
-  const diff = myersDiff(StringPrototypeSplit(actual, ""), StringPrototypeSplit(expected, ""));
+  // const diff = myersDiff(StringPrototypeSplit(actual, ""), StringPrototypeSplit(expected, ""));
+  const diff = myersDiff(actual, expected, false, false);
   let message = printSimpleMyersDiff(diff);
 
   if (skipped) {
@@ -137,7 +158,7 @@ function getStackedDiff(actual, expected) {
   return { message };
 }
 
-function getSimpleDiff(originalActual, actual, originalExpected, expected) {
+function getSimpleDiff(originalActual, actual: string, originalExpected, expected: string) {
   let stringsLen = actual.length + expected.length;
   // Accounting for the quotes wrapping strings
   if (typeof originalActual === "string") {
@@ -200,7 +221,7 @@ function createErrDiff(actual, expected, operator, customMessage) {
     header = "";
   } else {
     const checkCommaDisparity = actual != null && typeof actual === "object";
-    const diff = myersDiff(inspectedSplitActual, inspectedSplitExpected, checkCommaDisparity);
+    const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
 
     const myersDiffMessage = printMyersDiff(diff);
     message = myersDiffMessage.message;

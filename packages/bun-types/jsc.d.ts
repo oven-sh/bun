@@ -225,5 +225,5 @@ declare module "bun:jsc" {
    *
    * Passing a primitive type that isn't heap allocated returns 0.
    */
-  function estimateDirectMemoryUsageOf(value: object | CallableFunction | bigint | symbol | string): number;
+  function estimateShallowMemoryUsageOf(value: object | CallableFunction | bigint | symbol | string): number;
 }

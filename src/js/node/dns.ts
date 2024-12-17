@@ -155,8 +155,12 @@ var InternalResolver = class Resolver {
 
   cancel() {}
 
+  #getResolver() {
+    return this instanceof Resolver ? this.#resolver : dns;
+  }
+
   getServers() {
-    return this.#resolver.getServers();
+    return this.#getResolver().getServers();
   }
 
   resolve(hostname, rrtype, callback) {
@@ -171,22 +175,24 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.resolve(hostname).then(
-      results => {
-        switch (rrtype?.toLowerCase()) {
-          case "a":
-          case "aaaa":
-            callback(null, hostname, results.map(mapResolveX));
-            break;
-          default:
-            callback(null, results);
-            break;
-        }
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    this.#getResolver()
+      .resolve(hostname)
+      .then(
+        results => {
+          switch (rrtype?.toLowerCase()) {
+            case "a":
+            case "aaaa":
+              callback(null, hostname, results.map(mapResolveX));
+              break;
+            default:
+              callback(null, results);
+              break;
+          }
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolve4(hostname, options, callback) {
@@ -510,6 +516,9 @@ const promises = {
     return translateErrorCode(dns.lookup(hostname, { family: 6 }).then(promisifyResolveX));
   },
 
+  resolveAny(hostname) {
+    return translateErrorCode(dns.resolveAny(hostname));
+  },
   resolveSrv(hostname) {
     return translateErrorCode(dns.resolveSrv(hostname));
   },
@@ -522,7 +531,6 @@ const promises = {
   resolveNaptr(hostname) {
     return translateErrorCode(dns.resolveNaptr(hostname));
   },
-
   resolveMx(hostname) {
     return translateErrorCode(dns.resolveMx(hostname));
   },
@@ -625,9 +633,6 @@ const promises = {
     setServers(servers) {}
   },
 };
-for (const key of ["resolveAny"]) {
-  promises[key] = () => Promise.resolve(undefined);
-}
 
 // Compatibility with util.promisify(dns[method])
 for (const [method, pMethod] of [

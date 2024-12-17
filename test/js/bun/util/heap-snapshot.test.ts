@@ -1,20 +1,20 @@
 import { describe, it, expect } from "bun:test";
 import { parseHeapSnapshot, summarizeByType } from "./heap";
-import { estimateDirectMemoryUsageOf } from "bun:jsc";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 
 describe("Native types report their size correctly", () => {
   it("FormData", () => {
     var formData = new FormData();
     globalThis.formData = formData;
-    let original = estimateDirectMemoryUsageOf(formData);
+    let original = estimateShallowMemoryUsageOf(formData);
     formData.append("a", Buffer.alloc(1024 * 1024 * 8, "abc").toString());
-    const afterBuffer = estimateDirectMemoryUsageOf(formData);
+    const afterBuffer = estimateShallowMemoryUsageOf(formData);
     expect(afterBuffer).toBeGreaterThan(original + 1024 * 1024 * 8);
     formData.append("a", new Blob([Buffer.alloc(1024 * 1024 * 2, "yooa")]));
-    const afterBlob = estimateDirectMemoryUsageOf(formData);
+    const afterBlob = estimateShallowMemoryUsageOf(formData);
     expect(afterBlob).toBeGreaterThan(afterBuffer + 1024 * 1024 * 2);
     formData.append("a", new Blob([Buffer.alloc(1024 * 1024 * 2, "yooa")]));
-    const afterBlob2 = estimateDirectMemoryUsageOf(formData);
+    const afterBlob2 = estimateShallowMemoryUsageOf(formData);
     expect(afterBlob2).toBeGreaterThan(afterBlob + 1024 * 1024 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
@@ -88,11 +88,11 @@ describe("Native types report their size correctly", () => {
   it("URLSearchParams", () => {
     const searchParams = new URLSearchParams();
     globalThis.searchParams = searchParams;
-    const original = estimateDirectMemoryUsageOf(searchParams);
+    const original = estimateShallowMemoryUsageOf(searchParams);
     for (let i = 0; i < 1000; i++) {
       searchParams.set(`a${i}`, `b${i}`);
     }
-    const after = estimateDirectMemoryUsageOf(searchParams);
+    const after = estimateShallowMemoryUsageOf(searchParams);
     expect(after).toBeGreaterThan(original + 1000 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
@@ -110,11 +110,11 @@ describe("Native types report their size correctly", () => {
 
   it("Headers", () => {
     const headers = new Headers();
-    const original = estimateDirectMemoryUsageOf(headers);
+    const original = estimateShallowMemoryUsageOf(headers);
     for (let i = 0; i < 1000; i++) {
       headers.set(`a${i}`, `b${i}`);
     }
-    const after = estimateDirectMemoryUsageOf(headers);
+    const after = estimateShallowMemoryUsageOf(headers);
     expect(after).toBeGreaterThan(original + 1000 * 2);
 
     globalThis.headers = headers;
@@ -137,9 +137,9 @@ describe("Native types report their size correctly", () => {
         open(ws) {},
         drain(ws) {},
         message(ws, message) {
-          const before = estimateDirectMemoryUsageOf(ws);
+          const before = estimateShallowMemoryUsageOf(ws);
           ws.send(message);
-          const after = estimateDirectMemoryUsageOf(ws);
+          const after = estimateShallowMemoryUsageOf(ws);
           const bufferedAmount = ws.getBufferedAmount();
           if (bufferedAmount > 0) {
             expect(after).toBeGreaterThan(before + bufferedAmount);
@@ -148,9 +148,9 @@ describe("Native types report their size correctly", () => {
       },
 
       fetch(req, server) {
-        const before = estimateDirectMemoryUsageOf(req);
+        const before = estimateShallowMemoryUsageOf(req);
         server.upgrade(req);
-        const after = estimateDirectMemoryUsageOf(req);
+        const after = estimateShallowMemoryUsageOf(req);
 
         // We detach the request context from the request object on upgrade.
         expect(after).toBeLessThan(before);
@@ -159,7 +159,7 @@ describe("Native types report their size correctly", () => {
       },
     });
     const ws = new WebSocket(server.url);
-    const original = estimateDirectMemoryUsageOf(ws);
+    const original = estimateShallowMemoryUsageOf(ws);
     globalThis.ws = ws;
 
     const { promise, resolve } = Promise.withResolvers();
@@ -172,7 +172,7 @@ describe("Native types report their size correctly", () => {
     };
     await promise;
 
-    const after = estimateDirectMemoryUsageOf(ws);
+    const after = estimateShallowMemoryUsageOf(ws);
     expect(after).toBeGreaterThan(original + 1024 * 128);
 
     const snapshot = Bun.generateHeapSnapshot();

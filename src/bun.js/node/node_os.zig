@@ -312,7 +312,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
             return global.throwValue(err.toJSC(global));
         }
-        return bun.String.createUTF8(&out);
+        return bun.String.createUTF8(out[0..size]);
     } else {
 
         // The posix implementation of uv_os_homedir first checks the HOME

@@ -1104,7 +1104,7 @@ pub const GlobalData = struct {
     resolver: DNSResolver,
 
     pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *GlobalData {
-        const global = allocator.create(GlobalData) catch unreachable;
+        const global = allocator.create(GlobalData) catch bun.outOfMemory();
         global.* = .{
             .resolver = .{
                 .vm = vm,
@@ -1748,6 +1748,9 @@ pub const DNSResolver = struct {
     pending_addr_cache_crares: AddrPendingCache = AddrPendingCache.init(),
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
+    pub usingnamespace JSC.Codegen.JSDNSResolver;
+    pub usingnamespace bun.New(@This());
+
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
     const PollType = if (Environment.isWindows)
@@ -1768,6 +1771,20 @@ pub const DNSResolver = struct {
 
         pub usingnamespace bun.New(@This());
     };
+
+    pub fn init(vm: *JSC.VirtualMachine) *DNSResolver {
+        return DNSResolver.new(.{
+            .vm = vm,
+        });
+    }
+
+    pub fn finalize(this: *DNSResolver) void {
+        if (this.channel) |channel| {
+            channel.deinit();
+        }
+
+        this.destroy();
+    }
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
     const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
@@ -2094,6 +2111,21 @@ pub const DNSResolver = struct {
         return .{ .result = this.channel.? };
     }
 
+    pub fn getChannelOrError(this: *DNSResolver, globalThis: *JSC.JSGlobalObject) bun.JSError!*c_ares.Channel {
+        switch (this.getChannel()) {
+            .result => |result| return result,
+            .err => |err| {
+                const system_error = JSC.SystemError{
+                    .errno = -1,
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
+                };
+
+                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
+            },
+        }
+    }
+
     pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
         const poll = UvDnsPoll.fromPoll(watcher);
         const vm = poll.parent.vm;
@@ -2252,7 +2284,7 @@ pub const DNSResolver = struct {
     pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolve", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolve", 3, arguments.len);
         }
 
         const record_type: RecordType = if (arguments.len == 1)
@@ -2822,10 +2854,8 @@ pub const DNSResolver = struct {
         };
     }
 
-    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    fn getChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = callframe;
-
-        const channel = try getChannelFromVM(globalThis);
         var servers: ?*c_ares.struct_ares_addr_port_node = null;
         const r = c_ares.ares_get_servers_ports(channel, &servers);
         if (r != c_ares.ARES_SUCCESS) {
@@ -2885,9 +2915,17 @@ pub const DNSResolver = struct {
         return values;
     }
 
-    pub fn setServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn getGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const channel = try getChannelFromVM(globalThis);
+        return getChannelServers(channel, globalThis, callframe);
+    }
 
+    pub fn getServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const channel = try this.getChannelOrError(globalThis);
+        return getChannelServers(channel, globalThis, callframe);
+    }
+
+    fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments();
         if (arguments.len == 0) {
             return globalThis.throwNotEnoughArguments("setServers", 1, 0);
@@ -2961,6 +2999,22 @@ pub const DNSResolver = struct {
         }
 
         return .undefined;
+    }
+
+    pub fn setGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const channel = try getChannelFromVM(globalThis);
+        return setChannelServers(channel, globalThis, callframe);
+    }
+
+    pub fn setServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const channel = try this.getChannelOrError(globalThis);
+        return setChannelServers(channel, globalThis, callframe);
+    }
+
+    pub fn newResolver(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        _ = callframe;
+
+        return DNSResolver.init(globalThis.bunVM()).toJS(globalThis);
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
@@ -3060,7 +3114,7 @@ pub const DNSResolver = struct {
 
     comptime {
         const js_resolve = JSC.toJSHostFunction(resolve);
-        @export(js_resolve, .{ .name = "Bun__DNSResolver__resolve" });
+        @export(js_resolve, .{ .name = "Bun__DNS__resolve" });
         const js_lookup = JSC.toJSHostFunction(lookup);
         @export(js_lookup, .{ .name = "Bun__DNSResolver__lookup" });
         const js_resolveTxt = JSC.toJSHostFunction(resolveTxt);
@@ -3081,10 +3135,10 @@ pub const DNSResolver = struct {
         @export(js_resolvePtr, .{ .name = "Bun__DNSResolver__resolvePtr" });
         const js_resolveCname = JSC.toJSHostFunction(resolveCname);
         @export(js_resolveCname, .{ .name = "Bun__DNSResolver__resolveCname" });
-        const js_getServers = JSC.toJSHostFunction(getServers);
-        @export(js_getServers, .{ .name = "Bun__DNSResolver__getServers" });
-        const js_setServers = JSC.toJSHostFunction(setServers);
-        @export(js_setServers, .{ .name = "Bun__DNSResolver__setServers" });
+        const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
+        @export(js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
+        const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);
+        @export(js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
         const js_reverse = JSC.toJSHostFunction(reverse);
         @export(js_reverse, .{ .name = "Bun__DNSResolver__reverse" });
         const js_lookupService = JSC.toJSHostFunction(lookupService);
@@ -3093,5 +3147,7 @@ pub const DNSResolver = struct {
         @export(js_prefetchFromJS, .{ .name = "Bun__DNSResolver__prefetch" });
         const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
         @export(js_getDNSCacheStats, .{ .name = "Bun__DNSResolver__getCacheStats" });
+        const js_newResolver = JSC.toJSHostFunction(newResolver);
+        @export(js_newResolver, .{ .name = "Bun__DNSResolver__new" });
     }
 };

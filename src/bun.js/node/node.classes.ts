@@ -2,6 +2,24 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
+    name: "DNSResolver",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    proto: {
+      setServers: {
+        fn: "setServers",
+        length: 1,
+      },
+      getServers: {
+        fn: "getServers",
+        length: 0,
+      },
+    },
+  }),
+  define({
     name: "FSWatcher",
     construct: false,
     noConstructor: true,

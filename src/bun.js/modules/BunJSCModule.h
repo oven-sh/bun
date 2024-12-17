@@ -935,7 +935,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     setTimeZone                         functionSetTimeZone                         Function    0                               
     serialize                           functionSerialize                           Function    0                             
     deserialize                         functionDeserialize                         Function    0   
-    estimateDirectMemoryUsageOf         functionEstimateDirectMemoryUsageOf         Function    1
+    estimateShallowMemoryUsageOf         functionEstimateDirectMemoryUsageOf         Function    1
 @end
 */
 
@@ -975,7 +975,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
-    putNativeFn(Identifier::fromString(vm, "estimateDirectMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
+    putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);

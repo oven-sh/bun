@@ -319,6 +319,36 @@ describe("napi", () => {
       checkSameOutput("test_type_tag", []);
     });
   });
+
+  describe("napi_wrap", () => {
+    it("accepts the right kinds of values", () => {
+      checkSameOutput("test_napi_wrap", []);
+    });
+
+    it("is shared between addons", () => {
+      checkSameOutput("test_napi_wrap_cross_addon", []);
+    });
+
+    it("does not follow prototypes", () => {
+      checkSameOutput("test_napi_wrap_prototype", []);
+    });
+
+    it("does not consider proxies", () => {
+      checkSameOutput("test_napi_wrap_proxy", []);
+    });
+
+    it("can remove a wrap", () => {
+      checkSameOutput("test_napi_remove_wrap", []);
+    });
+
+    it("has the right lifetime", () => {
+      checkSameOutput("test_wrap_lifetime_without_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

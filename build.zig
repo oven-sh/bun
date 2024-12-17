@@ -328,6 +328,12 @@ pub fn build(b: *Build) !void {
         });
     }
 
+    // zig build translate-c-headers
+    {
+        const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
+        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+    }
+
     // zig build enum-extractor
     {
         // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
@@ -380,6 +386,25 @@ pub fn addMultiCheck(
     }
 }
 
+fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.TranslateC {
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c-headers-for-zig.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    inline for ([_](struct { []const u8, bool }){
+        .{ "WINDOWS", translate_c.target.result.os.tag == .windows },
+        .{ "POSIX", translate_c.target.result.os.tag != .windows },
+        .{ "LINUX", translate_c.target.result.os.tag == .linux },
+        .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+    }) |entry| {
+        const str, const value = entry;
+        translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
+    }
+    return translate_c;
+}
+
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     const obj = b.addObject(.{
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
@@ -428,13 +453,8 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_plugin_api = b.addTranslateC(.{
-        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .link_libc = true,
-    });
-    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
 
     return obj;
 }

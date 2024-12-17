@@ -47,6 +47,8 @@ export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
 /** Each variant gets a dispatcher function. */
 export const extDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: number) =>
   `bindgen_${cap(namespaceVar)}_dispatch${cap(fnLabel)}${variantNumber}`;
+export const extInternalDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: string | number) =>
+  `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}_v${variantNumber}`;
 
 interface TypeDataDefs {
   /** The name */
@@ -70,12 +72,18 @@ interface TypeDataDefs {
 }
 type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
+export const enum NodeValidator {
+  validateInteger = "validateInteger",
+}
+
 interface Flags {
+  nodeValidator?: NodeValidator;
   optional?: boolean;
   required?: boolean;
-  nullable?: boolean;
+  nonNull?: boolean;
   default?: any;
   range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
+  finite?: boolean;
 }
 
 export interface DictionaryField {
@@ -84,6 +92,8 @@ export interface DictionaryField {
 }
 
 export declare const isType: unique symbol;
+
+const numericTypes = new Set(["f64", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize"]);
 
 /**
  * Implementation of the Type interface.  All types are immutable and hashable.
@@ -263,7 +273,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   cppClassName() {
-    assert(this.lowersToNamedType());
+    assert(this.lowersToNamedType(), `Does not lower to named type: ${inspect(this)}`);
     const name = this.name();
     const namespace = typeHashToNamespace.get(this.hash());
     return namespace ? `${namespace}::${cap(name)}` : name;
@@ -325,48 +335,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         }
         break;
     }
-  }
-
-  // Interface definition API
-  get optional() {
-    if (this.flags.required) {
-      throw new Error("Cannot derive optional on a required type");
-    }
-    if (this.flags.default) {
-      throw new Error("Cannot derive optional on a something with a default value (default implies optional)");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      optional: true,
-    });
-  }
-
-  get nullable() {
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      nullable: true,
-    });
-  }
-
-  get required() {
-    if (this.flags.required) {
-      throw new Error("This type already has required set");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive required on an optional type");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      required: true,
-    });
-  }
-
-  clamp(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "clamp");
-  }
-
-  enforceRange(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "enforce");
   }
 
   #rangeModifier(min: undefined | number | bigint, max: undefined | number | bigint, kind: "clamp" | "enforce") {
@@ -467,6 +435,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           }
         }
         break;
+      case "undefined":
+        assert(value === undefined, `Expected undefined, got ${inspect(value)}`);
+        break;
       default:
         throw new Error(`TODO: set default value on type ${this.kind}`);
     }
@@ -515,6 +486,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           throw new Error(`TODO: non-empty string default`);
         }
         break;
+      case "undefined":
+        throw new Error("Zero-sized type");
       default:
         throw new Error(`TODO: set default value on type ${this.kind}`);
     }
@@ -527,25 +500,31 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     throw new Error("TODO: generate non-extern struct for representing this data type");
   }
 
-  default(def: any) {
-    if ("default" in this.flags) {
-      throw new Error("This type already has a default value");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive default on a required type");
-    }
-    this.assertDefaultIsValid(def);
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      default: def,
-    });
+  isIgnoredUndefinedType() {
+    return this.kind === "undefined";
+  }
+
+  isStringType() {
+    return (
+      this.kind === "DOMString" || this.kind === "ByteString" || this.kind === "USVString" || this.kind === "UTF8String"
+    );
+  }
+
+  isNumberType() {
+    return numericTypes.has(this.kind);
+  }
+
+  isObjectType() {
+    return this.kind === "externalClass" || this.kind === "dictionary";
   }
 
   [Symbol.toStringTag] = "Type";
   [Bun.inspect.custom](depth, options, inspect) {
     return (
       `${options.stylize("Type", "special")} ${
-        this.nameDeduplicated ? options.stylize(JSON.stringify(this.nameDeduplicated), "string") + " " : ""
+        this.lowersToNamedType() && this.nameDeduplicated
+          ? options.stylize(JSON.stringify(this.nameDeduplicated), "string") + " "
+          : ""
       }${options.stylize(
         `[${this.kind}${["required", "optional", "nullable"]
           .filter(k => this.flags[k])
@@ -562,9 +541,105 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         : "")
     );
   }
+
+  // Public interface definition API
+  get optional() {
+    if (this.flags.required) {
+      throw new Error("Cannot derive optional on a required type");
+    }
+    if (this.flags.default) {
+      throw new Error("Cannot derive optional on a something with a default value (default implies optional)");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      optional: true,
+    });
+  }
+
+  get finite() {
+    if (this.kind !== "f64") {
+      throw new Error("finite can only be used on f64");
+    }
+    if (this.flags.finite) {
+      throw new Error("This type already has finite set");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      finite: true,
+    });
+  }
+
+  get required() {
+    if (this.flags.required) {
+      throw new Error("This type already has required set");
+    }
+    if (this.flags.required) {
+      throw new Error("Cannot derive required on an optional type");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      required: true,
+    });
+  }
+
+  default(def: any) {
+    if ("default" in this.flags) {
+      throw new Error("This type already has a default value");
+    }
+    if (this.flags.required) {
+      throw new Error("Cannot derive default on a required type");
+    }
+    this.assertDefaultIsValid(def);
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      default: def,
+    });
+  }
+
+  clamp(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "clamp");
+  }
+
+  enforceRange(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "enforce");
+  }
+
+  get nonNull() {
+    if (this.flags.nonNull) {
+      throw new Error("Cannot derive nonNull on a nonNull type");
+    }
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      nonNull: true,
+    });
+  }
+
+  validateInt32(min?: number, max?: number) {
+    if (this.kind !== "i32") {
+      throw new Error("validateInt32 can only be used on i32 or u32");
+    }
+    const rangeInfo = cAbiIntegerLimits("i32");
+    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
+  }
+
+  validateUint32(min?: number, max?: number) {
+    if (this.kind !== "u32") {
+      throw new Error("validateUint32 can only be used on i32 or u32");
+    }
+    const rangeInfo = cAbiIntegerLimits("u32");
+    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
+  }
+
+  validateInteger(min?: number | bigint, max?: number | bigint) {
+    min ??= Number.MIN_SAFE_INTEGER;
+    max ??= Number.MAX_SAFE_INTEGER;
+    const enforceRange = this.#rangeModifier(min, max, "enforce") as TypeImpl;
+    enforceRange.flags.nodeValidator = NodeValidator.validateInteger;
+    return enforceRange;
+  }
 }
 
-function cAbiIntegerLimits(type: CAbiType) {
+export function cAbiIntegerLimits(type: CAbiType) {
   switch (type) {
     case "u8":
       return [0, 255];
@@ -584,6 +659,8 @@ function cAbiIntegerLimits(type: CAbiType) {
       return [-2147483648, 2147483647];
     case "i64":
       return [-9223372036854775808n, 9223372036854775807n];
+    case "f64":
+      return [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
     default:
       throw new Error(`Unexpected type ${type}`);
   }
@@ -603,9 +680,6 @@ export function oneOfImpl(types: TypeImpl[]): TypeImpl {
     if (type.kind === "oneOf") {
       out.push(...type.data);
     } else {
-      if (type.flags.nullable) {
-        throw new Error("Union type cannot include nullable");
-      }
       if (type.flags.default) {
         throw new Error(
           "Union type cannot include a default value. Instead, set a default value on the union type itself",
@@ -711,6 +785,8 @@ export type ArgStrategyChildItem =
 export type ReturnStrategy =
   // JSValue is special cased because it encodes exception as 0x0
   | { type: "jsvalue" }
+  // Return value doesnt exist. function returns a boolean indicating success/error.
+  | { type: "void" }
   // For primitives and simple structures where direct assignment into a
   // pointer is possible. function returns a boolean indicating success/error.
   | { type: "basic-out-param"; abiType: CAbiType };
@@ -741,7 +817,8 @@ export function registerFunction(opts: FuncOptions) {
     for (const variant of opts.variants) {
       const { minRequiredArgs } = validateVariant(variant);
       variants.push({
-        ...variant,
+        args: Object.entries(variant.args).map(([name, type]) => ({ name, type })) as Arg[],
+        ret: variant.ret as TypeImpl,
         suffix: `${i}`,
         minRequiredArgs,
       } as unknown as Variant);

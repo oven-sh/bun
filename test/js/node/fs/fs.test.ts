@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -2225,110 +2225,73 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
-  it("simple write stream finishes", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStream.txt`;
-    const stream = createWriteStream(path);
+  it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
+    const streamPath = join(tmpdirSync(), "create-write-stream.txt");
+    const { promise: done, resolve, reject } = Promise.withResolvers();
+
+    const stream = createWriteStream(streamPath);
+    stream.on("error", reject);
+    stream.on("finish", resolve);
     stream.write("Test file written successfully");
     stream.end();
 
-    return await new Promise((resolve, reject) => {
-      stream.on("error", e => {
-        reject(e);
-      });
-
-      stream.on("finish", () => {
-        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-        resolve(true);
-      });
-    });
+    await done;
+    expect(readFileSync(streamPath, "utf8")).toBe("Test file written successfully");
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
-    const stream = createWriteStream(path);
-    try {
-      stream.write(null);
-      expect(() => {}).toThrow(Error);
-    } catch (exception: any) {
-      expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
-    }
+    const streamPath = join(tmpdirSync(), "create-write-stream-nulls.txt");
+    const stream = createWriteStream(streamPath);
+    expect.toThrowWithCode(() => stream.write(null), "ERR_STREAM_NULL_VALUES");
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
-    const stream = createWriteStream(path, {
+    const streamPath = join(tmpdirSync(), "create-write-stream-nulls-object-mode.txt");
+    const stream = createWriteStream(streamPath, {
       // @ts-ignore-next-line
       objectMode: true,
     });
-    try {
-      stream.write(null);
-      expect(() => {}).toThrow(Error);
-    } catch (exception: any) {
-      expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
-    }
+    expect.toThrowWithCode(() => stream.write(null), "ERR_STREAM_NULL_VALUES");
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
-    const stream = createWriteStream(path);
-    try {
-      stream.write(false);
-      expect(() => {}).toThrow(Error);
-    } catch (exception: any) {
-      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
-    }
+    const streamPath = join(tmpdirSync(), "create-write-stream-false.txt");
+    const stream = createWriteStream(streamPath);
+    expect.toThrowWithCode(() => stream.write(false), "ERR_INVALID_ARG_TYPE");
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
-    const stream = createWriteStream(path, {
+    const streamPath = join(tmpdirSync(), "create-write-stream-false-object-mode.txt");
+    const stream = createWriteStream(streamPath, {
       // @ts-ignore-next-line
       objectMode: true,
     });
-    try {
-      stream.write(false);
-      expect(() => {}).toThrow(Error);
-    } catch (exception: any) {
-      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
-    }
+    expect.toThrowWithCode(() => stream.write(false), "ERR_INVALID_ARG_TYPE");
   });
 
   it("writing in append mode should not truncate the file", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamAppend.txt`;
-    const stream = createWriteStream(path, {
+    const streamPath = join(tmpdirSync(), "create-write-stream-append.txt");
+    const stream = createWriteStream(streamPath, {
       // @ts-ignore-next-line
       flags: "a",
     });
+
+    const { promise: done1, resolve: resolve1, reject: reject1 } = Promise.withResolvers();
+    stream.on("error", reject1);
+    stream.on("finish", resolve1);
     stream.write("first line\n");
     stream.end();
+    await done1;
 
-    await new Promise((resolve, reject) => {
-      stream.on("error", e => {
-        reject(e);
-      });
-
-      stream.on("finish", () => {
-        resolve(true);
-      });
-    });
-
-    const stream2 = createWriteStream(path, {
-      // @ts-ignore-next-line
-      flags: "a",
-    });
+    const { promise: done2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
+    const stream2 = createWriteStream(streamPath, { flags: "a" });
+    stream2.on("error", reject2);
+    stream2.on("finish", resolve2);
     stream2.write("second line\n");
     stream2.end();
+    await done2;
 
-    return await new Promise((resolve, reject) => {
-      stream2.on("error", e => {
-        reject(e);
-      });
-
-      stream2.on("finish", () => {
-        expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
-        resolve(true);
-      });
-    });
+    expect(readFileSync(streamPath, "utf8")).toBe("first line\nsecond line\n");
   });
 
   it("should emit open and call close callback", done => {

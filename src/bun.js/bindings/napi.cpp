@@ -2528,7 +2528,7 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
 {
     NAPI_PREMABLE
     JSValue jsValue = toJS(value);
-    if (jsValue.isEmpty() || !result) {
+    if (jsValue.isEmpty() || !result || !lossless) {
         return napi_invalid_arg;
     }
     if (!jsValue.isHeapBigInt()) {
@@ -2539,29 +2539,43 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
 
     if (bigint->isZero()) {
         *result = 0;
-        if (lossless != nullptr) *lossless = true;
+        *lossless = true;
     } else {
         uint64_t digit = bigint->digit(0);
+
+        // The goal of this code is something like:
+        //
+        //     *result = digit;
+        //     if (bigint->sign()) {
+        //         *result *= -1;
+        //     }
+        //
+        // However, that code has the possibility of overflowing a signed integer. The overflow is
+        // going to come up in cases where the bigint is negative, but its single digit exceeds
+        // the range of int64_t.
+        //
+        // Since signed overflow is undefined behavior in C++, I have chosen instead to negate
+        // `digit` as an unsigned integer (using two's complement) and then copy its bytes into
+        // `result`.
+        //
+        // Yes, clang optimizes this like it should: https://godbolt.org/z/Pa5vEcn8E
         uint64_t signed_digit = digit;
         if (bigint->sign()) {
-            // negate, while keeping it unsigned because i don't trust signed overflow
             signed_digit = ~signed_digit + 1;
         }
         memcpy(result, &signed_digit, sizeof(signed_digit));
 
-        if (lossless != nullptr) {
-            if (bigint->length() > 1) {
-                *lossless = false;
-            } else if (bigint->sign()) {
-                // negative
-                // lossless if numeric value is >= -2^63,
-                // for which digit will be <= 2^63
-                *lossless = (digit <= (1ull << 63));
-            } else {
-                // positive
-                // lossless if numeric value is <= 2^63 - 1
-                *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
-            }
+        if (bigint->length() > 1) {
+            *lossless = false;
+        } else if (bigint->sign()) {
+            // negative
+            // lossless if numeric value is >= -2^63,
+            // for which digit will be <= 2^63
+            *lossless = (digit <= (1ull << 63));
+        } else {
+            // positive
+            // lossless if numeric value is <= 2^63 - 1
+            *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
         }
     }
 
@@ -2572,7 +2586,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
 {
     NAPI_PREMABLE
     JSValue jsValue = toJS(value);
-    if (jsValue.isEmpty() || !result) {
+    if (jsValue.isEmpty() || !result || !lossless) {
         return napi_invalid_arg;
     }
     if (!jsValue.isHeapBigInt()) {
@@ -2583,13 +2597,15 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
 
     if (bigint->isZero()) {
         *result = 0;
-        if (lossless != nullptr) *lossless = true;
+        *lossless = true;
     } else {
         *result = bigint->digit(0);
-        if (lossless != nullptr) {
-            // lossless if and only if only one digit and positive
-            *lossless = (bigint->length() == 1 && bigint->sign() == false);
+        if (bigint->sign()) {
+            // pretend we use two's complement
+            *result = ~*result + 1;
         }
+        // lossless if and only if only one digit and positive
+        *lossless = (bigint->length() == 1 && bigint->sign() == false);
     }
 
     return napi_ok;

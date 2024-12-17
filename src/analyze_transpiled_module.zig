@@ -103,7 +103,10 @@ pub const ModuleInfo = struct {
             }
             value: []const u8,
             pub fn jsonStringify(self: @This(), jw: anytype) !void {
-                try jw.write(self.value);
+                if (jw.next_punctuation == .comma) try jw.stream.writeByte(',');
+                if (jw.next_punctuation == .colon) try jw.stream.writeByte(':');
+                try jw.stream.print("\"{}\"", .{bun.strings.formatEscapes(self.value, .{ .quote_char = '"', .ascii_only = true, .json = true })});
+                jw.next_punctuation = .comma;
             }
             pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: anytype) !@This() {
                 const token = try source.nextAllocMax(alloc, .alloc_if_needed, options.max_value_len.?);

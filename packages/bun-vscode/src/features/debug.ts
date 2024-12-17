@@ -45,6 +45,16 @@ const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
 
 const adapters = new Map<string, FileDebugSession>();
 
+function semverLessThen(version: string, checkVersion: string) {
+  const [major, minor, patch] = version.split(".").map(e => parseInt(e))
+  const [_major, _minor, _patch] = checkVersion.split(".").map(e => parseInt(e))
+
+  if (major > _major) return true
+  if (major === _major && minor > _minor) return true
+  if (major === _major && minor === _minor && patch > _patch) return true
+  return false
+}
+
 export function registerDebugger(context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
@@ -64,8 +74,13 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.onDidOpenTerminal(injectDebugTerminal),
   );
+
+  if (semverLessThen(vscode.version, "1.96.0")) {
+    context.subscriptions.push(vscode.window.onDidOpenTerminal(injectDebugTerminal))
+  } else {
+    injectDebugTerminal2().then(e => e && context.subscriptions.push(e))
+  }
 }
 
 function runFileCommand(resource?: vscode.Uri): void {
@@ -132,6 +147,42 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   // Until a proper fix is found, we can just wait a bit before
   // disposing the terminal.
   setTimeout(() => terminal.dispose(), 100);
+}
+async function injectDebugTerminal2() {
+  if (!getConfig("debugTerminal.enabled")) return;
+
+  const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
+  if (!jsDebugExt) {
+    return
+  }
+
+  await jsDebugExt.activate()
+  const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
+
+
+  const session = new TerminalDebugSession();
+  await session.initialize();
+
+  const { adapter, signal } = session;
+
+  const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
+  const query = stopOnEntry ? "break=1" : "wait=1";
+
+  const debug = jsDebug.registerDebugTerminalOptionsProvider({
+    provideTerminalOptions(options) {
+      return {
+        ...options,
+        env: {
+          ...options.env,
+          "BUN_INSPECT": `${adapter.url}?${query}`,
+          "BUN_INSPECT_NOTIFY": signal.url,
+          BUN_INSPECT_CONNECT_TO: " ",
+        },
+      };
+    },
+  });
+
+  return debug
 }
 
 class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
@@ -295,7 +346,7 @@ class FileDebugSession extends DebugSession {
     }
 
     this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
+      this.sendRequest(command, args, 5000, () => { }),
     );
 
     adapters.set(url, this);

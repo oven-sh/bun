@@ -108,7 +108,7 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 //Returns `undefined` if param is utf8 or utf16 and not fully ascii.
-/// 
+///
 /// ```js
 /// // util.js
 /// const extractedNewLineRe = new RegExp("(?<=\\n)");
@@ -139,7 +139,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
             const end = delim_start + 1;
             try lines.append(allocator, bun.String.fromBytes(bytes[start..end])); // include the newline
             start = end;
-        } 
+        }
 
         if (start < bytes.len) {
             try lines.append(allocator, bun.String.fromBytes(bytes[start..]));

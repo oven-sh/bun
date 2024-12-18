@@ -52,7 +52,7 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     if (actual_str.length() == 0 and expected_str.length() == 0) {
         return JSC.JSValue.createEmptyArray(global, 0);
     }
-    
+
     bun.assertWithLocation(actual_str.tag != .Dead, @src());
     bun.assertWithLocation(expected_str.tag != .Dead, @src());
 

@@ -35,18 +35,6 @@ pub fn myersDiff(
     // split `actual` and `expected` into lines before diffing
     lines: bool,
 ) bun.JSError!JSC.JSValue {
-    // bun.assertWithLocation(actual.tag != .Dead, @src());
-    // bun.assertWithLocation(expected.tag != .Dead, @src());
-    // bun.assertWithLocation(actual.encoding() == expected.encoding(), @src());
-
-    // short circuit on empty strings. Note that, in release builds where
-    // assertions are disabled, if `actual` and `expected` are both dead, this
-    // branch will be hit since dead strings have a length of 0.
-    // if (actual.length() == 0 and expected.length() == 0) return StringDiffList.init(allocator);
-
-    // .Empty strings always get caught by above guard.
-    // bun.debugAssert(actual.tag != .Empty and expected.tag != .Empty);
-
     if (lines) {
         var a = try MyersDiff.split(allocator, actual);
         errdefer a.deinit(allocator);

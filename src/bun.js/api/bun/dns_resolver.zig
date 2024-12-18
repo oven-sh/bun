@@ -2938,8 +2938,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn getServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const channel = try this.getChannelOrError(globalThis);
-        return getChannelServers(channel, globalThis, callframe);
+        return getChannelServers(try this.getChannelOrError(globalThis), globalThis, callframe);
     }
 
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3023,8 +3022,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn setServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const channel = try this.getChannelOrError(globalThis);
-        return setChannelServers(channel, globalThis, callframe);
+        return setChannelServers(try this.getChannelOrError(globalThis), globalThis, callframe);
     }
 
     pub fn newResolver(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

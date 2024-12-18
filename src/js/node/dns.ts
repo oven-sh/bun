@@ -248,7 +248,6 @@ var InternalResolver = class Resolver {
       ["resolveCaa", "CAA"],
       ["resolveCname", "CNAME"],
       ["resolveMx", "MX"],
-      ["resolveNaptr", "NAPTR"],
       ["resolveNs", "NS"],
       ["resolvePtr", "PTR"],
       ["resolveSoa", "SOA"],
@@ -572,7 +571,7 @@ const promises = {
   resolveAny(hostname) {
     return translateErrorCode(
       new Promise((resolve, reject) => {
-        return Resolver.prototype.resolveAny(hostname, (err, results) => {
+        InternalResolver.prototype.resolveAny(hostname, (err, results) => {
           if (results) {
             resolve(results);
           } else {

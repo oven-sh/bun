@@ -61,16 +61,10 @@ pub fn myersDiff(
     @panic("TODO: diff characters w/o allocating for each char.");
 }
 
-// const StrDiffList = DiffList([]const u8);
 fn diffListToJS(comptime T: type, global: *JSC.JSGlobalObject, diff_list: MyersDiff.DiffList(T)) bun.JSError!JSC.JSValue {
-    // todo: replace with toJS
     var array = JSC.JSValue.createEmptyArray(global, diff_list.items.len);
     for (diff_list.items, 0..) |*line, i| {
-        var obj = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
-        if (obj == .zero) return global.throwOutOfMemory();
-        obj.put(global, bun.String.static("kind"), JSC.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
-        obj.put(global, bun.String.static("value"), JSC.toJS(global, T, line.value, .allocated));
-        array.putIndex(global, @truncate(i), obj);
+        array.putIndex(global, @truncate(i), JSC.JSObject.createNullProto(line.*, global).toJS());
     }
     return array;
 }

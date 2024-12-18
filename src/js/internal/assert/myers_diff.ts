@@ -1,3 +1,4 @@
+/// <reference path="../../builtins.d.ts" />
 "use strict";
 
 const colors = require("internal/util/colors");
@@ -9,7 +10,10 @@ const enum Operation {
 }
 interface Diff {
   kind: Operation;
-  value: string;
+  /**
+   * When diffing chars (that is, `line == false`, this is a char code.)
+   */
+  value: string | number;
 }
 
 declare namespace Internal {
@@ -23,16 +27,16 @@ declare namespace Internal {
 
 const kNopLinesToCollapse = 5;
 
-const { myersDiff: myersDiffInternal } = $zig("node_assert_binding.zig", "generate") as typeof Internal;
-function myersDiff(actual, expected, checkCommaDisparity = true, lines = false) {
-  return myersDiffInternal(actual, expected, checkCommaDisparity, lines);
-}
+const { myersDiff } = $zig("node_assert_binding.zig", "generate") as typeof Internal;
 
 function printSimpleMyersDiff(diff: Diff[]) {
   let message = "";
 
   for (let diffIdx = diff.length - 1; diffIdx >= 0; diffIdx--) {
-    const { kind, value } = diff[diffIdx];
+    let { kind, value } = diff[diffIdx];
+    if (typeof value === "number") {
+      value = String.fromCharCode(value);
+    }
     switch (kind) {
       case Operation.Insert:
         message += `${colors.green}${value}${colors.white}`;
@@ -58,6 +62,10 @@ function printMyersDiff(diff: Diff[], simple = false) {
 
   for (let diffIdx = diff.length - 1; diffIdx >= 0; diffIdx--) {
     const { kind, value } = diff[diffIdx];
+    $assert(
+      typeof value !== "number",
+      "printMyersDiff is only called for line diffs, which never return numeric char code values.",
+    );
     const previousType = diffIdx < diff.length - 1 ? diff[diffIdx + 1].kind : null;
     const typeChanged = previousType && kind !== previousType;
 

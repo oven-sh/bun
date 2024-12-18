@@ -103,7 +103,9 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
             // must come after toJS check in case this enum implements its own serializer.
             if (@typeInfo(Type) == .Enum) {
-                return JSC.JSValue.jsNumberWithType(Type, @intFromEnum(value));
+                // FIXME: creates non-normalized integers (e.g. u2), which
+                // aren't handled by `jsNumberWithType` rn
+                return JSC.JSValue.jsNumberWithType(u32, @as(u32, @intFromEnum(value)));
             }
 
             @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");

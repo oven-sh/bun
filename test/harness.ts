@@ -18,8 +18,10 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const isBuildKite = process.env.BUILDKITE === "true";
 export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isMusl = isLinux && libcFamily === "musl";
+export const isGlibc = isLinux && libcFamily === "glibc";
+export const isBuildKite = process.env.BUILDKITE === "true";
 export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.

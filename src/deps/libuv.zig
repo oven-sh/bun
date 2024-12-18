@@ -2327,7 +2327,7 @@ pub const uv_rusage_t = extern struct {
     ru_nivcsw: u64,
 };
 pub extern fn uv_getrusage(rusage: [*c]uv_rusage_t) c_int;
-pub extern fn uv_os_homedir(buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_os_homedir(buffer: [*]u8, size: *usize) ReturnCode;
 pub extern fn uv_os_tmpdir(buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_os_get_passwd(pwd: [*c]uv_passwd_t) c_int;
 pub extern fn uv_os_free_passwd(pwd: [*c]uv_passwd_t) void;

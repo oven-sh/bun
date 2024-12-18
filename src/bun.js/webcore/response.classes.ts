@@ -10,6 +10,7 @@ export default [
     estimatedSize: true,
     configurable: false,
     overridesToJS: true,
+    memoryCost: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

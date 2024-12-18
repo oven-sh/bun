@@ -190,7 +190,9 @@ const exports_string_name: string = "exports";
 
 const MacroRefData = struct {
     import_record_id: u32,
-    name: string,
+    // if name is null the macro is imported as a namespace import
+    // import * as macros from "./macros.js" with {type: "macro"};
+    name: ?string = null,
 };
 
 const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
@@ -8950,6 +8952,13 @@ fn NewParser_(
                     });
                 }
 
+                if (stmt.star_name_loc) |star| {
+                    const name = p.loadNameFromRef(stmt.namespace_ref);
+                    const ref = try p.declareSymbol(.other, star, name);
+                    stmt.namespace_ref = ref;
+                    try p.macro.refs.put(ref, .{ .import_record_id = id });
+                }
+
                 for (stmt.items) |item| {
                     const name = p.loadNameFromRef(item.name.ref.?);
                     const ref = try p.declareSymbol(.other, item.name.loc, name);
@@ -8983,7 +8992,7 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                // TODO: macro remap
+                // TODO: not sure how to handle macro remappings for namespace imports
             } else {
                 var path_name = fs.PathName.init(path.text);
                 const name = try strings.append(p.allocator, "import_", try path_name.nonUniqueNameString(p.allocator));
@@ -16514,11 +16523,15 @@ fn NewParser_(
                         e_.tag = p.visitExpr(tag);
 
                         if (comptime allow_macros) {
-                            if (e_.tag.?.data == .e_import_identifier and !p.options.features.is_macro_runtime) {
-                                const ref = e_.tag.?.data.e_import_identifier.ref;
+                            const ref = switch (e_.tag.?.data) {
+                                .e_import_identifier => |ident| ident.ref,
+                                .e_dot => |dot| if (dot.target.data == .e_identifier) dot.target.data.e_identifier.ref else null,
+                                else => null,
+                            };
 
-                                if (p.macro.refs.get(ref)) |macro_ref_data| {
-                                    p.ignoreUsage(ref);
+                            if (ref != null and !p.options.features.is_macro_runtime) {
+                                if (p.macro.refs.get(ref.?)) |macro_ref_data| {
+                                    p.ignoreUsage(ref.?);
                                     if (p.is_control_flow_dead) {
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
@@ -16535,6 +16548,7 @@ fn NewParser_(
                                     }
 
                                     p.macro_call_count += 1;
+                                    const name = macro_ref_data.name orelse e_.tag.?.data.e_dot.name;
                                     const record = &p.import_records.items[macro_ref_data.import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
@@ -16544,7 +16558,7 @@ fn NewParser_(
                                         p.source,
                                         record.range,
                                         expr,
-                                        macro_ref_data.name,
+                                        name,
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -17310,10 +17324,18 @@ fn NewParser_(
                         else => {},
                     }
 
-                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled)
-                        e_.target.data == .e_import_identifier and p.macro.refs.contains(e_.target.data.e_import_identifier.ref)
-                    else
-                        false;
+                    const is_macro_ref: bool = if (comptime allow_macros) brk: {
+                        const possible_macro_ref = switch (e_.target.data) {
+                            .e_import_identifier => |ident| ident.ref,
+                            .e_dot => |dot| if (dot.target.data == .e_identifier)
+                                dot.target.data.e_identifier.ref
+                            else
+                                null,
+                            else => null,
+                        };
+
+                        break :brk possible_macro_ref != null and p.macro.refs.contains(possible_macro_ref.?);
+                    } else false;
 
                     {
                         const old_ce = p.options.ignore_dce_annotations;
@@ -17439,7 +17461,12 @@ fn NewParser_(
 
                     if (comptime allow_macros) {
                         if (is_macro_ref and !p.options.features.is_macro_runtime) {
-                            const ref = e_.target.data.e_import_identifier.ref;
+                            const ref = switch (e_.target.data) {
+                                .e_import_identifier => |ident| ident.ref,
+                                .e_dot => |dot| dot.target.data.e_identifier.ref,
+                                else => unreachable,
+                            };
+
                             const macro_ref_data = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
                             if (p.is_control_flow_dead) {
@@ -17456,6 +17483,7 @@ fn NewParser_(
                                 return p.newExpr(E.Undefined{}, expr.loc);
                             }
 
+                            const name = macro_ref_data.name orelse e_.target.data.e_dot.name;
                             const record = &p.import_records.items[macro_ref_data.import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
@@ -17467,7 +17495,7 @@ fn NewParser_(
                                 p.source,
                                 record.range,
                                 copied,
-                                macro_ref_data.name,
+                                name,
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
                                     if (p.log.msgs.items.len == start_error_count) {

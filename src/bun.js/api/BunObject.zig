@@ -535,6 +535,22 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     return ret;
 }
 
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{
+        .globalThis = globalThis,
+        .quote_strings = true,
+    };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
+}
+
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const fun = JSC.createCallback(globalObject, ZigString.static("inspect"), 2, inspect);
     var str = ZigString.init("nodejs.util.inspect.custom");
@@ -944,14 +960,11 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
-export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
-    defer specifier_str.deref();
-
+export fn Bun__resolveSync(global: *JSGlobalObject, specifier: *const bun.String, source: JSValue, is_esm: bool) JSC.JSValue {
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source_str, is_esm, true));
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
@@ -4566,8 +4579,11 @@ const InternalTestingAPIs = struct {
 };
 
 comptime {
-    _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-    BunObject.exportAll();
+    if (Environment.export_cpp_apis) {
+        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+        _ = Bun__inspect;
+        BunObject.exportAll();
+    }
 }
 
 const assert = bun.assert;

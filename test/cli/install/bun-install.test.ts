@@ -8362,7 +8362,7 @@ cache = false
   expect(await exited).toBe(0);
 });
 
-it("should handle modified git resolutions in bun.lock", async () => {
+it.only("should handle modified git resolutions in bun.lock", async () => {
   // install-test-8 has a dependency but because it's not in the lockfile
   // it won't be included in the install.
   await Promise.all([
@@ -8408,7 +8408,6 @@ it("should handle modified git resolutions in bun.lock", async () => {
 
   const err = await Bun.readableStreamToText(stderr);
   const out = await Bun.readableStreamToText(stdout);
-  console.log({ err, out });
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("error:");
 

@@ -6760,13 +6760,20 @@ pub const PackageManager = struct {
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages += 1;
 
-                    // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, comptime log_level)) |pkg| brk: {
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        extract_ctx.fixCachedLockfilePackageSlices();
+                        callbacks.onExtract(
+                            extract_ctx,
+                            dependency_id,
+                            &task.data.extract,
+                            log_level,
+                        );
+                    } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :brk;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -6818,13 +6825,8 @@ pub const PackageManager = struct {
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                    // if (task.tag == .extract and task.request.extract.network.apply_patch_task != null) {
-                    //     manager.enqueuePatchTask(task.request.extract.network.apply_patch_task.?);
-                    // } else
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        if (ExtractCompletionContext == *PackageInstaller) {
-                            extract_ctx.fixCachedLockfilePackageSlices();
-                        }
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
+                        // handled *PackageInstaller above
                         callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, comptime log_level);
                     }
 
@@ -6942,15 +6944,29 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (manager.processExtractedTarballPackage(
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        // We've populated the cache, package already exists in memory. Call the package installer callback
+                        // and don't enqueue dependencies
+
+                        // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                        // keeping just in case for now
+                        extract_ctx.fixCachedLockfilePackageSlices();
+
+                        callbacks.onExtract(
+                            extract_ctx,
+                            git_checkout.dependency_id,
+                            &task.data.git_checkout,
+                            log_level,
+                        );
+                    } else if (manager.processExtractedTarballPackage(
                         &package_id,
                         git_checkout.dependency_id,
                         resolution,
                         &task.data.git_checkout,
-                        comptime log_level,
-                    )) |pkg| brk: {
+                        log_level,
+                    )) |pkg| handle_pkg: {
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :brk;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -6977,18 +6993,15 @@ pub const PackageManager = struct {
                                 },
                             }
                         }
-                    }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        if (ExtractCompletionContext == *PackageInstaller) {
-                            extract_ctx.fixCachedLockfilePackageSlices();
+                        if (comptime @TypeOf(callbacks.onExtract) != void) {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                comptime log_level,
+                            );
                         }
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            comptime log_level,
-                        );
                     }
 
                     if (comptime log_level.showProgress()) {

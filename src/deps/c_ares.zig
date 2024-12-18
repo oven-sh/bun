@@ -1292,6 +1292,7 @@ pub const ARES_ELOADIPHLPAPI = 22;
 pub const ARES_EADDRGETNETWORKPARAMS = 23;
 pub const ARES_ECANCELLED = 24;
 pub const ARES_ESERVICE = 25;
+pub const ARES_ENOSERVER = 26;
 
 pub const Error = enum(i32) {
     ENODATA = ARES_ENODATA,
@@ -1319,6 +1320,7 @@ pub const Error = enum(i32) {
     EADDRGETNETWORKPARAMS = ARES_EADDRGETNETWORKPARAMS,
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
+    ENOSERVER = ARES_ENOSERVER,
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
@@ -1455,6 +1457,7 @@ pub const Error = enum(i32) {
         .{ .EADDRGETNETWORKPARAMS, "DNS_EADDRGETNETWORKPARAMS" },
         .{ .ECANCELLED, "DNS_ECANCELLED" },
         .{ .ESERVICE, "DNS_ESERVICE" },
+        .{ .ENOSERVER, "DNS_ENOSERVER" },
     });
 
     pub const label = bun.enumMap(Error, .{
@@ -1483,6 +1486,7 @@ pub const Error = enum(i32) {
         .{ .EADDRGETNETWORKPARAMS, "EADDRGETNETWORKPARAMS" },
         .{ .ECANCELLED, "DNS query cancelled" },
         .{ .ESERVICE, "Service not available" },
+        .{ .ENOSERVER, "No DNS servers were configured" },
     });
 
     pub fn get(rc: i32) ?Error {
@@ -1493,8 +1497,8 @@ pub const Error = enum(i32) {
 
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),
-            -ARES_ESERVICE...-1 => @as(Error, @enumFromInt(-rc)),
+            1...ARES_ENOSERVER => @as(Error, @enumFromInt(rc)),
+            -ARES_ENOSERVER...-1 => @as(Error, @enumFromInt(-rc)),
             else => unreachable,
         };
     }

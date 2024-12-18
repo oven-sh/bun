@@ -2039,7 +2039,7 @@ pub const ModuleLoader = struct {
             .sqlite_embedded, .sqlite => {
                 const sqlite_module_source_code_string = brk: {
                     if (jsc_vm.hot_reload == .hot) {
-                        break :brk
+                        break :brk 
                         \\// Generated code
                         \\import {Database} from 'bun:sqlite';
                         \\const {path} = import.meta;
@@ -2059,7 +2059,7 @@ pub const ModuleLoader = struct {
                         ;
                     }
 
-                    break :brk
+                    break :brk 
                     \\// Generated code
                     \\import {Database} from 'bun:sqlite';
                     \\export const db = new Database(import.meta.path);

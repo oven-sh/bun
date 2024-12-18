@@ -1319,7 +1319,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        const test_files, const search_count = scan: {
+        var test_files, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or
                     strings.startsWith(arg, "./") or

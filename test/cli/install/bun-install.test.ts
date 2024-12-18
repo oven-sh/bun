@@ -11,7 +11,7 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile, cp, stat } from "fs/promises";
+import { access, mkdir, readlink, rm, writeFile, cp, stat, exists } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -35,6 +35,7 @@ import {
   requested,
   root_url,
   setHandler,
+  getPort,
 } from "./dummy.registry.js";
 
 expect.extend({
@@ -8406,4 +8407,54 @@ it("should handle modified git resolutions in bun.lock", async () => {
   expect(
     (await file(join(package_dir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
   ).toMatchSnapshot();
+});
+
+it("should read install.saveTextLockfile from bunfig.toml", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = "http://localhost:${getPort()}/"
+saveTextLockfile = true
+`,
+    ),
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(package_dir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg-one",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).toContain("1 package installed");
+
+  expect(await exited).toBe(0);
+  expect(await Bun.file(join(package_dir, "node_modules", "pkg-one", "package.json")).json()).toEqual({
+    name: "pkg-one",
+    version: "1.0.0",
+  });
+  expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
+  expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
 });

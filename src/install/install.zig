@@ -946,6 +946,8 @@ pub const Task = struct {
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
             env: DotEnv.Map,
+            dep_id: DependencyID,
+            res: Resolution,
         },
         git_checkout: struct {
             repo_dir: bun.FileDescriptor,
@@ -4838,7 +4840,9 @@ pub const PackageManager = struct {
         task_id: u64,
         name: string,
         repository: *const Repository,
+        dep_id: DependencyID,
         dependency: *const Dependency,
+        res: *const Resolution,
         /// if patched then we need to do apply step after network task is done
         patch_name_and_version_hash: ?u64,
     ) *ThreadPool.Task {
@@ -4860,6 +4864,8 @@ pub const PackageManager = struct {
                         FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
+                    .dep_id = dep_id,
+                    .res = res.*,
                 },
             },
             .id = task_id,
@@ -5452,7 +5458,7 @@ pub const PackageManager = struct {
 
                     if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
-                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, dependency, null)));
+                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, id, dependency, &res, null)));
                 }
             },
             .github => {
@@ -6754,13 +6760,20 @@ pub const PackageManager = struct {
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages += 1;
 
-                    // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, comptime log_level)) |pkg| brk: {
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        extract_ctx.fixCachedLockfilePackageSlices();
+                        callbacks.onExtract(
+                            extract_ctx,
+                            dependency_id,
+                            &task.data.extract,
+                            log_level,
+                        );
+                    } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :brk;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -6812,13 +6825,8 @@ pub const PackageManager = struct {
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                    // if (task.tag == .extract and task.request.extract.network.apply_patch_task != null) {
-                    //     manager.enqueuePatchTask(task.request.extract.network.apply_patch_task.?);
-                    // } else
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        if (ExtractCompletionContext == *PackageInstaller) {
-                            extract_ctx.fixCachedLockfilePackageSlices();
-                        }
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
+                        // handled *PackageInstaller above
                         callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, comptime log_level);
                     }
 
@@ -6831,10 +6839,11 @@ pub const PackageManager = struct {
                 },
                 .git_clone => {
                     const clone = &task.request.git_clone;
+                    const repo_fd = task.data.git_clone;
                     const name = clone.name.slice();
                     const url = clone.url.slice();
 
-                    manager.git_repositories.put(manager.allocator, task.id, task.data.git_clone) catch unreachable;
+                    manager.git_repositories.put(manager.allocator, task.id, repo_fd) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -6861,11 +6870,49 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
-                    const dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        // Installing!
+                        // this dependency might be something other than a git dependency! only need the name and
+                        // behavior, use the resolution from the task.
+                        const dep_id = clone.dep_id;
+                        const dep = manager.lockfile.buffers.dependencies.items[dep_id];
+                        const dep_name = dep.name.slice(manager.lockfile.buffers.string_bytes.items);
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                        const git = clone.res.value.git;
+                        const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
+                        const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
+
+                        const resolved = try Repository.findCommit(
+                            manager.allocator,
+                            manager.env,
+                            manager.log,
+                            task.data.git_clone.asDir(),
+                            dep_name,
+                            committish,
+                            task.id,
+                        );
+
+                        const checkout_id = Task.Id.forGitCheckout(repo, resolved);
+
+                        if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
+
+                        manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
+                            checkout_id,
+                            repo_fd,
+                            dep_id,
+                            dep_name,
+                            clone.res,
+                            resolved,
+                            null,
+                        )));
+                    } else {
+                        // Resolving!
+                        const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                        const dependency_list = dependency_list_entry.value_ptr.*;
+                        dependency_list_entry.value_ptr.* = .{};
+
+                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    }
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -6897,15 +6944,29 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (manager.processExtractedTarballPackage(
+                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                        // We've populated the cache, package already exists in memory. Call the package installer callback
+                        // and don't enqueue dependencies
+
+                        // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                        // keeping just in case for now
+                        extract_ctx.fixCachedLockfilePackageSlices();
+
+                        callbacks.onExtract(
+                            extract_ctx,
+                            git_checkout.dependency_id,
+                            &task.data.git_checkout,
+                            log_level,
+                        );
+                    } else if (manager.processExtractedTarballPackage(
                         &package_id,
                         git_checkout.dependency_id,
                         resolution,
                         &task.data.git_checkout,
-                        comptime log_level,
-                    )) |pkg| brk: {
+                        log_level,
+                    )) |pkg| handle_pkg: {
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :brk;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -6932,18 +6993,15 @@ pub const PackageManager = struct {
                                 },
                             }
                         }
-                    }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        if (ExtractCompletionContext == *PackageInstaller) {
-                            extract_ctx.fixCachedLockfilePackageSlices();
+                        if (comptime @TypeOf(callbacks.onExtract) != void) {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                comptime log_level,
+                            );
                         }
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            comptime log_level,
-                        );
                     }
 
                     if (comptime log_level.showProgress()) {
@@ -13517,7 +13575,15 @@ pub const PackageManager = struct {
 
             if (clone_queue.found_existing) return;
 
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, repository, &this.lockfile.buffers.dependencies.items[dependency_id], null)));
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(
+                clone_id,
+                alias,
+                repository,
+                dependency_id,
+                &this.lockfile.buffers.dependencies.items[dependency_id],
+                resolution,
+                null,
+            )));
         }
     }
 

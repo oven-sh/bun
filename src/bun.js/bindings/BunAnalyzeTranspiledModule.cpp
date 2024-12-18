@@ -149,9 +149,9 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* modul
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JSON);
     moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, const char* hostDefinedImportType)
+extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t hostDefinedImportType)
 {
-    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(makeString(ASCIILiteral::fromLiteralUnsafe(hostDefinedImportType)));
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(identifierArray[hostDefinedImportType].string());
     moduleRecord->appendRequestedModule(identifierArray[moduleName], WTFMove(attributes));
 }
 

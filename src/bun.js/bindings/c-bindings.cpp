@@ -41,19 +41,25 @@ extern "C" void bun_warn_avx_missing(const char* url)
 }
 #endif
 
-extern "C" int32_t get_process_priority(uint32_t pid)
+// Error condition is encoded as max int32_t.
+// The only error in this function is ESRCH (no process found)
+extern "C" int32_t get_process_priority(int32_t pid)
 {
 #if OS(WINDOWS)
     int priority = 0;
     if (uv_os_getpriority(pid, &priority))
-        return 0;
+        return std::numeric_limits<int32_t>::max();
     return priority;
 #else
-    return getpriority(PRIO_PROCESS, pid);
+    errno = 0;
+    int priority = getpriority(PRIO_PROCESS, pid);
+    if (priority == -1 && errno != 0)
+        return std::numeric_limits<int32_t>::max();
+    return priority;
 #endif // OS(WINDOWS)
 }
 
-extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
+extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
 #if OS(WINDOWS)
     return uv_os_setpriority(pid, priority);

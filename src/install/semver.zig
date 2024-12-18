@@ -39,19 +39,16 @@ pub const String = extern struct {
     }
 
     pub const Buf = struct {
-        bytes: std.ArrayList(u8),
-        pool: Builder.StringPool,
+        bytes: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+        pool: *Builder.StringPool,
 
-        pub fn init(allocator: std.mem.Allocator) Buf {
+        pub fn init(lockfile: *const Lockfile) Buf {
             return .{
-                .bytes = std.ArrayList(u8).init(allocator),
-                .pool = Builder.StringPool.init(allocator),
+                .bytes = &lockfile.buffers.string_bytes,
+                .allocator = lockfile.allocator,
+                .pool = &lockfile.string_pool,
             };
-        }
-
-        pub fn apply(this: *Buf, lockfile: *Lockfile) void {
-            lockfile.buffers.string_bytes = this.bytes.moveToUnmanaged();
-            lockfile.string_pool = this.pool;
         }
 
         pub fn append(this: *Buf, str: string) OOM!String {
@@ -66,7 +63,7 @@ pub const String = extern struct {
             }
 
             // new entry
-            const new = try String.initAppend(&this.bytes, str);
+            const new = try String.initAppend(this.allocator, this.bytes, str);
             entry.value_ptr.* = new;
             return new;
         }
@@ -82,7 +79,7 @@ pub const String = extern struct {
             }
 
             // new entry
-            const new = try String.initAppend(&this.bytes, str);
+            const new = try String.initAppend(this.allocator, this.bytes, str);
             entry.value_ptr.* = new;
             return new;
         }
@@ -105,7 +102,7 @@ pub const String = extern struct {
                 };
             }
 
-            const new = try String.initAppend(&this.bytes, str);
+            const new = try String.initAppend(this.allocator, this.bytes, str);
             entry.value_ptr.* = new;
             return .{
                 .value = new,
@@ -129,7 +126,7 @@ pub const String = extern struct {
                 };
             }
 
-            const new = try String.initAppend(&this.bytes, str);
+            const new = try String.initAppend(this.allocator, this.bytes, str);
             entry.value_ptr.* = new;
             return .{
                 .value = new,
@@ -157,6 +154,29 @@ pub const String = extern struct {
         pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
+        }
+    };
+
+    /// Escapes for json. Expects string to be prequoted
+    pub inline fn fmtJson(self: *const String, buf: []const u8, opts: JsonFormatter.Options) JsonFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+            .opts = opts,
+        };
+    }
+
+    pub const JsonFormatter = struct {
+        str: *const String,
+        buf: string,
+        opts: Options,
+
+        pub const Options = struct {
+            quote: bool = true,
+        };
+
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
         }
     };
 
@@ -309,7 +329,8 @@ pub const String = extern struct {
     }
 
     pub fn initAppendIfNeeded(
-        buf: *std.ArrayList(u8),
+        allocator: std.mem.Allocator,
+        buf: *std.ArrayListUnmanaged(u8),
         in: string,
     ) OOM!String {
         return switch (in.len) {
@@ -327,19 +348,20 @@ pub const String = extern struct {
             // This should only happen for non-ascii strings that are exactly 8 bytes.
             // so that's an edge-case
             if ((in[max_inline_len - 1]) >= 128)
-                try initAppend(buf, in)
+                try initAppend(allocator, buf, in)
             else
                 .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
 
-            else => try initAppend(buf, in),
+            else => try initAppend(allocator, buf, in),
         };
     }
 
     pub fn initAppend(
-        buf: *std.ArrayList(u8),
+        allocator: std.mem.Allocator,
+        buf: *std.ArrayListUnmanaged(u8),
         in: string,
     ) OOM!String {
-        try buf.appendSlice(in);
+        try buf.appendSlice(allocator, in);
         const in_buf = buf.items[buf.items.len - in.len ..];
         return @bitCast((@as(u64, 0) | @as(u64, @as(max_addressable_space, @truncate(@as(u64, @bitCast(Pointer.init(buf.items, in_buf))))))) | 1 << 63);
     }
@@ -1443,9 +1465,7 @@ pub const Version = extern struct {
                             .none => {},
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
+
                                 state = State.none;
                             },
                             .build => {

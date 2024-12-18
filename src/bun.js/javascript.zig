@@ -972,10 +972,15 @@ pub const VirtualMachine = struct {
     pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
-        pub var main_thread_vm: *VirtualMachine = undefined;
+        pub var main_thread_vm: ?*VirtualMachine = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
             if (vm) |vm_instance| {
                 vm_instance.global = global;
+
+                // Ensure this is always set when it should be.
+                if (vm_instance.is_main_thread) {
+                    VMHolder.main_thread_vm = vm_instance;
+                }
             }
 
             cached_global_object = global;
@@ -995,7 +1000,7 @@ pub const VirtualMachine = struct {
         return VMHolder.vm.?;
     }
 
-    pub fn getMainThreadVM() *VirtualMachine {
+    pub fn getMainThreadVM() ?*VirtualMachine {
         return VMHolder.main_thread_vm;
     }
 
@@ -1931,7 +1936,9 @@ pub const VirtualMachine = struct {
         vm.bundler.configureLinkerWithAutoJSX(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
+        if (opts.is_main_thread) {
+            VMHolder.main_thread_vm = vm;
+        }
         vm.global = ZigGlobalObject.create(
             vm.console,
             -1,
@@ -1947,6 +1954,10 @@ pub const VirtualMachine = struct {
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
+    }
+
+    export fn Bun__isMainThreadVM() callconv(.C) bool {
+        return get().is_main_thread;
     }
 
     pub const Options = struct {
@@ -2073,16 +2084,12 @@ pub const VirtualMachine = struct {
         }
 
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
         const connect_to = bun.getenvZ("BUN_INSPECT_CONNECT_TO") orelse "";
 
         const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
         const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
 
-        const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
-            true => if (notify.len > 0 or connect_to.len > 0) .shortly else .forever,
-            false => .off,
-        };
+        const wait_for_connection: Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
 
         switch (cli_flag) {
             .unspecified => {
@@ -2093,22 +2100,14 @@ pub const VirtualMachine = struct {
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                     };
-                } else if (notify.len > 0) {
-                    this.debugger = Debugger{
-                        .path_or_port = null,
-                        .from_environment_variable = notify,
-                        .wait_for_connection = wait_for_connection,
-                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
-                        .mode = .connect,
-                    };
                 } else if (connect_to.len > 0) {
                     // This works in the vscode debug terminal because that relies on unix or notify being set, which they
                     // are in the debug terminal. This branch doesn't reach
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = connect_to,
-                        .wait_for_connection = wait_for_connection,
-                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .wait_for_connection = .off,
+                        .set_breakpoint_on_first_line = false,
                         .mode = .connect,
                     };
                 }
@@ -3000,7 +2999,7 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return e;
@@ -3012,7 +3011,7 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            bun.fmt.formatJSONString(preload),
+                            bun.fmt.formatJSONStringLatin1(preload),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;
@@ -3993,7 +3992,7 @@ pub const VirtualMachine = struct {
 
         if (show.system_code) {
             if (show.syscall) {
-                try writer.writeAll("  ");
+                try writer.writeAll("   ");
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }

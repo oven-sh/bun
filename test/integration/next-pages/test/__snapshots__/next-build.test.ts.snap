@@ -20772,7 +20772,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 374,
         },
         "array-includes": {
-          "id": 806,
+          "id": 445,
           "package_id": 384,
         },
         "array-union": {
@@ -20792,7 +20792,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 382,
         },
         "array.prototype.flatmap": {
-          "id": 808,
+          "id": 448,
           "package_id": 380,
         },
         "array.prototype.toreversed": {
@@ -21068,11 +21068,11 @@ exports[`next build works: bun 1`] = `
           "package_id": 316,
         },
         "es-errors": {
-          "id": 858,
+          "id": 690,
           "package_id": 312,
         },
         "es-iterator-helpers": {
-          "id": 812,
+          "id": 740,
           "package_id": 409,
         },
         "es-object-atoms": {
@@ -21084,7 +21084,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 369,
         },
         "es-shim-unscopables": {
-          "id": 860,
+          "id": 692,
           "package_id": 381,
         },
         "es-to-primitive": {
@@ -21120,7 +21120,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 302,
         },
         "eslint-module-utils": {
-          "id": 452,
+          "id": 438,
           "package_id": 376,
         },
         "eslint-plugin-import": {
@@ -21164,7 +21164,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 279,
         },
         "estraverse": {
-          "id": 432,
+          "id": 415,
           "package_id": 166,
         },
         "esutils": {
@@ -21248,7 +21248,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 51,
         },
         "function-bind": {
-          "id": 761,
+          "id": 55,
           "package_id": 21,
         },
         "function.prototype.name": {
@@ -21412,7 +21412,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 329,
         },
         "is-core-module": {
-          "id": 454,
+          "id": 675,
           "package_id": 19,
         },
         "is-data-view": {
@@ -21556,7 +21556,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 174,
         },
         "jsx-ast-utils": {
-          "id": 814,
+          "id": 742,
           "package_id": 408,
         },
         "keyv": {
@@ -21680,11 +21680,11 @@ exports[`next build works: bun 1`] = `
           "package_id": 355,
         },
         "object.entries": {
-          "id": 816,
+          "id": 745,
           "package_id": 405,
         },
         "object.fromentries": {
-          "id": 817,
+          "id": 457,
           "package_id": 375,
         },
         "object.groupby": {
@@ -21696,7 +21696,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 434,
         },
         "object.values": {
-          "id": 819,
+          "id": 459,
           "package_id": 310,
         },
         "once": {
@@ -21924,7 +21924,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 112,
         },
         "semver": {
-          "id": 822,
+          "id": 460,
           "package_id": 309,
         },
         "set-function-length": {
@@ -22271,18 +22271,14 @@ exports[`next build works: bun 1`] = `
     },
     {
       "dependencies": {
-        "doctrine": {
-          "id": 811,
-          "package_id": 379,
-        },
-        "resolve": {
-          "id": 821,
-          "package_id": 431,
+        "debug": {
+          "id": 674,
+          "package_id": 377,
         },
       },
       "depth": 1,
       "id": 4,
-      "path": "node_modules/eslint-plugin-react/node_modules",
+      "path": "node_modules/eslint-import-resolver-node/node_modules",
     },
     {
       "dependencies": {
@@ -22301,14 +22297,18 @@ exports[`next build works: bun 1`] = `
     },
     {
       "dependencies": {
-        "debug": {
-          "id": 674,
-          "package_id": 377,
+        "doctrine": {
+          "id": 811,
+          "package_id": 379,
+        },
+        "resolve": {
+          "id": 821,
+          "package_id": 431,
         },
       },
       "depth": 1,
       "id": 6,
-      "path": "node_modules/eslint-import-resolver-node/node_modules",
+      "path": "node_modules/eslint-plugin-react/node_modules",
     },
     {
       "dependencies": {
@@ -22360,24 +22360,13 @@ exports[`next build works: bun 1`] = `
     },
     {
       "dependencies": {
-        "debug": {
-          "id": 672,
-          "package_id": 377,
-        },
-      },
-      "depth": 1,
-      "id": 11,
-      "path": "node_modules/eslint-module-utils/node_modules",
-    },
-    {
-      "dependencies": {
         "minimatch": {
           "id": 104,
           "package_id": 69,
         },
       },
       "depth": 1,
-      "id": 12,
+      "id": 11,
       "path": "node_modules/glob/node_modules",
     },
     {
@@ -22392,8 +22381,19 @@ exports[`next build works: bun 1`] = `
         },
       },
       "depth": 1,
-      "id": 13,
+      "id": 12,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
+    },
+    {
+      "dependencies": {
+        "debug": {
+          "id": 672,
+          "package_id": 377,
+        },
+      },
+      "depth": 1,
+      "id": 13,
+      "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
       "dependencies": {
@@ -22441,25 +22441,25 @@ exports[`next build works: bun 1`] = `
     },
     {
       "dependencies": {
-        "lru-cache": {
-          "id": 165,
-          "package_id": 117,
-        },
-      },
-      "depth": 2,
-      "id": 18,
-      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
-    },
-    {
-      "dependencies": {
         "brace-expansion": {
           "id": 720,
           "package_id": 70,
         },
       },
       "depth": 2,
-      "id": 19,
+      "id": 18,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
+    },
+    {
+      "dependencies": {
+        "lru-cache": {
+          "id": 165,
+          "package_id": 117,
+        },
+      },
+      "depth": 2,
+      "id": 19,
+      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
     },
     {
       "dependencies": {
@@ -43376,7 +43376,7 @@ exports[`next build works: node 1`] = `
           "package_id": 374,
         },
         "array-includes": {
-          "id": 806,
+          "id": 445,
           "package_id": 384,
         },
         "array-union": {
@@ -43396,7 +43396,7 @@ exports[`next build works: node 1`] = `
           "package_id": 382,
         },
         "array.prototype.flatmap": {
-          "id": 808,
+          "id": 448,
           "package_id": 380,
         },
         "array.prototype.toreversed": {
@@ -43672,11 +43672,11 @@ exports[`next build works: node 1`] = `
           "package_id": 316,
         },
         "es-errors": {
-          "id": 858,
+          "id": 690,
           "package_id": 312,
         },
         "es-iterator-helpers": {
-          "id": 812,
+          "id": 740,
           "package_id": 409,
         },
         "es-object-atoms": {
@@ -43688,7 +43688,7 @@ exports[`next build works: node 1`] = `
           "package_id": 369,
         },
         "es-shim-unscopables": {
-          "id": 860,
+          "id": 692,
           "package_id": 381,
         },
         "es-to-primitive": {
@@ -43724,7 +43724,7 @@ exports[`next build works: node 1`] = `
           "package_id": 302,
         },
         "eslint-module-utils": {
-          "id": 452,
+          "id": 438,
           "package_id": 376,
         },
         "eslint-plugin-import": {
@@ -43768,7 +43768,7 @@ exports[`next build works: node 1`] = `
           "package_id": 279,
         },
         "estraverse": {
-          "id": 432,
+          "id": 415,
           "package_id": 166,
         },
         "esutils": {
@@ -43852,7 +43852,7 @@ exports[`next build works: node 1`] = `
           "package_id": 51,
         },
         "function-bind": {
-          "id": 761,
+          "id": 55,
           "package_id": 21,
         },
         "function.prototype.name": {
@@ -44016,7 +44016,7 @@ exports[`next build works: node 1`] = `
           "package_id": 329,
         },
         "is-core-module": {
-          "id": 454,
+          "id": 675,
           "package_id": 19,
         },
         "is-data-view": {
@@ -44160,7 +44160,7 @@ exports[`next build works: node 1`] = `
           "package_id": 174,
         },
         "jsx-ast-utils": {
-          "id": 814,
+          "id": 742,
           "package_id": 408,
         },
         "keyv": {
@@ -44284,11 +44284,11 @@ exports[`next build works: node 1`] = `
           "package_id": 355,
         },
         "object.entries": {
-          "id": 816,
+          "id": 745,
           "package_id": 405,
         },
         "object.fromentries": {
-          "id": 817,
+          "id": 457,
           "package_id": 375,
         },
         "object.groupby": {
@@ -44300,7 +44300,7 @@ exports[`next build works: node 1`] = `
           "package_id": 434,
         },
         "object.values": {
-          "id": 819,
+          "id": 459,
           "package_id": 310,
         },
         "once": {
@@ -44528,7 +44528,7 @@ exports[`next build works: node 1`] = `
           "package_id": 112,
         },
         "semver": {
-          "id": 822,
+          "id": 460,
           "package_id": 309,
         },
         "set-function-length": {
@@ -44875,18 +44875,14 @@ exports[`next build works: node 1`] = `
     },
     {
       "dependencies": {
-        "doctrine": {
-          "id": 811,
-          "package_id": 379,
-        },
-        "resolve": {
-          "id": 821,
-          "package_id": 431,
+        "debug": {
+          "id": 674,
+          "package_id": 377,
         },
       },
       "depth": 1,
       "id": 4,
-      "path": "node_modules/eslint-plugin-react/node_modules",
+      "path": "node_modules/eslint-import-resolver-node/node_modules",
     },
     {
       "dependencies": {
@@ -44905,14 +44901,18 @@ exports[`next build works: node 1`] = `
     },
     {
       "dependencies": {
-        "debug": {
-          "id": 674,
-          "package_id": 377,
+        "doctrine": {
+          "id": 811,
+          "package_id": 379,
+        },
+        "resolve": {
+          "id": 821,
+          "package_id": 431,
         },
       },
       "depth": 1,
       "id": 6,
-      "path": "node_modules/eslint-import-resolver-node/node_modules",
+      "path": "node_modules/eslint-plugin-react/node_modules",
     },
     {
       "dependencies": {
@@ -44964,24 +44964,13 @@ exports[`next build works: node 1`] = `
     },
     {
       "dependencies": {
-        "debug": {
-          "id": 672,
-          "package_id": 377,
-        },
-      },
-      "depth": 1,
-      "id": 11,
-      "path": "node_modules/eslint-module-utils/node_modules",
-    },
-    {
-      "dependencies": {
         "minimatch": {
           "id": 104,
           "package_id": 69,
         },
       },
       "depth": 1,
-      "id": 12,
+      "id": 11,
       "path": "node_modules/glob/node_modules",
     },
     {
@@ -44996,8 +44985,19 @@ exports[`next build works: node 1`] = `
         },
       },
       "depth": 1,
-      "id": 13,
+      "id": 12,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
+    },
+    {
+      "dependencies": {
+        "debug": {
+          "id": 672,
+          "package_id": 377,
+        },
+      },
+      "depth": 1,
+      "id": 13,
+      "path": "node_modules/eslint-module-utils/node_modules",
     },
     {
       "dependencies": {
@@ -45045,25 +45045,25 @@ exports[`next build works: node 1`] = `
     },
     {
       "dependencies": {
-        "lru-cache": {
-          "id": 165,
-          "package_id": 117,
-        },
-      },
-      "depth": 2,
-      "id": 18,
-      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
-    },
-    {
-      "dependencies": {
         "brace-expansion": {
           "id": 720,
           "package_id": 70,
         },
       },
       "depth": 2,
-      "id": 19,
+      "id": 18,
       "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch/node_modules",
+    },
+    {
+      "dependencies": {
+        "lru-cache": {
+          "id": 165,
+          "package_id": 117,
+        },
+      },
+      "depth": 2,
+      "id": 19,
+      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
     },
     {
       "dependencies": {

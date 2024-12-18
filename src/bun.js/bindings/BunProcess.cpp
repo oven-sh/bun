@@ -823,6 +823,19 @@ bool isSignalName(WTF::String input)
     return signalNameToNumberMap->contains(input);
 }
 
+extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
+{
+    Process* process = jsCast<Process*>(globalObject->processObject());
+
+    String signalName = signalNumberToNameMap->get(signalNumber);
+    Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+    MarkedArgumentBuffer args;
+    args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
+    args.append(jsNumber(signalNumber));
+
+    process->wrapped().emitForBindings(signalNameIdentifier, args);
+}
+
 #if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
@@ -834,28 +847,20 @@ void signalHandler(int signalNumber)
 void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
+#if OS(WINDOWS)
     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
-
     // signal handlers can be run on any thread
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
-        JSGlobalObject* lexicalGlobalObject = context.jsGlobalObject();
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-        Process* process = jsCast<Process*>(globalObject->processObject());
-
-        String signalName = signalNumberToNameMap->get(signalNumber);
-        Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
-        MarkedArgumentBuffer args;
-        args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
-        args.append(jsNumber(signalNumber));
-
-        process->wrapped().emitForBindings(signalNameIdentifier, args);
+        Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
+#else
+
+#endif
 };
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
@@ -934,10 +939,12 @@ extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
         process->scriptExecutionContext()->unrefEventLoop();
     }
 }
-
+extern "C" void Bun__ensureSignalHandler();
+extern "C" bool Bun__isMainThreadVM();
+extern "C" void Bun__onPosixSignal(int signalNumber);
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
-    if (eventEmitter.scriptExecutionContext()->isMainThread()) {
+    if (Bun__isMainThreadVM()) {
         // IPC handlers
         if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
@@ -1056,11 +1063,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
                         };
 #if !OS(WINDOWS)
+                        Bun__ensureSignalHandler();
                         struct sigaction action;
                         memset(&action, 0, sizeof(struct sigaction));
 
                         // Set the handler in the action struct
-                        action.sa_handler = signalHandler;
+                        action.sa_handler = [](int signalNumber) {
+                            Bun__onPosixSignal(signalNumber);
+                        };
 
                         // Clear the sa_mask
                         sigemptyset(&action.sa_mask);

@@ -1,4 +1,4 @@
-//! > ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems proramming and the C ABI. Use with caution.
+//! > ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems programming and the C ABI. Use with caution.
 //!
 //! # Bun Native Plugins
 //!
@@ -44,7 +44,7 @@
 //! /// Use `no_mangle` so that we can reference this symbol by name later
 //! /// when registering this native plugin in JS.
 //! ///
-//! /// Here we'll create a dummy plugin which replaces all occurences of
+//! /// Here we'll create a dummy plugin which replaces all occurrences of
 //! /// `foo` with `bar`
 //! #[no_mangle]
 //! pub extern "C" fn on_before_parse_plugin_impl(

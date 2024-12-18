@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -278,8 +278,6 @@ export interface BundlerTestInput {
 
   /** Multiplier for test timeout */
   timeoutScale?: number;
-  /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
-  debugTimeoutScale?: number;
 
   /* determines whether or not anything should be passed to outfile, outdir, etc. */
   generateOutput?: boolean;
@@ -1663,8 +1661,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
@@ -1676,8 +1673,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
   );
 };
 

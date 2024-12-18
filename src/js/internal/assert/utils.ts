@@ -17,7 +17,6 @@ const {
   //   StringPrototypeStartsWith,
 } = require("internal/primordials");
 
-const { isError } = require("internal/util");
 // const { Buffer } = require('node:buffer');
 // const {
 //   isErrorStackTraceLimitWritable,
@@ -275,7 +274,7 @@ export function innerOk(fn, argLen, value, message) {
       generatedMessage = true;
       message = getErrMessage(message, value, fn);
       // TODO: message
-    } else if (isError(message)) {
+    } else if (Error.isError(message)) {
       throw message;
     }
 

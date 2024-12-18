@@ -52,41 +52,35 @@ const {
   SymbolIterator,
 } = require("internal/primordials");
 
-// const {
-//   ERR_AMBIGUOUS_ARGUMENT,
-//   ERR_INVALID_ARG_TYPE,
-//   ERR_INVALID_ARG_VALUE,
-//   ERR_INVALID_RETURN_VALUE,
-//   ERR_MISSING_ARGS,
-// } = require("internal/errors");
-const AssertionError = require("internal/assert/assertion_error");
-const { inspect } = require("internal/util/inspect");
 const { Buffer } = require("node:buffer");
 const { deprecate } = require("node:util");
 const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
-// const { isError, deprecate, emitExperimentalWarning } = require("internal/util");
-const { isError } = require("internal/util");
 const { innerOk } = require("internal/assert/utils");
 
-const CallTracker = require("internal/assert/calltracker");
 const { validateFunction } = require("internal/validators");
 
-// import type nodeAssert from "node:assert";
 type nodeAssert = typeof import("node:assert");
 
-// let isDeepEqual = Bun.deepEquals
-// let isDeepStrictEqual;
-
-// function lazyLoadComparison() {
-//   const comparison = require("internal/util/comparisons");
-//   isDeepEqual = comparison.isDeepEqual;
-//   isDeepStrictEqual = comparison.isDeepStrictEqual;
-// }
 function isDeepEqual(a, b) {
   return Bun.deepEquals(a, b, false);
 }
 function isDeepStrictEqual(a, b) {
   return Bun.deepEquals(a, b, true);
+}
+
+var _inspect;
+function lazyInspect() {
+  if (_inspect === undefined) {
+    _inspect = require("internal/util/inspect").inspect;
+  }
+  return _inspect
+}
+
+var AssertionError;
+function loadAssertionError() {
+  if (AssertionError === undefined) {
+    AssertionError = require("internal/assert/assertion_error");
+  }
 }
 
 let warned = false;
@@ -160,6 +154,7 @@ function fail(
     stackStartFn: stackStartFn || fail,
     message,
   };
+  if (AssertionError === undefined) loadAssertionError();
   const err = new AssertionError(errArgs);
   if (internalMessage) {
     err.generatedMessage = true;
@@ -171,6 +166,18 @@ assert.fail = fail;
 
 // The AssertionError is defined in internal/error.
 assert.AssertionError = AssertionError;
+Object.defineProperty(assert, "AssertionError", {
+  get() {
+    loadAssertionError();
+    return AssertionError;
+  },
+  set(value) {
+    AssertionError = value;
+  },
+  configurable: true,
+  enumerable: true,
+});
+
 
 /**
  * Pure assertion tests whether a value is truthy, as determined
@@ -245,7 +252,6 @@ assert.deepEqual = function deepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  // if (isDeepEqual === undefined) lazyLoadComparison();
   if (!isDeepEqual(actual, expected)) {
     innerFail({
       actual,
@@ -268,7 +274,6 @@ assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  if (isDeepEqual === undefined) lazyLoadComparison();
   if (isDeepEqual(actual, expected)) {
     innerFail({
       actual,
@@ -293,7 +298,6 @@ assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  if (isDeepEqual === undefined) lazyLoadComparison();
   if (!isDeepStrictEqual(actual, expected)) {
     innerFail({
       actual,
@@ -318,7 +322,6 @@ function notDeepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  if (isDeepEqual === undefined) lazyLoadComparison();
   if (isDeepStrictEqual(actual, expected)) {
     innerFail({
       actual,
@@ -375,7 +378,7 @@ assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
 };
 
 function isSpecial(obj) {
-  return obj == null || typeof obj !== "object" || isError(obj) || isRegExp(obj) || isDate(obj);
+  return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
 }
 
 const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
@@ -412,7 +415,6 @@ function compareBranch(actual, expected, comparedObjects) {
 
   for (const type of typesToCallDeepStrictEqualWith) {
     if (type(actual) || type(expected)) {
-      if (isDeepStrictEqual === undefined) lazyLoadComparison();
       return isDeepStrictEqual(actual, expected);
     }
   }
@@ -422,8 +424,6 @@ function compareBranch(actual, expected, comparedObjects) {
     if (expected.size > actual.size) {
       return false; // `expected` can't be a subset if it has more elements
     }
-
-    if (isDeepEqual === undefined) lazyLoadComparison();
 
     const actualArray = ArrayFrom(FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], actual));
     const expectedIterator = FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], expected);
@@ -447,8 +447,6 @@ function compareBranch(actual, expected, comparedObjects) {
     if (expected.length > actual.length) {
       return false;
     }
-
-    if (isDeepEqual === undefined) lazyLoadComparison();
 
     // Create a map to count occurrences of each element in the expected array
     const expectedCounts = new SafeMap();
@@ -485,9 +483,6 @@ function compareBranch(actual, expected, comparedObjects) {
 
   // Comparison done when at least one of the values is not an object
   if (isSpecial(actual) || isSpecial(expected)) {
-    if (isDeepEqual === undefined) {
-      lazyLoadComparison();
-    }
     return isDeepStrictEqual(actual, expected);
   }
 
@@ -502,6 +497,7 @@ function compareBranch(actual, expected, comparedObjects) {
   }
   comparedObjects.add(actual);
 
+  if (AssertionError === undefined) loadAssertionError();
   // Check if all expected keys and values match
   for (let i = 0; i < keysExpected.length; i++) {
     const key = keysExpected[i];
@@ -567,6 +563,7 @@ function compareExceptionKey(actual, expected, key, message, keys, fn) {
       const a = new Comparison(actual, keys);
       const b = new Comparison(expected, keys, actual);
 
+      if (AssertionError === undefined) loadAssertionError();
       const err = new AssertionError({
         actual: a,
         expected: b,
@@ -597,6 +594,7 @@ function expectedException(actual, expected, message, fn) {
     if (isRegExp(expected)) {
       const str = String(actual);
       if (RegExpPrototypeExec(expected, str) !== null) return;
+      const inspect = lazyInspect();
 
       if (!message) {
         generatedMessage = true;
@@ -606,6 +604,7 @@ function expectedException(actual, expected, message, fn) {
       throwError = true;
       // Handle primitives properly.
     } else if (typeof actual !== "object" || actual === null) {
+      if (AssertionError === undefined) loadAssertionError();
       const err = new AssertionError({
         actual,
         expected,
@@ -626,7 +625,6 @@ function expectedException(actual, expected, message, fn) {
         // throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
         throw $ERR_INVALID_ARG_VALUE(`The argument 'error' may not be an empty object. Received: {}`);
       }
-      if (isDeepEqual === undefined) lazyLoadComparison();
       for (const key of keys) {
         if (
           typeof actual[key] === "string" &&
@@ -647,7 +645,7 @@ function expectedException(actual, expected, message, fn) {
     if (!message) {
       generatedMessage = true;
       message = "The error is expected to be an instance of " + `"${expected.name}". Received `;
-      if (isError(actual)) {
+      if (Error.isError(actual)) {
         const name = actual.constructor?.name || actual.name;
         if (expected.name === name) {
           message += "an error with identical name but a different prototype.";
@@ -658,7 +656,7 @@ function expectedException(actual, expected, message, fn) {
           message += `\n\nError message:\n\n${actual.message}`;
         }
       } else {
-        message += `"${inspect(actual, { depth: -1 })}"`;
+        message += `"${lazyInspect()(actual, { depth: -1 })}"`;
       }
     }
     throwError = true;
@@ -669,9 +667,10 @@ function expectedException(actual, expected, message, fn) {
       if (!message) {
         generatedMessage = true;
         const name = expected.name ? `"${expected.name}" ` : "";
+        const inspect = lazyInspect();
         message = `The ${name}validation function is expected to return` + ` "true". Received ${inspect(res)}`;
 
-        if (isError(actual)) {
+        if (Error.isError(actual)) {
           message += `\n\nCaught error:\n\n${actual}`;
         }
       }
@@ -680,6 +679,7 @@ function expectedException(actual, expected, message, fn) {
   }
 
   if (throwError) {
+    if (AssertionError === undefined) loadAssertionError();
     const err = new AssertionError({
       actual,
       expected,
@@ -861,7 +861,7 @@ assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args:
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...argsa: unknown[]): Promise<void> {
+assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
   expectsNoError(doesNotReject, await waitForActual(fn), ...args);
 };
 
@@ -880,9 +880,11 @@ assert.ifError = function ifError(err: unknown): void {
         message += err.message;
       }
     } else {
+      const inspect = lazyInspect();
       message += inspect(err);
     }
 
+    if (AssertionError === undefined) loadAssertionError();
     const newErr = new AssertionError({
       actual: err,
       expected: null,
@@ -933,6 +935,7 @@ function internalMatch(string, regexp, message, fn) {
     }
 
     const generatedMessage = !message;
+    const inspect = lazyInspect();
 
     // 'The input was expected to not match the regular expression ' +
     message ||=
@@ -942,6 +945,7 @@ function internalMatch(string, regexp, message, fn) {
             ? "The input did not match the regular expression "
             : "The input was expected to not match the regular expression ") +
           `${inspect(regexp)}. Input:\n\n${inspect(string)}\n`;
+    if (AssertionError === undefined) loadAssertionError();
     const err = new AssertionError({
       actual: string,
       expected: regexp,
@@ -976,7 +980,20 @@ assert.doesNotMatch = function doesNotMatch(string, regexp, message) {
   internalMatch(string, regexp, message, doesNotMatch);
 };
 
-assert.CallTracker = deprecate(CallTracker, "assert.CallTracker is deprecated.", "DEP0173");
+var CallTracker
+Object.defineProperty(assert, "CallTracker", {
+  get() {
+    if (CallTracker === undefined) {
+      CallTracker = require("internal/assert/calltracker"); deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173")
+    }
+    return CallTracker;
+  },
+  set(value) {
+    CallTracker = value;
+  },
+  configurable: true,
+  enumerable: true,
+});
 // assert.CallTracker = CallTracker
 
 /**

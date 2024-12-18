@@ -16,7 +16,6 @@ const {
   StringPrototypeSplit,
 } = require("internal/primordials");
 
-const { isError } = require("internal/util");
 
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
@@ -67,7 +66,7 @@ function copyError(source) {
   if (ObjectPrototypeHasOwnProperty(source, "cause")) {
     let { cause } = source;
 
-    if (isError(cause)) {
+    if (Error.isError(cause)) {
       cause = copyError(cause);
     }
 

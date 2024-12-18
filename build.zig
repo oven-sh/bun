@@ -363,8 +363,8 @@ pub fn build(b: *Build) !void {
         });
         var it = bun_check_obj.root_module.import_table.iterator();
         while (it.next()) |entry| {
-            if(!std.mem.eql(u8, entry.key_ptr.*, "build_options"))
-            exe.root_module.addImport(entry.key_ptr.*, noop);
+            if (!std.mem.eql(u8, entry.key_ptr.*, "build_options"))
+                exe.root_module.addImport(entry.key_ptr.*, noop);
         }
 
         const run = b.addRunArtifact(exe);

@@ -43,11 +43,13 @@ pub fn customDeserializer(
     b: JSC.ArrayBuffer,
     c: SampleEnum,
     d: ?JSC.Node.StringOrBuffer,
+    e: ?JSC.ArrayBuffer,
 ) i32 {
     return @intCast(std.math.clamp(
         a.slice().len +|
             b.slice().len +|
             (if (d) |buf| buf.slice().len else 42) +|
+            (if (e) |buf| buf.slice().len else 24) +|
             @intFromEnum(c),
         std.math.minInt(i32),
         std.math.maxInt(i32),

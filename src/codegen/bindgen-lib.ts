@@ -294,6 +294,10 @@ export namespace t {
     return new TypeImpl("customZig", customZigOption);
   }
 
+  export function customCpp<T>(customCppOption: CustomCpp) {
+    return new TypeImpl("customCpp", customCppOption);
+  }
+
   /** An array or iterable type of T */
   export function sequence<T>(itemType: Type<T>): Type<Iterable<T>, "sequence"> {
     return new TypeImpl("sequence", {
@@ -369,7 +373,7 @@ export namespace t {
     return new TypeImpl("zigEnum", { file, impl, snapshot: snapshotCallerLocation() });
   }
 
-  // Zig types built off of `t.customZig`
+  // Compound types built off of `t.customZig`
 
   /**
    * Anything that can be interpreted as a byte array.
@@ -379,6 +383,7 @@ export namespace t {
     fromJSFunction: "JSC.Node.StringOrBuffer.fromJS",
     fromJSArgs: ["global", "allocator", "value"],
     fromJSReturn: "optional",
+    validateFunction: "JSC.Node.StringOrBuffer.validateForBindgen",
     validateErrorDescription: nodeInvalidArgTypeMessage(["string", "Buffer", "TypedArray", "DataView"]),
     deinitMethod: "deinit",
     deinitArgs: [],
@@ -386,13 +391,13 @@ export namespace t {
   /**
    * Anything ArrayBuffer-like
    */
-  export const ArrayBuffer = customZig<Buffer | ArrayBuffer | NodeJS.TypedArray | DataView>({
-    type: "JSC.ArrayBuffer",
-    fromJSFunction: "JSValue.asArrayBuffer",
-    fromJSArgs: ["value", "global"],
-    validateFunction: "JSC.ArrayBuffer.validate",
+  export const ArrayBuffer = customCpp<Buffer | ArrayBuffer | NodeJS.TypedArray | DataView>({
+    cppType: "Bun__ArrayBuffer",
+    header: ["headers.h"],
+    zigType: "JSC.ArrayBuffer",
+    fromJSFunction: "JSC__JSValue__asArrayBuffer_",
+    fromJSArgs: ["encoded-value", "global", "out"],
     validateErrorDescription: nodeInvalidArgTypeMessage(["Buffer", "TypedArray", "DataView"]),
-    fromJSReturn: "optional",
   });
 }
 
@@ -416,14 +421,38 @@ export interface CustomZig {
    * Error message to display if the value is not valid
    * "The {...} must be {validateErrorDescription}"
    */
-  validateErrorDescription: string;
+  validateErrorDescription?: string;
   /** Method name, such as "deinit" */
   deinitMethod?: string;
   /** Argument layout, not including the value which is the first argument. */
   deinitArgs?: CustomZigArg[];
 }
 
+export interface CustomCpp {
+  /** Additional headers to include */
+  header: string | string[];
+  /**
+   * C++ type. If a Zig type name is specified, it is assumed
+   * that the C++ type is compatible with the C ABI
+   */
+  cppType: string;
+  /** Type name such as `bun.String`. Should start with `bun` or `JSC` */
+  zigType?: string;
+  /** Fully qualified name */
+  fromJSFunction: string;
+  /** If the function can error */
+  fromJSReturn?: "optional" | "error";
+  /** Argument layout */
+  fromJSArgs: CustomCppArg[];
+  /**
+   * Error message to display if the value is not valid
+   * "The {...} must be {validateErrorDescription}"
+   */
+  validateErrorDescription?: string;
+}
+
 export type CustomZigArg = "global" | "value" | "allocator" | { text: string };
+export type CustomCppArg = "global" | "value" | "encoded-value" | "out" | { text: string };
 
 export type FnOptions = FuncMetadata &
   (

@@ -3,7 +3,7 @@
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
-import type { FnOptions, Type, t } from "./bindgen-lib";
+import type { CustomCpp, CustomZig, FnOptions, Type, t } from "./bindgen-lib";
 import * as path from "node:path";
 import assert from "node:assert";
 
@@ -57,11 +57,14 @@ export const pascal = (s: string) => cap(camel(s));
 /** The JS Host function, aka fn (*JSC.JSGlobalObject, *JSC.CallFrame) JSValue.MaybeException */
 export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
   `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}`;
-/** Each variant gets a dispatcher function. */
+/** Each variant gets a dispatcher function, defined in Zig. */
 export const extDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: number) =>
   `bindgen_${cap(namespaceVar)}_dispatch${cap(fnLabel)}${variantNumber}`;
+/** When there are more than 1 variants, an internal dispatch function decodes the arguments. */
 export const extInternalDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: string | number) =>
   `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}_v${variantNumber}`;
+/** Used by `t.customZig` validator functions */
+export const extCustomZigValidator = (key: string) => `bindgen_zig_${key.replaceAll(".", "__")}`;
 
 interface TypeDataDefs {
   /** The name */
@@ -83,6 +86,10 @@ interface TypeDataDefs {
   stringEnum: string[];
   oneOf: TypeImpl[];
   dictionary: DictionaryField[];
+  customZig: CustomZig;
+  customCpp: CustomCpp & {
+    cachedExternalStruct?: ExternalStruct;
+  };
 }
 type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
@@ -190,6 +197,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "stringEnum":
       case "zigEnum":
         return true;
+      // customZig is special cased
+      case "customZig":
+      case "customCpp":
       default:
         return false;
     }
@@ -240,7 +250,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         return null;
       case "externalClass":
         throw new Error("TODO");
-        return "*anyopaque";
       case "dictionary": {
         let existing = typeHashToStruct.get(this.hash());
         if (existing) return existing;
@@ -262,6 +271,13 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         typeHashToStruct.set(this.hash(), existing);
         return existing;
       }
+      case "customCpp": {
+        const customCpp = this.data as TypeData<"customCpp">;
+        if (customCpp.zigType) {
+          return (customCpp.cachedExternalStruct ??= new ExternalStruct(customCpp.cppType, customCpp.zigType));
+        }
+        return null;
+      }
       case "customZig":
       case "sequence": {
         return null;
@@ -279,6 +295,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
     if (existing) return (this.nameDeduplicated = existing.nameDeduplicated ??= this.#generateName());
+    if (this.kind === "customCpp") {
+      return (this.canDirectlyMapToCAbi() as ExternalStruct).name();
+    }
     return (this.nameDeduplicated = `bindgen_${this.kind}_${hash}`);
   }
 
@@ -990,9 +1009,10 @@ export type CAbiType =
   | "i32"
   | "i64"
   | "f64"
+  | ExternalStruct
   | Struct;
 
-export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] {
+export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] | null {
   if (typeof type !== "string") {
     return type.abiInfo();
   }
@@ -1129,7 +1149,7 @@ export class Struct {
   }
 
   add(name: string, cType: CAbiType) {
-    const [size, naturalAlignment] = cAbiTypeInfo(cType);
+    const [size, naturalAlignment] = cAbiTypeInfo(cType) ?? [null, null];
     this.fields.push({ name, type: cType, size, naturalAlignment });
   }
 
@@ -1154,12 +1174,37 @@ export class Struct {
   }
 }
 
+export class ExternalStruct {
+  #cppName: string;
+  #zigName: string;
+  constructor(cppName: string, zigName: string) {
+    this.#cppName = cppName;
+    this.#zigName = zigName;
+  }
+
+  name() {
+    return this.#cppName;
+  }
+
+  toString() {
+    return this.#zigName;
+  }
+
+  zigName() {
+    return this.#zigName;
+  }
+
+  abiInfo() {
+    return null;
+  }
+}
+
 export interface StructField {
   /** camel case */
   name: string;
   type: CAbiType;
-  size: number;
-  naturalAlignment: number;
+  size: number | null;
+  naturalAlignment: number | null;
 }
 
 export class CodeWriter {

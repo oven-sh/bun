@@ -25,6 +25,7 @@ export const customDeserializer = Fn({
     b: t.ArrayBuffer,
     c: t.zigEnum("bindgen_test.zig", "SampleEnum"),
     d: t.StringOrBuffer.optional,
+    e: t.ArrayBuffer.optional,
   },
   ret: t.i32,
 });

@@ -46,6 +46,8 @@ private:
     void finishCreation(VM&);
 };
 
+WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg);
+
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);

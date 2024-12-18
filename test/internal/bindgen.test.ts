@@ -75,13 +75,13 @@ it("custom deserializers / zigEnum / StringOrBuffer / ArrayBuffer", () => {
   expect(() => bindgen.customDeserializer()).toThrow("Not enough arguments");
   const ab4 = new ArrayBuffer(4);
   const ab2 = new ArrayBuffer(2);
-  expect(bindgen.customDeserializer(ab4, ab4, "hello")).toBe(50);
-  expect(bindgen.customDeserializer(ab2, ab4, "hello")).toBe(48);
-  expect(bindgen.customDeserializer(ab2, ab2, "hello")).toBe(46);
-  expect(bindgen.customDeserializer(ab2, ab2, "world")).toBe(47);
-  // expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow(
-  //   'Argument 3 (\'c\') to bindgen_test.customDeserializer must be one of: "hello", "world"',
-  // );
+  expect(bindgen.customDeserializer(ab4, ab4, "hello")).toBe(74);
+  expect(bindgen.customDeserializer(ab2, ab4, "hello")).toBe(72);
+  expect(bindgen.customDeserializer(ab2, ab2, "hello")).toBe(70);
+  expect(bindgen.customDeserializer(ab2, ab2, "world")).toBe(71);
+  expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow(
+    'The "a" argument must be of type string or an instance of Buffer, TypedArray, or DataView of type string or an instance of Buffer, TypedArray, or DataView. Received null',
+  );
   expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow(
     'Argument 3 (\'c\') to bindgen_test.customDeserializer must be one of: "hello", "world"',
   );

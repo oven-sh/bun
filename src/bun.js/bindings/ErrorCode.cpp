@@ -1,6 +1,4 @@
-
-#include "root.h"
-
+#include "ErrorCode.h"
 #include "ZigGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
@@ -24,8 +22,6 @@
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
-
-#include "ErrorCode.h"
 
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {

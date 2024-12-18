@@ -44,7 +44,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
     };
 
     if (comptime bun.trait.isNumber(Type)) {
-        return JSC.JSValue.jsNumberWithType(Type, if (comptime Type != ValueType) value.* else value);
+        return JSC.JSValue.jsNumber(if (comptime Type != ValueType) value.* else value);
     }
 
     switch (comptime Type) {
@@ -433,7 +433,6 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
-
         // The reason for this is
         // JSC C API returns a detached arraybuffer
         // if you pass it a zero-length TypedArray

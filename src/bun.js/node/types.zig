@@ -623,6 +623,30 @@ pub const StringOrBuffer = union(enum) {
         };
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
+
+    pub fn validateForBindgen(value: JSC.JSValue) bool {
+        return switch (value.jsType()) {
+            .String,
+            .StringObject,
+            .DerivedStringObject,
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float16Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => true,
+            else => false,
+        };
+    }
 };
 
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;

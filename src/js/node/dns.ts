@@ -154,12 +154,12 @@ var InternalResolver = class Resolver {
 
   cancel() {}
 
-  getServers() {
-    return Resolver.#getResolver(this).getServers();
-  }
-
   static #getResolver(object) {
     return #resolver in object ? object.#resolver : dns;
+  }
+
+  getServers() {
+    return Resolver.#getResolver(this).getServers();
   }
 
   resolve(hostname, rrtype, callback) {
@@ -505,8 +505,14 @@ const promisifyLookupAll = res => {
 
 const mapResolveX = a => a.address;
 
-const promisifyResolveX = res => {
-  return res?.map(mapResolveX);
+const promisifyResolveX = ttl => {
+  if (ttl) {
+    return res => res;
+  } else {
+    return res => {
+      return res?.map(mapResolveX);
+    };
+  }
 };
 
 const translateLookupOptions = ({ family, order, verbatim, hints: flags, all }) => ({
@@ -556,17 +562,11 @@ const promises = {
   },
 
   resolve4(hostname, options) {
-    if (options?.ttl) {
-      return translateErrorCode(dns.resolve(hostname, "A"));
-    }
-    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX));
+    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
   },
 
   resolve6(hostname, options) {
-    if (options?.ttl) {
-      return translateErrorCode(dns.resolve(hostname, "AAAA"));
-    }
-    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX));
+    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
   },
 
   resolveAny(hostname) {
@@ -614,12 +614,20 @@ const promises = {
   },
 
   Resolver: class Resolver {
-    constructor(options) {}
+    #resolver;
+
+    constructor(options) {
+      this.#resolver = dns.newResolver();
+    }
 
     cancel() {}
 
+    static #getResolver(object) {
+      return #resolver in object ? object.#resolver : dns;
+    }
+
     getServers() {
-      return [];
+      return Resolver.#getResolver(this).getServers();
     }
 
     resolve(hostname, rrtype) {
@@ -629,72 +637,66 @@ const promises = {
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup));
+          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup));
         default:
-          return translateErrorCode(dns.resolve(hostname, rrtype));
+          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
       }
     }
 
     resolve4(hostname, options) {
-      if (options?.ttl) {
-        return translateErrorCode(dns.resolve(hostname, "A"));
-      }
-      return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX));
+      return translateErrorCode(
+        Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+      );
     }
 
     resolve6(hostname, options) {
-      if (options?.ttl) {
-        return translateErrorCode(dns.resolve(hostname, "AAAA"));
-      }
-      return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX));
-    }
-
-    resolveAny(hostname) {
-      return Promise.resolve([]);
+      return translateErrorCode(
+        Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+      );
     }
 
     resolveCname(hostname) {
-      return translateErrorCode(dns.resolveCname(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
     }
 
     resolveMx(hostname) {
-      return translateErrorCode(dns.resolveMx(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
     }
 
     resolveNaptr(hostname) {
-      return translateErrorCode(dns.resolveNaptr(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
     }
 
     resolveNs(hostname) {
-      return translateErrorCode(dns.resolveNs(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
     }
 
     resolvePtr(hostname) {
-      return translateErrorCode(dns.resolvePtr(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
     }
 
     resolveSoa(hostname) {
-      return translateErrorCode(dns.resolveSoa(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
     }
 
     resolveSrv(hostname) {
-      return translateErrorCode(dns.resolveSrv(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
     }
 
     resolveCaa(hostname) {
-      return translateErrorCode(dns.resolveCaa(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
     }
 
     resolveTxt(hostname) {
-      return translateErrorCode(dns.resolveTxt(hostname));
+      return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
     }
 
     reverse(ip) {
-      return translateErrorCode(dns.reverse(ip));
+      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
     }
 
     setServers(servers) {
-      throw new Error("unimplemented");
+      return setServersOn(servers, Resolver.#getResolver(this));
     }
   },
 };

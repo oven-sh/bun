@@ -59,10 +59,11 @@ export default [
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
-  //NET
+  // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],
   ["ERR_SOCKET_CLOSED", Error],
-  //HTTP2
+
+  // HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED", TypeError],
   ["ERR_HTTP2_SEND_FILE", Error],
@@ -87,4 +88,9 @@ export default [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error],
   ["ERR_HTTP2_ERROR", Error],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],
+
+  // AsyncHooks
+  ["ERR_ASYNC_TYPE", TypeError],
+  ["ERR_INVALID_ASYNC_ID", RangeError],
+  ["ERR_ASYNC_CALLBACK", TypeError],
 ] as ErrorCodeMapping;

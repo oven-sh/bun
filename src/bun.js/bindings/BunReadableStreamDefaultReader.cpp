@@ -1,3 +1,4 @@
+#include "ErrorCode+List.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSObject.h>
@@ -13,7 +14,7 @@
 #include "BunReadableStreamDefaultController.h"
 #include <JavaScriptCore/Completion.h>
 #include "BunReadableStreamDefaultReader.h"
-
+#include "ErrorCode.h"
 namespace Bun {
 
 using namespace JSC;
@@ -25,7 +26,7 @@ public:
     static JSReadableStreamDefaultReaderPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
         JSReadableStreamDefaultReaderPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReaderPrototype>(vm)) JSReadableStreamDefaultReaderPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
+        ptr->finishCreation(vm);
         return ptr;
     }
 
@@ -47,16 +48,8 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    void finishCreation(JSC::VM&);
 };
-
-JSReadableStreamDefaultReader* JSReadableStreamDefaultReader::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSReadableStream* stream)
-{
-    JSReadableStreamDefaultReader* reader = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReader>(vm)) JSReadableStreamDefaultReader(vm, structure);
-    reader->finishCreation(vm);
-    reader->m_stream.set(vm, reader, stream);
-    return reader;
-}
 
 // JSReadableStreamDefaultReader.cpp
 
@@ -108,7 +101,7 @@ template<typename Visitor>
 void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* reader = jsCast<JSReadableStreamDefaultReader*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(reader, info());
+    ASSERT_GC_OBJECT_INHERITS(reader, JSReadableStreamDefaultReader::info());
     Base::visitChildren(reader, visitor);
     visitor.append(reader->m_stream);
     visitor.append(reader->m_readyPromise);
@@ -117,11 +110,6 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);
-
-void JSReadableStreamDefaultReader::destroy(JSCell* cell)
-{
-    static_cast<JSReadableStreamDefaultReader*>(cell)->JSReadableStreamDefaultReader::~JSReadableStreamDefaultReader();
-}
 
 void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm)
 {
@@ -143,7 +131,7 @@ void JSReadableStreamDefaultReader::releaseLock()
         return;
 
     // Release the stream's reader reference
-    m_stream->clearReader();
+    m_stream->setReader(nullptr);
     detach();
 }
 
@@ -236,7 +224,7 @@ const ClassInfo JSReadableStreamDefaultReaderConstructor::s_info = { "ReadableSt
 
 void JSReadableStreamDefaultReaderConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultReaderPrototype* prototype)
 {
-    Base::finishCreation(vm, 1, "ReadableStreamDefaultReader"_s, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    Base::finishCreation(vm, 1, "ReadableStreamDefaultReader"_s, PropertyAdditionMode::WithStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
@@ -245,7 +233,8 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstr
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return JSValue::encode(throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "ReadableStreamDefaultReader"));
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "ReadableStreamDefaultReader constructor cannot be called as a function"_s);
+    return {};
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -268,8 +257,19 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstr
         return throwVMTypeError(globalObject, scope, "Cannot construct a ReadableStreamDefaultReader for a locked ReadableStream"_s);
     }
 
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    Structure* structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget, getFunctionRealm(globalObject, newTarget));
+    JSC::JSObject* newTarget = callFrame->newTarget().getObject();
+    JSC::JSObject* constructor = callFrame->jsCallee();
+
+    auto* structure = defaultGlobalObject(globalObject)->readableStreamDefaultReaderStructure();
+
+    // TODO: double-check this.
+    if (!(!newTarget || newTarget == constructor)) {
+        if (newTarget) {
+            structure = JSC::InternalFunction::createSubclassStructure(getFunctionRealm(globalObject, newTarget), newTarget, structure);
+        } else {
+            structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
+        }
+    }
     RETURN_IF_EXCEPTION(scope, {});
 
     JSReadableStreamDefaultReader* reader = JSReadableStreamDefaultReader::create(vm, globalObject, structure, stream);
@@ -283,9 +283,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstr
         JSValue error = stream->storedError();
         if (!error)
             error = jsUndefined();
+
         reader->readyPromise()->reject(globalObject, error);
     } else {
-        reader->readyPromise()->resolve(globalObject, jsUndefined());
+        reader->readyPromise()->fulfillWithNonPromise(globalObject, jsUndefined());
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(reader));

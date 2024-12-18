@@ -7,9 +7,24 @@
 #include "BunReadableStream.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/Completion.h>
+#include "BunReadableStreamDefaultReader.h"
+#include "DOMIsoSubspaces.h"
+#include "BunClientData.h"
+
 namespace Bun {
 
 using namespace JSC;
+
+template<typename CellType, JSC::SubspaceAccess mode>
+JSC::GCClient::IsoSubspace* JSReadableStreamDefaultController::subspaceFor(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultController, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSReadableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSReadableStreamDefaultController = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSReadableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSReadableStreamDefaultController = std::forward<decltype(space)>(space); });
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeClose, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -380,7 +395,7 @@ bool JSReadableStreamDefaultController::shouldCallPull() const
         return false;
 
     // Only pull if we need more chunks
-    if (reader->numReadRequests() == 0)
+    if (reader->length() == 0)
         return false;
 
     double desiredSize = m_strategyHWM - m_queueTotalSize;

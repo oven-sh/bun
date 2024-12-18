@@ -19,12 +19,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return &vm.plainObjectSpace();
-    }
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
     static JSReadableStreamDefaultController* create(JSC::VM&, JSC::Structure*, JSReadableStream* stream);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

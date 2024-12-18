@@ -45,6 +45,8 @@ public:
     bool isActive() const { return !!m_stream; }
     void detach();
 
+    unsigned length() const { return m_readRequests.get()->length(); }
+
     // Implements ReadableStreamDefaultReader
     void releaseLock();
 

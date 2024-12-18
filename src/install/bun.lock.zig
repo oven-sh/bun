@@ -1053,7 +1053,7 @@ pub fn parseIntoBinaryLockfile(
         return error.InvalidLockfileVersion;
     };
 
-    var string_buf = String.Buf.init(allocator);
+    var string_buf = lockfile.stringBuf();
 
     if (root.get("trustedDependencies")) |trusted_dependencies_expr| {
         var trusted_dependencies: BinaryLockfile.TrustedDependenciesSet = .{};
@@ -1476,8 +1476,6 @@ pub fn parseIntoBinaryLockfile(
         try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
         lockfile.buffers.resolutions.expandToCapacity();
         @memset(lockfile.buffers.resolutions.items, invalid_package_id);
-
-        string_buf.apply(lockfile);
 
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);

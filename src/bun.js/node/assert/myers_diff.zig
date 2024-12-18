@@ -73,8 +73,8 @@ const int = i64; // must be large enough to hold all valid values of `uint` w/o 
 /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
 pub fn Differ(comptime Line: type, comptime opts: Options) type {
     const eql: LineCmp(Line) = switch (Line) {
-        // char-by-char comparison. u32 is for utf8
-        u8, u32 => blk: {
+        // char-by-char comparison. u16 is for utf16
+        u8, u16 => blk: {
             const gen = struct {
                 pub fn eql(a: Line, b: Line) bool {
                     return a == b;
@@ -82,7 +82,15 @@ pub fn Differ(comptime Line: type, comptime opts: Options) type {
             };
             break :blk gen.eql;
         },
-        []const u8, []u8, [:0]const u8, [:0]u8 => blk: {
+        []const u8,
+        []u8,
+        [:0]const u8,
+        [:0]u8,
+        []const u16,
+        []u16,
+        [:0]const u16,
+        [:0]u16,
+        => blk: {
             const gen = struct {
                 pub fn eql(a: Line, b: Line) bool {
                     return areStrLinesEqual(Line, a, b, opts.check_comma_disparity);
@@ -247,7 +255,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                 try result.ensureUnusedCapacity(u(@max(x - prev_x, y - prev_y)));
                 while (x > prev_x and y > prev_y) {
                     const line: Line = blk: {
-                        if (comptime opts.check_comma_disparity) {
+                        if (@typeInfo(Line) == .Pointer and comptime opts.check_comma_disparity) {
                             const actual_el = actual[u(x) - 1];
                             // actual[x-1].endsWith(',')
                             break :blk if (actual_el[actual_el.len - 1] == ',')
@@ -584,8 +592,8 @@ test StrDiffer {
         //     ,
         // },
     }) |thing| {
-        var actual = try split(a, thing[0]);
-        var expected = try split(a, thing[1]);
+        var actual = try split(u8, a, thing[0]);
+        var expected = try split(u8, a, thing[1]);
         defer {
             actual.deinit(a);
             expected.deinit(a);
@@ -598,10 +606,21 @@ test StrDiffer {
     }
 }
 
-pub fn split(alloc: Allocator, s: []const u8) Allocator.Error!std.ArrayListUnmanaged([]const u8) {
+pub fn split(
+    comptime T: type,
+    alloc: Allocator,
+    s: []const T,
+) Allocator.Error!std.ArrayListUnmanaged([]const T) {
+    comptime {
+        if (T != u8 and T != u16) {
+            @compileError("Split only supports latin1, utf8, and utf16. Received: " ++ @typeName(T));
+        }
+    }
+    const newline: T = if (comptime T == u8) '\n' else '\n';
+    //
     // thing
-    var it = std.mem.splitScalar(u8, s, '\n');
-    var lines = std.ArrayListUnmanaged([]const u8){};
+    var it = std.mem.splitScalar(T, s, newline);
+    var lines = std.ArrayListUnmanaged([]const T){};
     try lines.ensureUnusedCapacity(alloc, s.len >> 4);
     errdefer lines.deinit(alloc);
     while (it.next()) |l| {

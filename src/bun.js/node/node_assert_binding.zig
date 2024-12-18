@@ -44,32 +44,14 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const expected_str = try expected_arg.toBunString2(global);
     defer expected_str.deref();
 
-    // Short circuit on empty strings. Note that, in release builds where
-    // assertions are disabled, if `actual` and `expected` are both dead, this
-    // branch will be hit since dead strings have a length of 0. This should be
-    // moot since BunStrings with non-zero reference counds should never be
-    // dead.
-    if (actual_str.length() == 0 and expected_str.length() == 0) {
-        return JSC.JSValue.createEmptyArray(global, 0);
-    }
-
     bun.assertWithLocation(actual_str.tag != .Dead, @src());
     bun.assertWithLocation(expected_str.tag != .Dead, @src());
 
-    // TODO: diffing w/o utf8 conversion when actual, expected are both UTF-16.
-    // Requires char diffing that respects surrogate pairs.
-    const actual = actual_str.toUTF8WithoutRef(allocator);
-    const expected = expected_str.toUTF8WithoutRef(allocator);
-    defer {
-        actual.deinit();
-        expected.deinit();
-    }
-
     return assert.myersDiff(
-        arena.allocator(),
+        allocator,
         global,
-        actual.byteSlice(),
-        expected.byteSlice(),
+        &actual_str,
+        &expected_str,
         check_comma_disparity,
         lines,
     );

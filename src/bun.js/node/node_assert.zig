@@ -34,7 +34,7 @@ pub fn myersDiff(
     check_comma_disparity: bool,
     // split `actual` and `expected` into lines before diffing
     lines: bool,
-) bun.JSError!MyersDiff.DiffList([]const u8) {
+) bun.JSError!JSC.JSValue {
     // bun.assertWithLocation(actual.tag != .Dead, @src());
     // bun.assertWithLocation(expected.tag != .Dead, @src());
     // bun.assertWithLocation(actual.encoding() == expected.encoding(), @src());
@@ -54,16 +54,37 @@ pub fn myersDiff(
         errdefer e.deinit(allocator);
 
         // NOTE: split lines leak memory if arena is not used
-        if (check_comma_disparity) {
-            const Differ = MyersDiff.Differ([]const u8, .{ .check_comma_disparity = true });
-            return Differ.diff(allocator, a.items, e.items) catch |err| return mapDiffError(global, err);
-        } else {
-            const Differ = MyersDiff.Differ([]const u8, .{ .check_comma_disparity = false });
-            return Differ.diff(allocator, a.items, e.items) catch |err| return mapDiffError(global, err);
-        }
+        const diff = blk: {
+            if (check_comma_disparity) {
+                const Differ = MyersDiff.Differ([]const u8, .{ .check_comma_disparity = true });
+                break :blk Differ.diff(allocator, a.items, e.items) catch |err| return mapDiffError(global, err);
+            } else {
+                const Differ = MyersDiff.Differ([]const u8, .{ .check_comma_disparity = false });
+                break :blk Differ.diff(allocator, a.items, e.items) catch |err| return mapDiffError(global, err);
+            }
+        };
+        return diffListToJS([]const u8, global, diff);
+    } else {
+        const Differ = MyersDiff.Differ(u8, .{});
+        const diff = Differ.diff(allocator, actual, expected) catch |err| return mapDiffError(global, err);
+        return diffListToJS(u8, global, diff);
     }
 
     @panic("TODO: diff characters w/o allocating for each char.");
+}
+
+// const StrDiffList = DiffList([]const u8);
+fn diffListToJS(comptime T: type, global: *JSC.JSGlobalObject, diff_list: MyersDiff.DiffList(T)) bun.JSError!JSC.JSValue {
+    // todo: replace with toJS
+    var array = JSC.JSValue.createEmptyArray(global, diff_list.items.len);
+    for (diff_list.items, 0..) |*line, i| {
+        var obj = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+        if (obj == .zero) return global.throwOutOfMemory();
+        obj.put(global, bun.String.static("kind"), JSC.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
+        obj.put(global, bun.String.static("value"), JSC.toJS(global, T, line.value, .allocated));
+        array.putIndex(global, @truncate(i), obj);
+    }
+    return array;
 }
 
 fn mapDiffError(global: *JSC.JSGlobalObject, err: MyersDiff.Error) bun.JSError {

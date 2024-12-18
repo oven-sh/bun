@@ -65,18 +65,7 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         expected.deinit();
     }
 
-    // // const actual = try actual_arg.toBunString2(global);
-    // // const expected = try safeToString(global, alloc, callframe.argument(1), "expected");
-    // const actual_str, const expected_str = blk: {
-    //     // block used to limit scope of errdefer
-    //     var _actual = try actual_arg.toBunString2(global);
-    //     errdefer _actual.deref();
-    //     const _expected = try expected_arg.toBunString2(global);
-    //     break :blk .{ _actual, _expected };
-    //     // var _expected = try safeToString(global, alloc, expected_arg, "expected");
-    // };
-
-    const diff = try assert.myersDiff(
+    return assert.myersDiff(
         arena.allocator(),
         global,
         actual.byteSlice(),
@@ -84,8 +73,6 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         check_comma_disparity,
         lines,
     );
-
-    return diffListToJS(global, diff);
 }
 
 const StrDiffList = DiffList([]const u8);

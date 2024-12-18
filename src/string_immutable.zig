@@ -9,6 +9,7 @@ const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
 const JSC = bun.JSC;
+const OOM = bun.OOM;
 
 pub const Encoding = enum {
     ascii,
@@ -640,7 +641,7 @@ pub const StringOrTinyString = struct {
         // allocator.free(slice_);
     }
 
-    pub fn initAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+    pub fn initAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) OOM!StringOrTinyString {
         if (stringy.len <= StringOrTinyString.Max) {
             return StringOrTinyString.init(stringy);
         }
@@ -648,7 +649,7 @@ pub const StringOrTinyString = struct {
         return StringOrTinyString.init(try appendy.append(string, stringy));
     }
 
-    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) OOM!StringOrTinyString {
         if (stringy.len <= StringOrTinyString.Max) {
             return StringOrTinyString.initLowerCase(stringy);
         }

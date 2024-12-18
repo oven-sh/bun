@@ -5947,6 +5947,10 @@ pub fn printAst(
         try mi.fixupIndirectExports();
     }
 
+    if (PrinterType.may_have_module_info) {
+        try mi.serializeToComment(printer.writer.stdWriter());
+    }
+
     var sourcemap: []const u8 = "";
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
@@ -5962,10 +5966,6 @@ pub fn printAst(
         if (PrinterType.may_have_module_info) try mi.serialize(mi_buf.writer());
 
         cache.put(printer.writer.ctx.getWritten(), sourcemap, if (PrinterType.may_have_module_info) mi_buf.items else "");
-    }
-
-    if (PrinterType.may_have_module_info) {
-        try mi.serializeToComment(printer.writer.stdWriter());
     }
 
     try printer.writer.done();

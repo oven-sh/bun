@@ -1,5 +1,4 @@
 const std = @import("std");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;

@@ -445,7 +445,7 @@ pub const Run = struct {
             );
         }
 
-        if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
+        JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
     }
 };

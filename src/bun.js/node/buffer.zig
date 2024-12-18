@@ -82,7 +82,7 @@ pub const BufferVectorized = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         @export(BufferVectorized.fill, .{ .name = "Bun__Buffer_fill" });
     }
 }

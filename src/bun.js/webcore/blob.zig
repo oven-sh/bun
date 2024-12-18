@@ -1529,7 +1529,7 @@ pub const Blob = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = JSDOMFile__hasInstance;
         }
     }
@@ -3830,7 +3830,7 @@ pub const Blob = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = Bun__Blob__getSizeForBindings;
         }
     }

@@ -27,9 +27,12 @@ pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
 
-/// All calls to `@export` should be gated behind this check, so that code
-/// generators that compile Zig code know not to reference and compile a ton of
-/// unused code.
+/// All calls to `@export` should be gated behind this flag, so that code
+/// generators that compile Zig code can avoid referencing exported functions.
+///
+/// In addition to making generated programs like `zig build enum-extractor`
+/// compile faster, it allows these to compile at all as they are missing
+/// relevant modules pertaining to dependencies.
 pub const export_cpp_apis = @import("builtin").output_mode == .Obj;
 
 pub const build_options = @import("build_options");

@@ -337,6 +337,9 @@ pub fn build(b: *Build) !void {
 
     // zig build enum-extractor
     if (exists(b.pathFromRoot("src/generated_enum_extractor.zig"))) {
+        // the source file to this step is generated and executed by `bindgen.ts`,
+        // in order to extract exact enum definitions. the step is not exposed if
+        // the file does not exist.
         const step = b.step("enum-extractor", "Extract enum definitions (invoked by 'bindgen.ts')");
         const exe = b.addExecutable(.{
             .name = "enum_extractor",
@@ -344,7 +347,11 @@ pub fn build(b: *Build) !void {
             .target = b.graph.host,
             .optimize = .Debug,
         });
+        // This executable intentionally does not add all of Bun's includes, as they
+        // are never needed, and any compile error referencing an external module is
+        // something that should be gated behind `bun.Environment.export_cpp_apis`
         exe.root_module.addImport("build_options", build_options.buildOptionsModule(b));
+
         const run = b.addRunArtifact(exe);
         step.dependOn(&run.step);
     }
@@ -577,7 +584,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
 
 fn validateGeneratedPath(path: []const u8) void {
     if (!exists(path)) {
-        std.log.warn(
+        std.debug.panic(
             \\Generated file '{s}' is missing!
             \\
             \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dgenerated-code=...'

@@ -21,7 +21,6 @@ const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
-const is_bindgen = false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
@@ -8148,7 +8147,6 @@ pub const Macro = struct {
                 source: *const logger.Source,
                 id: i32,
             ) MacroError!Expr {
-                if (comptime is_bindgen) return undefined;
                 const macro_callback = macro.vm.macros.get(id) orelse return caller;
 
                 const result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(

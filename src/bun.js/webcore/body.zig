@@ -1721,7 +1721,7 @@ pub const BodyValueBufferer = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
             @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);

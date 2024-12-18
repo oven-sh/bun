@@ -107,7 +107,7 @@ pub const Request = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = Request__getUWSRequest;
             _ = Request__setInternalEventCallback;
             _ = Request__setTimeout;

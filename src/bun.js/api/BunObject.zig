@@ -98,7 +98,7 @@ pub const BunObject = struct {
             @compileError("Must be comptime");
         }
 
-        if (JSC.is_bindgen) {
+        if (!Environment.export_cpp_apis) {
             return;
         }
 
@@ -246,7 +246,6 @@ const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const is_bindgen = JSC.is_bindgen;
 const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
@@ -3167,7 +3166,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Bun__escapeHTML8;
         _ = Bun__escapeHTML16;
     }
@@ -4236,7 +4235,7 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 }
 
 comptime {
-    if (!is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Bun__reportError;
         _ = EnvironmentVariables.Bun__getEnvCount;
         _ = EnvironmentVariables.Bun__getEnvKey;

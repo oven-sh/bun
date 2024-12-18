@@ -1551,7 +1551,7 @@ pub const Encoder = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = Bun__encoding__writeLatin1;
             _ = Bun__encoding__writeUTF16;
 
@@ -1568,7 +1568,7 @@ pub const Encoder = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         std.testing.refAllDecls(Encoder);
     }
 }

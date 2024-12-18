@@ -2439,13 +2439,13 @@ const CompilerRT = struct {
         bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
     };
     const headers = @import("../bindings/headers.zig");
-    var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
+    var workaround: MyFunctionSStructWorkAround = .{
         .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
         .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
         .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
         .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
         .bun_call = &JSC.C.JSObjectCallAsFunction,
-    } else undefined;
+    };
 
     noinline fn memset(
         dest: [*]u8,
@@ -2521,12 +2521,10 @@ const CompilerRT = struct {
             "JSVALUE_TO_UINT64_SLOW",
             workaround.JSVALUE_TO_UINT64,
         );
-        if (!comptime JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
-        }
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
         _ = TCC.tcc_add_symbol(
             state,
             "INT64_TO_JSVALUE_SLOW",

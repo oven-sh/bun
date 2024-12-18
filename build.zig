@@ -295,9 +295,9 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build check
+    var bun_check_obj = addBunObject(b, &build_options);
     {
         var step = b.step("check", "Check for semantic analysis errors");
-        var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
@@ -349,10 +349,23 @@ pub fn build(b: *Build) !void {
             .target = b.graph.host,
             .optimize = .Debug,
         });
-        // This executable intentionally does not add all of Bun's includes, as they
-        // are never needed, and any compile error referencing an external module is
-        // something that should be gated behind `bun.Environment.export_cpp_apis`
+        // This executable intentionally does not add all of Bun's proper
+        // modules, as they are theoretically not needed, and any compile error
+        // referencing an external module is something that should be gated
+        // behind `bun.Environment.export_cpp_apis`. If these modules were
+        // required, then that indicates that random code is being analyzed
+        // when it should not be, and is a mistake.
         exe.root_module.addImport("build_options", build_options.buildOptionsModule(b));
+        const noop = b.createModule(.{
+            .root_source_file = b.path("src/noop.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        var it = bun_check_obj.root_module.import_table.iterator();
+        while (it.next()) |entry| {
+            if(!std.mem.eql(u8, entry.key_ptr.*, "build_options"))
+            exe.root_module.addImport(entry.key_ptr.*, noop);
+        }
 
         const run = b.addRunArtifact(exe);
         step.dependOn(&run.step);

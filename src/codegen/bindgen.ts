@@ -1536,9 +1536,13 @@ pub fn main() !void {
   });
   if (!result.success) {
     console.error("Failed to extract enums, see above for the error.");
-    console.error("If you just added a new t.zigEnum, check the file for top-level comptime blocks, they may");
-    console.error("need to add new checks for `if (bun.Environment.export_cpp_apis)` to not export code");
-    console.error("when being compiled from the code generator.");
+    console.error("");
+    console.error("If you just added a new t.zigEnum, check the file for top-level comptime blocks,");
+    console.error("they may need to add new checks for `if (bun.Environment.export_cpp_apis)` to");
+    console.error("avoid exporting and referencing code when being compiled from the code generator.");
+    console.error("");
+    console.error("If that does not work, then move the desired Zig enum to a new file, or consider");
+    console.error("cutting down on namespace indirection.");
     process.exit(1);
   }
   const out = JSON.parse(result.stdout.toString("utf-8"));

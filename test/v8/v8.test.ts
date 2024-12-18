@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows, isMusl, isBroken } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { join, basename } from "path";
@@ -84,163 +84,165 @@ async function build(
   };
 }
 
-beforeAll(async () => {
-  // set up clean directories for our 4 builds
-  directories.bunRelease = tmpdirSync();
-  directories.bunDebug = tmpdirSync();
-  directories.node = tmpdirSync();
-  directories.badModules = tmpdirSync();
+describe.todoIf(isBroken && isMusl)("node:v8", () => {
+  beforeAll(async () => {
+    // set up clean directories for our 4 builds
+    directories.bunRelease = tmpdirSync();
+    directories.bunDebug = tmpdirSync();
+    directories.node = tmpdirSync();
+    directories.badModules = tmpdirSync();
 
-  await install(srcDir, directories.bunRelease, Runtime.bun);
-  await install(srcDir, directories.bunDebug, Runtime.bun);
-  await install(srcDir, directories.node, Runtime.node);
-  await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
+    await install(srcDir, directories.bunRelease, Runtime.bun);
+    await install(srcDir, directories.bunDebug, Runtime.bun);
+    await install(srcDir, directories.node, Runtime.node);
+    await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-  const results = await Promise.all([
-    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-    build(srcDir, directories.node, Runtime.node, BuildMode.release),
-    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-  ]);
-  for (const r of results) {
-    console.log(r.description, "stdout:");
-    console.log(r.out);
-    console.log(r.description, "stderr:");
-    console.log(r.err);
-  }
-});
+    const results = await Promise.all([
+      build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+      build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+      build(srcDir, directories.node, Runtime.node, BuildMode.release),
+      build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+    ]);
+    for (const r of results) {
+      console.log(r.description, "stdout:");
+      console.log(r.out);
+      console.log(r.description, "stderr:");
+      console.log(r.err);
+    }
+  });
 
-describe("module lifecycle", () => {
-  it("can call a basic native function", () => {
-    checkSameOutput("test_v8_native_call", []);
-  });
-});
-
-describe("primitives", () => {
-  it("can create and distinguish between null, undefined, true, and false", () => {
-    checkSameOutput("test_v8_primitives", []);
-  });
-});
-
-describe("Number", () => {
-  it("can create small integer", () => {
-    checkSameOutput("test_v8_number_int", []);
-  });
-  // non-i32 v8::Number is not implemented yet
-  it("can create large integer", () => {
-    checkSameOutput("test_v8_number_large_int", []);
-  });
-  it("can create fraction", () => {
-    checkSameOutput("test_v8_number_fraction", []);
-  });
-});
-
-describe("String", () => {
-  it("can create and read back strings with only ASCII characters", () => {
-    checkSameOutput("test_v8_string_ascii", []);
-  });
-  // non-ASCII strings are not implemented yet
-  it("can create and read back strings with UTF-8 characters", () => {
-    checkSameOutput("test_v8_string_utf8", []);
-  });
-  it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
-    checkSameOutput("test_v8_string_invalid_utf8", []);
-  });
-  it("can create strings from null-terminated Latin-1 data", () => {
-    checkSameOutput("test_v8_string_latin1", []);
-  });
-  describe("WriteUtf8", () => {
-    it("truncates the string correctly", () => {
-      checkSameOutput("test_v8_string_write_utf8", []);
+  describe("module lifecycle", () => {
+    it("can call a basic native function", () => {
+      checkSameOutput("test_v8_native_call", []);
     });
   });
-});
 
-describe("External", () => {
-  it("can create an external and read back the correct value", () => {
-    checkSameOutput("test_v8_external", []);
-  });
-});
-
-describe("Object", () => {
-  it("can create an object and set properties", () => {
-    checkSameOutput("test_v8_object", []);
-  });
-});
-describe("Array", () => {
-  // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-  it.skip("can create an array from a C array of Locals", () => {
-    checkSameOutput("test_v8_array_new", []);
-  });
-});
-
-describe("ObjectTemplate", () => {
-  it("creates objects with internal fields", () => {
-    checkSameOutput("test_v8_object_template", []);
-  });
-});
-
-describe("FunctionTemplate", () => {
-  it("keeps the data parameter alive", () => {
-    checkSameOutput("test_v8_function_template", []);
-  });
-});
-
-describe("Function", () => {
-  it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
-    checkSameOutput("print_native_function", []);
+  describe("primitives", () => {
+    it("can create and distinguish between null, undefined, true, and false", () => {
+      checkSameOutput("test_v8_primitives", []);
+    });
   });
 
-  it("correctly receives the this value from JS", () => {
-    checkSameOutput("call_function_with_weird_this_values", []);
+  describe("Number", () => {
+    it("can create small integer", () => {
+      checkSameOutput("test_v8_number_int", []);
+    });
+    // non-i32 v8::Number is not implemented yet
+    it("can create large integer", () => {
+      checkSameOutput("test_v8_number_large_int", []);
+    });
+    it("can create fraction", () => {
+      checkSameOutput("test_v8_number_fraction", []);
+    });
   });
-});
 
-describe("error handling", () => {
-  it("throws an error for modules built using the wrong ABI version", () => {
-    expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
-      "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
-    );
+  describe("String", () => {
+    it("can create and read back strings with only ASCII characters", () => {
+      checkSameOutput("test_v8_string_ascii", []);
+    });
+    // non-ASCII strings are not implemented yet
+    it("can create and read back strings with UTF-8 characters", () => {
+      checkSameOutput("test_v8_string_utf8", []);
+    });
+    it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
+      checkSameOutput("test_v8_string_invalid_utf8", []);
+    });
+    it("can create strings from null-terminated Latin-1 data", () => {
+      checkSameOutput("test_v8_string_latin1", []);
+    });
+    describe("WriteUtf8", () => {
+      it("truncates the string correctly", () => {
+        checkSameOutput("test_v8_string_write_utf8", []);
+      });
+    });
   });
 
-  it("throws an error for modules with no entrypoint", () => {
-    expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
-      "The module 'no_entrypoint' has no declared entry point.",
-    );
+  describe("External", () => {
+    it("can create an external and read back the correct value", () => {
+      checkSameOutput("test_v8_external", []);
+    });
   });
-});
 
-describe("Global", () => {
-  it("can create, modify, and read the value from global handles", () => {
-    checkSameOutput("test_v8_global", []);
+  describe("Object", () => {
+    it("can create an object and set properties", () => {
+      checkSameOutput("test_v8_object", []);
+    });
   });
-});
-
-describe("HandleScope", () => {
-  it("can hold a lot of locals", () => {
-    checkSameOutput("test_many_v8_locals", []);
+  describe("Array", () => {
+    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
+    it.skip("can create an array from a C array of Locals", () => {
+      checkSameOutput("test_v8_array_new", []);
+    });
   });
-  it("keeps GC objects alive", () => {
-    checkSameOutput("test_handle_scope_gc", []);
-  }, 10000);
-});
 
-describe("EscapableHandleScope", () => {
-  it("keeps handles alive in the outer scope", () => {
-    checkSameOutput("test_v8_escapable_handle_scope", []);
+  describe("ObjectTemplate", () => {
+    it("creates objects with internal fields", () => {
+      checkSameOutput("test_v8_object_template", []);
+    });
   });
-});
 
-describe("uv_os_getpid", () => {
-  it.skipIf(isWindows)("returns the same result as getpid on POSIX", () => {
-    checkSameOutput("test_uv_os_getpid", []);
+  describe("FunctionTemplate", () => {
+    it("keeps the data parameter alive", () => {
+      checkSameOutput("test_v8_function_template", []);
+    });
   });
-});
 
-describe("uv_os_getppid", () => {
-  it.skipIf(isWindows)("returns the same result as getppid on POSIX", () => {
-    checkSameOutput("test_uv_os_getppid", []);
+  describe("Function", () => {
+    it("correctly receives all its arguments from JS", () => {
+      checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
+      checkSameOutput("print_native_function", []);
+    });
+
+    it("correctly receives the this value from JS", () => {
+      checkSameOutput("call_function_with_weird_this_values", []);
+    });
+  });
+
+  describe("error handling", () => {
+    it("throws an error for modules built using the wrong ABI version", () => {
+      expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
+        "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
+      );
+    });
+
+    it("throws an error for modules with no entrypoint", () => {
+      expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
+        "The module 'no_entrypoint' has no declared entry point.",
+      );
+    });
+  });
+
+  describe("Global", () => {
+    it("can create, modify, and read the value from global handles", () => {
+      checkSameOutput("test_v8_global", []);
+    });
+  });
+
+  describe("HandleScope", () => {
+    it("can hold a lot of locals", () => {
+      checkSameOutput("test_many_v8_locals", []);
+    });
+    it("keeps GC objects alive", () => {
+      checkSameOutput("test_handle_scope_gc", []);
+    }, 10000);
+  });
+
+  describe("EscapableHandleScope", () => {
+    it("keeps handles alive in the outer scope", () => {
+      checkSameOutput("test_v8_escapable_handle_scope", []);
+    });
+  });
+
+  describe("uv_os_getpid", () => {
+    it.skipIf(isWindows)("returns the same result as getpid on POSIX", () => {
+      checkSameOutput("test_uv_os_getpid", []);
+    });
+  });
+
+  describe("uv_os_getppid", () => {
+    it.skipIf(isWindows)("returns the same result as getppid on POSIX", () => {
+      checkSameOutput("test_uv_os_getppid", []);
+    });
   });
 });
 

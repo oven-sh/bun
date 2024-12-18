@@ -74,6 +74,7 @@ public:
     Ref<DOMFormData> clone() const;
 
     size_t count() const { return m_items.size(); }
+    size_t memoryCost() const;
 
     String toURLEncodedString();
 

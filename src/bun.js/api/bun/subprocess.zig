@@ -395,6 +395,14 @@ pub const Subprocess = struct {
         closed: void,
         buffer: []u8,
 
+        pub fn memoryCost(this: *const Readable) usize {
+            return switch (this.*) {
+                .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
+                .buffer => this.buffer.len,
+                else => 0,
+            };
+        }
+
         pub fn hasPendingActivity(this: *const Readable) bool {
             return switch (this.*) {
                 .pipe => this.pipe.hasPendingActivity(),
@@ -794,6 +802,16 @@ pub const Subprocess = struct {
         array_buffer: JSC.ArrayBuffer.Strong,
         detached: void,
 
+        pub fn memoryCost(this: *const Source) usize {
+            // Memory cost of Source and each of the particular fields is covered by @sizeOf(Subprocess).
+            return switch (this.*) {
+                .blob => this.blob.memoryCost(),
+                // ArrayBuffer is owned by GC.
+                .array_buffer => 0,
+                .detached => 0,
+            };
+        }
+
         pub fn slice(this: *const Source) []const u8 {
             return switch (this.*) {
                 .blob => this.blob.slice(),
@@ -921,6 +939,10 @@ pub const Subprocess = struct {
                 this.destroy();
             }
 
+            pub fn memoryCost(this: *const This) usize {
+                return @sizeOf(@This()) + this.source.memoryCost() + this.writer.memoryCost();
+            }
+
             pub fn loop(this: *This) *uws.Loop {
                 return this.event_loop.loop();
             }
@@ -953,6 +975,10 @@ pub const Subprocess = struct {
         pub const Poll = IOReader;
 
         pub usingnamespace bun.NewRefCounted(PipeReader, PipeReader.deinit);
+
+        pub fn memoryCost(this: *const PipeReader) usize {
+            return this.reader.memoryCost();
+        }
 
         pub fn hasPendingActivity(this: *const PipeReader) bool {
             if (this.state == .pending)
@@ -1140,6 +1166,15 @@ pub const Subprocess = struct {
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
+
+        pub fn memoryCost(this: *const Writable) usize {
+            return switch (this.*) {
+                .pipe => |pipe| pipe.memoryCost(),
+                .buffer => |buffer| buffer.memoryCost(),
+                // TODO: memfd
+                else => 0,
+            };
+        }
 
         pub fn hasPendingActivity(this: *const Writable) bool {
             return switch (this.*) {
@@ -1414,6 +1449,14 @@ pub const Subprocess = struct {
             }
         }
     };
+
+    pub fn memoryCost(this: *const Subprocess) usize {
+        return @sizeOf(@This()) +
+            this.process.memoryCost() +
+            this.stdin.memoryCost() +
+            this.stdout.memoryCost() +
+            this.stderr.memoryCost();
+    }
 
     pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
         log("onProcessExit()", .{});

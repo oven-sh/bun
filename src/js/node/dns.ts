@@ -236,95 +236,41 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
+    const resolver = this.#getResolver();
     let results = undefined;
     let error = null;
+    const methods = [
+      ["resolve", "A", "A"],
+      ["resolve", "AAAA", "AAAA"],
+      ["resolveCaa", "CAA"],
+      ["resolveCname", "CNAME"],
+      ["resolveMx", "MX"],
+      ["resolveNaptr", "NAPTR"],
+      ["resolveNs", "NS"],
+      ["resolvePtr", "PTR"],
+      ["resolveSrv", "SRV"],
+      ["resolveTxt", "TXT"],
+    ];
 
-    this.resolve4(hostname, {}, (err, records) => {
-      if (err) {
-        error = err;
-      } else {
-        results = (results || []).concat(records.map(record => Object.assign(record, { type: "A" })));
+    Promise.all(
+      methods.map(([method, type, ...args]) =>
+        resolver[method](hostname, ...args)
+          .then(records => {
+            results = (results || []).concat(records.map(record => Object.assign(record, { type })));
+          })
+          .catch(err => (error = err)),
+      ),
+      resolver
+        .resolveSoa(hostname)
+        .then(record => {
+          results = (results || []).concat([Object.assign(record, { type: "SOA" })]);
+        })
+        .catch(err => (error = err)),
+    ).finally(() => {
+      if (error) {
+        error.syscall = "queryAny";
       }
-      this.resolve6(hostname, {}, (err, records) => {
-        if (err) {
-          error = err;
-        } else {
-          results = (results || []).concat(records.map(record => Object.assign(record, { type: "AAAA" })));
-        }
-        this.resolveCaa(hostname, (err, records) => {
-          if (err) {
-            error = err;
-          } else {
-            results = (results || []).concat(records.map(record => Object.assign(record, { type: "CAA" })));
-          }
-          this.resolveCname(hostname, (err, records) => {
-            if (err) {
-              error = err;
-            } else {
-              results = (results || []).concat(records.map(record => Object.assign(record, { type: "CNAME" })));
-            }
-            this.resolveMx(hostname, (err, records) => {
-              if (err) {
-                error = err;
-              } else {
-                results = (results || []).concat(records.map(record => Object.assign(record, { type: "MX" })));
-              }
-              this.resolveNaptr(hostname, (err, records) => {
-                if (err) {
-                  error = err;
-                } else {
-                  results = (results || []).concat(records.map(record => Object.assign(record, { type: "NAPTR" })));
-                }
-                this.resolveNs(hostname, (err, records) => {
-                  if (err) {
-                    error = err;
-                  } else {
-                    results = (results || []).concat(records.map(record => Object.assign(record, { type: "NS" })));
-                  }
-                  this.resolvePtr(hostname, (err, records) => {
-                    if (err) {
-                      error = err;
-                    } else {
-                      results = (results || []).concat(records.map(record => Object.assign(record, { type: "PTR" })));
-                    }
-                    this.resolveSoa(hostname, (err, record) => {
-                      if (err) {
-                        error = err;
-                      } else {
-                        results = (results || []).concat(
-                          [record].map(record => Object.assign(record, { type: "SOA" })),
-                        );
-                      }
-                      this.resolveSrv(hostname, (err, records) => {
-                        if (err) {
-                          error = err;
-                        } else {
-                          results = (results || []).concat(
-                            records.map(record => Object.assign(record, { type: "SRV" })),
-                          );
-                        }
-                        this.resolveTxt(hostname, (err, records) => {
-                          if (err) {
-                            error = err;
-                          } else {
-                            results = (results || []).concat(
-                              records.map(record => Object.assign(record, { type: "TXT" })),
-                            );
-                          }
-                          if (error) {
-                            error.syscall = "queryAny";
-                          }
-                          callback(error, results);
-                        });
-                      });
-                    });
-                  });
-                });
-              });
-            });
-          });
-        });
-      });
+      callback(results ? undefined : error, results);
     });
   }
 

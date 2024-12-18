@@ -105,3 +105,48 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
     return fmtstring.transferToJS(globalThis);
 }
+
+/// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
+//Returns `undefined` if param is utf8 or utf16 and not fully ascii.
+/// 
+/// ```js
+/// // util.js
+/// const extractedNewLineRe = new RegExp("(?<=\\n)");
+/// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
+/// ```
+pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    var fallback = std.heap.stackFallback(1024, bun.default_allocator);
+    const allocator = fallback.get();
+    bun.assert(callframe.argumentsCount() == 1);
+    const value = callframe.argument(0);
+    bun.assert(value.isString());
+
+    const str = try value.toBunString2(globalThis);
+
+    if (str.is8Bit() or bun.strings.isAllASCII(str.byteSlice())) {
+        var lines: std.ArrayListUnmanaged(bun.String) = .{};
+        defer {
+            for (lines.items) |out| {
+                out.deref();
+            }
+            lines.deinit(allocator);
+        }
+
+        var start: usize = 0;
+        const bytes = str.byteSlice();
+
+        while (std.mem.indexOfScalarPos(u8, bytes, start, '\n')) |delim_start| {
+            const end = delim_start + 1;
+            try lines.append(allocator, bun.String.fromBytes(bytes[start..end])); // include the newline
+            start = end;
+        } 
+
+        if (start < bytes.len) {
+            try lines.append(allocator, bun.String.fromBytes(bytes[start..]));
+        }
+
+        return bun.String.toJSArray(globalThis, lines.items);
+    }
+
+    return JSC.JSValue.jsUndefined();
+}

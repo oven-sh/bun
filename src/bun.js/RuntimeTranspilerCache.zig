@@ -259,7 +259,7 @@ pub const RuntimeTranspilerCache = struct {
                     }
                     bun.assert(end_position == total);
                 }
-                bun.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
+                bun.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size + esm_record.len)));
 
                 bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {

@@ -1394,6 +1394,10 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.acquire);
         }
 
+        pub fn memoryCost(this: *This) usize {
+            return @sizeOf(This) + this.buffered_data_for_node_net.cap;
+        }
+
         pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
             if (this.native_callback != .none) return false;
             this.native_callback = callback;

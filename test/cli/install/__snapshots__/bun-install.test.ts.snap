@@ -54,3 +54,20 @@ note: Package name is also declared here
    at [dir]/bar/package.json:1:9
 "
 `;
+
+exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {},
+    "packages/pkg1": {
+      "name": "pkg-one",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "pkg-one": ["pkg-one@workspace:packages/pkg1", {}],
+  }
+}
+"
+`;

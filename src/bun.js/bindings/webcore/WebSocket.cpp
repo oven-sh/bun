@@ -285,6 +285,31 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     return connect(url, protocols, std::nullopt);
 }
 
+size_t WebSocket::memoryCost() const
+
+{
+    size_t cost = sizeof(WebSocket);
+    cost += m_url.string().sizeInBytes();
+    cost += m_subprotocol.sizeInBytes();
+    cost += m_extensions.sizeInBytes();
+
+    if (m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        cost += Bun__WebSocketClient__memoryCost(m_connectedWebSocket.client);
+    } else if (m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        cost += Bun__WebSocketClientTLS__memoryCost(m_connectedWebSocket.clientSSL);
+    }
+
+    if (m_upgradeClient) {
+        if (m_isSecure) {
+            cost += Bun__WebSocketHTTPSClient__memoryCost(m_upgradeClient);
+        } else {
+            cost += Bun__WebSocketHTTPClient__memoryCost(m_upgradeClient);
+        }
+    }
+
+    return cost;
+}
+
 ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
 {
     // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());

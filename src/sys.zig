@@ -255,6 +255,7 @@ pub const Tag = enum(u8) {
     uv_pipe,
     uv_tty_set_mode,
     uv_open_osfhandle,
+    uv_os_homedir,
 
     // Below this line are Windows API calls only.
 
@@ -3462,8 +3463,8 @@ pub const File = struct {
         };
     }
 
-    /// Use this function on small files < 1024 bytes.
-    /// This will skip the fstat() call.
+    /// Use this function on small files <= 1024 bytes.
+    /// This will skip the fstat() call, preallocating 64 bytes instead of the file's size.
     pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
         return switch (readToEndWithArrayList(this, &list, true)) {

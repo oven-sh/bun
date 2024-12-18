@@ -409,6 +409,7 @@ pub const RuntimeTranspilerStore = struct {
             var cache = JSC.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
 
             var vm = this.vm;
@@ -1567,6 +1568,7 @@ pub const ModuleLoader = struct {
                 var cache = JSC.RuntimeTranspilerCache{
                     .output_code_allocator = allocator,
                     .sourcemap_allocator = bun.default_allocator,
+                    .esm_record_allocator = bun.default_allocator,
                 };
 
                 const old = jsc_vm.bundler.log;

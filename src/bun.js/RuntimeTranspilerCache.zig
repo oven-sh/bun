@@ -32,6 +32,7 @@ pub const RuntimeTranspilerCache = struct {
 
     sourcemap_allocator: std.mem.Allocator,
     output_code_allocator: std.mem.Allocator,
+    esm_record_allocator: std.mem.Allocator,
 
     const seed = 42;
     pub const Metadata = struct {
@@ -132,7 +133,7 @@ pub const RuntimeTranspilerCache = struct {
         metadata: Metadata,
         output_code: OutputCode = .{ .utf8 = "" },
         sourcemap: []const u8 = "",
-
+        esm_record: []const u8 = "",
         pub const OutputCode = union(enum) {
             utf8: []const u8,
             string: bun.String,
@@ -154,10 +155,13 @@ pub const RuntimeTranspilerCache = struct {
             }
         };
 
-        pub fn deinit(this: *Entry, sourcemap_allocator: std.mem.Allocator, output_code_allocator: std.mem.Allocator) void {
+        pub fn deinit(this: *Entry, sourcemap_allocator: std.mem.Allocator, output_code_allocator: std.mem.Allocator, esm_record_allocator: std.mem.Allocator) void {
             this.output_code.deinit(output_code_allocator);
             if (this.sourcemap.len > 0) {
                 sourcemap_allocator.free(this.sourcemap);
+            }
+            if (this.esm_record.len > 0) {
+                esm_record_allocator.free(this.esm_record);
             }
         }
 
@@ -234,19 +238,23 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                const vecs: []const bun.PlatformIOVecConst = if (output_bytes.len > 0)
-                    &.{
-                        bun.platformIOVecConstCreate(metadata_bytes),
-                        bun.platformIOVecConstCreate(output_bytes),
-                        bun.platformIOVecConstCreate(sourcemap),
-                        bun.platformIOVecConstCreate(esm_record),
-                    }
-                else
-                    &.{
-                        bun.platformIOVecConstCreate(metadata_bytes),
-                        bun.platformIOVecConstCreate(sourcemap),
-                        bun.platformIOVecConstCreate(esm_record),
-                    };
+                var vecs_buf: [4]bun.PlatformIOVecConst = undefined;
+                var vecs_i: usize = 0;
+                vecs_buf[vecs_i] = bun.platformIOVecConstCreate(metadata_bytes);
+                vecs_i += 1;
+                if (output_bytes.len > 0) {
+                    vecs_buf[vecs_i] = bun.platformIOVecConstCreate(output_bytes);
+                    vecs_i += 1;
+                }
+                if (sourcemap.len > 0) {
+                    vecs_buf[vecs_i] = bun.platformIOVecConstCreate(sourcemap);
+                    vecs_i += 1;
+                }
+                if (esm_record.len > 0) {
+                    vecs_buf[vecs_i] = bun.platformIOVecConstCreate(esm_record);
+                    vecs_i += 1;
+                }
+                const vecs: []const bun.PlatformIOVecConst = vecs_buf[0..vecs_i];
 
                 var position: isize = 0;
                 const end_position = Metadata.size + output_bytes.len + sourcemap.len + esm_record.len;
@@ -280,6 +288,7 @@ pub const RuntimeTranspilerCache = struct {
             file: std.fs.File,
             sourcemap_allocator: std.mem.Allocator,
             output_code_allocator: std.mem.Allocator,
+            esm_record_allocator: std.mem.Allocator,
         ) !void {
             const stat_size = try file.getEndPos();
             if (stat_size < Metadata.size + this.metadata.output_byte_length + this.metadata.sourcemap_byte_length) {
@@ -354,6 +363,17 @@ pub const RuntimeTranspilerCache = struct {
                 }
 
                 this.sourcemap = sourcemap;
+            }
+
+            if (this.metadata.esm_record_byte_length > 0) {
+                const esm_record = try esm_record_allocator.alloc(u8, this.metadata.esm_record_byte_length);
+                errdefer esm_record_allocator.free(esm_record);
+                const read_bytes = try file.preadAll(esm_record, this.metadata.esm_record_byte_offset);
+                if (read_bytes != this.metadata.esm_record_byte_length) {
+                    return error.MissingData;
+                }
+
+                this.esm_record = esm_record;
             }
         }
     };
@@ -472,6 +492,7 @@ pub const RuntimeTranspilerCache = struct {
         input_stat_size: u64,
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
+        esm_record_allocator: std.mem.Allocator,
     ) !Entry {
         var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.fromFile");
         defer tracer.end();
@@ -486,6 +507,7 @@ pub const RuntimeTranspilerCache = struct {
             input_stat_size,
             sourcemap_allocator,
             output_code_allocator,
+            esm_record_allocator,
         );
     }
 
@@ -496,6 +518,7 @@ pub const RuntimeTranspilerCache = struct {
         input_stat_size: u64,
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
+        esm_record_allocator: std.mem.Allocator,
     ) !Entry {
         var metadata_bytes_buf: [Metadata.size * 2]u8 = undefined;
         const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), bun.O.RDONLY, 0).unwrap();
@@ -527,7 +550,7 @@ pub const RuntimeTranspilerCache = struct {
             return error.MismatchedFeatureHash;
         }
 
-        try entry.load(file, sourcemap_allocator, output_code_allocator);
+        try entry.load(file, sourcemap_allocator, output_code_allocator, esm_record_allocator);
 
         return entry;
     }
@@ -618,7 +641,7 @@ pub const RuntimeTranspilerCache = struct {
         parser_options.hashForRuntimeTranspiler(&features_hasher, used_jsx);
         this.features_hash = features_hasher.final();
 
-        this.entry = fromFile(input_hash, this.features_hash.?, source.contents.len, this.sourcemap_allocator, this.output_code_allocator) catch |err| {
+        this.entry = fromFile(input_hash, this.features_hash.?, source.contents.len, this.sourcemap_allocator, this.output_code_allocator, this.esm_record_allocator) catch |err| {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
@@ -634,7 +657,7 @@ pub const RuntimeTranspilerCache = struct {
         if (comptime bun.Environment.isDebug) {
             if (!bun_debug_restore_from_cache) {
                 if (this.entry) |*entry| {
-                    entry.deinit(this.sourcemap_allocator, this.output_code_allocator);
+                    entry.deinit(this.sourcemap_allocator, this.output_code_allocator, this.esm_record_allocator);
                     this.entry = null;
                 }
             }

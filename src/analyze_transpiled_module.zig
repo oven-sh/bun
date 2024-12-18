@@ -192,6 +192,7 @@ pub const ModuleInfo = struct {
         self.record_kinds.deinit();
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
+        if (std.mem.indexOfScalar(u8, value, 0) != null) return error.StrContainsNullByte;
         const gpres = try self.strings.getOrPut(value);
         if (gpres.found_existing) return @enumFromInt(@as(u32, @intCast(gpres.index)));
         gpres.key_ptr.* = try self.strings.allocator.dupe(u8, value);

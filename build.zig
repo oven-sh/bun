@@ -154,6 +154,8 @@ pub fn build(b: *Build) !void {
     if (!(b.option(bool, "no-compiler-info", "") orelse false))
         std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
+    ignore_missing_generated_paths = b.option(bool, "ignore-missing-generated-paths", "Do not verify required generated files exist. Used by some code generators") orelse false;
+
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
     // TODO: Upgrade path for 0.14.0
@@ -582,8 +584,10 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     }
 }
 
+var ignore_missing_generated_paths = false;
+
 fn validateGeneratedPath(path: []const u8) void {
-    if (!exists(path)) {
+    if (!ignore_missing_generated_paths and !exists(path)) {
         std.debug.panic(
             \\Generated file '{s}' is missing!
             \\

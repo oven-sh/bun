@@ -1526,7 +1526,7 @@ pub fn main() !void {
   status(`Extracting ${zigEnums.size} enum definitions`);
   writeIfNotChanged(path.join(src, "generated_enum_extractor.zig"), zigEnumCode.buffer);
   const result = Bun.spawnSync({
-    cmd: [zigPath, "build", "enum-extractor", "-Dno-compiler-info"],
+    cmd: [zigPath, "build", "enum-extractor", "-Dno-compiler-info", "-Dignore-missing-generated-paths"],
     stdio: ["inherit", "pipe", "inherit"],
   });
   if (!result.success) {

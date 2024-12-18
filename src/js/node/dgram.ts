@@ -354,7 +354,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
             family,
           });
         },
-        error: (_socket, error) => {
+        error: error => {
           this.emit("error", error);
         },
       },

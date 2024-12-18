@@ -3905,7 +3905,7 @@ fn NewPrinter(
                     if (p.moduleInfo()) |mi| {
                         try mi.requestModule(irp, .none);
                         if (s.alias) |alias| {
-                            try mi.addExportInfoNamespace(irp, alias.original_name);
+                            try mi.addExportInfoNamespace(alias.original_name, irp);
                         } else {
                             try mi.addExportInfoStar(irp);
                         }

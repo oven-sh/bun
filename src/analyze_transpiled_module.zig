@@ -3,14 +3,6 @@ const bun = @import("bun.zig");
 const js_ast = bun.JSAst;
 const Ast = js_ast.Ast;
 
-// export fn Bun__analyzeTranspiledModule(globalObject: *bun.JSC.JSGlobalObject, moduleKey: *anyopaque, sourceCode: *anyopaque) *bun.JSC.JSModuleRecord {
-//     // const record = bun.JSC.JSModuleRecord.create(globalObject, globalObject.vm(), globalObject.moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, features);
-//     _ = globalObject;
-//     _ = moduleKey;
-//     _ = sourceCode;
-//     @panic("TODO analyzeTranspiledModule");
-// }
-
 pub const RecordKind = enum(u8) {
     /// var_name
     declared_variable,
@@ -174,7 +166,7 @@ pub const ModuleInfo = struct {
         try self._addRecord(.export_info_indirect, &.{ try self.str(export_name), try self.str(import_name), try self.str(module_name) });
     }
     pub fn addExportInfoLocal(self: *ModuleInfo, export_name: []const u8, local_name: []const u8) !void {
-        try self._addRecord(.export_info_local, &.{ try self.str(export_name), try self.str(local_name), @enumFromInt(0) });
+        try self._addRecord(.export_info_local, &.{ try self.str(export_name), try self.str(local_name), @enumFromInt(std.math.maxInt(u32)) });
     }
     pub fn addExportInfoNamespace(self: *ModuleInfo, export_name: []const u8, module_name: []const u8) !void {
         try self._addRecord(.export_info_namespace, &.{ try self.str(export_name), try self.str(module_name) });
@@ -216,12 +208,14 @@ pub const ModuleInfo = struct {
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
     pub fn fixupIndirectExports(self: *ModuleInfo) !void {
         bun.assert(!self.indirect_exports_fixed);
-        var local_name_to_module_name = std.AutoArrayHashMap(StringID, [2]StringID).init(self.strings.allocator);
+        var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID }).init(self.strings.allocator);
         defer local_name_to_module_name.deinit();
         {
             var i: usize = 0;
-            for (self.record_kinds.items) |*k| {
-                if (k.* == .import_info_single) try local_name_to_module_name.put(self.buffer.items[i + 2], [2]StringID{ self.buffer.items[i], self.buffer.items[i + 1] });
+            for (self.record_kinds.items) |k| {
+                if (k == .import_info_single) {
+                    try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1] });
+                }
                 i += k.len() catch unreachable;
             }
         }
@@ -232,9 +226,8 @@ pub const ModuleInfo = struct {
                 if (k.* == .export_info_local) {
                     if (local_name_to_module_name.get(self.buffer.items[i + 1])) |ip| {
                         k.* = .export_info_indirect;
-                        self.buffer.items[i + 1] = ip[0];
-                        self.buffer.items[i + 2] = ip[1];
-                        continue;
+                        self.buffer.items[i + 1] = ip.import_name;
+                        self.buffer.items[i + 2] = ip.module_name;
                     }
                 }
                 i += k.len() catch unreachable;
@@ -311,13 +304,14 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     {
         var i: usize = 0;
         for (res.record_kinds) |k| {
+            if (i + (k.len() catch 0) > res.buffer.len) return fail(failure_reason, 2);
             switch (k) {
                 .declared_variable => declared_variables.add(identifiers, res.buffer[i]),
                 .lexical_variable => lexical_variables.add(identifiers, res.buffer[i]),
                 .import_info_single, .import_info_namespace, .export_info_indirect, .export_info_local, .export_info_namespace, .export_info_star => {},
                 else => return fail(failure_reason, 2),
             }
-            i += k.len() catch return fail(failure_reason, 2);
+            i += k.len() catch unreachable; // handled above
         }
     }
 
@@ -336,17 +330,18 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     {
         var i: usize = 0;
         for (res.record_kinds) |k| {
+            if (i + (k.len() catch unreachable) > res.buffer.len) unreachable; // handled above
             switch (k) {
                 .declared_variable, .lexical_variable => {},
                 .import_info_single => module_record.addImportEntrySingle(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
                 .import_info_namespace => module_record.addImportEntryNamespace(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
-                .export_info_indirect => module_record.addIndirectExport(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
+                .export_info_indirect => module_record.addIndirectExport(identifiers, res.buffer[i + 0], res.buffer[i + 1], res.buffer[i + 2]),
                 .export_info_local => module_record.addLocalExport(identifiers, res.buffer[i], res.buffer[i + 1]),
                 .export_info_namespace => module_record.addNamespaceExport(identifiers, res.buffer[i], res.buffer[i + 1]),
                 .export_info_star => module_record.addStarExport(identifiers, res.buffer[i]),
-                else => return fail(failure_reason, 2),
+                else => unreachable, // handled above
             }
-            i += k.len() catch return fail(failure_reason, 2);
+            i += k.len() catch unreachable; // handled above
         }
     }
 

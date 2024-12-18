@@ -2112,6 +2112,12 @@ pub const DNSResolver = struct {
         return .{ .result = this.channel.? };
     }
 
+    fn getChannelFromVM(globalThis: *JSC.JSGlobalObject) bun.JSError!*c_ares.Channel {
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.getChannelOrError(globalThis);
+    }
+
     pub fn getChannelOrError(this: *DNSResolver, globalThis: *JSC.JSGlobalObject) bun.JSError!*c_ares.Channel {
         switch (this.getChannel()) {
             .result => |result| return result,
@@ -2866,23 +2872,6 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    fn getChannelFromVM(globalThis: *JSC.JSGlobalObject) bun.JSError!*c_ares.Channel {
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-        return switch (resolver.getChannel()) {
-            .result => |res| res,
-            .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
-
-                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
-            },
-        };
-    }
-
     fn getChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = callframe;
         var servers: ?*c_ares.struct_ares_addr_port_node = null;
@@ -2945,8 +2934,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn getGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const channel = try getChannelFromVM(globalThis);
-        return getChannelServers(channel, globalThis, callframe);
+        return getChannelServers(try getChannelFromVM(globalThis), globalThis, callframe);
     }
 
     pub fn getServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3031,8 +3019,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn setGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const channel = try getChannelFromVM(globalThis);
-        return setChannelServers(channel, globalThis, callframe);
+        return setChannelServers(try getChannelFromVM(globalThis), globalThis, callframe);
     }
 
     pub fn setServers(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

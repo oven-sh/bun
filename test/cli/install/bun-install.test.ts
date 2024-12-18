@@ -8362,7 +8362,7 @@ cache = false
   expect(await exited).toBe(0);
 });
 
-it.only("should handle modified git resolutions in bun.lock", async () => {
+it("should handle modified git resolutions in bun.lock", async () => {
   // install-test-8 has a dependency but because it's not in the lockfile
   // it won't be included in the install.
   await Promise.all([

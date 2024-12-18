@@ -5708,14 +5708,8 @@ it("should handle tarball URL with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-    `${root_url}/moo-0.1.0.tgz`,
-  ]);
-  expect(requested).toBe(10);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/moo-0.1.0.tgz`]);
+  expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -5850,13 +5844,8 @@ it("should handle tarball path with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-  ]);
-  expect(requested).toBe(8);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(6);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));

@@ -2,6 +2,7 @@ import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
 import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
 import defaultMacro, {
+  default as defaultMacroAlias,
   identity as identity1,
   identity as identity2,
 } from "./macro.ts" assert { type: "macro" };
@@ -95,15 +96,16 @@ test("utf16 string", () => {
   expect(identity("😊 Smiling Face with Smiling Eyes Emoji")).toBe("😊 Smiling Face with Smiling Eyes Emoji");
 });
 
-test("default import", () => {
-  expect(defaultMacro()).toBe("defaultdefaultdefault");
-});
-
 test("import aliases", () => {
   expect(identity1({ a: 1 })).toEqual({ a: 1 });
   expect(identity1([1, 2, 3])).toEqual([1, 2, 3]);
   expect(identity2({ a: 1 })).toEqual({ a: 1 });
   expect(identity2([1, 2, 3])).toEqual([1, 2, 3]);
+});
+
+test("default import", () => {
+  expect(defaultMacro()).toBe("defaultdefaultdefault");
+  expect(defaultMacroAlias()).toBe("defaultdefaultdefault");
 });
 
 test("namespace import", () => {

@@ -47,7 +47,7 @@ registry = "https://registry.yarnpkg.com/"
 # Install for production? This is the equivalent to the "--production" CLI argument
 production = false
 
-# Save a text-based lockfile? This is equivalent to "--save-text-lockfile" CLI argument
+# Save a text-based lockfile? This is equivalent to the "--save-text-lockfile" CLI argument
 saveTextLockfile = false
 
 # Disallow changes to lockfile? This is the equivalent to the "--frozen-lockfile" CLI argument

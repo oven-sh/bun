@@ -2247,9 +2247,10 @@ pub const DNSResolver = struct {
         ttl: i32 = 0,
     };
 
-    pub const RecordType = enum(u8) {
+    pub const RecordType = enum(c_int) {
         A = 1,
         AAAA = 28,
+        CAA = 257,
         CNAME = 5,
         MX = 15,
         NS = 2,
@@ -2263,6 +2264,7 @@ pub const DNSResolver = struct {
         pub const map = bun.ComptimeStringMap(RecordType, .{
             .{ "A", .A },
             .{ "AAAA", .AAAA },
+            .{ "CAA", .CAA },
             .{ "CNAME", .CNAME },
             .{ "MX", .MX },
             .{ "NS", .NS },
@@ -2272,6 +2274,7 @@ pub const DNSResolver = struct {
             .{ "TXT", .TXT },
             .{ "a", .A },
             .{ "aaaa", .AAAA },
+            .{ "caa", .CAA },
             .{ "cname", .CNAME },
             .{ "mx", .MX },
             .{ "ns", .NS },
@@ -2311,7 +2314,7 @@ pub const DNSResolver = struct {
             }
 
             break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), JSC.ZigString.eqlComptime) orelse {
-                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
+                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
             };
         };
 
@@ -2342,6 +2345,9 @@ pub const DNSResolver = struct {
                 defer name.deinit();
                 const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet6 };
                 return resolver.doLookup(name.slice(), 0, options, globalThis);
+            },
+            RecordType.CAA => {
+                return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
             },
             RecordType.CNAME => {
                 return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);

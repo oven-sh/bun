@@ -86,6 +86,7 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
+  env = {},
 }: {
   cwd: string;
   pattern: string | string[];
@@ -93,35 +94,48 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
+  env?: Record<string, string | undefined>;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
-  if (Array.isArray(pattern)) {
-    for (const p of pattern) {
-      cmd.push("--filter", p);
+
+  // Split command into flags and script name
+  const [flags, scriptName] = command.reduce(([flags, script], arg, i, arr) => {
+    if (arg.startsWith("--")) {
+      flags.push(arg);
+      // Include flag value if next arg exists and isn't a flag
+      if (arr[i + 1] && !arr[i + 1].startsWith("--")) {
+        flags.push(arr[i + 1]);
+      }
+    } else if (!flags.includes(`--${arg}`) && !arr[i - 1]?.startsWith("--")) {
+      script = arg;
     }
-  } else {
-    cmd.push("--filter", pattern);
-  }
-  for (const c of command) {
-    cmd.push(c);
-  }
-  const { exitCode, stdout, stderr } = spawnSync({
-    cwd: cwd,
-    cmd: cmd,
-    env: bunEnv,
+    return [flags, script];
+  }, [[] as string[], undefined as string | undefined]);
+
+  // Build command: flags -> filter -> script
+  cmd.push(...flags);
+  cmd.push("--filter", ...(Array.isArray(pattern) ? pattern : [pattern]));
+  if (scriptName) cmd.push(scriptName);
+
+  const { exitCode, stdout } = spawnSync({
+    cwd,
+    cmd,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const stdoutval = stdout.toString();
   for (const r of Array.isArray(target_pattern) ? target_pattern : [target_pattern]) {
     expect(stdoutval).toMatch(r);
   }
+
   if (antipattern !== undefined) {
     for (const r of Array.isArray(antipattern) ? antipattern : [antipattern]) {
       expect(stdoutval).not.toMatch(r);
     }
   }
-  // expect(stderr.toString()).toBeEmpty();
+
   expect(exitCode).toBe(0);
 }
 
@@ -415,5 +429,102 @@ describe("bun", () => {
     expect(stdoutval).toMatch(/code 0/);
     expect(stdoutval).toMatch(/code 23/);
     expect(exitCode).toBe(23);
+  });
+
+  test("elides output by default when using --filter", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: {
+        FORCE_COLOR: "1",
+        NO_COLOR: "0",
+      },
+      target_pattern: [
+        /\[10 lines elided\]/,
+        /(?:log_line[\s\S]*?){20}/,
+      ],
+      command: ["script"],
+    });
+  });
+
+  test("respects --elide-lines argument", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: {
+        FORCE_COLOR: "1",
+        NO_COLOR: "0",
+      },
+      target_pattern: [
+        /\[5 lines elided\]/,
+        /(?:log_line[\s\S]*?){20}/,
+      ],
+      command: ["--elide-lines", "15", "script"],
+    });
+  });
+
+  test("--elide-lines=0 shows all output", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: { FORCE_COLOR: "1" },
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
+      command: ["--elide-lines", "0", "script"],
+    });
   });
 });

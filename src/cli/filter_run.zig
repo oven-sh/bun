@@ -29,6 +29,7 @@ const ScriptConfig = struct {
     // ../../node_modules/.bin
     // and so forth, in addition to the user's $PATH.
     PATH: []const u8,
+    elide_count: ?usize,
 
     fn cmp(_: void, a: @This(), b: @This()) bool {
         return bun.strings.cmpStringsAsc({}, a.package_name, b.package_name);
@@ -247,7 +248,7 @@ const State = struct {
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
-        if (max_lines == null) return .{ .content = data, .elided_count = 0 };
+        if (max_lines == null or max_lines.? == 0) return .{ .content = data, .elided_count = 0 };
         var i: usize = data.len;
         var lines: usize = 0;
         while (i > 0) : (i -= 1) {
@@ -282,7 +283,9 @@ const State = struct {
         }
         for (this.handles) |*handle| {
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            const e = elide(handle.buffer.items, if (is_abort) null else 10);
+            const elide_lines = if (is_abort) null else handle.config.elide_count orelse 10;
+            const e = elide(handle.buffer.items, elide_lines);
+
             try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
@@ -513,6 +516,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .combined = copy_script.items[0 .. copy_script.items.len - 1 :0],
                 .deps = pkgjson.dependencies,
                 .PATH = PATH,
+                .elide_count = ctx.bundler_options.elide_lines,
             });
         }
     }

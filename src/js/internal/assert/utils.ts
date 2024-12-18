@@ -1,10 +1,10 @@
 /* prettier-ignore */
 'use strict';
 
-const {
+// const {
   //   ArrayPrototypeShift,
   //   Error,
-  ErrorCaptureStackTrace,
+  // ErrorCaptureStackTrace,
   //   FunctionPrototypeBind,
   //   RegExpPrototypeSymbolReplace,
   //   SafeMap,
@@ -15,14 +15,20 @@ const {
   //   StringPrototypeSlice,
   //   StringPrototypeSplit,
   //   StringPrototypeStartsWith,
-} = require("internal/primordials");
+// } = require("internal/primordials");
+
+var AssertionError;
+function loadAssertionError() {
+  if (AssertionError === undefined) {
+    AssertionError = require("internal/assert/assertion_error");
+  }
+}
 
 // const { Buffer } = require('node:buffer');
 // const {
 //   isErrorStackTraceLimitWritable,
 //   overrideStackTrace,
 // } = require('internal/errors');
-const AssertionError = require("internal/assert/assertion_error");
 // const { openSync, closeSync, readSync } = require('node:fs');
 // // const { EOL } = require('internal/constants');
 // // const { BuiltinModule } = require('internal/bootstrap/realm');
@@ -278,6 +284,7 @@ export function innerOk(fn, argLen, value, message) {
       throw message;
     }
 
+    if (AssertionError === undefined) loadAssertionError();
     const err = new AssertionError({
       actual: value,
       expected: true,

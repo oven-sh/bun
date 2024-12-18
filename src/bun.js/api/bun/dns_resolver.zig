@@ -1745,6 +1745,8 @@ pub const DNSResolver = struct {
     pending_ns_cache_cares: NSPendingCache = NSPendingCache.init(),
     pending_ptr_cache_cares: PtrPendingCache = PtrPendingCache.init(),
     pending_cname_cache_cares: CnamePendingCache = CnamePendingCache.init(),
+    pending_a_cache_cares: APendingCache = APendingCache.init(),
+    pending_aaaa_cache_cares: AAAAPendingCache = AAAAPendingCache.init(),
     pending_addr_cache_crares: AddrPendingCache = AddrPendingCache.init(),
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
@@ -1773,6 +1775,7 @@ pub const DNSResolver = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *DNSResolver {
+        log("init", .{});
         return DNSResolver.new(.{
             .vm = vm,
             .polls = DNSResolver.PollsMap.init(allocator),
@@ -1797,6 +1800,8 @@ pub const DNSResolver = struct {
     const NSPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ns").PendingCacheKey, 32);
     const PtrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ptr").PendingCacheKey, 32);
     const CnamePendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "cname").PendingCacheKey, 32);
+    const APendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "a").PendingCacheKey, 32);
+    const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "aaaa").PendingCacheKey, 32);
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
@@ -2340,17 +2345,12 @@ pub const DNSResolver = struct {
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
-        //TODO: ANY CASE
         switch (record_type) {
             RecordType.A => {
-                defer name.deinit();
-                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet };
-                return resolver.doLookup(name.slice(), 0, options, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_hostent, "a", name.slice(), globalThis);
             },
             RecordType.AAAA => {
-                defer name.deinit();
-                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet6 };
-                return resolver.doLookup(name.slice(), 0, options, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_hostent, "aaaa", name.slice(), globalThis);
             },
             RecordType.CAA => {
                 return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);

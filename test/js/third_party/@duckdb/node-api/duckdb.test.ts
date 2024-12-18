@@ -9,9 +9,16 @@
 // Copied from https://github.com/duckdb/duckdb-node-neo/blob/3f85023c6b42d6b288a2e0f92dd7c7b40cf2a63c/api/test/api.test.ts,
 // with minor modifications to work as a Bun test
 
+import { libcFamily } from "harness";
+if (libcFamily == "musl") {
+  // @duckdb/node-bindings does not distribute musl binaries, so we skip this test on musl to avoid CI noise
+  process.exit(0);
+}
+
 import { describe, test } from "bun:test";
 import assert from "node:assert";
-import {
+// Must be CJS require so that the above code can exit before we attempt to import DuckDB
+const {
   DateParts,
   DuckDBAnyType,
   DuckDBArrayType,
@@ -128,7 +135,7 @@ import {
   timestampValue,
   unionValue,
   version,
-} from "@duckdb/node-api";
+} = require("@duckdb/node-api");
 
 const BI_10_8 = 100000000n;
 const BI_10_10 = 10000000000n;

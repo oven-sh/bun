@@ -86,6 +86,9 @@ peer = true
 # equivalent to `--production` flag
 production = false
 
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
+
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
 

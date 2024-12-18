@@ -214,4 +214,16 @@ declare module "bun:jsc" {
    * Run JavaScriptCore's sampling profiler
    */
   function startSamplingProfiler(optionalDirectory?: string): void;
+
+  /**
+   * Non-recursively estimate the memory usage of an object, excluding the memory usage of
+   * properties or other objects it references. For more accurate per-object
+   * memory usage, use {@link Bun.generateHeapSnapshot}.
+   *
+   * This is a best-effort estimate. It may not be 100% accurate. When it's
+   * wrong, it may mean the memory is non-contiguous (such as a large array).
+   *
+   * Passing a primitive type that isn't heap allocated returns 0.
+   */
+  function estimateShallowMemoryUsageOf(value: object | CallableFunction | bigint | symbol | string): number;
 }

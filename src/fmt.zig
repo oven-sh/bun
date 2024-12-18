@@ -234,19 +234,28 @@ const JSONFormatter = struct {
 
 const JSONFormatterUTF8 = struct {
     input: []const u8,
+    opts: Options,
+
+    pub const Options = struct {
+        quote: bool = true,
+    };
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        if (self.opts.quote) {
+            try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        } else {
+            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+        }
     }
 };
 
 /// Expects latin1
-pub fn formatJSONString(text: []const u8) JSONFormatter {
+pub fn formatJSONStringLatin1(text: []const u8) JSONFormatter {
     return .{ .input = text };
 }
 
-pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
-    return .{ .input = text };
+pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) JSONFormatterUTF8 {
+    return .{ .input = text, .opts = opts };
 }
 
 const SharedTempBuffer = [32 * 1024]u8;

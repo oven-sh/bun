@@ -10,43 +10,107 @@ import {
   isFunc,
 } from "./bindgen-lib-internal";
 
-export type Type<T, K extends TypeKind = TypeKind, Flags extends boolean | null = null> = {
-  [isType]: true | [T, K, Flags];
-} & (Flags extends null
-  ? {
-      /**
-       * Optional means the value may be omitted from a parameter definition.
-       * Parameters are required by default.
-       */
-      optional: Type<T | undefined, K, true>;
-      /**
-       * When this is used as a dictionary value, this makes that parameter
-       * required. Dictionary entries are optional by default.
-       */
-      required: Type<Exclude<T, undefined>, K, false>;
+/** A type definition for argument parsing. See `bindgen.md` for usage details. */
+export type Type<
+  /** T = JavaScript type that the Type represents */
+  T,
+  /** K = "kind" a string pertaining to the `t.<K>` that created this type. affects method listing */
+  K extends TypeKind = TypeKind,
+  /** F = "flags" defining if the value is optional. null = not set, false = required, true = optional. */
+  F extends TypeFlag = null,
+> = F extends null
+  ? Props<T, K>
+  : F extends true
+    ? {
+        [isType]: true | [T, K, F];
+        nonNull: Type<T, K, "opt-nonnull">;
+      }
+    : { [isType]: true | [T, K, F] };
 
-      /** Implies `optional`, this sets a default value if omitted */
-      default(def: T): Type<T, K, true>;
-    } & (K extends IntegerTypeKind
-      ? {
-          /**
-           * Applies [Clamp] semantics
-           * https://webidl.spec.whatwg.org/#Clamp
-           * If a custom numeric range is provided, it will be used instead of the built-in clamp rules.
-           */
-          clamp(min?: T, max?: T): Type<T, K, Flags>;
-          /**
-           * Applies [EnforceRange] semantics
-           * https://webidl.spec.whatwg.org/#EnforceRange
-           * If a custom numeric range is provided, it will be used instead of the built-in enforce rules.
-           */
-          enforceRange(min?: T, max?: T): Type<T, K, Flags>;
-        }
-      : {})
-  : {});
+type TypeFlag = boolean | "opt-nonnull" | null;
+
+interface BaseTypeProps<T, K extends TypeKind> {
+  [isType]: true | [T, K];
+  /**
+   * Optional means the value may be omitted from a parameter definition.
+   * Parameters are required by default.
+   */
+  optional: Type<T | undefined, K, true>;
+  /**
+   * When this is used as a dictionary value, this makes that parameter
+   * required. Dictionary entries are optional by default.
+   */
+  required: Type<Exclude<T, undefined>, K, false>;
+
+  /** Implies `optional`, this sets a default value if omitted */
+  default(def: T): Type<T, K, true>;
+}
+
+interface NumericTypeProps<T, K extends TypeKind> extends BaseTypeProps<T, K> {
+  /**
+   * Applies [Clamp] semantics
+   * https://webidl.spec.whatwg.org/#Clamp
+   * If a custom numeric range is provided, it will be used instead of the built-in clamp rules.
+   */
+  clamp(min?: T, max?: T): Type<T, K>;
+  /**
+   * Applies [EnforceRange] semantics
+   * https://webidl.spec.whatwg.org/#EnforceRange
+   * If a custom numeric range is provided, it will be used instead of the built-in enforce rules.
+   */
+  enforceRange(min?: T, max?: T): Type<T, K>;
+
+  /**
+   * Equivalent to calling Node.js' `validateInteger(val, prop, min, max)`
+   */
+  validateInteger(min?: T, max?: T): Type<T, K>;
+}
+
+interface I32TypeProps extends NumericTypeProps<number, "i32"> {
+  /**
+   * Equivalent to calling Node.js' `validateInt32(val, prop, min, max)`
+   */
+  validateInt32(min?: number, max?: number): Type<number, "i32">;
+}
+
+interface U32TypeProps extends NumericTypeProps<number, "u32"> {
+  /**
+   * Equivalent to calling Node.js' `validateUint32(val, prop, min, max)`
+   */
+  validateUint32(min?: number, max?: number): Type<number, "u32">;
+}
+
+interface F64TypeProps extends NumericTypeProps<number, "f64"> {
+  /**
+   * Throws an error if the input is non-finite (NaN, ±Infinity)
+   */
+  finite: Type<number, "f64">;
+  /**
+   * Equivalent to calling Node.js' `validateNumber(val, prop, min, max)`
+   */
+  validateNumber(min?: number, max?: number): Type<number, "f64">;
+}
+
+// If an entry does not exist, then `BaseTypeProps` is assumed.
+// T = JavaScript type that the Type represents
+interface TypePropsMap<T> {
+  // Integer types are always numbers, so T is not passed
+  ["u8"]: NumericTypeProps<number, "u8">;
+  ["i8"]: NumericTypeProps<number, "i8">;
+  ["u16"]: NumericTypeProps<number, "u16">;
+  ["i16"]: NumericTypeProps<number, "i16">;
+  ["u32"]: U32TypeProps;
+  ["i32"]: I32TypeProps;
+  ["u64"]: NumericTypeProps<number, "u64">;
+  ["i64"]: NumericTypeProps<number, "i64">;
+  // F64 is always a number, so T is not passed.
+  ["f64"]: F64TypeProps;
+}
+
+type PropertyMapKeys = keyof TypePropsMap<any>;
+type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
 
 export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
-export type IntegerTypeKind = "usize" | "i32" | "i64" | "u32" | "u64" | "i8" | "u8" | "i16" | "u16";
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -78,6 +142,10 @@ export namespace t {
   /** Throws if the value is not a boolean. */
   export const strictBoolean = builtinType<boolean>()("strictBoolean");
 
+  /**
+   * Equivalent to IDL's `unrestricted double`, allowing NaN and Infinity.
+   * To restrict to finite values, use `f64.finite`.
+   */
   export const f64 = builtinType<number>()("f64");
 
   export const u8 = builtinType<number>()("u8");

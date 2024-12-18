@@ -2979,6 +2979,8 @@ pub const Api = struct {
 
         cafile: ?[]const u8 = null,
 
+        save_text_lockfile: ?bool = null,
+
         ca: ?union(enum) {
             str: []const u8,
             list: []const []const u8,

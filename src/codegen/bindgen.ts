@@ -4,6 +4,7 @@
 // Generated bindings are available in `bun.generated.<basename>.*` in Zig,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import * as path from "node:path";
+import * as fs from "node:fs";
 import {
   CodeWriter,
   TypeImpl,
@@ -1525,6 +1526,10 @@ pub fn main() !void {
 `;
   status(`Extracting ${zigEnums.size} enum definitions`);
   writeIfNotChanged(path.join(src, "generated_enum_extractor.zig"), zigEnumCode.buffer);
+  const generatedBindingsFile = path.join(src, "bun.js/bindings/GeneratedBindings.zig");
+  if (!fs.existsSync(generatedBindingsFile)) {
+    fs.writeFileSync(generatedBindingsFile, "// stub for code generator");
+  }
   const result = Bun.spawnSync({
     cmd: [zigPath, "build", "enum-extractor", "-Dno-compiler-info", "-Dignore-missing-generated-paths"],
     stdio: ["inherit", "pipe", "inherit"],

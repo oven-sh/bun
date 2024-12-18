@@ -787,11 +787,12 @@ pub const EventLoop = struct {
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
-            const vm = JSC.VirtualMachine.getMainThreadVM();
-            const this = vm.eventLoop();
-            if (this.signal_handler == null) {
-                this.signal_handler = PosixSignalHandle.new(.{});
-                @memset(&this.signal_handler.?.signals, 0);
+            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+                const this = vm.eventLoop();
+                if (this.signal_handler == null) {
+                    this.signal_handler = PosixSignalHandle.new(.{});
+                    @memset(&this.signal_handler.?.signals, 0);
+                }
             }
         }
     }
@@ -2356,7 +2357,7 @@ pub const PosixSignalHandle = struct {
         // Publish the new tail (Release so that the consumer sees the updated tail).
         this.tail.store(old_tail +% 1, .release);
 
-        JSC.VirtualMachine.getMainThreadVM().eventLoop().wakeup();
+        JSC.VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
 
         return true;
     }
@@ -2364,7 +2365,7 @@ pub const PosixSignalHandle = struct {
     /// This is the signal handler entry point. Calls enqueue on the ring buffer.
     /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
     export fn Bun__onPosixSignal(number: i32) void {
-        const vm = JSC.VirtualMachine.getMainThreadVM();
+        const vm = JSC.VirtualMachine.getMainThreadVM().?;
         _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
     }
 

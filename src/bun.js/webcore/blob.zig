@@ -1655,6 +1655,13 @@ pub const Blob = struct {
 
         pub usingnamespace bun.New(@This());
 
+        pub fn memoryCost(this: *const Store) usize {
+            return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
+                .bytes => this.data.bytes.len,
+                .file => 0,
+            } else 0;
+        }
+
         pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
                 .bytes => this.data.bytes.len,
@@ -4770,6 +4777,15 @@ pub const AnyBlob = union(enum) {
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
 
+    /// Assumed that AnyBlob itself is covered by the caller.
+    pub fn memoryCost(this: *const AnyBlob) usize {
+        return switch (this.*) {
+            .Blob => |*blob| if (blob.store) |blob_store| blob_store.memoryCost() else 0,
+            .WTFStringImpl => |str| if (str.refCount() == 1) str.memoryCost() else 0,
+            .InternalBlob => |*internal_blob| internal_blob.memoryCost(),
+        };
+    }
+
     pub fn hasOneRef(this: *const AnyBlob) bool {
         if (this.store()) |s| {
             return s.hasOneRef();
@@ -5121,6 +5137,10 @@ pub const AnyBlob = union(enum) {
 pub const InternalBlob = struct {
     bytes: std.ArrayList(u8),
     was_string: bool = false,
+
+    pub fn memoryCost(this: *const @This()) usize {
+        return this.bytes.capacity;
+    }
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);

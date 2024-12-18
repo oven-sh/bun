@@ -74,7 +74,8 @@ pub const JSObject = extern struct {
                 JSValue.createEmptyObjectWithNullPrototype(global)
             else
                 JSValue.createEmptyObject(global, comptime info.fields.len);
-            bun.debugAssert(val.isObject());
+            if (bun.Environment.isDebug)
+                bun.assert(val.isObject());
             break :obj val.uncheckedPtrCast(JSObject);
         };
 
@@ -1729,10 +1730,6 @@ pub const SystemError = extern struct {
         return @enumFromInt(this.errno * -1);
     }
 
-    pub fn toAnyhowError(this: SystemError) bun.anyhow.Error {
-        return bun.anyhow.Error.newSys(this);
-    }
-
     pub fn deref(this: *const SystemError) void {
         this.path.deref();
         this.code.deref();
@@ -1757,6 +1754,37 @@ pub const SystemError = extern struct {
 
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
+
+    /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
+    /// property containing the details of the system error:
+    ///
+    /// SystemError [ERR_SYSTEM_ERROR]: A system error occurred: {syscall} returned {errno} ({message})
+    /// {
+    ///     name: "ERR_SYSTEM_ERROR",
+    ///     info: {
+    ///         errno: -{errno},
+    ///         code: {code},        // string
+    ///         message: {message},  // string
+    ///         syscall: {syscall},  // string
+    ///     },
+    ///     errno: -{errno},
+    ///     syscall: {syscall},
+    /// }
+    ///
+    /// Before using this function, consider if the Node.js API it is
+    /// implementing follows this convention. It is exclusively used
+    /// to match the error code that `node:os` throws.
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+            this.syscall.deref();
+        }
+
+        return SystemError__toErrorInstanceWithInfoObject(this, global);
+    }
+    extern fn SystemError__toErrorInstanceWithInfoObject(*const SystemError, *JSC.JSGlobalObject) JSValue;
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (!self.path.isEmpty()) {
@@ -1999,6 +2027,7 @@ pub const JSPromiseRejectionOperation = enum(u32) {
     Handle = 1,
 };
 
+// TODO(@paperdave): delete and inline these functions
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
         const importNotImpl = "Import not implemented";
@@ -5881,14 +5910,11 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asInt32(this: JSValue) i32 {
-        // TODO: add this assertion. currently, there is a mistake in
-        // argumentCount that mistakenly uses a JSValue instead of a c_int. This
-        // mistake performs the correct conversion instructions for it's use
-        // case but is bad code practice to misuse JSValue casts.
-        //
-        // if (bun.Environment.allow_assert) {
-        //     bun.assert(this.isInt32());
-        // }
+        // TODO: promote assertion to allow_assert. That has not been done because
+        // the assertion was commented out until 2024-12-12
+        if (bun.Environment.isDebug) {
+            bun.assert(this.isInt32());
+        }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
@@ -6573,67 +6599,112 @@ pub const CatchScope = extern struct {
     };
 };
 
-// TODO: callframe cleanup
-// - remove all references into sizegen.zig since it is no longer run and may become out of date
-// - remove all functions to retrieve arguments, replace with
-//   - arguments(*CallFrame) []const JSValue (when you want a full slice)
-//   - argumentsAsArray(*CallFrame, comptime len) [len]JSValue (common case due to destructuring)
-//   - argument(*CallFrame, i: usize) JSValue (return undefined if not present)
-//   - argumentCount(*CallFrame) usize
-//
-// argumentsPtr() -> arguments().ptr
-// arguments(n).ptr[k] -> argumentsAsArray(n)[k]
-// arguments(n).slice() -> arguments()
-// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
-// argumentsCount() -> argumentCount() (to match JSC)
-// argument(n) -> arguments().ptr[n]
+/// Call Frame for JavaScript -> Native function calls. In Bun, it is
+/// preferred to use the bindings generator instead of directly decoding
+/// arguments. See `docs/project/bindgen.md`
 pub const CallFrame = opaque {
-    /// The value is generated in `make sizegen`
-    /// The value is 6.
-    /// On ARM64_32, the value is something else but it really doesn't matter for our case
-    /// However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
-    const alignment = Sizes.Bun_CallFrame__align;
-
-    pub const name = "JSC::CallFrame";
-
-    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
-        return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self)));
+    /// A slice of all passed arguments to this function call.
+    pub fn arguments(self: *const CallFrame) []const JSValue {
+        return self.asUnsafeJSValueArray()[offset_first_argument..][0..self.argumentsCount()];
     }
 
-    pub fn format(frame: *CallFrame, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const args = frame.argumentsPtr()[0..frame.argumentsCount()];
-
-        for (args[0..@min(args.len, 4)], 0..) |arg, i| {
-            if (i != 0) {
-                try writer.writeAll(", ");
-            }
-            switch (arg) {
-                .zero => try writer.writeAll("<empty>"),
-                .undefined => try writer.writeAll("undefined"),
-                .null => try writer.writeAll("null"),
-                .true => try writer.writeAll("true"),
-                .false => try writer.writeAll("false"),
-                else => {
-                    if (arg.isNumber()) {
-                        try writer.writeAll("number");
-                    } else {
-                        try writer.writeAll(@tagName(arg.jsType()));
-                    }
-                },
-            }
-        }
-
-        if (args.len > 4) {
-            try writer.print(", ... {d} more", .{args.len - 4});
-        }
+    /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
+    pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
+        const slice = call_frame.arguments();
+        var value: [count]JSValue = .{.undefined} ** count;
+        const n = @min(call_frame.argumentsCount(), count);
+        @memcpy(value[0..n], slice[0..n]);
+        return value;
     }
 
-    pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__firstArgument..];
+    /// This function protects out-of-bounds access by returning `JSValue.undefined`
+    pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
+        return if (self.argumentsCount() > i) self.arguments()[i] else .undefined;
     }
 
+    pub fn argumentsCount(self: *const CallFrame) u32 {
+        return self.argumentCountIncludingThis() - 1;
+    }
+
+    /// When this CallFrame belongs to a constructor, this value is not the `this`
+    /// value, but instead the value of `new.target`.
+    pub fn this(self: *const CallFrame) JSC.JSValue {
+        return self.asUnsafeJSValueArray()[offset_this_argument];
+    }
+
+    /// `JSValue` for the current function being called.
     pub fn callee(self: *const CallFrame) JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__callee];
+        return self.asUnsafeJSValueArray()[offset_callee];
+    }
+
+    /// From JavaScriptCore/interpreter/CallFrame.h
+    ///
+    ///   |          ......            |   |
+    ///   +----------------------------+   |
+    ///   |           argN             |   v  lower address
+    ///   +----------------------------+
+    ///   |           arg1             |
+    ///   +----------------------------+
+    ///   |           arg0             |
+    ///   +----------------------------+
+    ///   |           this             |
+    ///   +----------------------------+
+    ///   | argumentCountIncludingThis |
+    ///   +----------------------------+
+    ///   |          callee            |
+    ///   +----------------------------+
+    ///   |        codeBlock           |
+    ///   +----------------------------+
+    ///   |      return-address        |
+    ///   +----------------------------+
+    ///   |       callerFrame          |
+    ///   +----------------------------+  <- callee's cfr is pointing this address
+    ///   |          local0            |
+    ///   +----------------------------+
+    ///   |          local1            |
+    ///   +----------------------------+
+    ///   |          localN            |
+    ///   +----------------------------+
+    ///   |          ......            |
+    ///
+    /// The proper return type of this should be []Register, but
+    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
+        return @ptrCast(@alignCast(self));
+    }
+
+    // These constants are from JSC::CallFrameSlot in JavaScriptCore/interpreter/CallFrame.h
+    const offset_code_block = 2;
+    const offset_callee = offset_code_block + 1;
+    const offset_argument_count_including_this = offset_callee + 1;
+    const offset_this_argument = offset_argument_count_including_this + 1;
+    const offset_first_argument = offset_this_argument + 1;
+
+    /// This function is manually ported from JSC's equivalent function in C++
+    /// See JavaScriptCore/interpreter/CallFrame.h
+    fn argumentCountIncludingThis(self: *const CallFrame) u32 {
+        // Register defined in JavaScriptCore/interpreter/Register.h
+        const Register = extern union {
+            value: JSValue, // EncodedJSValue
+            call_frame: *CallFrame,
+            code_block: *anyopaque, // CodeBlock*
+            /// EncodedValueDescriptor defined in JavaScriptCore/runtime/JSCJSValue.h
+            encoded_value: extern union {
+                ptr: JSValue, // JSCell*
+                as_bits: extern struct {
+                    payload: i32,
+                    tag: i32,
+                },
+            },
+            number: f64, // double
+            integer: i64, // integer
+        };
+        const registers: [*]const Register = @alignCast(@ptrCast(self));
+        // argumentCountIncludingThis takes the register at the defined offset, then
+        // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
+        // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
+        // which accesses `.encodedValue.asBits.payload`
+        // JSC stores and works with value as signed, but it is always 1 or more.
+        return @intCast(registers[offset_argument_count_including_this].encoded_value.as_bits.payload);
     }
 
     fn Arguments(comptime max: usize) type {
@@ -6667,53 +6738,34 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn arguments(self: *const CallFrame) []const JSValue {
-        // this presumably isn't allowed given that it doesn't exist
-        return self.argumentsPtr()[0..self.argumentsCount()];
-    }
+    /// Do not use this function. Migration path:
+    /// arguments(n).ptr[k] -> argumentsAsArray(n)[k]
+    /// arguments(n).slice() -> arguments()
+    /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
-        const len = self.argumentsCount();
-        const ptr = self.argumentsPtr();
-        return switch (@as(u4, @min(len, max))) {
+        const slice = self.arguments();
+        comptime bun.assert(max <= 10);
+        return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), ptr),
+            inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
             else => unreachable,
         };
     }
 
+    /// Do not use this function. Migration path:
+    /// argumentsAsArray(n)
     pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
-        const len = self.argumentsCount();
-        const ptr = self.argumentsPtr();
-        return switch (@as(u4, @min(len, max))) {
+        const slice = self.arguments();
+        comptime bun.assert(max <= 9);
+        return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
-            inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), ptr),
+            inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), slice.ptr),
             else => unreachable,
         };
-    }
-
-    pub inline fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
-        return self.argumentsPtr()[i];
-    }
-
-    pub fn this(self: *const CallFrame) JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__thisArgument];
-    }
-
-    pub fn argumentsCount(self: *const CallFrame) usize {
-        return @as(usize, @intCast(self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
     }
 
     extern fn Bun__CallFrame__isFromBunMain(*const CallFrame, *const VM) bool;
     pub const isFromBunMain = Bun__CallFrame__isFromBunMain;
-
-    /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
-    pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
-        var value: [count]JSValue = .{.undefined} ** count;
-        for (0..@min(call_frame.argumentsCount(), count)) |i| {
-            value[i] = call_frame.argument(i);
-        }
-        return value;
-    }
 
     extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bun.String, *c_uint, *c_uint) void;
     pub const CallerSrcLoc = struct {

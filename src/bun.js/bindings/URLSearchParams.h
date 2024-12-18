@@ -56,6 +56,7 @@ public:
     void updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
+    size_t memoryCost() const;
 
     class Iterator {
     public:

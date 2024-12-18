@@ -469,6 +469,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("saveTextLockfile")) |save_text_lockfile| {
+                        if (save_text_lockfile.asBool()) |value| {
+                            install.save_text_lockfile = value;
+                        }
+                    }
+
                     if (install_obj.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();

@@ -353,7 +353,7 @@ describe("napi", () => {
   describe("bigint conversion to int64/uint64", () => {
     it("works", () => {
       const tests = [-1n, 0n, 1n];
-      for (const power of [63, 64]) {
+      for (const power of [63, 64, 65]) {
         for (const sign of [-1, 1]) {
           const boundary = BigInt(sign) * 2n ** BigInt(power);
           tests.push(boundary, boundary - 1n, boundary + 1n);
@@ -365,7 +365,7 @@ describe("napi", () => {
       checkSameOutput("bigint_to_u64", testsString);
     });
     it("returns the right error code", () => {
-      const badTypes = '[null, undefined, 5, "123"]';
+      const badTypes = '[null, undefined, 5, "123", "abc"]';
       checkSameOutput("bigint_to_i64", badTypes);
       checkSameOutput("bigint_to_u64", badTypes);
       checkSameOutput("bigint_to_64_null", []);

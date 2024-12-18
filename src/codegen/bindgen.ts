@@ -1475,7 +1475,7 @@ pub fn main() !void {
 `;
   zigEnumCode.level = 3;
   for (const zigEnum of zigEnums.values()) {
-    const candidates = allZigFiles.filter(file => file.endsWith("/" + zigEnum.file));
+    const candidates = allZigFiles.filter(file => file.endsWith(path.sep + zigEnum.file));
     if (candidates.length === 0) {
       throwAt(`Cannot find a file named ${str(zigEnum.file)}`, zigEnum.snapshot);
       continue;

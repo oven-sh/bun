@@ -17,6 +17,11 @@ const JSValue = JSC.JSValue;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    var stack_fallback = std.heap.stackFallback(1024 * 2, bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(stack_fallback.get());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const nargs = callframe.argumentsCount();
     if (nargs < 2) {
         return global.throwNotEnoughArguments("printMyersDiff", 2, callframe.argumentsCount());
@@ -34,22 +39,51 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     if (!actual_arg.isString()) return global.throwInvalidArgumentTypeValue("actual", "string", actual_arg);
     if (!expected_arg.isString()) return global.throwInvalidArgumentTypeValue("expected", "string", expected_arg);
 
-    // const actual = try actual_arg.toBunString2(global);
-    // const expected = try safeToString(global, alloc, callframe.argument(1), "expected");
-    const actual, const expected = blk: {
-        // block used to limit scope of errdefer
-        var _actual = try actual_arg.toBunString2(global);
-        errdefer _actual.deref();
-        const _expected = try expected_arg.toBunString2(global);
-        break :blk .{ _actual, _expected };
-        // var _expected = try safeToString(global, alloc, expected_arg, "expected");
-    };
+    const actual_str = try actual_arg.toBunString2(global);
+    defer actual_str.deref();
+    const expected_str = try expected_arg.toBunString2(global);
+    defer expected_str.deref();
 
-    var stack_fallback = std.heap.stackFallback(1024 * 2, bun.default_allocator);
-    var arena = std.heap.ArenaAllocator.init(stack_fallback.get());
-    defer arena.deinit();
+    // Short circuit on empty strings. Note that, in release builds where
+    // assertions are disabled, if `actual` and `expected` are both dead, this
+    // branch will be hit since dead strings have a length of 0. This should be
+    // moot since BunStrings with non-zero reference counds should never be
+    // dead.
+    if (actual_str.length() == 0 and expected_str.length() == 0) {
+        return JSC.JSValue.createEmptyArray(global, 0);
+    }
+    
+    bun.assertWithLocation(actual_str.tag != .Dead, @src());
+    bun.assertWithLocation(expected_str.tag != .Dead, @src());
 
-    const diff = try assert.myersDiff(arena.allocator(), global, &actual, &expected, check_comma_disparity, lines);
+    // TODO: diffing w/o utf8 conversion when actual, expected are both UTF-16.
+    // Requires char diffing that respects surrogate pairs.
+    const actual = actual_str.toUTF8WithoutRef(allocator);
+    const expected = expected_str.toUTF8WithoutRef(allocator);
+    defer {
+        actual.deinit();
+        expected.deinit();
+    }
+
+    // // const actual = try actual_arg.toBunString2(global);
+    // // const expected = try safeToString(global, alloc, callframe.argument(1), "expected");
+    // const actual_str, const expected_str = blk: {
+    //     // block used to limit scope of errdefer
+    //     var _actual = try actual_arg.toBunString2(global);
+    //     errdefer _actual.deref();
+    //     const _expected = try expected_arg.toBunString2(global);
+    //     break :blk .{ _actual, _expected };
+    //     // var _expected = try safeToString(global, alloc, expected_arg, "expected");
+    // };
+
+    const diff = try assert.myersDiff(
+        arena.allocator(),
+        global,
+        actual.byteSlice(),
+        expected.byteSlice(),
+        check_comma_disparity,
+        lines,
+    );
 
     return diffListToJS(global, diff);
 }

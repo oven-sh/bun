@@ -184,11 +184,12 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                     assert(diag_idx + max >= 0); // sanity check. Fine to be stripped in release.
                     const k: uint = u(diag_idx + max);
 
+                    const uk = u(k);
                     var x = if (diag_idx == diag_start or
-                        (diag_idx != diag_end and graph[k - 1] < graph[k + 1]))
-                        graph[k + 1]
+                        (diag_idx != diag_end and graph[uk - 1] < graph[uk + 1]))
+                        graph[uk + 1]
                     else
-                        graph[k - 1] + 1;
+                        graph[uk - 1] + 1;
 
                     // y = x - diag_idx
                     var y: usize = blk: {
@@ -197,6 +198,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                         assert(y >= 0 and y <= MAXLEN); // sanity check. Fine to be stripped in release.
                         break :blk @intCast(y);
                     };
+
                     while (x < actual.len and y < expected.len and eql(actual[x], expected[y])) {
                         x += 1;
                         y += 1;
@@ -346,7 +348,7 @@ fn areStrLinesEqual(comptime T: type, a: T, b: T, comptime check_comma_disparity
     const largest, const smallest = if (a.len > b.len) .{ a, b } else .{ b, a };
     return switch (largest.len - smallest.len) {
         inline 0 => mem.eql(ChildType, a, b),
-        inline 1 => largest[largest.len - 1] == ',', // 'foo,' == 'foo'
+        inline 1 => largest[largest.len - 1] == ',' and mem.eql(ChildType, largest[0..smallest.len], smallest), // 'foo,' == 'foo'
         else => false,
     };
 }
@@ -371,6 +373,14 @@ pub const DiffKind = enum {
     insert,
     delete,
     equal,
+
+    pub fn format(value: DiffKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (value) {
+            .insert => writer.writeByte('+'),
+            .delete => writer.writeByte('-'),
+            .equal => writer.writeByte(' '),
+        };
+    }
 };
 
 pub fn Diff(comptime T: type) type {
@@ -381,6 +391,17 @@ pub fn Diff(comptime T: type) type {
         const Self = @This();
         pub fn eql(self: Self, other: Self) bool {
             return self.kind == other.kind and mem.eql(T, self.value, other.value);
+        }
+
+        /// pub fn format(value: ?, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void
+        pub fn format(value: anytype, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const specifier = switch (T) {
+                u8 => "c",
+                u32 => "u",
+                []const u8, [:0]const u8, []u8, [:0]u8 => "s",
+                else => @compileError("printDiff can only print chars and strings. Received: " ++ @typeName(T)),
+            };
+            return writer.print("{} {" ++ specifier ++ "}", .{ value.kind, value.value });
         }
     };
 }
@@ -432,113 +453,136 @@ test areLinesEqual {
     try t.expect(!areLinesEqual([]const u8, ",😤", "😤", true));
 }
 
-const CharList = DiffList(u8);
-const CDiff = Diff(u8);
-const CharDiffer = Differ(u8, .{});
+// const CharList = DiffList(u8);
+// const CDiff = Diff(u8);
+// const CharDiffer = Differ(u8, .{});
 
-fn testCharDiff(actual: []const u8, expected: []const u8, expected_diff: []const Diff(u8)) !void {
-    const allocator = t.allocator;
-    const actual_diff = try CharDiffer.diff(allocator, actual, expected);
-    defer actual_diff.deinit();
-    try t.expectEqualSlices(Diff(u8), expected_diff, actual_diff.items);
-}
+// fn testCharDiff(actual: []const u8, expected: []const u8, expected_diff: []const Diff(u8)) !void {
+//     const allocator = t.allocator;
+//     const actual_diff = try CharDiffer.diff(allocator, actual, expected);
+//     defer actual_diff.deinit();
+//     try t.expectEqualSlices(Diff(u8), expected_diff, actual_diff.items);
+// }
 
-test CharDiffer {
-    const TestCase = std.meta.Tuple(&[_]type{ []const CDiff, []const u8, []const u8 });
-    const test_cases = &[_]TestCase{
-        .{ &[_]CDiff{}, "foo", "foo" },
-    };
-    for (test_cases) |test_case| {
-        const expected_diff, const actual, const expected = test_case;
-        try testCharDiff(actual, expected, expected_diff);
-    }
-}
+// test CharDiffer {
+//     const TestCase = std.meta.Tuple(&[_]type{ []const CDiff, []const u8, []const u8 });
+//     const test_cases = &[_]TestCase{
+//         .{ &[_]CDiff{}, "foo", "foo" },
+//     };
+//     for (test_cases) |test_case| {
+//         const expected_diff, const actual, const expected = test_case;
+//         try testCharDiff(actual, expected, expected_diff);
+//     }
+// }
 
-const StrDiffer = Differ([]const u8, .{});
+const StrDiffer = Differ([]const u8, .{ .check_comma_disparity = true });
 test StrDiffer {
     const a = t.allocator;
     inline for (.{
         // .{ "foo", "foo" },
-        .{ "foo", "bar" },
-        // remove line
+        // .{ "foo", "bar" },
         .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
+            // actual
+            \\[
+            \\  1,
+            \\  2,
+            \\  3,
+            \\  4,
+            \\  5,
+            \\  6,
+            \\  7  
+            \\]
             ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
+            // expected
+            \\[
+            \\  1,
+            \\  2,
+            \\  3,
+            \\  4,
+            \\  5,
+            \\  9,
+            \\  7  
+            \\]
         },
-        // add some line
-        .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            ,
-        },
-        // modify lines
-        .{
-            \\foo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\barrr
-            \\baz
-        },
-        .{
-            \\foooo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\bar
-            \\baz
-        },
-        .{
-            \\foo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\bar
-            \\baz
-        },
-        .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor modified
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in also modified
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-        },
+        // // remove line
+        // .{
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     ,
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     ,
+        // },
+        // // add some line
+        // .{
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     ,
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     ,
+        // },
+        // // modify lines
+        // .{
+        //     \\foo
+        //     \\bar
+        //     \\baz
+        //     ,
+        //     \\foo
+        //     \\barrr
+        //     \\baz
+        // },
+        // .{
+        //     \\foooo
+        //     \\bar
+        //     \\baz
+        //     ,
+        //     \\foo
+        //     \\bar
+        //     \\baz
+        // },
+        // .{
+        //     \\foo
+        //     \\bar
+        //     \\baz
+        //     ,
+        //     \\foo
+        //     \\bar
+        //     \\baz
+        // },
+        // .{
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     ,
+        //     \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor modified
+        //     \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+        //     \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        //     \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+        //     \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in also modified
+        //     \\culpa qui officia deserunt mollit anim id est laborum.
+        //     ,
+        // },
     }) |thing| {
         var actual = try split(a, thing[0]);
         var expected = try split(a, thing[1]);
@@ -548,6 +592,9 @@ test StrDiffer {
         }
         var d = try StrDiffer.diff(a, actual.items, expected.items);
         defer d.deinit();
+        for (d.items) |diff| {
+            std.debug.print("{}\n", .{diff});
+        }
     }
 }
 

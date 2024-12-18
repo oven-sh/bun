@@ -113,7 +113,6 @@ function checkOperator(actual, expected, operator) {
 }
 
 function getColoredMyersDiff(actual, expected) {
-  // console.log("getColoredMyersDiff(", actual, expected, ")");
   const header = `${colors.green}actual${colors.white} ${colors.red}expected${colors.white}`;
   const skipped = false;
 

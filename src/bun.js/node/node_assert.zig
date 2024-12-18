@@ -10,6 +10,8 @@ const JSValue = JSC.JSValue;
 
 const StringDiffList = MyersDiff.DiffList([]const u8);
 
+const print = std.debug.print;
+
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
 ///
@@ -25,30 +27,30 @@ const StringDiffList = MyersDiff.DiffList([]const u8);
 pub fn myersDiff(
     allocator: Allocator,
     global: *JSC.JSGlobalObject,
-    actual: *const BunString,
-    expected: *const BunString,
+    actual: []const u8,
+    expected: []const u8,
     // If true, strings that have a trailing comma but are otherwise equal are
     // considered equal.
     check_comma_disparity: bool,
     // split `actual` and `expected` into lines before diffing
     lines: bool,
 ) bun.JSError!MyersDiff.DiffList([]const u8) {
-    bun.assertWithLocation(actual.tag != .Dead, @src());
-    bun.assertWithLocation(expected.tag != .Dead, @src());
-    bun.assertWithLocation(actual.encoding() == expected.encoding(), @src());
+    // bun.assertWithLocation(actual.tag != .Dead, @src());
+    // bun.assertWithLocation(expected.tag != .Dead, @src());
+    // bun.assertWithLocation(actual.encoding() == expected.encoding(), @src());
 
     // short circuit on empty strings. Note that, in release builds where
     // assertions are disabled, if `actual` and `expected` are both dead, this
     // branch will be hit since dead strings have a length of 0.
-    if (actual.length() == 0 and expected.length() == 0) return StringDiffList.init(allocator);
+    // if (actual.length() == 0 and expected.length() == 0) return StringDiffList.init(allocator);
 
     // .Empty strings always get caught by above guard.
     // bun.debugAssert(actual.tag != .Empty and expected.tag != .Empty);
 
     if (lines) {
-        var a = try MyersDiff.split(allocator, actual.byteSlice());
+        var a = try MyersDiff.split(allocator, actual);
         errdefer a.deinit(allocator);
-        var e = try MyersDiff.split(allocator, expected.byteSlice());
+        var e = try MyersDiff.split(allocator, expected);
         errdefer e.deinit(allocator);
 
         // NOTE: split lines leak memory if arena is not used

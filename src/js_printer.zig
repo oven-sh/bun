@@ -5913,8 +5913,8 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
-    var mi = ModuleInfo.init(opts.allocator);
-    defer mi.deinit();
+    var mi = if (PrinterType.may_have_module_info) ModuleInfo.init(opts.allocator);
+    defer if (PrinterType.may_have_module_info) mi.deinit();
     if (PrinterType.may_have_module_info) printer.module_info = &mi;
 
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -5943,29 +5943,29 @@ pub fn printAst(
         }
     }
 
-    if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
+    if (PrinterType.may_have_module_info) {
+        try mi.fixupIndirectExports();
+    }
+
+    var sourcemap: []const u8 = "";
+    if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
             const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
-            }
+            sourcemap = source_maps_chunk.buffer.list.items;
 
             try handler.onSourceMapChunk(source_maps_chunk, source.*);
-        } else {
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), "");
-            }
         }
-    } else if (comptime generate_source_map) {
-        if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
-        }
+    }
+    if (opts.runtime_transpiler_cache) |cache| {
+        var mi_buf = if (PrinterType.may_have_module_info) std.ArrayList(u8).init(bun.default_allocator);
+        defer if (PrinterType.may_have_module_info) mi_buf.deinit();
+        if (PrinterType.may_have_module_info) try mi.serialize(mi_buf.writer());
+
+        cache.put(printer.writer.ctx.getWritten(), sourcemap, if (PrinterType.may_have_module_info) mi_buf.items else "");
     }
 
     if (PrinterType.may_have_module_info) {
-        try mi.fixupIndirectExports();
-
-        try mi.serialize(printer.writer.stdWriter());
+        try mi.serializeToComment(printer.writer.stdWriter());
     }
 
     try printer.writer.done();

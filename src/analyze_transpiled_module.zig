@@ -97,12 +97,10 @@ pub const ModuleInfo = struct {
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
     contains_import_meta: bool,
+    indirect_exports_fixed: bool = false,
 
-    pub fn serialize(self: *ModuleInfo, final_writer: anytype) !void {
-        var res = std.ArrayList(u8).init(bun.default_allocator);
-        defer res.deinit();
-        const writer = res.writer();
-
+    pub fn serialize(self: *ModuleInfo, writer: anytype) !void {
+        bun.assert(self.indirect_exports_fixed);
         try writer.writeInt(u32, @truncate(self.record_kinds.items.len), .little);
         try writer.writeAll(std.mem.sliceAsBytes(self.record_kinds.items));
         try writer.writeInt(u32, @truncate(self.buffer.items.len), .little);
@@ -119,6 +117,12 @@ pub const ModuleInfo = struct {
             try writer.writeAll(s);
             try writer.writeByte(0);
         }
+    }
+    pub fn serializeToComment(self: *ModuleInfo, final_writer: anytype) !void {
+        var res = std.ArrayList(u8).init(bun.default_allocator);
+        defer res.deinit();
+        const writer = res.writer();
+        try self.serialize(writer);
 
         const enc_buf = try bun.default_allocator.alloc(u8, std.base64.standard.Encoder.calcSize(res.items.len));
         defer bun.default_allocator.free(enc_buf);
@@ -149,6 +153,7 @@ pub const ModuleInfo = struct {
     }
 
     fn _addRecord(self: *ModuleInfo, kind: RecordKind, data: []const StringID) !void {
+        bun.assert(!self.indirect_exports_fixed);
         bun.assert(data.len == kind.len() catch unreachable);
         try self.record_kinds.append(kind);
         try self.buffer.appendSlice(data);
@@ -210,6 +215,7 @@ pub const ModuleInfo = struct {
 
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
     pub fn fixupIndirectExports(self: *ModuleInfo) !void {
+        bun.assert(!self.indirect_exports_fixed);
         var local_name_to_module_name = std.AutoArrayHashMap(StringID, [2]StringID).init(self.strings.allocator);
         defer local_name_to_module_name.deinit();
         {
@@ -234,6 +240,7 @@ pub const ModuleInfo = struct {
                 i += k.len() catch unreachable;
             }
         }
+        self.indirect_exports_fixed = true;
     }
 };
 pub const StringID = enum(u32) {

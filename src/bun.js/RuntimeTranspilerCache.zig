@@ -168,6 +168,7 @@ pub const RuntimeTranspilerCache = struct {
             input_hash: u64,
             features_hash: u64,
             sourcemap: []const u8,
+            esm_record: []const u8,
             output_code: OutputCode,
             exports_kind: bun.JSAst.ExportsKind,
         ) !void {
@@ -214,7 +215,7 @@ pub const RuntimeTranspilerCache = struct {
                         .output_byte_length = output_bytes.len,
                         .sourcemap_byte_offset = Metadata.size + output_bytes.len,
                         .esm_record_byte_offset = Metadata.size + output_bytes.len + sourcemap.len,
-                        .esm_record_byte_length = 0,
+                        .esm_record_byte_length = esm_record.len,
                     };
 
                     metadata.output_hash = hash(output_bytes);
@@ -238,15 +239,17 @@ pub const RuntimeTranspilerCache = struct {
                         bun.platformIOVecConstCreate(metadata_bytes),
                         bun.platformIOVecConstCreate(output_bytes),
                         bun.platformIOVecConstCreate(sourcemap),
+                        bun.platformIOVecConstCreate(esm_record),
                     }
                 else
                     &.{
                         bun.platformIOVecConstCreate(metadata_bytes),
                         bun.platformIOVecConstCreate(sourcemap),
+                        bun.platformIOVecConstCreate(esm_record),
                     };
 
                 var position: isize = 0;
-                const end_position = Metadata.size + output_bytes.len + sourcemap.len;
+                const end_position = Metadata.size + output_bytes.len + sourcemap.len + esm_record.len;
 
                 if (bun.Environment.allow_assert) {
                     var total: usize = 0;
@@ -541,6 +544,7 @@ pub const RuntimeTranspilerCache = struct {
         input_hash: u64,
         features_hash: u64,
         sourcemap: []const u8,
+        esm_record: []const u8,
         source_code: bun.String,
         exports_kind: bun.JSAst.ExportsKind,
     ) !void {
@@ -580,6 +584,7 @@ pub const RuntimeTranspilerCache = struct {
             input_hash,
             features_hash,
             sourcemap,
+            esm_record,
             output_code,
             exports_kind,
         );
@@ -638,7 +643,7 @@ pub const RuntimeTranspilerCache = struct {
         return this.entry != null;
     }
 
-    pub fn put(this: *RuntimeTranspilerCache, output_code_bytes: []const u8, sourcemap: []const u8) void {
+    pub fn put(this: *RuntimeTranspilerCache, output_code_bytes: []const u8, sourcemap: []const u8, esm_record: []const u8) void {
         if (comptime !bun.FeatureFlags.runtime_transpiler_cache)
             @compileError("RuntimeTranspilerCache is disabled");
 
@@ -649,7 +654,7 @@ pub const RuntimeTranspilerCache = struct {
         const output_code = bun.String.createLatin1(output_code_bytes);
         this.output_code = output_code;
 
-        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
+        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, output_code, this.exports_kind) catch |err| {
             debug("put() = {s}", .{@errorName(err)});
             return;
         };

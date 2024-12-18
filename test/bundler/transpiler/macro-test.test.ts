@@ -6,6 +6,8 @@ import defaultMacro, {
   identity as identity2,
 } from "./macro.ts" assert { type: "macro" };
 
+import * as macros from "./macro.ts" assert { type: "macro" };
+
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
 });
@@ -93,15 +95,21 @@ test("utf16 string", () => {
   expect(identity("😊 Smiling Face with Smiling Eyes Emoji")).toBe("😊 Smiling Face with Smiling Eyes Emoji");
 });
 
-test("default export", () => {
+test("default import", () => {
   expect(defaultMacro()).toBe("defaultdefaultdefault");
 });
 
-test("aliases", () => {
+test("import aliases", () => {
   expect(identity1({ a: 1 })).toEqual({ a: 1 });
   expect(identity1([1, 2, 3])).toEqual([1, 2, 3]);
   expect(identity2({ a: 1 })).toEqual({ a: 1 });
   expect(identity2([1, 2, 3])).toEqual([1, 2, 3]);
+});
+
+test("namespace import", () => {
+  expect(macros.identity({ a: 1 })).toEqual({ a: 1 });
+  expect(macros.identity([1, 2, 3])).toEqual([1, 2, 3]);
+  expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
 // test("template string ascii", () => {

@@ -79,15 +79,18 @@ it("custom deserializers / zigEnum / StringOrBuffer / ArrayBuffer", () => {
   expect(bindgen.customDeserializer(ab2, ab4, "hello")).toBe(72);
   expect(bindgen.customDeserializer(ab2, ab2, "hello")).toBe(70);
   expect(bindgen.customDeserializer(ab2, ab2, "world")).toBe(71);
-  expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow(
-    'The "a" argument must be of type string or an instance of Buffer, TypedArray, or DataView of type string or an instance of Buffer, TypedArray, or DataView. Received null',
-  );
-  expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow(
-    'Argument 3 (\'c\') to bindgen_test.customDeserializer must be one of: "hello", "world"',
-  );
+  expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow();
   expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'c' must be one of: 'hello', 'world'. Received undefined",
+  });
+  expect(() => bindgen.customDeserializer(null, ab4, undefined)).toThrow({
     code: "ERR_INVALID_ARG_TYPE",
-    message: `Argument 3 ('c') to bindgen_test.customDeserializer must be one of: "hello", "world"`,
+    message: 'The "a" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received null',
+  });
+  expect(() => bindgen.customDeserializer(ab4, ab4, "hello", ab4, "hi")).toThrow({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "e" argument must be an instance of Buffer, TypedArray, or DataView. Received "hi"',
   });
 });
 

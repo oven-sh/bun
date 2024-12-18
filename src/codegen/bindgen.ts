@@ -248,7 +248,7 @@ function emitCppCallToVariant(className: string, name: string, variant: Variant,
         cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
+      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, isOptionalToUser, "assign");
       cpp.dedent();
       if ("default" in type.flags) {
         cpp.line(`} else {`);
@@ -262,7 +262,14 @@ function emitCppCallToVariant(className: string, name: string, variant: Variant,
       }
       cpp.line(`}`);
     } else {
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, needDeclare ? "declare" : "assign");
+      emitConvertValue(
+        storageLocation,
+        arg.type,
+        jsValueRef,
+        exceptionContext,
+        isOptionalToUser,
+        needDeclare ? "declare" : "assign",
+      );
     }
 
     i += 1;
@@ -463,6 +470,7 @@ function emitConvertValue(
   type: TypeImpl,
   jsValueRef: string,
   exceptionContext: ExceptionContext,
+  isOptionalToUser: boolean,
   decl: "declare" | "assign",
 ) {
   if (decl === "declare") {
@@ -473,18 +481,12 @@ function emitConvertValue(
   if (simpleType) {
     const cAbiType = type.canDirectlyMapToCAbi();
     assert(cAbiType);
-    let exceptionHandler: ExceptionHandler | undefined;
+    let exceptionHandler: ExceptionHandler | null = null;
     switch (exceptionContext.type) {
       case "none":
         break;
       case "argument":
-        exceptionHandler = getArgumentExceptionHandlerForIDL(
-          type,
-          exceptionContext.className,
-          exceptionContext.argIndex,
-          exceptionContext.argName,
-          exceptionContext.functionName,
-        );
+        exceptionHandler = getIDLExceptionHandler(type, exceptionContext, jsValueRef, isOptionalToUser);
     }
 
     if (decl === "declare") {
@@ -549,7 +551,9 @@ function emitConvertValue(
           ensureCppHasValidationForwardDecl(customZig);
           cpp.line(`if (!${extCustomZigValidator(customZig.validateFunction)}(${storageLocation})) {`);
           cpp.indent();
-          emitCppThrowNodeJsTypeError(exceptionContext, customZig.validateErrorDescription!, jsValueRef);
+          cpp.line(
+            getCppThrowNodeJsTypeError("global", exceptionContext, customZig.validateErrorDescription!, jsValueRef),
+          );
           cpp.line(`return {};`);
           cpp.dedent();
           cpp.line(`}`);
@@ -569,7 +573,9 @@ function emitConvertValue(
           `if (!${customCpp.fromJSFunction}(${customCpp.fromJSArgs.map(x => mapCustomCppArg(x, jsValueRef, storageLocation))})) {`,
         );
         cpp.indent();
-        emitCppThrowNodeJsTypeError(exceptionContext, customCpp.validateErrorDescription!, jsValueRef);
+        cpp.line(
+          getCppThrowNodeJsTypeError("global", exceptionContext, customCpp.validateErrorDescription!, jsValueRef),
+        );
         cpp.line(`return {};`);
         cpp.dedent();
         cpp.line(`}`);
@@ -598,7 +604,12 @@ function ensureCppHasValidationForwardDecl({ validateFunction }: CustomZig) {
   zigInternal.line("}");
 }
 
-function emitCppThrowNodeJsTypeError(exceptionContext: ExceptionContext, message: string, jsValueRef: string) {
+function getCppThrowNodeJsTypeError(
+  global: string,
+  exceptionContext: ExceptionContext,
+  message: string,
+  jsValueRef: string,
+) {
   let argumentOrProperty = "";
   if (exceptionContext.type === "argument") {
     argumentOrProperty = `\"${exceptionContext.argName}\" argument`;
@@ -606,12 +617,27 @@ function emitCppThrowNodeJsTypeError(exceptionContext: ExceptionContext, message
     assert(exceptionContext.type !== "none"); // missing info on what to throw
     throw new Error(`TODO: implement exception thrower for type error`);
   }
-  ensureHeader("BindgenInvalidArgTypeError.h");
+  ensureHeader("BindgenNodeErrors.h");
   const desc = message;
-  cpp.line(`// The ${argumentOrProperty} must be ${desc}`);
-  cpp.line(
-    `throwNodeInvalidArgTypeErrorForBindgen(throwScope, global, ${str(argumentOrProperty)}_s, ${str(desc)}_s, ${jsValueRef});`,
-  );
+  return `throwNodeInvalidArgTypeErrorForBindgen(throwScope, ${global}, ${str(argumentOrProperty)}_s, ${str(desc)}_s, ${jsValueRef});`;
+}
+
+function getCppThrowNodeJsValueError(
+  global: string,
+  exceptionContext: ExceptionContext,
+  message: string,
+  jsValueRef: string,
+) {
+  let argumentOrProperty = "";
+  if (exceptionContext.type === "argument") {
+    argumentOrProperty = `argument '${exceptionContext.argName}'`;
+  } else {
+    assert(exceptionContext.type !== "none"); // missing info on what to throw
+    throw new Error(`TODO: implement exception thrower for type error`);
+  }
+  ensureHeader("BindgenNodeErrors.h");
+  const desc = message;
+  return `throwNodeInvalidArgValueErrorForBindgen(throwScope, ${global}, ${str(argumentOrProperty)}_s, ${str(desc)}_s, ${jsValueRef});`;
 }
 
 interface ExceptionHandler {
@@ -621,21 +647,22 @@ interface ExceptionHandler {
   body: string;
 }
 
-function getArgumentExceptionHandlerForIDL(
+function getIDLExceptionHandler(
   type: TypeImpl,
-  className: string,
-  argumentIndex: number,
-  argName: string,
-  functionName: string,
-) {
+  context: ExceptionContext,
+  jsValueRef: string,
+  // optionality depends on the context
+  isOptional: boolean,
+): ExceptionHandler | null {
   const { nodeValidator } = type.flags;
   if (nodeValidator) {
     switch (nodeValidator) {
       case NodeValidator.validateInteger:
         ensureHeader("ErrorCode.h");
+        assert(context.type === "argument"); // TODO:
         return {
           params: `[]()`,
-          body: `return ${str(argName)}_s;`,
+          body: `return ${str(context.argName)}_s;`,
         };
       default:
         throw new Error(`TODO: implement exception thrower for node validator ${nodeValidator}`);
@@ -644,21 +671,24 @@ function getArgumentExceptionHandlerForIDL(
   switch (type.kind) {
     case "zigEnum":
     case "stringEnum": {
+      // This is what validateOneOf in Node.js does, which is higher quality
+      // than webkit's enum error.
+      const values: string[] =
+        type.kind === "stringEnum" //
+          ? type.data.map(x => `'${x}'`)
+          : zigEnums.get(type.hash())!.variants.map(x => `'${x.name}'`);
+      if (isOptional) {
+        if (!type.flags.nonNull) values.push("null");
+        values.push("undefined");
+      }
       return {
-        params: `[](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
-        body: `WebCore::throwArgumentMustBeEnumError(${[
-          `global`,
-          `scope`,
-          `${argumentIndex}`,
-          `${str(argName)}_s`,
-          `${str(className)}_s`,
-          `${str(functionName)}_s`,
-          `WebCore::expectedEnumerationValues<${type.cppClassName()}>()`,
-        ].join(", ")});`,
+        // TODO: avoid &
+        params: `[&](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
+        body: getCppThrowNodeJsValueError("&global", context, "one of: " + values.join(", "), jsValueRef),
       };
-      break;
     }
   }
+  return null;
 }
 
 /**
@@ -723,7 +753,8 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     cpp.line(`}`);
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
+    const isOptional = !type.flags.required || "default" in fieldType.flags;
+    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, isOptional, "assign");
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();

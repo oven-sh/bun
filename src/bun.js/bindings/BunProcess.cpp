@@ -940,10 +940,11 @@ extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
     }
 }
 extern "C" void Bun__ensureSignalHandler();
+extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
-    if (eventEmitter.scriptExecutionContext()->isMainThread()) {
+    if (Bun__isMainThreadVM()) {
         // IPC handlers
         if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());

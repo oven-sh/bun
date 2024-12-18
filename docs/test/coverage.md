@@ -89,3 +89,20 @@ To generate an lcov report, you can use the `lcov` reporter. This will generate 
 [test]
 coverageReporter = "lcov"
 ```
+
+#### Include or Exclude files from coverate
+You can customize the files included or excluded from test coverage using the `coverageInclude` and `coverageExclude` options in your `bunfig.toml` file:
+
+```toml
+[test]
+coverageInclude = ["**/*.service.ts"]
+coverageExclude = ["**/*.test.ts"]
+```
+
+- `coverageInclude`: Specifies the files or patterns to include in coverage calculations.
+- `coverageExclude`: Specifies the files or patterns to exclude from coverage calculations.
+- Supported patterns:
+  - **Glob patterns**: For example, **/*.service.ts matches all .service.ts files in any folder.
+  - **Regular expressions**: For more advanced and precise matching, such as .*\.service\.ts$.
+  
+These configurations provide flexibility to focus coverage on specific files or directories while ignoring others.

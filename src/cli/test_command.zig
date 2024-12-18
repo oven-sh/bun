@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const c_size_t = std.c_size_t;
 const OOM = bun.OOM;
 
 const lex = bun.js_lexer;
@@ -1163,6 +1164,8 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        include: ?[]const []const u8 = null,
+        exclude: ?[]const []const u8 = null,
     };
     pub const Reporter = enum {
         text,
@@ -1370,6 +1373,26 @@ pub const TestCommand = struct {
 
             break :scan .{ scanner.results.items, scanner.search_count };
         };
+
+        const coverage_options = ctx.test_options.coverage;
+
+        if (coverage_options.include or coverage_options.exclude) {
+            var filtered_files = try std.ArrayList(PathString).initCapacity(ctx.allocator, test_files.len);
+            defer filtered_files.deinit();
+
+            for (test_files) |test_file| {
+                const test_name = test_file.slice();
+                if (coverage_options.include) |includes| {
+                    if (!matchesAnyPattern(test_name, includes)) continue;
+                }
+                if (coverage_options.exclude) |excludes| {
+                    if (matchesAnyPattern(test_name, excludes)) continue;
+                }
+                try filtered_files.append(test_file);
+            }
+
+            test_files = filtered_files.items;
+        }
 
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
@@ -1579,6 +1602,113 @@ pub const TestCommand = struct {
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
+    }
+
+    fn matchesRegex(target: string, pattern: string) bool {
+        const allocator = std.heap.c_allocator;
+
+        // Import the PCRE2 library
+        const pcre2 = @cImport({
+            @cInclude("pcre2.h");
+        });
+
+        const _options = pcre2.PCRE2_ZERO_TERMINATED;
+        const error_code: *c_int = undefined;
+        const error_offset: *c_size_t = undefined;
+
+        // Compile the regex pattern
+        const re = pcre2.pcre2_compile(
+            pattern.ptr,
+            pattern.len,
+            _options,
+            error_code,
+            error_offset,
+            null,
+        );
+
+        if (re == null) {
+            std.debug.warn("Failed to compile regex: {}\n", .{pattern});
+            return false;
+        }
+
+        const match_data = pcre2.pcre2_match_data_create_from_pattern(re, allocator);
+        if (match_data == null) {
+            pcre2.pcre2_code_free(re);
+            return false;
+        }
+
+        const result = pcre2.pcre2_match(
+            re,
+            target.ptr,
+            target.len,
+            0,
+            0,
+            match_data,
+            null,
+        );
+
+        pcre2.pcre2_match_data_free(match_data);
+        pcre2.pcre2_code_free(re);
+
+        return result >= 0;
+    }
+
+    fn isGlobPattern(pattern: string) bool {
+        return std.mem.contains(u8, pattern, '*') or std.mem.contains(u8, pattern, '?');
+    }
+
+    fn matchesGlob(pattern: string, target: string) bool {
+        var i = 0;
+        var j = 0;
+
+        while (i < pattern.len and j < target.len) {
+            switch (pattern[i]) {
+                '*' => {
+                    if (i + 1 < pattern.len and pattern[i + 1] == '*') {
+                        // Handle '**' (any directory level)
+                        i += 2;
+                        while (j < target.len and target[j] != '/') {
+                            j += 1;
+                        }
+                    } else {
+                        // Handle '*' (any characters except '/')
+                        i += 1;
+                        while (j < target.len and target[j] != '/') {
+                            j += 1;
+                        }
+                    }
+                },
+                '?' => {
+                    // Handle '?' (any single character)
+                    i += 1;
+                    j += 1;
+                },
+                else => {
+                    // Match characters literally
+                    if (pattern[i] != target[j]) return false;
+                    i += 1;
+                    j += 1;
+                },
+            }
+        }
+
+        // Ensure the entire pattern and target are consumed
+        return i == pattern.len and j == target.len;
+    }
+
+    fn matchesAnyPattern(target: string, patterns: []const string) bool {
+        for (patterns) |pattern| {
+            if (isGlobPattern(pattern)) {
+                if (matchesGlob(target, pattern)) {
+                    return true;
+                }
+            } else {
+                if (matchesRegex(target, pattern)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {

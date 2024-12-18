@@ -2538,8 +2538,9 @@ pub inline fn stringBuilder(this: *Lockfile) Lockfile.StringBuilder {
 
 pub fn stringBuf(this: *Lockfile) String.Buf {
     return .{
-        .bytes = this.buffers.string_bytes.toManaged(this.allocator),
-        .pool = this.string_pool,
+        .bytes = &this.buffers.string_bytes,
+        .allocator = this.allocator,
+        .pool = &this.string_pool,
     };
 }
 

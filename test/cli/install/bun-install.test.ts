@@ -5709,14 +5709,8 @@ it("should handle tarball URL with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-    `${root_url}/moo-0.1.0.tgz`,
-  ]);
-  expect(requested).toBe(10);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/moo-0.1.0.tgz`]);
+  expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -5851,13 +5845,8 @@ it("should handle tarball path with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-  ]);
-  expect(requested).toBe(8);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(6);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -8361,6 +8350,63 @@ cache = false
   expect(await new Response(stderr).text()).toContain("Saved lockfile");
   expect(await new Response(stdout).text()).toContain("installed @~39/empty@1.0.0");
   expect(await exited).toBe(0);
+});
+
+it("should handle modified git resolutions in bun.lock", async () => {
+  // install-test-8 has a dependency but because it's not in the lockfile
+  // it won't be included in the install.
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "jquery": "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      JSON.stringify({
+        "lockfileVersion": 0,
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
+            {},
+            "3a1288830817d13da39e9231302261896f8721ea",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+
+  expect(out).toContain("1 package installed");
+  expect(await exited).toBe(0);
+
+  expect(
+    (await file(join(package_dir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+  ).toMatchSnapshot();
 });
 
 it("should read install.saveTextLockfile from bunfig.toml", async () => {

@@ -200,7 +200,6 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
     RETURN_IF_EXCEPTION(scope, false);
 
-    slot.setThisValue(sandbox);
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
         return true;
     }
@@ -553,8 +552,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
 
-    if (exception)
+    if (exception) {
         throwException(globalObject, scope, exception);
+        return {};
+    }
 
     return JSValue::encode(result);
 }

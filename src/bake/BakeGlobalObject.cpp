@@ -151,6 +151,7 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
     INHERIT_HOOK_METHOD(codeForEval),
     INHERIT_HOOK_METHOD(canCompileStrings),
+    INHERIT_HOOK_METHOD(trustedScriptStructure),
 };
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,

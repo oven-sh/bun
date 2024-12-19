@@ -1651,7 +1651,7 @@ pub const VirtualMachine = struct {
                             }
                         }
 
-                        this.uwsLoop().tickWithTimeout(&deadline);
+                        this.uwsLoop().tickWithTimeout(&deadline, this);
 
                         if (comptime Environment.enable_logs)
                             log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});

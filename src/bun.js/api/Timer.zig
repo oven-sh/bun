@@ -129,6 +129,14 @@ pub const All = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
+    pub export fn Bun__updateTimeoutAfterEINTR(this: *VirtualMachine, timeout: *timespec) i32 {
+        if (!this.timer.getTimeout(timeout)) {
+            return 0;
+        }
+
+        return 1;
+    }
+
     pub fn getTimeout(this: *const All, spec: *timespec) bool {
         if (this.active_timer_count == 0) {
             return false;

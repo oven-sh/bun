@@ -33,7 +33,8 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, struct timespec* timeout, void* timeout_update_ctx);
+extern int Bun__updateTimeoutAfterEINTR(void* timeout_update_ctx, struct timespec *timeout);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -128,8 +129,7 @@ static int has_epoll_pwait2 = -1;
 extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
                               const struct timespec* timeout, const sigset_t* sigmask);
 
-
-static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
+static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, struct timespec *timeout, void* timeout_update_ctx) {
     int ret;
     sigset_t mask;  
     sigemptyset(&mask);
@@ -137,7 +137,17 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     if (has_epoll_pwait2 != 0) {
         do {
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
-        } while (ret == -EINTR);
+            if (ret == -EINTR) {
+                if (timeout_update_ctx) {
+                    if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
+                        timeout = NULL;
+                    }
+                }
+                continue;
+            }
+
+            break;
+        } while (1);
 
         if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
             return ret;
@@ -153,7 +163,16 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 
     do {
         ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
-    } while (IS_EINTR(ret));
+
+        if (ret == -1 && errno == EINTR && timeout_update_ctx) {
+            if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
+                timeout = NULL;
+            }
+            continue;
+        }
+
+        break;
+    } while (1);
 
     return ret;
 }
@@ -199,7 +218,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL, NULL);
 #else
         do {
             loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
@@ -250,7 +269,7 @@ void us_loop_run(struct us_loop_t *loop) {
 extern int Bun__JSC_onBeforeWait(void*);
 extern void Bun__JSC_onAfterWait(void*);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, struct timespec* timeout, void* timeout_update_ctx) {
     if (loop->num_polls == 0)
         return;
 
@@ -272,12 +291,23 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout, timeout_update_ctx);
 #else
+    
     do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
-    } while (IS_EINTR(loop->num_ready_polls));
+        int rc = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
+
+        if (UNLIKELY(rc == -1 && errno == EINTR && timeout_update_ctx)) {
+            if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
+                timeout = NULL;
+            }
+            continue;
+        }
+
+        loop->num_ready_polls = rc;
+        break;
+    } while (1);
+    
 #endif
 
     if (needs_after_wait) {

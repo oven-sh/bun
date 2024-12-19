@@ -790,11 +790,14 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
+        const proxy_url = (proxy orelse "");
+
         const task = MultiPartUpload.new(.{
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
             .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
             .callback_context = undefined,
             .globalThis = globalThis,
@@ -895,7 +898,7 @@ pub const AWSCredentials = struct {
         return endPromise;
     }
     /// returns a writable stream that writes to the s3 path
-    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions) bun.JSError!JSC.JSValue {
+    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
             pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
                 if (sink.endPromise.globalObject()) |globalObject| {
@@ -916,10 +919,12 @@ pub const AWSCredentials = struct {
                 sink.destroy();
             }
         };
+        const proxy_url = (proxy orelse "");
         this.ref(); // ref the credentials
         const task = MultiPartUpload.new(.{
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
             .callback = @ptrCast(&Wrapper.callback),
             .callback_context = undefined,
             .globalThis = globalThis,
@@ -953,9 +958,11 @@ pub const AWSCredentials = struct {
 };
 
 pub const MultiPartUpload = struct {
-    pub const MAX_SINGLE_UPLOAD_SIZE: usize = 4294967296; // we limit to 4 GiB
     pub const OneMiB: usize = 1048576;
-    pub const DefaultPartSize = OneMiB * 5;
+    pub const MAX_SINGLE_UPLOAD_SIZE_IN_MiB: usize = 5120; // we limit to 5 GiB
+    pub const MAX_SINGLE_UPLOAD_SIZE: usize = MAX_SINGLE_UPLOAD_SIZE_IN_MiB * OneMiB; // we limit to 5 GiB
+    pub const MIN_SINGLE_UPLOAD_SIZE_IN_MiB: usize = 5;
+    pub const DefaultPartSize = OneMiB * MIN_SINGLE_UPLOAD_SIZE_IN_MiB;
     const MAX_QUEUE_SIZE = 64; // dont make sense more than this because we use fetch anything greater will be 64
     const AWS = AWSCredentials;
     queue: std.ArrayListUnmanaged(UploadPart) = .{},
@@ -976,6 +983,7 @@ pub const MultiPartUpload = struct {
     offset: usize = 0,
 
     path: []const u8,
+    proxy: []const u8,
     upload_id: []const u8 = "",
     uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
 
@@ -1100,6 +1108,9 @@ pub const MultiPartUpload = struct {
             this.queue.deinit(bun.default_allocator);
         this.poll_ref.unref(this.vm);
         bun.default_allocator.free(this.path);
+        if (this.proxy.len > 0) {
+            bun.default_allocator.free(this.proxy);
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -1343,8 +1354,7 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn proxyUrl(this: *@This()) ?[]const u8 {
-        const proxy_url = this.vm.bundler.env.getHttpProxy(true, null);
-        return if (proxy_url) |url| url.href else null;
+        return this.proxy;
     }
     fn processBuffered(this: *@This(), part_size: usize) void {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {

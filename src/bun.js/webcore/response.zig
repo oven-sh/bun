@@ -3205,7 +3205,7 @@ pub const Fetch = struct {
             var endpointSlice: ?ZigString.Slice = null;
             var bucketSlice: ?ZigString.Slice = null;
 
-            const multipart_options: s3.MultiPartUpload.MultiPartUploadOptions = .{};
+            var multipart_options: s3.MultiPartUpload.MultiPartUploadOptions = .{};
 
             defer {
                 // cleanup s3 options
@@ -3274,12 +3274,32 @@ pub const Fetch = struct {
                                 }
                             }
                         }
+                        if (try s3_options.getOptional(globalThis, "pageSize", i32)) |pageSize| {
+                            if (pageSize < s3.MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB and pageSize > s3.MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB) {
+                                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createRangeErrorInstance("pageSize must be between than {} MiB and {} MiB", .{ s3.MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB, s3.MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB }));
+                                body.detach();
+
+                                return rejected_value;
+                            } else {
+                                multipart_options.partSize = @intCast(pageSize);
+                            }
+                        }
+
+                        if (try s3_options.getOptional(globalThis, "queueSize", i32)) |queueSize| {
+                            if (queueSize < 1) {
+                                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createRangeErrorInstance("queueSize must be greather than 0", .{}));
+                                body.detach();
+                                return rejected_value;
+                            } else {
+                                multipart_options.queueSize = @intCast(@max(queueSize, 64));
+                            }
+                        }
                     }
                 }
             }
 
             if (body == .ReadableStream) {
-                // we cannot direct stream to s3
+                // we cannot direct stream to s3 we need to use multi part upload
                 defer body.ReadableStream.deinit();
                 const Wrapper = struct {
                     promise: JSC.JSPromise.Strong,
@@ -3341,7 +3361,8 @@ pub const Fetch = struct {
                 });
 
                 const promise_value = promise.value();
-                _ = credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, multipart_options, @ptrCast(&Wrapper.resolve), s3_stream);
+                const proxy_url = if (proxy) |p| p.href else "";
+                _ = credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, multipart_options, proxy_url, @ptrCast(&Wrapper.resolve), s3_stream);
                 url = .{};
                 url_proxy_buffer = "";
                 return promise_value;

@@ -1021,6 +1021,8 @@ pub const Blob = struct {
             const s3 = &destination_blob.store.?.data.s3;
             const credentials = s3.getCredentials();
             const store = source_blob.store.?;
+            const proxy = ctx.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy_url = if (proxy) |p| p.href else null;
             switch (store.data) {
                 .bytes => |bytes| {
                     if (bytes.len > S3MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE) {
@@ -1029,7 +1031,7 @@ pub const Blob = struct {
                             source_blob,
                             @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                         ), ctx)) |stream| {
-                            return credentials.s3UploadStream(s3.path(), stream, ctx, s3.options, null, undefined);
+                            return credentials.s3UploadStream(s3.path(), stream, ctx, s3.options, proxy_url, null, undefined);
                         } else {
                             return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                         }
@@ -1061,8 +1063,7 @@ pub const Blob = struct {
                         store.ref();
                         const promise = JSC.JSPromise.Strong.init(ctx);
                         const promise_value = promise.value();
-                        const proxy = ctx.bunVM().bundler.env.getHttpProxy(true, null);
-                        const proxy_url = if (proxy) |p| p.href else null;
+
                         credentials.s3Upload(s3.path(), bytes.slice(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                             .store = store,
                             .promise = promise,
@@ -1077,7 +1078,7 @@ pub const Blob = struct {
                         source_blob,
                         @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                     ), ctx)) |stream| {
-                        return credentials.s3UploadStream(s3.path(), stream, ctx, s3.options, null, undefined);
+                        return credentials.s3UploadStream(s3.path(), stream, ctx, s3.options, proxy_url, null, undefined);
                     } else {
                         return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                     }
@@ -1278,7 +1279,9 @@ pub const Blob = struct {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                                 }
-                                return credentials.s3UploadStream(s3.path(), readable, globalThis, s3.options, null, undefined);
+                                const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+                                const proxy_url = if (proxy) |p| p.href else null;
+                                return credentials.s3UploadStream(s3.path(), readable, globalThis, s3.options, proxy_url, null, undefined);
                             }
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1323,7 +1326,9 @@ pub const Blob = struct {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                                 }
-                                return credentials.s3UploadStream(s3.path(), readable, globalThis, s3.options, null, undefined);
+                                const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+                                const proxy_url = if (proxy) |p| p.href else null;
+                                return credentials.s3UploadStream(s3.path(), readable, globalThis, s3.options, proxy_url, null, undefined);
                             }
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -3874,8 +3879,10 @@ pub const Blob = struct {
             const s3 = &this.store.?.data.s3;
             const credentials = s3.getCredentials();
             const path = s3.path();
+            const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy_url = if (proxy) |p| p.href else null;
 
-            return try credentials.s3WritableStream(path, globalThis, s3.options);
+            return try credentials.s3WritableStream(path, globalThis, s3.options, proxy_url);
         }
         if (store.data != .file) {
             return globalThis.throwInvalidArguments("Blob is read-only", .{});

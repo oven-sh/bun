@@ -206,7 +206,28 @@ function styleText(format, text) {
     e.code = "ERR_INVALID_ARG_TYPE";
     throw e;
   }
-  const formatCodes = inspect.colors[format];
+
+  if ($isJSArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        const e = new Error(
+          `The value "${typeof key === "symbol" ? key.description : key}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+        );
+        e.code = "ERR_INVALID_ARG_VALUE";
+        throw e;
+      }
+      left += `\u001b[${formatCodes[0]}m`;
+      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+
+    return `${left}${text}${right}`;
+  }
+
+  let formatCodes = inspect.colors[format];
+
   if (formatCodes == null) {
     const e = new Error(
       `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,

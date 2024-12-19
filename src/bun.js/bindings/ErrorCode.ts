@@ -49,6 +49,8 @@ export default [
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError, "TypeError"],
   ["ERR_INVALID_URI", URIError, "URIError"],
+  ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
+  ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

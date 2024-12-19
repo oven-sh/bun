@@ -126,7 +126,7 @@ export function getStdinStream(fd) {
 
   let stream_destroyed = false;
   let stream_endEmitted = false;
-  stream.on = function (event, listener) {
+  stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
     //

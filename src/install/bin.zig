@@ -28,15 +28,10 @@ const Lockfile = Install.Lockfile;
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
-    unset: u8 = 0,
-    _padding_tag: [2]u8 = .{0} ** 2,
+    _padding_tag: [3]u8 = .{0} ** 3,
 
     // Largest member must be zero initialized
     value: Value = Value{ .map = ExternalStringList{} },
-
-    pub fn isUnset(this: *const Bin) bool {
-        return this.unset != 0;
-    }
 
     pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
@@ -59,26 +54,67 @@ pub const Bin = extern struct {
         return 0;
     }
 
+    pub fn eql(
+        l: *const Bin,
+        r: *const Bin,
+        l_buf: string,
+        l_extern_strings: []const ExternalString,
+        r_buf: string,
+        r_extern_strings: []const ExternalString,
+    ) bool {
+        if (l.tag != r.tag) return false;
+
+        return switch (l.tag) {
+            .none => true,
+            .file => l.value.file.eql(r.value.file, l_buf, r_buf),
+            .dir => l.value.dir.eql(r.value.dir, l_buf, r_buf),
+            .named_file => l.value.named_file[0].eql(r.value.named_file[0], l_buf, r_buf) and
+                l.value.named_file[1].eql(r.value.named_file[1], l_buf, r_buf),
+            .map => {
+                const l_list = l.value.map.get(l_extern_strings);
+                const r_list = r.value.map.get(r_extern_strings);
+                if (l_list.len != r_list.len) return false;
+
+                // assuming these maps are small without duplicate keys
+                var i: usize = 0;
+                outer: while (i < l_list.len) : (i += 2) {
+                    var j: usize = 0;
+                    while (j < r_list.len) : (j += 2) {
+                        if (l_list[i].hash == r_list[j].hash) {
+                            if (l_list[i + 1].hash != r_list[j + 1].hash) {
+                                return false;
+                            }
+
+                            continue :outer;
+                        }
+                    }
+
+                    // not found
+                    return false;
+                }
+
+                return true;
+            },
+        };
+    }
+
     pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         switch (this.tag) {
             .none => {
                 return Bin{
                     .tag = .none,
-                    .unset = this.unset,
                     .value = Value.init(.{ .none = {} }),
                 };
             },
             .file => {
                 return Bin{
                     .tag = .file,
-                    .unset = this.unset,
                     .value = Value.init(.{ .file = builder.append(String, this.value.file.slice(buf)) }),
                 };
             },
             .named_file => {
                 return Bin{
                     .tag = .named_file,
-                    .unset = this.unset,
                     .value = Value.init(
                         .{
                             .named_file = [2]String{
@@ -92,7 +128,6 @@ pub const Bin = extern struct {
             .dir => {
                 return Bin{
                     .tag = .dir,
-                    .unset = this.unset,
                     .value = Value.init(.{ .dir = builder.append(String, this.value.dir.slice(buf)) }),
                 };
             },
@@ -103,7 +138,6 @@ pub const Bin = extern struct {
 
                 return Bin{
                     .tag = .map,
-                    .unset = this.unset,
                     .value = Value.init(.{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) }),
                 };
             },
@@ -118,7 +152,6 @@ pub const Bin = extern struct {
 
         const cloned: Bin = .{
             .tag = this.tag,
-            .unset = this.unset,
 
             .value = switch (this.tag) {
                 .none => Value.init(.{ .none = {} }),
@@ -234,6 +267,46 @@ pub const Bin = extern struct {
             };
         }
         return .{};
+    }
+
+    /// Writes value of bin to a single line, either as a string or object. Cannot be `.none` because a value is expected to be
+    /// written to the json, as a property value or array value.
+    pub fn toSingleLineJson(this: *const Bin, buf: string, extern_strings: []const ExternalString, writer: anytype) @TypeOf(writer).Error!void {
+        bun.debugAssert(this.tag != .none);
+        switch (this.tag) {
+            .none => {},
+            .file => {
+                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+            },
+            .named_file => {
+                try writer.writeByte('{');
+                try writer.print(" {}: {} ", .{
+                    this.value.named_file[0].fmtJson(buf, .{}),
+                    this.value.named_file[1].fmtJson(buf, .{}),
+                });
+                try writer.writeByte('}');
+            },
+            .dir => {
+                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+            },
+            .map => {
+                try writer.writeByte('{');
+                const list = this.value.map.get(extern_strings);
+                var first = true;
+                var i: usize = 0;
+                while (i < list.len) : (i += 2) {
+                    if (!first) {
+                        try writer.writeByte(',');
+                    }
+                    first = false;
+                    try writer.print(" {}: {}", .{
+                        list[i].value.fmtJson(buf, .{}),
+                        list[i + 1].value.fmtJson(buf, .{}),
+                    });
+                }
+                try writer.writeAll(" }");
+            },
+        }
     }
 
     pub fn init() Bin {

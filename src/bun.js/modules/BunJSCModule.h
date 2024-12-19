@@ -889,6 +889,19 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue value = callFrame->argument(0);
+    if (value.isCell()) {
+        auto& vm = globalObject->vm();
+        EnsureStillAliveScope alive = value;
+        return JSValue::encode(jsDoubleNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
+    }
+
+    return JSValue::encode(jsNumber(0));
+}
+
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h
 @begin BunJSCModuleTable
@@ -918,17 +931,18 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     totalCompileTime                    functionTotalCompileTime                    Function    0                                            
     getProtectedObjects                 functionGetProtectedObjects                 Function    0                                               
     generateHeapSnapshotForDebugging    functionGenerateHeapSnapshotForDebugging    Function    0                                                                            
-    profile                             functionRunProfiler                         Function    0                           
+    profile                              functionRunProfiler                          Function    0                           
     setTimeZone                         functionSetTimeZone                         Function    0                               
     serialize                           functionSerialize                           Function    0                             
-    deserialize                         functionDeserialize                         Function    0                               
+    deserialize                         functionDeserialize                         Function    0   
+    estimateShallowMemoryUsageOf         functionEstimateDirectMemoryUsageOf         Function    1
 @end
 */
 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(34);
+    INIT_NATIVE_MODULE(35);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -957,10 +971,11 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getProtectedObjects"_s), functionGetProtectedObjects);
     putNativeFn(Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), functionGenerateHeapSnapshotForDebugging);
     putNativeFn(Identifier::fromString(vm, "profile"_s), functionRunProfiler);
-    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s), functionCodeCoverageForFile);
+    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s),  functionCodeCoverageForFile);
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
+    putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);

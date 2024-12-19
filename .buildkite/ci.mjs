@@ -296,19 +296,16 @@ function getEc2Agent(platform, options, ec2Options) {
 /**
  * @param {Platform} platform
  * @param {PipelineOptions} options
- * @param {boolean} [linkOnly]
  * @returns {string}
  */
-function getCppAgent(platform, options, linkOnly) {
+function getCppAgent(platform, options) {
   const { os, arch, distro } = platform;
 
   if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
-      // On macOS, we compile C++ on aarch64 since it's faster.
-      // However, this doesn't work for linking yet.
-      arch: linkOnly ? arch : "aarch64",
+      arch,
     };
   }
 
@@ -425,7 +422,12 @@ function getBuildCppStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform, options),
+    // On macOS, we cross-compile C++ on aarch64 since it's faster.
+    // However, this doesn't work for linking yet.
+    agents:
+      toolchain === "darwin-x64"
+        ? getCppAgent({ ...platform, arch: "aarch64" }, options)
+        : getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {

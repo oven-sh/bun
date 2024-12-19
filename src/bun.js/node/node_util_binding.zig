@@ -123,6 +123,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
 
     const str = try value.toBunString2(globalThis);
 
+    // if (str.isUTF16()) return JSC.JSValue.jsUndefined();
     if (str.is8Bit() or bun.strings.isAllASCII(str.byteSlice())) {
         var lines: std.ArrayListUnmanaged(bun.String) = .{};
         defer {
@@ -137,12 +138,33 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
 
         while (std.mem.indexOfScalarPos(u8, bytes, start, '\n')) |delim_start| {
             const end = delim_start + 1;
-            try lines.append(allocator, bun.String.fromBytes(bytes[start..end])); // include the newline
+            const buf = bytes[start..end];
+            const s = switch (str.encoding()) {
+                .latin1 => bun.String.fromBytes(buf),
+                .utf8 => bun.String.fromUTF8(buf),
+                .utf16 => blk: {
+                    var _s = bun.String.fromBytes(buf);
+                    _s.value.ZigString.markUTF16();
+                    break :blk _s;
+                },
+                    // bun.String.fromUTF16(@ptrCast(buf)),
+            };
+            try lines.append(allocator, s); // include the newline
             start = end;
         }
 
         if (start < bytes.len) {
-            try lines.append(allocator, bun.String.fromBytes(bytes[start..]));
+            const buf = bytes[start..];
+            const s = switch (str.encoding()) {
+                .latin1 => bun.String.fromBytes(buf),
+                .utf8 => bun.String.fromUTF8(buf),
+                .utf16 => blk: {
+                    var _s = bun.String.fromBytes(buf);
+                    _s.value.ZigString.markUTF16();
+                    break :blk _s;
+                },
+            };
+            try lines.append(allocator, s);
         }
 
         return bun.String.toJSArray(globalThis, lines.items);

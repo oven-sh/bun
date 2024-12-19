@@ -240,8 +240,8 @@ export namespace t {
    * Reference an external class type that is not defined with `bindgen`,
    * from either WebCore, JavaScriptCore, or Bun.
    */
-  export function externalClass<T>(name: string): Type<T> {
-    return new TypeImpl("ref", name);
+  export function externalClass<T>(externalClass: ExternalClass): Type<T> {
+    return new TypeImpl("externalClass", externalClass);
   }
 
   export function oneOf<T extends Type<any>[]>(
@@ -293,6 +293,11 @@ export namespace t {
   export function rest(...types: Type<any>[]): Type<any, "rest"> {
     return new TypeImpl("rest", types as any);
   }
+}
+
+export interface ExternalClass {
+  name: string;
+  zig: string;
 }
 
 export type FuncOptions = FuncMetadata &

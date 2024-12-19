@@ -122,7 +122,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   isVirtualArgument() {
-    return this.kind === "globalObject" || this.kind === "zigVirtualMachine";
+    return this.kind === "globalObject" || this.kind === "zigVirtualMachine" || this.kind === "callFrame";
   }
 
   hash() {
@@ -130,7 +130,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       return this.#hash;
     }
     let h = `${this.kind}:`;
-    switch (this.kind) {
+    switch (this.kind as TypeKind) {
       case "ref":
         throw new Error("TODO");
       case "sequence":
@@ -220,7 +220,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "sequence": // []const T
         return null;
       case "externalClass":
-        throw new Error("TODO");
         return "*anyopaque";
       case "dictionary": {
         let existing = typeHashToStruct.get(this.hash());

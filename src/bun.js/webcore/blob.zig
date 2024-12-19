@@ -1011,9 +1011,7 @@ pub const Blob = struct {
             cloned.allocator = bun.default_allocator;
             return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
         } else if (destination_type == .bytes and (source_type == .file or source_type == .s3)) {
-            var fake_call_frame: [8]JSC.JSValue = undefined;
-            @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
-            const blob_value = source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame))) catch .zero; // TODO:
+            const blob_value = source_blob.getSliceFrom(ctx, 0, 0, "", false);
 
             return JSPromise.resolvedPromiseValue(
                 ctx,
@@ -3987,6 +3985,30 @@ pub const Blob = struct {
         return sink.toJS(globalThis);
     }
 
+    pub fn getSliceFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, relativeStart: i64, relativeEnd: i64, content_type: []const u8, content_type_was_allocated: bool) JSValue {
+        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
+        const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
+
+        // This copies over the is_all_ascii flag
+        // which is okay because this will only be a <= slice
+        var blob = this.dupe();
+        blob.offset = offset;
+        blob.size = len;
+
+        // infer the content type if it was not specified
+        if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {
+            blob.content_type = this.content_type;
+        } else {
+            blob.content_type = content_type;
+        }
+        blob.content_type_allocated = content_type_was_allocated;
+        blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
+
+        var blob_ = Blob.new(blob);
+        blob_.allocator = bun.default_allocator;
+        return blob_.toJS(globalThis);
+    }
+
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     /// The slice() method returns a new Blob object with bytes ranging from the
     /// optional start parameter up to but not including the optional end
@@ -4078,26 +4100,7 @@ pub const Blob = struct {
             }
         }
 
-        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
-        const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
-
-        // This copies over the is_all_ascii flag
-        // which is okay because this will only be a <= slice
-        var blob = this.dupe();
-        blob.offset = offset;
-        blob.size = len;
-
-        // infer the content type if it was not specified
-        if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated)
-            content_type = this.content_type;
-
-        blob.content_type = content_type;
-        blob.content_type_allocated = content_type_was_allocated;
-        blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
-
-        var blob_ = Blob.new(blob);
-        blob_.allocator = allocator;
-        return blob_.toJS(globalThis);
+        return this.getSliceFrom(globalThis, relativeStart, relativeEnd, content_type, content_type_was_allocated);
     }
 
     pub fn getMimeType(this: *const Blob) ?bun.http.MimeType {

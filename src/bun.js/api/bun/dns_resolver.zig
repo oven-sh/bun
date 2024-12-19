@@ -1733,6 +1733,7 @@ pub const DNSResolver = struct {
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
     polls: PollsMap,
+    options: c_ares.ChannelOptions = .{},
 
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
@@ -2109,7 +2110,7 @@ pub const DNSResolver = struct {
     };
     pub fn getChannel(this: *DNSResolver) ChannelResult {
         if (this.channel == null) {
-            if (c_ares.Channel.init(DNSResolver, this)) |err| {
+            if (c_ares.Channel.init(DNSResolver, this, this.options)) |err| {
                 return .{ .err = err };
             }
         }
@@ -3026,9 +3027,20 @@ pub const DNSResolver = struct {
     }
 
     pub fn newResolver(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = callframe;
+        const resolver = DNSResolver.init(globalThis.allocator(), globalThis.bunVM());
 
-        return DNSResolver.init(globalThis.allocator(), globalThis.bunVM()).toJS(globalThis);
+        const options = callframe.argument(0);
+        if (options.isObject()) {
+            if (try options.get(globalThis, "timeout")) |timeout| {
+                resolver.options.timeout = timeout.coerceToInt32(globalThis);
+            }
+
+            if (try options.get(globalThis, "tries")) |tries| {
+                resolver.options.tries = tries.coerceToInt32(globalThis);
+            }
+        }
+
+        return resolver.toJS(globalThis);
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.

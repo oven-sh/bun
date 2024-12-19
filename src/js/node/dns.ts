@@ -145,11 +145,33 @@ function lookupService(address, port, callback) {
   );
 }
 
+function validateResolverOptions(options) {
+  if (options === undefined) {
+    return;
+  }
+
+  for (const key of ["timeout", "tries"]) {
+    if (key in options) {
+      if (typeof options[key] !== "number") {
+        throw $ERR_INVALID_ARG_TYPE(key, "number", typeof options[key]);
+      }
+    }
+  }
+
+  if ("timeout" in options) {
+    const timeout = options.timeout;
+    if ((timeout < 0 && timeout != -1) || Math.floor(timeout) != timeout || timeout >= 2 ** 31) {
+      throw $ERR_OUT_OF_RANGE("Invalid timeout", timeout);
+    }
+  }
+}
+
 var InternalResolver = class Resolver {
   #resolver;
 
   constructor(options) {
-    this.#resolver = dns.newResolver();
+    validateResolverOptions(options);
+    this.#resolver = this._handle = dns.newResolver(options);
   }
 
   cancel() {}
@@ -159,7 +181,7 @@ var InternalResolver = class Resolver {
   }
 
   getServers() {
-    return Resolver.#getResolver(this).getServers();
+    return Resolver.#getResolver(this).getServers() || [];
   }
 
   resolve(hostname, rrtype, callback) {
@@ -616,7 +638,8 @@ const promises = {
     #resolver;
 
     constructor(options) {
-      this.#resolver = dns.newResolver();
+      validateResolverOptions(options);
+      this.#resolver = this._handle = dns.newResolver(options);
     }
 
     cancel() {}
@@ -626,7 +649,7 @@ const promises = {
     }
 
     getServers() {
-      return Resolver.#getResolver(this).getServers();
+      return Resolver.#getResolver(this).getServers() || [];
     }
 
     resolve(hostname, rrtype) {

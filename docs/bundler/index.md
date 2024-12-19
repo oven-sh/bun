@@ -1259,7 +1259,7 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 ### `experimentalCss`
 
-Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`.
+Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`. In 1.2, this property will be deleted, and CSS bundling will always be enabled.
 
 This supports bundling CSS files imported from JS, as well as CSS entrypoints.
 
@@ -1274,6 +1274,12 @@ const result = await Bun.build({
 ```
 
 {% /codetabs %}
+
+### `throw`
+
+If set to `true`, `Bun.build` will throw on build failure. See the section ["Logs and Errors"](#logs-and-errors) for more details on the error message structure.
+
+In 1.2, this will default to `true`, with the previous behavior as `throw: false`
 
 ## Outputs
 
@@ -1460,8 +1466,6 @@ class ResolveMessage extends BuildMessage {
 }
 ```
 
-
-
 On build success, the returned object contains a `logs` property, which contains bundler warnings and info messages.
 
 ```ts
@@ -1545,7 +1549,7 @@ try {
 
 ## Reference
 
-````ts
+```ts
 interface Bun {
   build(options: BuildOptions): Promise<BuildOutput>;
 }
@@ -1599,14 +1603,6 @@ interface BuildConfig {
    * - `"disable"`: Disables environment variable injection entirely
    * - A string ending in `*`: Inlines environment variables that match the given prefix.
    *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
-   *
-   * @example
-   * ```ts
-   * Bun.build({
-   *   env: "MY_PUBLIC_*",
-   *   entrypoints: ["src/index.ts"],
-   * })
-   * ```
    */
   env?: "inline" | "disable" | `${string}*`;
   minify?:
@@ -1725,33 +1721,4 @@ declare class ResolveMessage {
 
   toString(): string;
 }
-````
-
-<!--
-interface BuildManifest {
-  inputs: {
-    [path: string]: {
-      output: {
-        path: string;
-      };
-      imports: {
-        path: string;
-        kind: ImportKind;
-        external?: boolean;
-        asset?: boolean; // whether the import defaulted to "file" loader
-      }[];
-    };
-  };
-  outputs: {
-    [path: string]: {
-      type: "chunk" | "entrypoint" | "asset";
-      inputs: { path: string }[];
-      imports: {
-        path: string;
-        kind: ImportKind;
-        external?: boolean;
-      }[];
-      exports: string[];
-    };
-  };
-} -->
+```

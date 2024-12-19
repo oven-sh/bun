@@ -1,14 +1,16 @@
 // This is the public API for `bind.ts` files
 // It is aliased as `import {} from 'bindgen'`
 import {
+  type TypeKind,
   isType,
   dictionaryImpl,
   oneOfImpl,
   registerFunction,
   TypeImpl,
-  type TypeKind,
   isFunc,
+  snapshotCallerLocation,
 } from "./bindgen-lib-internal";
+import assert from "assert";
 
 /** A type definition for argument parsing. See `bindgen.md` for usage details. */
 export type Type<
@@ -23,6 +25,10 @@ export type Type<
   : F extends true
     ? {
         [isType]: true | [T, K, F];
+        /**
+         * By default, optional types can be `null` or `undefined`. A non-null
+         * optional only accepts `undefined` as the "none" variant.
+         */
         nonNull: Type<T, K, "opt-nonnull">;
       }
     : { [isType]: true | [T, K, F] };
@@ -111,6 +117,91 @@ type PropertyMapKeys = keyof TypePropsMap<any>;
 type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
 
 export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
+
+const kTypes = [
+  "string",
+  "function",
+  "number",
+  "object",
+  // Accept 'Function' and 'Object' as alternative to the lower cased version.
+  "Function",
+  "Object",
+  "boolean",
+  "bigint",
+  "symbol",
+];
+const classRegExp = /^[A-Z][a-zA-Z0-9]*$/;
+
+export function formatList(array, type = "and") {
+  switch (array.length) {
+    case 0:
+      return "";
+    case 1:
+      return `${array[0]}`;
+    case 2:
+      return `${array[0]} ${type} ${array[1]}`;
+    case 3:
+      return `${array[0]}, ${array[1]}, ${type} ${array[2]}`;
+    default:
+      return `${array.slice(0, -1).join(", ")}, ${type} ${array[array.length - 1]}`;
+  }
+}
+
+/**
+ * Examples:
+ * - ["string", "number"] -> "a string or a number"
+ */
+export function nodeInvalidArgTypeMessage(expected: string[]) {
+  // This function is ported from the Node.js code that generates argument error messages.
+  let msg = "";
+
+  const types: string[] = [];
+  const instances: string[] = [];
+  const other: string[] = [];
+
+  for (const value of expected) {
+    assert(typeof value === "string", "All expected entries have to be of type string");
+    if (kTypes.includes(value)) {
+      types.push(value.toLowerCase());
+    } else if (classRegExp.exec(value) !== null) {
+      instances.push(value);
+    } else {
+      assert(value !== "object", 'The value "object" should be written as "Object"');
+      other.push(value);
+    }
+  }
+
+  // Special handle `object` in case other instances are allowed to outline
+  // the differences between each other.
+  if (instances.length > 0) {
+    const pos = types.indexOf("object");
+    if (pos !== -1) {
+      types.splice(pos, 1);
+      instances.push("Object");
+    }
+  }
+
+  if (types.length > 0) {
+    msg += `${types.length > 1 ? "one of type" : "of type"} ${formatList(types, "or")}`;
+    if (instances.length > 0 || other.length > 0) msg += " or ";
+  }
+
+  if (instances.length > 0) {
+    msg += `an instance of ${formatList(instances, "or")}`;
+    if (other.length > 0) msg += " or ";
+  }
+
+  if (other.length > 0) {
+    if (other.length > 1) {
+      msg += `one of ${formatList(other, "or")}`;
+    } else {
+      if (other[0].toLowerCase() !== other[0]) msg += "an ";
+      msg += `${other[0]}`;
+    }
+  }
+
+  return msg;
+}
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -211,6 +302,14 @@ export namespace t {
    */
   export const UTF8String = builtinType<string>()("UTF8String");
 
+  export function customZig<T>(customZigOption: CustomZig) {
+    return new TypeImpl("customZig", customZigOption);
+  }
+
+  export function customCpp<T>(customCppOption: CustomCpp) {
+    return new TypeImpl("customCpp", customCppOption);
+  }
+
   /** An array or iterable type of T */
   export function sequence<T>(itemType: Type<T>): Type<Iterable<T>, "sequence"> {
     return new TypeImpl("sequence", {
@@ -283,7 +382,7 @@ export namespace t {
    * file. Use this to get an enum type that can have functions added.
    */
   export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
+    return new TypeImpl("zigEnum", { file, impl, snapshot: snapshotCallerLocation() });
   }
 
   /**
@@ -293,6 +392,33 @@ export namespace t {
   export function rest(...types: Type<any>[]): Type<any, "rest"> {
     return new TypeImpl("rest", types as any);
   }
+
+  // Compound types built off of `t.customZig`
+
+  /**
+   * Anything that can be interpreted as a byte array.
+   */
+  export const StringOrBuffer = customZig<string | Buffer | ArrayBuffer | NodeJS.TypedArray | DataView>({
+    type: "JSC.Node.StringOrBuffer",
+    fromJSFunction: "JSC.Node.StringOrBuffer.fromJS",
+    fromJSArgs: ["global", "allocator", "value"],
+    fromJSReturn: "optional",
+    validateFunction: "JSC.Node.StringOrBuffer.validateForBindgen",
+    validateErrorDescription: nodeInvalidArgTypeMessage(["string", "Buffer", "TypedArray", "DataView"]),
+    deinitMethod: "deinit",
+    deinitArgs: [],
+  });
+  /**
+   * Anything ArrayBuffer-like
+   */
+  export const ArrayBuffer = customCpp<Buffer | ArrayBuffer | NodeJS.TypedArray | DataView>({
+    cppType: "Bun__ArrayBuffer",
+    header: ["headers.h"],
+    zigType: "JSC.ArrayBuffer",
+    fromJSFunction: "JSC__JSValue__asArrayBuffer_",
+    fromJSArgs: ["encoded-value", "global", "out"],
+    validateErrorDescription: nodeInvalidArgTypeMessage(["Buffer", "TypedArray", "DataView"]),
+  });
 }
 
 export interface ExternalClass {
@@ -300,7 +426,60 @@ export interface ExternalClass {
   zig: string;
 }
 
-export type FuncOptions = FuncMetadata &
+export interface CustomZig {
+  /** Type name such as `bun.String`. Should start with `bun` or `JSC` */
+  type: string;
+  /** Fully qualified name */
+  fromJSFunction: string;
+  /** If the function can error */
+  fromJSReturn?: "optional" | "error";
+  /** Argument layout */
+  fromJSArgs: CustomZigArg[];
+  /**
+   * Fast function to validate if value is probably valid.
+   * This is used by variant selection code.
+   * Must have no false negatives. False positives are ok
+   * and can be caught by the actual `fromJS` function.
+   */
+  validateFunction?: string;
+  /**
+   * Error message to display if the value is not valid
+   * "The {...} must be {validateErrorDescription}"
+   */
+  validateErrorDescription?: string;
+  /** Method name, such as "deinit" */
+  deinitMethod?: string;
+  /** Argument layout, not including the value which is the first argument. */
+  deinitArgs?: CustomZigArg[];
+}
+
+export interface CustomCpp {
+  /** Additional headers to include */
+  header: string | string[];
+  /**
+   * C++ type. If a Zig type name is specified, it is assumed
+   * that the C++ type is compatible with the C ABI
+   */
+  cppType: string;
+  /** Type name such as `bun.String`. Should start with `bun` or `JSC` */
+  zigType?: string;
+  /** Fully qualified name */
+  fromJSFunction: string;
+  /** If the function can error */
+  fromJSReturn?: "optional" | "error";
+  /** Argument layout */
+  fromJSArgs: CustomCppArg[];
+  /**
+   * Error message to display if the value is not valid
+   * "The {...} must be {validateErrorDescription}"
+   */
+  validateErrorDescription?: string;
+}
+
+export type CustomZigArg = "global" | "value" | "allocator" | { text: string };
+export type CustomCppArg = "global" | "value" | "encoded-value" | "out" | { text: string };
+
+export type FnOptions = FuncMetadata &
   (
     | {
         variants: FuncVariant[];
@@ -310,14 +489,19 @@ export type FuncOptions = FuncMetadata &
 
 export interface FuncMetadata {
   /**
+   * In functions that can emit errors, this name is used. When used for a generated
+   * class, this is automatically filled.
+   */
+  className?: string;
+  /**
    * The namespace where the implementation is, by default it's in the root.
    */
   implNamespace?: string;
-  /**
-   * TODO:
-   * Automatically generate code to expose this function on a well-known object
-   */
-  exposedOn?: ExposedOn;
+  // /**
+  //  * TODO:
+  //  * Automatically generate code to expose this function on a well-known object
+  //  */
+  // exposedOn?: ExposedOn;
 }
 
 export type FuncReference = { [isFunc]: true };
@@ -330,7 +514,7 @@ export interface FuncVariant {
   ret: Type<any>;
 }
 
-export function fn(opts: FuncOptions) {
+export function Fn(opts: FnOptions) {
   return registerFunction(opts) as FuncReference;
 }
 
@@ -341,3 +525,13 @@ export function fn(opts: FuncOptions) {
 // export function getterSetter<T>(returnType: Type<T>) {
 //   return registerAttribute({ type: returnType, readonly: true });
 // }
+export const fn = Fn;
+
+// export interface ClassOptions {
+//   /** Name of the class */
+//   impl?: string;
+//   methods: Record<string, FuncReference>;
+//   properties: Record<string, Type<any>>;
+// }
+
+// export function Class(opts: ClassOptions) {}

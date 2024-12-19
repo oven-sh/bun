@@ -304,6 +304,7 @@ it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
       enable_lto: false,
+      node_module_version: 127,
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},

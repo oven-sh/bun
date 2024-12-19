@@ -235,7 +235,7 @@ pub const TextEncoder = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = TextEncoder.TextEncoder__encode8;
         _ = TextEncoder.TextEncoder__encode16;
         _ = TextEncoder.TextEncoder__encodeInto8;
@@ -1547,7 +1547,7 @@ pub const Encoder = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = Bun__encoding__writeLatin1;
             _ = Bun__encoding__writeUTF16;
 
@@ -1564,7 +1564,7 @@ pub const Encoder = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         std.testing.refAllDecls(Encoder);
     }
 }

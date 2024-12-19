@@ -3,7 +3,7 @@
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
-import type { FuncOptions, Type, t } from "./bindgen-lib";
+import type { CustomCpp, CustomZig, FnOptions, Type, t } from "./bindgen-lib";
 import * as path from "node:path";
 import assert from "node:assert";
 
@@ -18,6 +18,19 @@ export let typeHashToReachableType = new Map<string, TypeImpl>();
 export let typeHashToStruct = new Map<string, Struct>();
 export let typeHashToNamespace = new Map<string, string>();
 export let structHashToSelf = new Map<string, Struct>();
+export let zigEnums = new Map<string, ZigEnum>();
+
+export interface ZigEnum {
+  file: string;
+  snapshot: string;
+  name: string;
+  tag: CAbiType;
+  resolved: boolean;
+  variants: {
+    name: string;
+    value: number | bigint;
+  }[];
+}
 
 /** String literal */
 export const str = (v: any) => JSON.stringify(v);
@@ -44,11 +57,14 @@ export const pascal = (s: string) => cap(camel(s));
 /** The JS Host function, aka fn (*JSC.JSGlobalObject, *JSC.CallFrame) JSValue.MaybeException */
 export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
   `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}`;
-/** Each variant gets a dispatcher function. */
+/** Each variant gets a dispatcher function, defined in Zig. */
 export const extDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: number) =>
   `bindgen_${cap(namespaceVar)}_dispatch${cap(fnLabel)}${variantNumber}`;
+/** When there are more than 1 variants, an internal dispatch function decodes the arguments. */
 export const extInternalDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: string | number) =>
   `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}_v${variantNumber}`;
+/** Used by `t.customZig` validator functions */
+export const extCustomZigValidator = (key: string) => `bindgen_zig_${key.replaceAll(".", "__")}`;
 
 interface TypeDataDefs {
   /** The name */
@@ -65,10 +81,15 @@ interface TypeDataDefs {
   zigEnum: {
     file: string;
     impl: string;
+    snapshot: string;
   };
   stringEnum: string[];
   oneOf: TypeImpl[];
   dictionary: DictionaryField[];
+  customZig: CustomZig;
+  customCpp: CustomCpp & {
+    cachedExternalStruct?: ExternalStruct;
+  };
 }
 export type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
@@ -82,6 +103,7 @@ interface Flags {
   required?: boolean;
   nonNull?: boolean;
   default?: any;
+  exported?: boolean;
   range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
   finite?: boolean;
 }
@@ -118,11 +140,15 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     this.kind = kind;
     this.data = data;
     this.flags = flags;
-    this.ownerFile = path.basename(stackTraceFileName(snapshotCallerLocation()), ".bind.ts");
+    this.ownerFile = path.relative(src, stackTraceFileName(snapshotCallerLocation()));
   }
 
   isVirtualArgument() {
     return this.kind === "globalObject" || this.kind === "zigVirtualMachine" || this.kind === "callFrame";
+  }
+
+  ownerFileBasename() {
+    return path.basename(this.ownerFile, ".bind.ts");
   }
 
   hash() {
@@ -171,6 +197,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "stringEnum":
       case "zigEnum":
         return true;
+      // customZig is special cased
+      case "customZig":
+      case "customCpp":
       default:
         return false;
     }
@@ -211,7 +240,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "stringEnum":
         return cAbiTypeForEnum(this.data.length);
       case "zigEnum":
-        throw new Error("TODO");
+        const zigEnum = zigEnums.get(this.hash());
+        assert(zigEnum && zigEnum.resolved, "enum was not resolved");
+        return zigEnum.tag;
       case "undefined":
         return "u0";
       case "oneOf": // `union(enum)`
@@ -242,11 +273,19 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         typeHashToStruct.set(this.hash(), existing);
         return existing;
       }
+      case "customCpp": {
+        const customCpp = this.data as TypeData<"customCpp">;
+        if (customCpp.zigType) {
+          return (customCpp.cachedExternalStruct ??= new ExternalStruct(customCpp.cppType, customCpp.zigType));
+        }
+        return null;
+      }
+      case "customZig":
       case "sequence": {
         return null;
       }
       default: {
-        throw new Error("unexpected: " + (kind satisfies never));
+        throw new Error("unexpected: " + kind);
       }
     }
   }
@@ -258,7 +297,19 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
     if (existing) return (this.nameDeduplicated = existing.nameDeduplicated ??= this.#generateName());
-    return (this.nameDeduplicated = `anon_${this.kind}_${hash}`);
+    if (this.kind === "customCpp") {
+      return (this.canDirectlyMapToCAbi() as ExternalStruct).name();
+    }
+    return (this.nameDeduplicated = `bindgen_${this.kind}_${hash}`);
+  }
+
+  publicName() {
+    switch (this.kind) {
+      case "zigEnum":
+        return this.data.impl.split(".").pop();
+      default:
+        return this.name();
+    }
   }
 
   cppInternalName() {
@@ -267,7 +318,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const namespace = typeHashToNamespace.get(this.hash());
     if (cAbiType) {
       if (typeof cAbiType === "string") {
-        return cAbiType;
+        return cAbiTypeName(cAbiType);
       }
     }
     return namespace ? `${namespace}${name}` : name;
@@ -291,7 +342,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   #generateName() {
-    return `bindgen_${this.ownerFile}_${this.hash()}`;
+    return `bindgen_${this.ownerFileBasename()}_${this.hash()}`;
   }
 
   /**
@@ -313,7 +364,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     if (!this.lowersToNamedType()) return;
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
-    this.nameDeduplicated ??= existing?.name() ?? `anon_${this.kind}_${hash}`;
+    this.nameDeduplicated ??=
+      existing?.name() ??
+      (this.kind === "zigEnum"
+        ? `Zig${pascal(path.basename(this.data.file, ".zig").replaceAll(".", "_"))}${pascal(this.data.impl.replaceAll(".", "_"))}`
+        : `bindgen_${this.kind}_${hash}`);
     if (!existing) typeHashToReachableType.set(hash, this);
 
     switch (this.kind) {
@@ -335,6 +390,19 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           type.markReachable();
         }
         break;
+      case "zigEnum": {
+        const hash = this.hash();
+        if (zigEnums.has(hash)) return;
+        zigEnums.set(hash, {
+          file: this.data.file,
+          name: this.data.impl,
+          snapshot: this.data.snapshot,
+          tag: "u32",
+          variants: [],
+          resolved: false,
+        });
+        break;
+      }
     }
   }
 
@@ -442,6 +510,34 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         break;
       default:
         throw new Error(`TODO: set default value on type ${this.kind}`);
+    }
+  }
+
+  assertCanBeReturned() {
+    for (const modifier of [
+      //
+      "nodeValidator",
+      "optional",
+      "required",
+      "nonNull",
+      "default",
+      "range",
+      "finite",
+    ]) {
+      if (modifier in this.flags) {
+        if (modifier === "nodeValidator" || modifier === "range") {
+          throw new Error("Cannot return a type with a validation modifier.");
+        }
+        throw new Error("Cannot return a type with the '" + modifier + "' modifier.");
+      }
+    }
+
+    switch (this.kind) {
+      case "UTF8String":
+      case "USVString":
+      case "ByteString":
+        throw new Error(`Cannot return t.${this.kind}. Use t.DOMString instead`);
+      default:
     }
   }
 
@@ -731,6 +827,7 @@ export interface Func {
   snapshot: string;
   zigFile: string;
   variants: Variant[];
+  className: string;
 }
 
 export interface Variant {
@@ -807,6 +904,7 @@ export type ReturnStrategy =
 export interface File {
   functions: Func[];
   typedefs: TypeDef[];
+  anonTypedefs: TypeImpl[];
 }
 
 export interface TypeDef {
@@ -814,14 +912,14 @@ export interface TypeDef {
   type: TypeImpl;
 }
 
-export function registerFunction(opts: FuncOptions) {
+export function registerFunction(opts: FnOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
   const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".zig"));
   let file = files.get(zigFile);
   if (!file) {
-    file = { functions: [], typedefs: [] };
+    file = { functions: [], typedefs: [], anonTypedefs: [] };
     files.set(zigFile, file);
   }
   const variants: Variant[] = [];
@@ -829,9 +927,11 @@ export function registerFunction(opts: FuncOptions) {
     let i = 1;
     for (const variant of opts.variants) {
       const { minRequiredArgs } = validateVariant(variant);
+      const ret = variant.ret as TypeImpl;
+      ret.assertCanBeReturned();
       variants.push({
         args: Object.entries(variant.args).map(([name, type]) => ({ name, type })) as Arg[],
-        ret: variant.ret as TypeImpl,
+        ret,
         suffix: `${i}`,
         minRequiredArgs,
       } as unknown as Variant);
@@ -839,10 +939,12 @@ export function registerFunction(opts: FuncOptions) {
     }
   } else {
     const { minRequiredArgs } = validateVariant(opts);
+    const ret = opts.ret as TypeImpl;
+    ret.assertCanBeReturned();
     variants.push({
       suffix: "",
       args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
-      ret: opts.ret as TypeImpl,
+      ret,
       minRequiredArgs,
     });
   }
@@ -854,6 +956,7 @@ export function registerFunction(opts: FuncOptions) {
     snapshot,
     zigFile,
     variants,
+    className: opts.className ?? "",
   };
   allFunctions.push(func);
   file.functions.push(func);
@@ -901,7 +1004,7 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
-function snapshotCallerLocation(): string {
+export function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
@@ -936,9 +1039,10 @@ export type CAbiType =
   | "i32"
   | "i64"
   | "f64"
+  | ExternalStruct
   | Struct;
 
-export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] {
+export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] | null {
   if (typeof type !== "string") {
     return type.abiInfo();
   }
@@ -981,8 +1085,8 @@ export function cAbiTypeName(type: CAbiType) {
     {
       "*anyopaque": "void*",
       "*JSGlobalObject": "JSC::JSGlobalObject*",
-      "JSValue": "JSValue",
-      "JSValue.MaybeException": "JSValue",
+      "JSValue": "JSC::EncodedJSValue",
+      "JSValue.MaybeException": "JSC::EncodedJSValue",
       "bool": "bool",
       "u8": "uint8_t",
       "u16": "uint16_t",
@@ -1077,7 +1181,7 @@ export class Struct {
   }
 
   add(name: string, cType: CAbiType) {
-    const [size, naturalAlignment] = cAbiTypeInfo(cType);
+    const [size, naturalAlignment] = cAbiTypeInfo(cType) ?? [null, null];
     this.fields.push({ name, type: cType, size, naturalAlignment });
   }
 
@@ -1102,12 +1206,37 @@ export class Struct {
   }
 }
 
+export class ExternalStruct {
+  #cppName: string;
+  #zigName: string;
+  constructor(cppName: string, zigName: string) {
+    this.#cppName = cppName;
+    this.#zigName = zigName;
+  }
+
+  name() {
+    return this.#cppName;
+  }
+
+  toString() {
+    return this.#zigName;
+  }
+
+  zigName() {
+    return this.#zigName;
+  }
+
+  abiInfo() {
+    return null;
+  }
+}
+
 export interface StructField {
   /** camel case */
   name: string;
   type: CAbiType;
-  size: number;
-  naturalAlignment: number;
+  size: number | null;
+  naturalAlignment: number | null;
 }
 
 export class CodeWriter {

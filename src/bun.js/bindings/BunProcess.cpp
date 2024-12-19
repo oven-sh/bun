@@ -375,8 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
-        JSC::throwTypeError(globalObject, scope, msg);
-        return {};
+        return Bun::ERR::DLOPEN_FAILED(scope, globalObject, msg);
     }
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
@@ -1869,6 +1868,8 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s),
         JSC::jsNumber(1), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_module_version"_s),
+        JSC::jsNumber(REPORTED_NODEJS_ABI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);

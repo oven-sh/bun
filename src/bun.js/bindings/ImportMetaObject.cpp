@@ -1,3 +1,4 @@
+#include "ErrorCode.h"
 #include "root.h"
 #include "headers.h"
 
@@ -189,9 +190,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     JSC::JSValue moduleName = callFrame->argument(0);
     JSC::JSValue fromValue = callFrame->argument(1);
 
-    if (moduleName.isUndefinedOrNull()) {
-        JSC::throwTypeError(globalObject, scope, "expects a string"_s);
-        scope.release();
+    if (!moduleName.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "id"_s, "string"_s, moduleName);
+        return {};
+    }
+    auto moduleNameString = moduleName.toWTFString(globalObject);
+    if (moduleNameString.isEmpty()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "id"_s, moduleName, "must be a non-empty string"_s);
         return {};
     }
 
@@ -260,7 +265,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         }
     }
 
-    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
+    BunString moduleNameBunString = Bun::toString(moduleNameString);
+    auto result = Bun__resolveSync(globalObject, &moduleNameBunString, from, isESM);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -284,9 +290,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue from = callFrame->argument(1);
     bool isESM = callFrame->argument(2).asBoolean();
 
-    if (moduleName.isUndefinedOrNull()) {
-        JSC::throwTypeError(lexicalGlobalObject, scope, "expected module name as a string"_s);
-        scope.release();
+    if (!moduleName.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "id"_s, "string"_s, moduleName);
+        return {};
+    }
+    auto moduleNameString = moduleName.toWTFString(globalObject);
+    if (moduleNameString.isEmpty()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "id"_s, moduleName, "must be a non-empty string"_s);
         return {};
     }
 
@@ -294,9 +304,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
-            auto moduleString = moduleName.toWTFString(globalObject);
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, from.toWTFString(globalObject))) {
-                if (moduleString == resolvedString.value())
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleNameString, from.toWTFString(globalObject))) {
+                if (moduleNameString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
             }
@@ -331,7 +340,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         }
     }
 
-    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
+    BunString moduleNameBunString = Bun::toString(moduleNameString);
+    auto result = Bun__resolveSync(lexicalGlobalObject, &moduleNameBunString, JSValue::encode(from), isESM);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {

@@ -4,6 +4,7 @@
 // Generated bindings are available in `bun.generated.<basename>.*` in Zig,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import * as path from "node:path";
+import * as fs from "node:fs";
 import {
   CodeWriter,
   TypeImpl,
@@ -30,20 +31,45 @@ import {
   alignForward,
   isFunc,
   Func,
+  zigEnums,
   NodeValidator,
   cAbiIntegerLimits,
   extInternalDispatchVariant,
   TypeData,
+  extCustomZigValidator,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
+import { CustomCpp, CustomCppArg, CustomZig, CustomZigArg } from "bindgen";
 
 // arg parsing
-let { "codegen-root": codegenRoot, debug } = argParse(["codegen-root", "debug"]);
+let {
+  "codegen-root": codegenRoot,
+  debug,
+  zig: zigPath = Bun.which("zig", {
+    PATH: path.join(import.meta.dirname, "../../vendor/zig") + path.delimiter + process.env.PATH,
+  }),
+} = argParse(["codegen-root", "debug", "zig"]);
 if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 if (!codegenRoot) {
   console.error("Missing --codegen-root=...");
   process.exit(1);
+}
+
+const start = performance.now();
+const emittedZigValidateFunctions = new Set<string>();
+
+let currentStatus: string | null = null;
+const { enableANSIColors } = Bun;
+function status(newStatus: string) {
+  if (!enableANSIColors) return console.log("bindgen: " + newStatus);
+  if (currentStatus) {
+    // move up and clear the line
+    process.stdout.write(`\x1b[1A\x1b[2K`);
+  }
+  newStatus = "bindgen: " + newStatus;
+  currentStatus = newStatus;
+  console.log(newStatus);
 }
 
 function resolveVariantStrategies(vari: Variant, name: string) {
@@ -140,16 +166,24 @@ function resolveComplexArgumentStrategy(
   }
 
   switch (type.kind) {
-    case "sequence": {
-      const child = type.data as TypeData<"sequence">;
-      break;
-    }
+    // case "sequence": {
+    //   const child = type.data as TypeData<"sequence">;
+    //   break;
+    // }
+    case "customZig":
+      communicationStruct.add(prefix, "JSValue");
+      return [
+        {
+          type: "c-abi-compatible",
+          abiType: "JSValue",
+        },
+      ];
     default:
       throw new Error(`TODO: resolveComplexArgumentStrategy for ${type.kind}`);
   }
 }
 
-function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionName: string) {
+function emitCppCallToVariant(className: string, name: string, variant: Variant, dispatchFunctionName: string) {
   cpp.line(`auto& vm = JSC::getVM(global);`);
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
   if (variant.minRequiredArgs > 0) {
@@ -175,8 +209,9 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
 
     const exceptionContext: ExceptionContext = {
       type: "argument",
-      argumentIndex: i,
-      name: arg.name,
+      argIndex: i,
+      argName: arg.name,
+      className,
       functionName: name,
     };
 
@@ -222,7 +257,7 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
+      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, isOptionalToUser, "assign");
       cpp.dedent();
       if ("default" in type.flags) {
         cpp.line(`} else {`);
@@ -236,7 +271,14 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
       }
       cpp.line(`}`);
     } else {
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, needDeclare ? "declare" : "assign");
+      emitConvertValue(
+        storageLocation,
+        arg.type,
+        jsValueRef,
+        exceptionContext,
+        isOptionalToUser,
+        needDeclare ? "declare" : "assign",
+      );
     }
 
     i += 1;
@@ -345,19 +387,28 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
       }
       switch (variant.ret.kind) {
         case "UTF8String":
-          throw new Error("Memory lifetime is ambiguous when returning UTF8String");
-        case "DOMString":
         case "USVString":
         case "ByteString":
-          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out));`);
+          // already validated against
+          assert(false);
+        case "DOMString":
+          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDLDOMString>(*global, out.toWTFString()));`);
           break;
         case "BunString":
-          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDLDOMString>(*global, out.toWTFString()));`);
+          cpp.line(`JSC::JSValue js = JSC::jsString(vm, out.toWTFString());`);
+          cpp.line(`out.deref();`);
+          cpp.line(`return JSC::JSValue::encode(js);`);
           break;
       }
       break;
     default:
       throw new Error(`TODO: emitCppCallToVariant for ${inspect(returnStrategy)}`);
+  }
+}
+
+function ensureHeader(filename: string, reason?: string) {
+  if (!headers.has(filename)) {
+    headers.set(filename, reason || "");
   }
 }
 
@@ -385,7 +436,7 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
           : "WebCore::IDLUnrestrictedDouble";
         break;
       case "stringEnum":
-        type.lowersToNamedType;
+      case "zigEnum":
         // const cType = cAbiTypeForEnum(type.data.length);
         // entry = map[cType as IntegerTypeKind]!;
         entry = `WebCore::IDLEnumeration<${type.cppClassName()}>`;
@@ -405,7 +456,7 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
       if (min === "abi") min = abiMin;
       if (max === "abi") max = abiMax;
 
-      headers.add("BindgenCustomEnforceRange.h");
+      ensureHeader("BindgenCustomEnforceRange.h");
       entry = `Bun::BindgenCustomEnforceRange<${cAbiTypeName(type.kind as CAbiType)}, ${min}, ${max}, Bun::BindgenCustomEnforceRangeKind::${
         nodeValidator ? "Node" : "Web"
       }>`;
@@ -424,13 +475,14 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
 
 type ExceptionContext =
   | { type: "none" }
-  | { type: "argument"; argumentIndex: number; name: string; functionName: string };
+  | { type: "argument"; argIndex: number; argName: string; className: string; functionName: string };
 
 function emitConvertValue(
   storageLocation: string,
   type: TypeImpl,
   jsValueRef: string,
   exceptionContext: ExceptionContext,
+  isOptionalToUser: boolean,
   decl: "declare" | "assign",
 ) {
   if (decl === "declare") {
@@ -441,20 +493,12 @@ function emitConvertValue(
   if (simpleType) {
     const cAbiType = type.canDirectlyMapToCAbi();
     assert(cAbiType);
-    let exceptionHandler: ExceptionHandler | undefined;
+    let exceptionHandler: ExceptionHandler | null = null;
     switch (exceptionContext.type) {
       case "none":
         break;
       case "argument":
-        exceptionHandler = getArgumentExceptionHandler(
-          type,
-          exceptionContext.argumentIndex,
-          exceptionContext.name,
-          exceptionContext.functionName,
-        );
-    }
-
-    switch (type.kind) {
+        exceptionHandler = getIDLExceptionHandler(type, exceptionContext, jsValueRef, isOptionalToUser);
     }
 
     if (decl === "declare") {
@@ -513,10 +557,100 @@ function emitConvertValue(
         cpp.dedent();
         break;
       }
+      case "customZig": {
+        cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
+        const customZig = type.data as CustomZig;
+        if (customZig.validateFunction) {
+          ensureCppHasValidationForwardDecl(customZig);
+          cpp.line(`if (!${extCustomZigValidator(customZig.validateFunction)}(${storageLocation})) {`);
+          cpp.indent();
+          cpp.line(
+            getCppThrowNodeJsTypeError("global", exceptionContext, customZig.validateErrorDescription!, jsValueRef),
+          );
+          cpp.line(`return {};`);
+          cpp.dedent();
+          cpp.line(`}`);
+        }
+        break;
+      }
+      case "customCpp": {
+        const customCpp = type.data as CustomCpp;
+        const headers = typeof customCpp.header === "string" ? [customCpp.header] : customCpp.header;
+        for (const arg of headers) {
+          ensureHeader(arg, `customCpp ${customCpp.zigType ?? customCpp.cppType}`);
+        }
+        if (decl === "declare") {
+          cpp.line(`${type.cppName()} ${storageLocation};`);
+        }
+        cpp.line(
+          `if (!${customCpp.fromJSFunction}(${customCpp.fromJSArgs.map(x => mapCustomCppArg(x, jsValueRef, storageLocation))})) {`,
+        );
+        cpp.indent();
+        cpp.line(
+          getCppThrowNodeJsTypeError("global", exceptionContext, customCpp.validateErrorDescription!, jsValueRef),
+        );
+        cpp.line(`return {};`);
+        cpp.dedent();
+        cpp.line(`}`);
+        break;
+      }
+      case "any": {
+        cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
+        break;
+      }
       default:
         throw new Error(`TODO: emitConvertValue for Type ${type.kind}`);
     }
   }
+}
+
+function ensureCppHasValidationForwardDecl({ validateFunction }: CustomZig) {
+  assert(validateFunction);
+  if (emittedZigValidateFunctions.has(validateFunction)) return;
+  emittedZigValidateFunctions.add(validateFunction);
+  cppInternal.line(`extern "C" bool ${extCustomZigValidator(validateFunction)}(JSC::EncodedJSValue);`);
+
+  zigInternal.line(`pub export fn ${extCustomZigValidator(validateFunction)}(value: JSValue) bool {`);
+  zigInternal.indent();
+  zigInternal.line(`return ${validateFunction}(value);`);
+  zigInternal.dedent();
+  zigInternal.line("}");
+}
+
+function getCppThrowNodeJsTypeError(
+  global: string,
+  exceptionContext: ExceptionContext,
+  message: string,
+  jsValueRef: string,
+) {
+  let argumentOrProperty = "";
+  if (exceptionContext.type === "argument") {
+    argumentOrProperty = `\"${exceptionContext.argName}\" argument`;
+  } else {
+    assert(exceptionContext.type !== "none"); // missing info on what to throw
+    throw new Error(`TODO: implement exception thrower for type error`);
+  }
+  ensureHeader("BindgenNodeErrors.h");
+  const desc = message;
+  return `throwNodeInvalidArgTypeErrorForBindgen(throwScope, ${global}, ${str(argumentOrProperty)}_s, ${str(desc)}_s, ${jsValueRef});`;
+}
+
+function getCppThrowNodeJsValueError(
+  global: string,
+  exceptionContext: ExceptionContext,
+  message: string,
+  jsValueRef: string,
+) {
+  let argumentOrProperty = "";
+  if (exceptionContext.type === "argument") {
+    argumentOrProperty = `argument '${exceptionContext.argName}'`;
+  } else {
+    assert(exceptionContext.type !== "none"); // missing info on what to throw
+    throw new Error(`TODO: implement exception thrower for type error`);
+  }
+  ensureHeader("BindgenNodeErrors.h");
+  const desc = message;
+  return `throwNodeInvalidArgValueErrorForBindgen(throwScope, ${global}, ${str(argumentOrProperty)}_s, ${str(desc)}_s, ${jsValueRef});`;
 }
 
 interface ExceptionHandler {
@@ -526,15 +660,22 @@ interface ExceptionHandler {
   body: string;
 }
 
-function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name: string, functionName: string) {
+function getIDLExceptionHandler(
+  type: TypeImpl,
+  context: ExceptionContext,
+  jsValueRef: string,
+  // optionality depends on the context
+  isOptional: boolean,
+): ExceptionHandler | null {
   const { nodeValidator } = type.flags;
   if (nodeValidator) {
     switch (nodeValidator) {
       case NodeValidator.validateInteger:
-        headers.add("ErrorCode.h");
+        ensureHeader("ErrorCode.h");
+        assert(context.type === "argument"); // TODO:
         return {
           params: `[]()`,
-          body: `return ${str(name)}_s;`,
+          body: `return ${str(context.argName)}_s;`,
         };
       default:
         throw new Error(`TODO: implement exception thrower for node validator ${nodeValidator}`);
@@ -543,21 +684,24 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
   switch (type.kind) {
     case "zigEnum":
     case "stringEnum": {
+      // This is what validateOneOf in Node.js does, which is higher quality
+      // than webkit's enum error.
+      const values: string[] =
+        type.kind === "stringEnum" //
+          ? type.data.map(x => `'${x}'`)
+          : zigEnums.get(type.hash())!.variants.map(x => `'${x.name}'`);
+      if (isOptional) {
+        if (!type.flags.nonNull) values.push("null");
+        values.push("undefined");
+      }
       return {
-        params: `[](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
-        body: `WebCore::throwArgumentMustBeEnumError(${[
-          `global`,
-          `scope`,
-          `${argumentIndex}`,
-          `${str(name)}_s`,
-          `${str(type.name())}_s`,
-          `${str(functionName)}_s`,
-          `WebCore::expectedEnumerationValues<${type.cppClassName()}>()`,
-        ].join(", ")});`,
+        // TODO: avoid &
+        params: `[&](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
+        body: getCppThrowNodeJsValueError("&global", context, "one of: " + values.join(", "), jsValueRef),
       };
-      break;
     }
   }
+  return null;
 }
 
 /**
@@ -581,8 +725,8 @@ function emitRangeModifierCheck(
 }
 
 function addHeaderForType(type: TypeImpl) {
-  if (type.lowersToNamedType() && type.ownerFile) {
-    headers.add(`Generated${pascal(type.ownerFile)}.h`);
+  if (type.lowersToNamedType()) {
+    ensureHeader(`Generated${pascal(type.ownerFileBasename())}.h`);
   }
 }
 
@@ -614,7 +758,7 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     cpp.line(`if (isNullOrUndefined) {`);
     cpp.line(`    propValue = JSC::jsUndefined();`);
     cpp.line(`} else {`);
-    headers.add("ObjectBindings.h");
+    ensureHeader("ObjectBindings.h");
     cpp.line(
       `    propValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, global, object, JSC::Identifier::fromString(vm, ${str(key)}_s));`,
     );
@@ -622,7 +766,8 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     cpp.line(`}`);
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
+    const isOptional = !type.flags.required || "default" in fieldType.flags;
+    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, isOptional, "assign");
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();
@@ -647,13 +792,16 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
 }
 
 function emitZigStruct(type: TypeImpl) {
-  zig.add(`pub const ${type.name()} = `);
+  zig.add(`${type.flags.exported ? "pub " : ""}const ${type.name()} = `);
 
   switch (type.kind) {
-    case "zigEnum":
+    case "zigEnum": {
+      const zigEnum = zigEnums.get(type.hash())!;
+      zig.line(`@import(${str(path.relative(src + "bun.js/bindings", zigEnum.file))}).${zigEnum.name};`);
+      return;
+    }
     case "stringEnum": {
-      const signPrefix = "u";
-      const tagType = `${signPrefix}${alignForward(type.data.length, 8)}`;
+      const tagType = `u${alignForward(type.data.length, 8)}`;
       zig.line(`enum(${tagType}) {`);
       zig.indent();
       for (const value of type.data) {
@@ -701,8 +849,7 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
   const externLayout = type.canDirectlyMapToCAbi();
   if (externLayout) {
     if (typeof externLayout === "string") {
-      w.line(`typedef ${externLayout} ${type.name()};`);
-      console.warn("should this really be done lol", type);
+      w.line(`typedef ${cAbiTypeName(externLayout)} ${type.name()};`);
     } else {
       externLayout.emitCpp(w, type.name());
       w.line();
@@ -718,43 +865,70 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
 }
 
 function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
-  assert(type.kind === "zigEnum" || type.kind === "stringEnum");
-
-  assert(type.kind === "stringEnum"); // TODO
-  assert(type.data.length > 0);
-  const signPrefix = "u";
-  const intBits = alignForward(type.data.length, 8);
-  const tagType = `${signPrefix}int${intBits}_t`;
-  w.line(`enum class ${type.name()} : ${tagType} {`);
-  for (const value of type.data) {
-    w.line(`    ${pascal(value)},`);
+  if (type.kind === "stringEnum") {
+    const intBits = alignForward(type.data.length, 8);
+    const tagType = `uint${intBits}_t`;
+    w.line(`enum class ${type.name()} : ${tagType} {`);
+    for (const value of type.data) {
+      w.line(`    ${pascal(value)},`);
+    }
+    w.line(`};`);
+    w.line();
+  } else if (type.kind === "zigEnum") {
+    const zigEnum = zigEnums.get(type.hash())!;
+    w.line(`enum class ${type.name()} : ${cAbiTypeName(zigEnum.tag)} {`);
+    w.indent();
+    for (const value of zigEnum.variants) {
+      w.line(`${pascal(value.name)} = ${value.value},`);
+    }
+    w.dedent();
+    w.line("};");
   }
-  w.line(`};`);
-  w.line();
 }
 
 // This function assumes in the WebCore namespace
 function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   assert(type.kind === "zigEnum" || type.kind === "stringEnum");
-  assert(type.kind === "stringEnum"); // TODO
-  assert(type.data.length > 0);
+  const values =
+    type.kind === "stringEnum"
+      ? //
+        type.data.map((name, i) => ({ name, value: i }))
+      : zigEnums.get(type.hash())!.variants;
+  assert(values.length > 0);
 
   const name = "Generated::" + type.cppName();
-  headers.add("JavaScriptCore/JSCInlines.h");
-  headers.add("JavaScriptCore/JSString.h");
-  headers.add("wtf/NeverDestroyed.h");
-  headers.add("wtf/SortedArrayMap.h");
+  ensureHeader("JavaScriptCore/JSCInlines.h");
+  ensureHeader("JavaScriptCore/JSString.h");
+  ensureHeader("wtf/NeverDestroyed.h");
+  ensureHeader("wtf/SortedArrayMap.h");
+
+  const sortedValues = values.slice().sort((a, b) => {
+    // sorted by name
+    return a.name.localeCompare(b.name);
+  });
 
   w.line(`String convertEnumerationToString(${name} enumerationValue) {`);
   w.indent();
-  w.line(`    static const NeverDestroyed<String> values[] = {`);
-  w.indent();
-  for (const value of type.data) {
-    w.line(`        MAKE_STATIC_STRING_IMPL(${str(value)}),`);
+  if (type.kind === "stringEnum") {
+    w.line(`static const NeverDestroyed<String> values[] = {`);
+    w.indent();
+    for (const value of values) {
+      w.line(`MAKE_STATIC_STRING_IMPL(${str(value.name)}),`);
+    }
+    w.dedent();
+    w.line(`};`);
+    w.line(`return values[static_cast<size_t>(enumerationValue)];`);
+  } else {
+    // Cannot guarantee that the enum values are contiguous.
+    w.line(`switch (enumerationValue) {`);
+    w.indent();
+    for (const value of values) {
+      w.line(`case ${name}::${pascal(value.name)}: return MAKE_STATIC_STRING_IMPL(${str(value.name)});`);
+    }
+    w.line(`default: RELEASE_ASSERT_NOT_REACHED();`);
+    w.dedent();
+    w.line("};");
   }
-  w.dedent();
-  w.line(`    };`);
-  w.line(`    return values[static_cast<size_t>(enumerationValue)];`);
   w.dedent();
   w.line(`}`);
   w.line();
@@ -765,8 +939,8 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line(`template<> std::optional<${name}> parseEnumerationFromString<${name}>(const String& stringValue)`);
   w.line(`{`);
   w.line(`    static constexpr std::pair<ComparableASCIILiteral, ${name}> mappings[] = {`);
-  for (const value of type.data) {
-    w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
+  for (const value of sortedValues) {
+    w.line(`        { ${str(value.name)}_s, ${name}::${pascal(value.name)} },`);
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
@@ -784,7 +958,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
   w.line(`template<> ASCIILiteral expectedEnumerationValues<${name}>()`);
   w.line(`{`);
-  w.line(`    return ${str(type.data.map(value => `${str(value)}`).join(", "))}_s;`);
+  w.line(`    return ${str(values.map(value => `${str(value.name)}`).join(", "))}_s;`);
   w.line(`}`);
   w.line();
 }
@@ -806,6 +980,11 @@ function zigTypeNameInner(type: TypeImpl): string {
     case "globalObject":
     case "zigVirtualMachine":
       return "*JSC.JSGlobalObject";
+    case "customCpp": {
+      const customCpp = type.data as CustomCpp;
+      assert(customCpp.zigType);
+      return customCpp.zigType;
+    }
     default:
       const cAbiType = type.canDirectlyMapToCAbi();
       if (cAbiType) {
@@ -838,7 +1017,7 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
     case "void":
       return "bool"; // true=success, false=exception
     case "jsvalue":
-      return "JSC.JSValue";
+      return "JSValue";
     default:
       throw new Error(
         `TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
@@ -846,43 +1025,142 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
   }
 }
 
-function emitNullableZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
-  assert(children.length > 0);
-  const indent = children[0].type !== "c-abi-compatible";
-  w.add(`if (${prefix}_set)`);
-  if (indent) {
-    w.indent();
-  } else {
-    w.add(` `);
+function typeHasComplexControlFlow(type: TypeImpl): boolean {
+  if (type.kind === "customZig") {
+    return (type.data as CustomZig).deinitMethod !== undefined;
   }
-  emitComplexZigDecoder(w, prefix + "_value", type, children);
-  if (indent) {
-    w.line();
-    w.dedent();
-  } else {
-    w.add(` `);
-  }
-  w.add(`else`);
-  if (indent) {
-    w.indent();
-  } else {
-    w.add(` `);
-  }
-  w.add(`null`);
-  if (indent) w.dedent();
+  return false;
 }
 
-function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+function emitNullableZigDecoder(
+  argsWriter: CodeWriter,
+  prefix: string,
+  type: TypeImpl,
+  children: ArgStrategyChildItem[],
+) {
   assert(children.length > 0);
-  if (children[0].type === "c-abi-compatible") {
-    w.add(`${prefix}`);
-    return;
+  const indent = children[0].type !== "c-abi-compatible";
+  argsWriter.add(`if (${prefix}_set)`);
+  if (indent) {
+    argsWriter.indent();
+  } else {
+    argsWriter.add(` `);
   }
+  emitComplexZigDecoder(argsWriter, prefix + "_value", type, children);
+  if (indent) {
+    argsWriter.line();
+    argsWriter.dedent();
+  } else {
+    argsWriter.add(` `);
+  }
+  argsWriter.add(`else`);
+  if (indent) {
+    argsWriter.indent();
+  } else {
+    argsWriter.add(` `);
+  }
+  argsWriter.add(`null`);
+  if (indent) argsWriter.dedent();
+}
 
+function emitComplexZigDecoder(
+  argsWriter: CodeWriter,
+  prefix: string,
+  type: TypeImpl,
+  children: ArgStrategyChildItem[],
+) {
+  assert(children.length > 0);
   switch (type.kind) {
+    case "boolean":
+    case "u8":
+    case "i32":
+    case "i64":
+    case "usize":
+    case "u16":
+    case "u32":
+    case "u64":
+    case "customCpp":
+      argsWriter.add(`${prefix}`);
+      break;
+    case "customZig": {
+      const customZig = type.data as CustomZig;
+      argsWriter.add(
+        `${customZig.fromJSFunction}(${customZig.fromJSArgs.map(arg => mapCustomZigArg(arg, prefix)).join(", ")})`,
+      );
+      if (customZig.fromJSReturn === "error") {
+        argsWriter.line(` catch |err| switch (err) {`);
+        argsWriter.indent();
+        argsWriter.line(`error.JSError => return false,`);
+        argsWriter.line(`error.OutOfMemory => global.throwOutOfMemory() catch return false,`);
+        argsWriter.dedent();
+        argsWriter.add(`}`);
+      } else if (customZig.fromJSReturn === "optional") {
+        argsWriter.line(` orelse {`);
+        argsWriter.line(`    @panic("TODO");`);
+        argsWriter.add(`}`);
+      }
+      break;
+    }
     default:
       throw new Error(`TODO: emitComplexZigDecoder for Type ${type.kind}`);
   }
+}
+
+function emitZigDeinitializer(w: CodeWriter, name: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+  assert(children.length > 0);
+  w.add("defer ");
+  const isOptional = type.flags.optional && !("default" in type.flags);
+  if (isOptional) {
+    w.add(`if (${name}) |v| `);
+    name = "v";
+  }
+  switch (type.kind) {
+    case "customZig":
+      const customZig = type.data as CustomZig;
+      w.add(
+        `${name}.${customZig.deinitMethod}(${(customZig.deinitArgs ?? []).map(arg => mapCustomZigArg(arg, name)).join(", ")});`,
+      );
+      break;
+    default:
+      throw new Error(`TODO: emitZigDeinitializer for Type ${type.kind}`);
+  }
+  w.line();
+}
+
+function mapCustomZigArg(arg: CustomZigArg, name: string) {
+  if (typeof arg === "string") {
+    switch (arg) {
+      case "allocator":
+        return "bun.default_allocator";
+      case "global":
+        return "global";
+      case "value":
+        return name;
+    }
+  }
+  return arg.text;
+}
+
+function mapCustomCppArg(arg: CustomCppArg, name: string, storageLocation) {
+  if (typeof arg === "string") {
+    switch (arg) {
+      case "global":
+        return "global";
+      case "value":
+        return name;
+      case "encoded-value":
+        return `JSC::JSValue::encode(${name})`;
+      case "out":
+        return "&" + storageLocation;
+    }
+  }
+  return arg.text;
+}
+
+function throwAt(message: string, caller: string) {
+  const err = new Error(message);
+  err.stack = `Error: ${message}\n${caller}`;
+  throw err;
 }
 
 type DistinguishablePrimitive = "undefined" | "string" | "number" | "boolean" | "object";
@@ -1071,18 +1349,18 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
 
 // BEGIN MAIN CODE GENERATION
 
-// Search for all .bind.ts files
+const allZigFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["node_modules", ".git"], [".zig"]);
 const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["node_modules", ".git"], [".bind.ts"]);
-
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
   let file = files.get(zigFile);
   if (!file) {
-    file = { functions: [], typedefs: [] };
+    file = { functions: [], typedefs: [], anonTypedefs: [] };
     files.set(zigFile, file);
   }
 
+  status(`Loading ${path.relative(src, fileName)}`);
   const exports = import.meta.require(fileName);
 
   // Mark all exported TypeImpl as reachable
@@ -1092,21 +1370,34 @@ for (const fileName of [...unsortedFiles].sort()) {
     if (value instanceof TypeImpl) {
       value.assignName(key);
       value.markReachable();
+      value.flags.exported = true;
       file.typedefs.push({ name: key, type: value });
     }
 
     if (value[isFunc]) {
       const func = value as Func;
       func.name = key;
+      for (const vari of func.variants) {
+        for (const arg of vari.args) {
+          arg.type.markReachable();
+        }
+      }
     }
   }
 
   for (const fn of file.functions) {
     if (fn.name === "") {
-      const err = new Error(`This function definition needs to be exported`);
-      err.stack = `Error: ${err.message}\n${fn.snapshot}`;
-      throw err;
+      throwAt(`This function definition needs to be exported`, fn.snapshot);
     }
+    fn.className ||= path.basename(zigFile, ".zig");
+  }
+}
+
+for (const type of typeHashToReachableType.values()) {
+  if (!type.flags.exported) {
+    const ownerFile = files.get(type.ownerFile.slice(0, -".bind.ts".length) + ".zig");
+    assert(ownerFile);
+    ownerFile.anonTypedefs.push(type);
   }
 }
 
@@ -1115,10 +1406,12 @@ const zigInternal = new CodeWriter();
 // TODO: split each *.bind file into a separate .cpp file
 const cpp = new CodeWriter();
 const cppInternal = new CodeWriter();
-const headers = new Set<string>();
+// Key: filename, Value: reason comment
+const headers = new Map<string, string>();
 
 zig.line('const bun = @import("root").bun;');
 zig.line("const JSC = bun.JSC;");
+zig.line("const JSValue = JSC.JSValue;");
 zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
 
 zigInternal.line("const binding_internals = struct {");
@@ -1127,19 +1420,19 @@ zigInternal.indent();
 cpp.line("namespace Generated {");
 cpp.line();
 
-cppInternal.line('// These "Arguments" definitions are for communication between C++ and Zig.');
+cppInternal.line("// These definitions are for communication between C++ and Zig.");
 cppInternal.line('// Field layout depends on implementation details in "bindgen.ts", and');
 cppInternal.line("// is not intended for usage outside generated binding code.");
 
-headers.add("root.h");
-headers.add("IDLTypes.h");
-headers.add("JSDOMBinding.h");
-headers.add("JSDOMConvertBase.h");
-headers.add("JSDOMConvertBoolean.h");
-headers.add("JSDOMConvertNumbers.h");
-headers.add("JSDOMConvertStrings.h");
-headers.add("JSDOMExceptionHandling.h");
-headers.add("JSDOMOperation.h");
+ensureHeader("root.h");
+ensureHeader("IDLTypes.h");
+ensureHeader("JSDOMBinding.h");
+ensureHeader("JSDOMConvertBase.h");
+ensureHeader("JSDOMConvertBoolean.h");
+ensureHeader("JSDOMConvertNumbers.h");
+ensureHeader("JSDOMConvertStrings.h");
+ensureHeader("JSDOMExceptionHandling.h");
+ensureHeader("JSDOMOperation.h");
 
 /**
  * Indexed by `zigFile`, values are the generated zig identifier name, without
@@ -1148,7 +1441,7 @@ headers.add("JSDOMOperation.h");
 const fileMap = new Map<string, string>();
 const fileNames = new Set<string>();
 
-for (const [filename, { functions, typedefs }] of files) {
+for (const [filename, { functions, typedefs, anonTypedefs }] of files) {
   const basename = path.basename(filename, ".zig");
   let varName = basename;
   if (fileNames.has(varName)) {
@@ -1162,13 +1455,107 @@ for (const [filename, { functions, typedefs }] of files) {
   for (const td of typedefs) {
     typeHashToNamespace.set(td.type.hash(), varName);
   }
+  for (const td of anonTypedefs) {
+    typeHashToNamespace.set(td.hash(), varName);
+  }
+}
 
-  for (const fn of functions) {
-    for (const vari of fn.variants) {
-      for (const arg of vari.args) {
-        arg.type.markReachable();
-      }
+{
+  const zigEnumCode = new CodeWriter();
+  zigEnumCode.buffer += /* zig */ `pub const bun = @import("./bun.zig");
+
+const std = @import("std");
+
+pub fn main() !void {
+    var buf = std.io.bufferedWriter(std.io.getStdOut().writer());
+    defer buf.flush() catch {};
+    const w = buf.writer();
+
+    var jsonw = std.json.writeStream(w, .{ .whitespace = .indent_2 });
+
+    try jsonw.beginArray();
+    inline for (.{
+`;
+  zigEnumCode.level = 3;
+  for (const zigEnum of zigEnums.values()) {
+    const candidates = allZigFiles.filter(file => file.endsWith(path.sep + zigEnum.file));
+    if (candidates.length === 0) {
+      throwAt(`Cannot find a file named ${str(zigEnum.file)}`, zigEnum.snapshot);
+      continue;
     }
+    if (candidates.length > 1) {
+      throwAt(`${str(zigEnum.file)} is not specific enough, matches: ${JSON.stringify(candidates)}`, zigEnum.snapshot);
+      continue;
+    }
+    zigEnum.file = candidates[0];
+    zigEnumCode.line(`@import(${str(path.relative(src, zigEnum.file))}).${zigEnum.name},`);
+  }
+  zigEnumCode.level = 0;
+  zigEnumCode.buffer += `    }) |enum_type| {
+        try jsonw.beginObject();
+
+        try jsonw.objectField("tag");
+        const tag_int = @typeInfo(@typeInfo(enum_type).Enum.tag_type).Int;
+        const tag_rounded = std.fmt.comptimePrint("{c}{d}", .{
+            switch (tag_int.signedness) {
+                .signed => 'i',
+                .unsigned => 'u',
+            },
+            comptime std.mem.alignForward(u16, tag_int.bits, 8),
+        });
+        try jsonw.write(tag_rounded);
+
+        try jsonw.objectField("values");
+        try jsonw.beginArray();
+
+        for (std.enums.values(enum_type)) |tag| {
+            try jsonw.beginObject();
+
+            try jsonw.objectField("name");
+            try jsonw.write(@tagName(tag));
+
+            try jsonw.objectField("value");
+            try jsonw.write(@as(i52, @intFromEnum(tag)));
+
+            try jsonw.endObject();
+        }
+
+        try jsonw.endArray();
+        try jsonw.endObject();
+    }
+    try jsonw.endArray();
+    jsonw.deinit();
+}
+`;
+  status(`Extracting ${zigEnums.size} enum definitions`);
+  writeIfNotChanged(path.join(src, "generated_enum_extractor.zig"), zigEnumCode.buffer);
+  const generatedBindingsFile = path.join(src, "bun.js/bindings/GeneratedBindings.zig");
+  if (!fs.existsSync(generatedBindingsFile)) {
+    fs.writeFileSync(generatedBindingsFile, "// stub for code generator");
+  }
+  const result = Bun.spawnSync({
+    cmd: [zigPath, "build", "enum-extractor", "-Dno-compiler-info", "-Dignore-missing-generated-paths"],
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  if (!result.success) {
+    console.error("Failed to extract enums, see above for the error.");
+    console.error("");
+    console.error("If you just added a new t.zigEnum, check the file for top-level comptime blocks,");
+    console.error("they may need to add new checks for `if (bun.Environment.export_cpp_apis)` to");
+    console.error("avoid exporting and referencing code when being compiled from the code generator.");
+    console.error("");
+    console.error("If that does not work, then move the desired Zig enum to a new file, or consider");
+    console.error("cutting down on namespace indirection.");
+    process.exit(1);
+  }
+  const out = JSON.parse(result.stdout.toString("utf-8"));
+  const zigEnumValues = [...zigEnums.values()];
+  for (let i = 0; i < out.length; i++) {
+    const { tag, values } = out[i];
+    const zigEnum = zigEnumValues[i];
+    zigEnum.tag = tag;
+    zigEnum.variants = values;
+    zigEnum.resolved = true;
   }
 }
 
@@ -1180,13 +1567,12 @@ for (const type of typeHashToReachableType.values()) {
       emitConvertDictionaryFunction(type);
       break;
     case "stringEnum":
-    case "zigEnum":
       needsWebCore = true;
       break;
   }
 }
 
-for (const [filename, { functions, typedefs }] of files) {
+for (const [filename, { functions, typedefs, anonTypedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
   zigInternal.line(`const import_${namespaceVar} = @import(${str(path.relative(src + "/bun.js", filename))});`);
@@ -1251,7 +1637,7 @@ for (const [filename, { functions, typedefs }] of files) {
         cpp.line(`{`);
         cpp.indent();
         cpp.resetTemporaries();
-        emitCppCallToVariant(fn.name, vari, dispatchName);
+        emitCppCallToVariant(fn.className, fn.name, vari, dispatchName);
         cpp.dedent();
         cpp.line(`}`);
       }
@@ -1272,7 +1658,7 @@ for (const [filename, { functions, typedefs }] of files) {
     cpp.resetTemporaries();
 
     if (fn.variants.length === 1) {
-      emitCppCallToVariant(fn.name, fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
+      emitCppCallToVariant(fn.className, fn.name, fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
     } else {
       emitCppVariationSelector(fn, namespaceVar);
     }
@@ -1353,20 +1739,23 @@ for (const [filename, { functions, typedefs }] of files) {
         }
       }
 
+      const mainCall = new CodeWriter();
+      mainCall.level = zigInternal.level;
+
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          mainCall.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
           break;
         case "basic-out-param":
-          zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
+          mainCall.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
           break;
         case "void":
           zigInternal.add(`@as(bun.JSError!void, `);
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
-      zigInternal.indent();
+      mainCall.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
+      mainCall.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
 
@@ -1375,10 +1764,10 @@ for (const [filename, { functions, typedefs }] of files) {
         if (arg.type.isVirtualArgument()) {
           switch (arg.type.kind) {
             case "zigVirtualMachine":
-              zigInternal.line(`${argName}.bunVM(),`);
+              mainCall.line(`${argName}.bunVM(),`);
               break;
             case "globalObject":
-              zigInternal.line(`${argName},`);
+              mainCall.line(`${argName},`);
               break;
             default:
               throw new Error("unexpected");
@@ -1387,43 +1776,57 @@ for (const [filename, { functions, typedefs }] of files) {
         }
 
         const strategy = arg.loweringStrategy!;
+        const hasTemporaries = typeHasComplexControlFlow(arg.type);
+
+        let decodeWriter = mainCall;
+        if (hasTemporaries) {
+          zigInternal.add(`const ${argName} = `);
+          decodeWriter = zigInternal;
+        }
+        const type = arg.type;
+        const isNullable = type.flags.optional && !("default" in type.flags);
         switch (strategy.type) {
           case "c-abi-pointer":
-            if (arg.type.kind === "UTF8String") {
-              zigInternal.line(`${argName}_utf8.slice(),`);
+            if (type.kind === "UTF8String") {
+              decodeWriter.add(`${argName}_utf8.slice()`);
               break;
             }
-            zigInternal.line(`${argName}.*,`);
+            decodeWriter.add(`${argName}.*`);
             break;
           case "c-abi-value":
-            zigInternal.line(`${argName},`);
+            decodeWriter.add(`${argName}`);
             break;
           case "uses-communication-buffer":
             const prefix = `buf.${snake(arg.name)}`;
-            const type = arg.type;
-            const isNullable = type.flags.optional && !("default" in type.flags);
-            if (isNullable) emitNullableZigDecoder(zigInternal, prefix, type, strategy.children);
-            else emitComplexZigDecoder(zigInternal, prefix, type, strategy.children);
-            zigInternal.line(`,`);
+            if (isNullable) emitNullableZigDecoder(decodeWriter, prefix, type, strategy.children);
+            else emitComplexZigDecoder(decodeWriter, prefix, type, strategy.children);
             break;
           default:
             throw new Error(`TODO: zig dispatch function for ${inspect(strategy satisfies never)}`);
         }
+        if (hasTemporaries) {
+          assert(strategy.type === "uses-communication-buffer");
+          decodeWriter.line(`;`);
+          mainCall.add(`${argName}`);
+          emitZigDeinitializer(zigInternal, argName, type, strategy.children);
+        }
+        mainCall.line(`,`);
       }
-      zigInternal.dedent();
+      mainCall.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`));`);
+          mainCall.line(`));`);
           break;
         case "basic-out-param":
         case "void":
-          zigInternal.line(`)) catch |err| switch (err) {`);
-          zigInternal.line(`    error.JSError => return false,`);
-          zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
-          zigInternal.line(`};`);
-          zigInternal.line(`return true;`);
+          mainCall.line(`)) catch |err| switch (err) {`);
+          mainCall.line(`    error.JSError => return false,`);
+          mainCall.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
+          mainCall.line(`};`);
+          mainCall.line(`return true;`);
           break;
       }
+      zigInternal.add(mainCall.buffer);
       zigInternal.dedent();
       zigInternal.line(`}`);
       variNum += 1;
@@ -1436,18 +1839,24 @@ for (const [filename, { functions, typedefs }] of files) {
     // Wrapper to init JSValue
     const wrapperName = zid("create" + cap(fn.name) + "Callback");
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
-    zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`);
+    zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSValue {`);
     zig.line(
       `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
     );
     zig.line(`}`);
   }
 
-  if (typedefs.length > 0) {
+  if (typedefs.length > 0 || anonTypedefs.length > 0) {
     zig.line();
   }
   for (const td of typedefs) {
     emitZigStruct(td.type);
+  }
+  if (anonTypedefs.length > 0) {
+    zig.line(`// To make these "pub", export them from ${path.basename(filename, ".zig")}.bind.ts`);
+  }
+  for (const td of anonTypedefs) {
+    emitZigStruct(td);
   }
 
   zig.dedent();
@@ -1460,7 +1869,7 @@ cpp.line();
 if (needsWebCore) {
   cpp.line(`namespace WebCore {`);
   cpp.line();
-  for (const [type, reachableType] of typeHashToReachableType) {
+  for (const [, reachableType] of typeHashToReachableType) {
     switch (reachableType.kind) {
       case "zigEnum":
       case "stringEnum":
@@ -1483,14 +1892,22 @@ zigInternal.line("        }");
 zigInternal.line("    }");
 zigInternal.line("}");
 
+status("Writing GeneratedBindings.cpp");
 writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
-  [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
+  [...headers].map(([name, reason]) => `#include ${str(name)}${reason ? ` // ${reason}` : ""}\n`).join("") +
+    "\n" +
+    cppInternal.buffer +
+    "\n" +
+    cpp.buffer,
 );
+status("Writing GeneratedBindings.zig");
 writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
-for (const [filename, { functions, typedefs }] of files) {
+for (const [filename, { functions, typedefs, anonTypedefs }] of files) {
+  const headerName = `Generated${pascal(path.basename(filename, ".zig"))}.h`;
+  status(`Writing ${headerName}`);
   const namespaceVar = fileMap.get(filename)!;
   const header = new CodeWriter();
   const headerIncludes = new Set<string>();
@@ -1524,6 +1941,17 @@ for (const [filename, { functions, typedefs }] of files) {
         break;
     }
   }
+  for (const td of anonTypedefs) {
+    emitCppStructHeader(header, td);
+
+    switch (td.kind) {
+      case "zigEnum":
+      case "stringEnum":
+      case "dictionary":
+        needsWebCoreNamespace = true;
+        break;
+    }
+  }
   for (const fn of functions) {
     const externName = extJsFunction(namespaceVar, fn.name);
     header.line(`constexpr auto* js${cap(fn.name)} = &${externName};`);
@@ -1537,12 +1965,12 @@ for (const [filename, { functions, typedefs }] of files) {
   if (needsWebCoreNamespace) {
     header.line(`namespace WebCore {`);
     header.line();
-    for (const td of typedefs) {
-      switch (td.type.kind) {
+    for (const type of typedefs.map(td => td.type).concat(anonTypedefs)) {
+      switch (type.kind) {
         case "zigEnum":
         case "stringEnum":
           headerIncludes.add("JSDOMConvertEnumeration.h");
-          const basename = td.type.name();
+          const basename = type.name();
           const name = `Generated::${namespaceVar}::${basename}`;
           header.line(`// Implement WebCore::IDLEnumeration trait for ${basename}`);
           header.line(`String convertEnumerationToString(${name});`);
@@ -1571,5 +1999,8 @@ for (const [filename, { functions, typedefs }] of files) {
   header.buffer =
     "#pragma once\n" + [...headerIncludes].map(name => `#include ${str(name)}\n`).join("") + "\n" + header.buffer;
 
-  writeIfNotChanged(path.join(codegenRoot, `Generated${pascal(namespaceVar)}.h`), header.buffer);
+  writeIfNotChanged(path.join(codegenRoot, headerName), header.buffer);
 }
+
+const duration = (performance.now() - start).toFixed(0);
+status(`processed ${files.size} files, ${typeHashToReachableType.size} types. (${duration}ms)`);

@@ -98,7 +98,7 @@ pub const BunObject = struct {
             @compileError("Must be comptime");
         }
 
-        if (JSC.is_bindgen) {
+        if (!Environment.export_cpp_apis) {
             return;
         }
 
@@ -245,7 +245,6 @@ const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const is_bindgen = JSC.is_bindgen;
 const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
@@ -533,6 +532,22 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const ret = out.toJS(globalThis);
     array.deinit();
     return ret;
+}
+
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{
+        .globalThis = globalThis,
+        .quote_strings = true,
+    };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -944,14 +959,11 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
-export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
-    defer specifier_str.deref();
-
+export fn Bun__resolveSync(global: *JSGlobalObject, specifier: *const bun.String, source: JSValue, is_esm: bool) JSC.JSValue {
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source_str, is_esm, true));
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
@@ -3166,7 +3178,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Bun__escapeHTML8;
         _ = Bun__escapeHTML16;
     }
@@ -4242,7 +4254,7 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 }
 
 comptime {
-    if (!is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Bun__reportError;
         _ = EnvironmentVariables.Bun__getEnvCount;
         _ = EnvironmentVariables.Bun__getEnvKey;
@@ -4573,8 +4585,11 @@ const InternalTestingAPIs = struct {
 };
 
 comptime {
-    _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-    BunObject.exportAll();
+    if (Environment.export_cpp_apis) {
+        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+        _ = Bun__inspect;
+        BunObject.exportAll();
+    }
 }
 
 const assert = bun.assert;

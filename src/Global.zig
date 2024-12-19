@@ -220,5 +220,6 @@ pub export fn Bun__onExit() void {
 }
 
 comptime {
-    _ = Bun__onExit;
+    if (Environment.export_cpp_apis)
+        _ = Bun__onExit;
 }

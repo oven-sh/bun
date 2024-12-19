@@ -202,6 +202,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
     auto moduleStr = moduleName.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
+    // Bun does not yet implement this module, but to mimic node:module, this special case is needed.
+    if (moduleStr == "node:test"_s) {
+        return JSValue::encode(jsBoolean(true));
+    }
     return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
 }
 
@@ -329,13 +333,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
 
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope,
                 "Module._resolveFilename expects a string"_s);
             scope.release();
             return JSC::JSValue::encode(JSC::JSValue {});
         }
+        WTF::String moduleNameString = moduleName.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (
             // fast path: it's a real CommonJS module object.
@@ -354,8 +360,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
         }
 
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false);
+        BunString moduleNameBunString = Bun::toString(moduleNameString);
+        auto result = Bun__resolveSync(globalObject, &moduleNameBunString, JSValue::encode(fromValue), false);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {

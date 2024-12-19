@@ -155,7 +155,7 @@ pub const Source = struct {
             restore();
         }
         comptime {
-            if (Environment.isWindows) {
+            if (Environment.isWindows and Environment.export_cpp_apis) {
                 _ = &Bun__restoreWindowsStdio;
             }
         }

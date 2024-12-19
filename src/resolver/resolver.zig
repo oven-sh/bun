@@ -4219,7 +4219,7 @@ pub const GlobalCache = enum {
 };
 
 comptime {
-    if (!bun.JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }

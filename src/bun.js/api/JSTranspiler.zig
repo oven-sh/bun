@@ -803,7 +803,7 @@ pub fn finalize(this: *Transpiler) callconv(.C) void {
     JSC.VirtualMachine.get().allocator.destroy(this);
 }
 
-fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Bundler.MacroJSValueType) ?Bundler.ParseResult {
+fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: JSValue) ?Bundler.ParseResult {
     const name = this.transpiler_options.default_loader.stdinName();
     const source = logger.Source.initPathString(name, code);
 
@@ -875,7 +875,7 @@ pub fn scan(this: *Transpiler, globalThis: *JSC.JSGlobalObject, callframe: *JSC.
         JSAst.Expr.Data.Store.reset();
     }
 
-    var parse_result = getParseResult(this, arena.allocator(), code, loader, Bundler.MacroJSValueType.zero) orelse {
+    var parse_result = getParseResult(this, arena.allocator(), code, loader, .zero) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             return globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         }
@@ -1025,7 +1025,7 @@ pub fn transformSync(
         arena.allocator(),
         code,
         loader,
-        if (comptime JSC.is_bindgen) Bundler.MacroJSValueType.zero else js_ctx_value,
+        js_ctx_value,
     ) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             return globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));

@@ -10,7 +10,6 @@ const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
-const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
@@ -4532,27 +4531,6 @@ pub const JSValue = enum(i64) {
 
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
 
-    pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
-        if (@typeInfo(Number) == .Enum) {
-            return jsNumberWithType(@typeInfo(Number).Enum.tag_type, @intFromEnum(number));
-        }
-        return switch (comptime Number) {
-            JSValue => number,
-            u0 => jsNumberFromInt32(0),
-            f32, f64 => jsNumberFromDouble(@as(f64, number)),
-            u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
-            c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
-            usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
-            comptime_int => switch (number) {
-                0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
-                else => jsNumberFromInt64(@as(i64, @intCast(number))),
-            },
-            else => {
-                @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
-            },
-        };
-    }
-
     pub fn createInternalPromise(globalObject: *JSGlobalObject) JSValue {
         return cppFn("createInternalPromise", .{globalObject});
     }
@@ -4590,14 +4568,6 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    pub inline fn jsBoolean(i: bool) JSValue {
-        return cppFn("jsBoolean", .{i});
-    }
-
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return cppFn("jsDoubleNumber", .{i});
-    }
-
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
         return cppFn("jsEmptyString", .{globalThis});
     }
@@ -4606,8 +4576,48 @@ pub const JSValue = enum(i64) {
         return JSValue.null;
     }
 
+    pub inline fn jsBoolean(i: bool) JSValue {
+        return cppFn("jsBoolean", .{i});
+    }
+
+    pub fn jsDoubleNumber(i: f64) JSValue {
+        return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
+    }
+
+    pub fn jsNumberFromInt32(i: i32) JSValue {
+        return FFI.INT32_TO_JSVALUE(i).asJSValue;
+    }
+
+    // Convert `number` into a JavaScript number using the most efficient
+    // strategy for the numeric type. Enums are encoded as their backing value.
+    // Large numbers incur floating point precision loss.
     pub fn jsNumber(number: anytype) JSValue {
-        return jsNumberWithType(@TypeOf(number), number);
+        const T = @TypeOf(number);
+        return switch (@typeInfo(T)) {
+            inline .Int, .ComptimeInt => |_, tag| {
+                // When in `i32` range, only use the Int32 tag of JSValue.
+                // Skip this for comptime int.
+                if (comptime (tag == .Int and
+                    std.math.minInt(T) >= std.math.minInt(i32) and
+                    std.math.maxInt(T) <= std.math.maxInt(i32)))
+                {
+                    return jsNumberFromInt32(number);
+                }
+
+                // The range check becomes a runtime check.
+                if (number <= (comptime std.math.maxInt(i32)) and
+                    number >= (comptime std.math.minInt(i32)))
+                {
+                    return jsNumberFromInt32(@as(i32, @intCast(number)));
+                }
+
+                // Otherwise, a double is used.
+                return jsDoubleNumber(@floatFromInt(number));
+            },
+            .Float, .ComptimeFloat => jsDoubleNumber(number),
+            .Enum => jsNumber(@intFromEnum(number)),
+            else => @compileError("Cannot convert " ++ @typeName(T) ++ " into a number"),
+        };
     }
 
     pub inline fn jsTDZValue() JSValue {
@@ -4715,41 +4725,15 @@ pub const JSValue = enum(i64) {
         return JSArrayIterator.init(this, global);
     }
 
-    pub fn jsNumberFromDouble(i: f64) JSValue {
-        return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
-    }
-    pub fn jsNumberFromChar(i: u8) JSValue {
-        return cppFn("jsNumberFromChar", .{i});
-    }
-    pub fn jsNumberFromU16(i: u16) JSValue {
-        return cppFn("jsNumberFromU16", .{i});
-    }
-    pub fn jsNumberFromInt32(i: i32) JSValue {
-        return FFI.INT32_TO_JSVALUE(i).asJSValue;
-    }
-
-    pub fn jsNumberFromInt64(i: i64) JSValue {
-        if (i <= std.math.maxInt(i32) and i >= std.math.minInt(i32)) {
-            return jsNumberFromInt32(@as(i32, @intCast(i)));
-        }
-
-        return jsNumberFromDouble(@floatFromInt(i));
-    }
+    // Deprecated in favor of jsNumber. TODO: remove
+    pub const jsNumberFromChar = jsNumber;
+    pub const jsNumberFromU16 = jsNumber;
+    pub const jsNumberFromPtrSize = jsNumber;
+    pub const jsNumberFromUint64 = jsNumber;
+    pub const jsNumberFromInt64 = jsNumber;
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
         return this;
-    }
-
-    pub fn jsNumberFromUint64(i: u64) JSValue {
-        if (i <= std.math.maxInt(i32)) {
-            return jsNumberFromInt32(@as(i32, @intCast(i)));
-        }
-
-        return jsNumberFromPtrSize(i);
-    }
-
-    pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@floatFromInt(i));
     }
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
@@ -7223,9 +7207,11 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    // this file is gennerated, but cant be placed in the build/debug/codegen folder
-    // because zig will complain about outside-of-module stuff
-    _ = @import("./GeneratedJS2Native.zig");
+    if (bun.Environment.export_cpp_apis) {
+        // this file is gennerated, but cant be placed in the build/debug/codegen folder
+        // because zig will complain about outside-of-module stuff
+        _ = @import("./GeneratedJS2Native.zig");
+    }
 }
 
 // Error's cannot be created off of the main thread. So we use this to store the

@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
 const posix = std.posix;
@@ -623,6 +622,30 @@ pub const StringOrBuffer = union(enum) {
             break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
+    }
+
+    pub fn validateForBindgen(value: JSC.JSValue) bool {
+        return switch (value.jsType()) {
+            .String,
+            .StringObject,
+            .DerivedStringObject,
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float16Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => true,
+            else => false,
+        };
     }
 };
 
@@ -1754,13 +1777,15 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         comptime {
-            _ = isBlockDevice_WithoutTypeChecks;
-            _ = isCharacterDevice_WithoutTypeChecks;
-            _ = isDirectory_WithoutTypeChecks;
-            _ = isFIFO_WithoutTypeChecks;
-            _ = isFile_WithoutTypeChecks;
-            _ = isSocket_WithoutTypeChecks;
-            _ = isSymbolicLink_WithoutTypeChecks;
+            if (Environment.export_cpp_apis) {
+                _ = isBlockDevice_WithoutTypeChecks;
+                _ = isCharacterDevice_WithoutTypeChecks;
+                _ = isDirectory_WithoutTypeChecks;
+                _ = isFIFO_WithoutTypeChecks;
+                _ = isFile_WithoutTypeChecks;
+                _ = isSocket_WithoutTypeChecks;
+                _ = isSymbolicLink_WithoutTypeChecks;
+            }
         }
     };
 }
@@ -2154,5 +2179,7 @@ pub const Process = struct {
 };
 
 comptime {
-    std.testing.refAllDecls(Process);
+    if (Environment.export_cpp_apis) {
+        std.testing.refAllDecls(Process);
+    }
 }

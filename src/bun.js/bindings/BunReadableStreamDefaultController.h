@@ -33,7 +33,7 @@ public:
     JSC::JSObject* cancelAlgorithm() const { return m_cancelAlgorithm.get(); }
 
     // Internal slots from the spec
-    JSC::JSArray* queue() { return m_queue.get(); }
+    JSC::JSArray* queue() { return m_queue.getInitializedOnMainThread(this); }
     double queueTotalSize() const { return m_queueTotalSize; }
     bool started() const { return m_started; }
     bool closeRequested() const { return m_closeRequested; }

@@ -6,6 +6,8 @@
 
 namespace Bun {
 
+class JSTransformStreamDefaultController;
+
 class JSTransformStream final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -38,7 +40,7 @@ public:
     // Readable side operations
     JSC::JSValue readable() { return m_readable.get(); }
     JSC::JSValue writable() { return m_writable.get(); }
-
+    JSTransformStreamDefaultController* controller() { return m_controller.get(); }
     // Direct C++ API
     void enqueue(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue chunk);
     void error(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue error);

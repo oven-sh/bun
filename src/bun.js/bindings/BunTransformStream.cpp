@@ -1,3 +1,4 @@
+#include "BunClientData.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSObject.h>
@@ -5,7 +6,8 @@
 #include <JavaScriptCore/JSPromise.h>
 #include "ErrorCode.h"
 #include "BunTransformStream.h"
-// #include "BunTransformStreamDefaultController.h"
+#include "BunTransformStreamDefaultController.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -181,10 +183,14 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
     JSTransformStream* transformStream = JSTransformStream::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto& builtinNames = Bun::builtinNames(vm);
+
     // Set up readable and writable sides with provided strategies
     if (!writableStrategyArg.isUndefined()) {
+
         // Apply writable strategy
-        JSValue highWaterMark = writableStrategyArg.get(globalObject, vm.propertyNames->highWaterMark);
+        JSValue highWaterMark = writableStrategyArg.get(globalObject, builtinNames.highWaterMarkPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue size = writableStrategyArg.get(globalObject, vm.propertyNames->size);
         RETURN_IF_EXCEPTION(scope, {});
         // ... apply strategy to writable side
@@ -192,17 +198,24 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
 
     if (!readableStrategyArg.isUndefined()) {
         // Apply readable strategy
-        JSValue highWaterMark = readableStrategyArg.get(globalObject, vm.propertyNames->highWaterMark);
+        JSValue highWaterMark = readableStrategyArg.get(globalObject, builtinNames.highWaterMarkPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue size = readableStrategyArg.get(globalObject, vm.propertyNames->size);
         RETURN_IF_EXCEPTION(scope, {});
         // ... apply strategy to readable side
+
+        // TODO: set up readable side
+        UNUSED_PARAM(highWaterMark);
+        UNUSED_PARAM(size);
     }
 
     // Handle transformer setup if provided
     if (!transformerArg.isUndefined()) {
-        JSValue transformFn = transformerArg.get(globalObject, vm.propertyNames->transform);
-        JSValue flushFn = transformerArg.get(globalObject, vm.propertyNames->flush);
-        JSValue startFn = transformerArg.get(globalObject, vm.propertyNames->start);
+        JSValue transformFn = transformerArg.get(globalObject, builtinNames.transformPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue flushFn = transformerArg.get(globalObject, builtinNames.flushPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue startFn = transformerArg.get(globalObject, builtinNames.startPublicName());
         RETURN_IF_EXCEPTION(scope, {});
 
         // Set up transform algorithm
@@ -217,11 +230,11 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
 
         // Call start if present
         if (!startFn.isUndefined()) {
-            JSValue controller = transformStream->controller();
-            callData.thisValue = transformerArg;
+            auto* controller = transformStream->controller();
             MarkedArgumentBuffer args;
             args.append(controller);
-            JSValue startResult = call(globalObject, startFn, callData, args);
+
+            JSC::JSValue startResult = call(globalObject, startFn, callData, args);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -263,16 +276,6 @@ DEFINE_VISIT_CHILDREN(JSTransformStream);
 JSTransformStream::JSTransformStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSTransformStream::~JSTransformStream()
-{
-    // Clean up any resources
-}
-
-void JSTransformStream::destroy(JSCell* cell)
-{
-    static_cast<JSTransformStream*>(cell)->JSTransformStream::~JSTransformStream();
 }
 
 void JSTransformStream::finishCreation(VM& vm, JSGlobalObject* globalObject)
@@ -326,26 +329,6 @@ JSTransformStream* JSTransformStream::create(
     ptr->finishCreation(vm, globalObject);
     return ptr;
 }
-
-// Prototype implementation (JSTransformStreamPrototype.cpp)
-static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
-    { "readable"_s,
-        static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly),
-        NoIntrinsic,
-        { HashTableValue::GetterSetterType, jsTransformStreamReadableGetter, nullptr } },
-    { "writable"_s,
-        static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly),
-        NoIntrinsic,
-        { HashTableValue::GetterSetterType, jsTransformStreamWritableGetter, nullptr } }
-};
-
-const ClassInfo JSTransformStreamPrototype::s_info = {
-    "TransformStream"_s,
-    &Base::s_info,
-    nullptr,
-    nullptr,
-    CREATE_METHOD_TABLE(JSTransformStreamPrototype)
-};
 
 void JSTransformStreamPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {

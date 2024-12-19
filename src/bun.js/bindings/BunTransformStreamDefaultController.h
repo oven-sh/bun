@@ -14,18 +14,7 @@ public:
     static constexpr bool needsDestruction = true;
 
     template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-
-        return subspaceForImpl<JSTransformStreamDefaultController, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamController = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTransformStreamController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamController = std::forward<decltype(space)>(space); });
-    }
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
     static JSTransformStreamDefaultController* create(
         JSC::VM& vm,

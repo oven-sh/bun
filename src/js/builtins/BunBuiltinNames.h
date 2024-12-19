@@ -21,9 +21,24 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(AbortSignal) \
+    macro(Buffer) \
+    macro(Bun) \
+    macro(Loader) \
+    macro(ReadableByteStreamController) \
+    macro(ReadableStream) \
+    macro(ReadableStreamBYOBReader) \
+    macro(ReadableStreamBYOBRequest) \
+    macro(ReadableStreamDefaultController) \
+    macro(ReadableStreamDefaultReader) \
+    macro(TextEncoderStreamEncoder) \
+    macro(TransformStream) \
+    macro(TransformStreamDefaultController) \
+    macro(WritableStream) \
+    macro(WritableStreamDefaultController) \
+    macro(WritableStreamDefaultWriter) \
     macro(_events) \
     macro(abortAlgorithm) \
-    macro(AbortSignal) \
     macro(abortSteps) \
     macro(addAbortAlgorithmToSignal) \
     macro(addEventListener) \
@@ -36,8 +51,6 @@ using namespace JSC;
     macro(backpressureChangePromise) \
     macro(basename) \
     macro(body) \
-    macro(Buffer) \
-    macro(Bun) \
     macro(bunNativePtr) \
     macro(bunNativeType) \
     macro(byobRequest) \
@@ -47,11 +60,11 @@ using namespace JSC;
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
+    macro(closeRequest) \
+    macro(closeRequested) \
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
-    macro(closeRequest) \
-    macro(closeRequested) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \
@@ -129,7 +142,6 @@ using namespace JSC;
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
     macro(loadCJS2ESM) \
-    macro(Loader) \
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \
@@ -138,6 +150,8 @@ using namespace JSC;
     macro(makeThisTypeError) \
     macro(method) \
     macro(mockedFunction) \
+    macro(napiDlopenHandle) \
+    macro(napiWrappedContents) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
@@ -173,18 +187,12 @@ using namespace JSC;
     macro(put) \
     macro(queue) \
     macro(read) \
-    macro(readable) \
-    macro(ReadableByteStreamController) \
-    macro(ReadableStream) \
-    macro(ReadableStreamBYOBReader) \
-    macro(ReadableStreamBYOBRequest) \
-    macro(readableStreamController) \
-    macro(ReadableStreamDefaultController) \
-    macro(ReadableStreamDefaultReader) \
-    macro(readableStreamToArray) \
-    macro(reader) \
     macro(readIntoRequests) \
     macro(readRequests) \
+    macro(readable) \
+    macro(readableStreamController) \
+    macro(readableStreamToArray) \
+    macro(reader) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
     macro(redirect) \
@@ -225,14 +233,12 @@ using namespace JSC;
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
-    macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
     macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \
+    macro(transform) \
     macro(transformAlgorithm) \
-    macro(TransformStream) \
-    macro(TransformStreamDefaultController) \
     macro(uncork) \
     macro(underlyingByteSource) \
     macro(underlyingSink) \
@@ -245,17 +251,12 @@ using namespace JSC;
     macro(versions) \
     macro(view) \
     macro(writable) \
-    macro(WritableStream) \
-    macro(WritableStreamDefaultController) \
-    macro(WritableStreamDefaultWriter) \
     macro(write) \
     macro(writeAlgorithm) \
-    macro(writer) \
     macro(writeRequests) \
+    macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(napiDlopenHandle) \
-    macro(napiWrappedContents) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

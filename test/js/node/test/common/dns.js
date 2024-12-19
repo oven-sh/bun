@@ -15,6 +15,7 @@ const types = {
   TXT: 16,
   ANY: 255,
   CAA: 257,
+  SRV: 33,
 };
 
 const classes = {

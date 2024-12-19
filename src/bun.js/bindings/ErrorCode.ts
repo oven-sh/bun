@@ -52,6 +52,8 @@ export default [
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
   ["ERR_INVALID_URI", URIError],
+  ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error],
+  ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

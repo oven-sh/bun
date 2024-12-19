@@ -175,6 +175,8 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
     });
 }
 
+#define PROFILE_MODE false
+
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
 {
@@ -195,8 +197,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
     if (provider->m_resolvedSource.module_info_len == 0) {
-        // RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null; TODO uncomment the line below")))));
+#if PROFILE_MODE
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
+#else
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, nullptr));
+#endif
     }
 
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, provider->m_resolvedSource.module_info_ptr, provider->m_resolvedSource.module_info_len);
@@ -204,14 +209,12 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-    bool compare = true;
-
-    if (compare) {
-        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
-    } else {
-        promise->fulfillWithNonPromise(globalObject, moduleRecord);
-        RELEASE_AND_RETURN(scope, JSValue::encode(promise));
-    }
+#if PROFILE_MODE
+    promise->fulfillWithNonPromise(globalObject, moduleRecord);
+    RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+#else
+    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
+#endif
 }
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue)
 {

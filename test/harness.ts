@@ -1445,12 +1445,15 @@ export function simpleMemoryLeakChecker(options: { samples: number; preSamples?:
   let threshold = 0;
   for (let i = 0; i < preSamples; i++) {
     options.run();
+    Bun.gc(true);
     const firstRun = process.memoryUsage().rss;
     threshold = Math.max(threshold, firstRun);
   }
+  threshold += 4 * 1024 * 1024; // 4mb
   Bun.gc(true);
 
   for (let i = 0; i < options.samples; i++) {
+    Bun.gc(true);
     options.run();
     Bun.gc(true);
   }

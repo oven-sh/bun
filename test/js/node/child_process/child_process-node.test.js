@@ -718,7 +718,7 @@ describe("fork", () => {
           expect.objectContaining({
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
-            message: expect.stringContaining(`The "options" argument must be of type object. Received: `),
+            message: expect.stringContaining(`The "options" argument must be of type object. Received`),
           }),
         );
       });

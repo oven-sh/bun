@@ -5,10 +5,18 @@
 #include "BunWritableStreamDefaultWriter.h"
 #include "BunStreamStructures.h"
 #include "BunStreamInlines.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+// Forward declarations
+namespace Operations {
+void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason);
+void WritableStreamFinishErroring(JSWritableStream* stream);
+void WritableStreamDefaultWriterEnsureReadyPromiseRejected(JSWritableStreamDefaultWriter* writer, JSValue reason);
+} // namespace Operations
 
 // JSWritableStreamPrototype bindings
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -48,8 +56,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalO
     if (stream->isLocked())
         return throwVMTypeError(globalObject, scope, "Cannot get writer for locked WritableStream"_s);
 
-    Structure* writerStructure = globalObject->writableStreamDefaultWriterStructure();
-    auto* writer = JSWritableStreamDefaultWriter::create(vm, globalObject, writerStructure, stream);
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (!zigGlobalObject)
+        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
+
+    Structure* writerStructure = zigGlobalObject->streamStructures().getWritableStreamDefaultWriterStructure(zigGlobalObject);
+    auto* writer = JSWritableStreamDefaultWriter::create(vm, writerStructure, stream);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->setWriter(vm, writer);
@@ -248,8 +260,13 @@ void JSWritableStream::finishCreation(VM& vm)
 
 JSWritableStream* JSWritableStream::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (!zigGlobalObject)
+        return nullptr;
+
+    Structure* streamStructure = zigGlobalObject->streamStructures().getWritableStreamStructure(zigGlobalObject);
     JSWritableStream* stream = new (NotNull, allocateCell<JSWritableStream>(vm))
-        JSWritableStream(vm, structure);
+        JSWritableStream(vm, streamStructure ? streamStructure : structure);
     stream->finishCreation(vm);
     return stream;
 }
@@ -306,42 +323,12 @@ JSValue JSWritableStream::error(JSGlobalObject* globalObject, JSValue error)
 
 namespace Operations {
 
-// WritableStreamDefaultControllerErrorSteps(stream.[[writableStreamController]]).
-void WritableStreamDefaultControllerErrorSteps(JSWritableStreamDefaultController* controller)
+void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason)
 {
-    auto* stream = controller->stream();
-    // 1. Let stream be controller.[[controlledWritableStream]].
-    ASSERT(stream);
-
-    // 2. Assert: stream.[[state]] is "writable".
-    ASSERT(stream->state() == JSWritableStream::State::Writable);
-
-    // 3. Perform ! WritableStreamStartErroring(stream, controller.[[signal]].[[error]]).
-    WritableStreamStartErroring(stream, controller->abortSignal());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
+    VM& vm = stream->vm();
+    JSGlobalObject* globalObject = stream->globalObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPromise* promise = jsDynamicCast<JSPromise*>(callFrame->argument(1));
-    promise->fulfillWithNonPromise(globalObject, jsUndefined());
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRejectAbortPromiseWithReason, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSPromise* promise = jsDynamicCast<JSPromise*>(callFrame->argument(1));
-    promise->reject(globalObject, callFrame->argument(0));
-    return JSValue::encode(jsUndefined());
-}
-
-static void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason)
-{
     // 1. Assert: stream.[[storedError]] is undefined.
     ASSERT(!stream->storedError() || stream->storedError().isUndefined());
 
@@ -356,7 +343,7 @@ static void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason
     stream->setState(JSWritableStream::State::Erroring);
 
     // 5. Set stream.[[storedError]] to reason.
-    stream->setStoredError(reason);
+    stream->setStoredError(vm, reason);
 
     // 6. Let writer be stream.[[writer]].
     auto* writer = stream->writer();
@@ -369,10 +356,16 @@ static void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason
     //    perform ! WritableStreamFinishErroring(stream).
     if (!stream->hasOperationMarkedInFlight() && controller->started())
         WritableStreamFinishErroring(stream);
+
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
-static void WritableStreamFinishErroring(JSWritableStream* stream)
+void WritableStreamFinishErroring(JSWritableStream* stream)
 {
+    VM& vm = stream->vm();
+    JSGlobalObject* globalObject = stream->globalObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     // 1. Assert: stream.[[state]] is "erroring".
     ASSERT(stream->state() == JSWritableStream::State::Erroring);
 
@@ -396,7 +389,7 @@ static void WritableStreamFinishErroring(JSWritableStream* stream)
         // b. Set writer.[[writeRequests]] to an empty List.
         // c. For each writeRequest of writeRequests,
         //    1. Reject writeRequest with stream.[[storedError]].
-        writer->rejectWriteRequests(storedError);
+        writer->rejectWriteRequests(globalObject, storedError);
     }
 
     JSPromise* abortPromise = stream->pendingAbortRequestPromise();
@@ -406,8 +399,6 @@ static void WritableStreamFinishErroring(JSWritableStream* stream)
     if (!abortPromise)
         return;
 
-    // 9. Set stream.[[pendingAbortRequest]] to undefined.
-
     JSValue abortReason = stream->pendingAbortRequestReason();
     bool wasAlreadyErroring = stream->wasAlreadyErroring();
     stream->clearPendingAbortRequest();
@@ -415,7 +406,7 @@ static void WritableStreamFinishErroring(JSWritableStream* stream)
     // 10. If pendingAbortRequest.[[wasAlreadyErroring]] is true,
     if (wasAlreadyErroring) {
         // a. Reject pendingAbortRequest.[[promise]] with pendingAbortRequest.[[reason]].
-        abortPromise->(abortReason);
+        abortPromise->reject(globalObject, abortReason);
         // b. Return.
         return;
     }
@@ -431,67 +422,31 @@ static void WritableStreamFinishErroring(JSWritableStream* stream)
     if (JSPromise* resultPromise = jsDynamicCast<JSPromise*>(result)) {
         Bun::then(globalObject, resultPromise,
             jsFunctionResolveAbortPromiseWithUndefined,
-            jsFunctionRejectAbortPromiseWithReason);
+            jsFunctionRejectAbortPromiseWithReason,
+            abortPromise);
     } else {
         // If not a promise, treat as fulfilled
-        abortPromise->resolve(jsUndefined());
+        abortPromise->resolve(globalObject, jsUndefined());
     }
 }
 
-static JSValue WritableStreamAbort(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue reason)
+void WritableStreamDefaultWriterEnsureReadyPromiseRejected(JSWritableStreamDefaultWriter* writer, JSValue reason)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = writer->globalObject()->vm();
+    JSGlobalObject* globalObject = writer->globalObject();
 
-    // 1. Let state be stream.[[state]].
-    const auto state = stream->state();
+    // 1. If writer.[[readyPromise]] is pending, reject it with reason.
+    JSPromise* readyPromise = writer->ready();
+    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending)
+        readyPromise->reject(globalObject, reason);
 
-    // 2. If state is "closed" or state is "errored", return a promise resolved with undefined.
-    if (state == JSWritableStream::State::Closed || state == JSWritableStream::State::Errored) {
-        return JSPromise::resolvedPromise(globalObject, jsUndefined());
-    }
-
-    // 3. If stream.[[pendingAbortRequest]] is not undefined, return stream.[[pendingAbortRequest]].[[promise]].
-    if (auto promise = stream->pendingAbortRequestPromise())
-        return promise;
-
-    // 4. Assert: state is "writable" or state is "erroring".
-    ASSERT(state == JSWritableStream::State::Writable || state == JSWritableStream::State::Erroring);
-
-    // 5. Let wasAlreadyErroring be false.
-    bool wasAlreadyErroring = false;
-
-    // 6. If state is "erroring",
-    if (state == JSWritableStream::State::Erroring) {
-        //   a. Set wasAlreadyErroring to true.
-        wasAlreadyErroring = true;
-        //   b. Set reason to undefined.
-        reason = jsUndefined();
-    }
-
-    // 7. Let promise be a new promise.
-    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
-    // 8. Set stream.[[pendingAbortRequest]] to record {[[promise]]: promise, [[reason]]: reason,
-    //    [[wasAlreadyErroring]]: wasAlreadyErroring}.
-    stream->setPendingAbortRequest(vm, promise, reason, wasAlreadyErroring);
-
-    // 9. If wasAlreadyErroring is false, perform ! WritableStreamStartErroring(stream, reason).
-    if (!wasAlreadyErroring) {
-        WritableStreamStartErroring(stream, reason);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    // 10. If stream.[[state]] is "errored", perform ! WritableStreamFinishErroring(stream).
-    if (stream->state() == JSWritableStream::State::Errored) {
-        WritableStreamFinishErroring(stream);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    // 11. Return promise.
-    return promise;
+    // 2. Set writer.[[readyPromise]] to a promise rejected with reason.
+    JSPromise* newPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    newPromise->reject(globalObject, reason);
+    writer->setReady(vm, newPromise);
 }
-}
+
+} // namespace Operations
 
 JSValue JSWritableStream::abort(JSGlobalObject* globalObject, JSValue reason)
 {
@@ -644,6 +599,30 @@ void JSWritableStream::finishInFlightCloseWithError(JSValue error)
         // a. Reject writer.[[closedPromise]] with error.
         writer->rejectClosedPromise(globalObject, error);
     }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPromise* promise = jsDynamicCast<JSPromise*>(callFrame->argument(1));
+    if (!promise)
+        return JSValue::encode(jsUndefined());
+    promise->resolve(globalObject, jsUndefined());
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRejectAbortPromiseWithReason, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPromise* promise = jsDynamicCast<JSPromise*>(callFrame->argument(1));
+    if (!promise)
+        return JSValue::encode(jsUndefined());
+    promise->reject(globalObject, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
 }
 
 }

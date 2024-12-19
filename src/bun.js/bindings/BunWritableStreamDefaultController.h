@@ -1,3 +1,5 @@
+#pragma once
+
 #include "root.h"
 
 #include <JavaScriptCore/JSPromise.h>
@@ -43,6 +45,9 @@ public:
     // C++-facing methods
     bool shouldCallWrite() const;
     double getDesiredSize() const;
+    bool started() const;
+    void errorSteps();
+    JSC::JSValue performAbortAlgorithm(JSC::JSValue reason);
 
     // For garbage collection
     DECLARE_VISIT_CHILDREN;

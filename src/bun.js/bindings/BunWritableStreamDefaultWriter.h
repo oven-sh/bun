@@ -35,6 +35,9 @@ public:
 
     void resolveClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
     void rejectClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
+    void rejectWriteRequests(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    void setReady(JSC::VM& vm, JSC::JSPromise* promise);
+    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
 
     // Internal APIs for C++ use
     JSWritableStream* stream() { return m_stream.get(); }
@@ -54,6 +57,7 @@ private:
     JSC::WriteBarrier<JSWritableStream> m_stream;
     JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
     JSC::WriteBarrier<JSC::JSPromise> m_readyPromise;
+    JSC::WriteBarrier<JSC::JSArray> m_writeRequests;
 };
 
 } // namespace Bun

@@ -209,6 +209,10 @@ JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
         JSWritableStreamDefaultController(vm, structure);
 
     controller->finishCreation(vm);
+    controller->m_stream.set(vm, controller, stream);
+    controller->m_strategyHWM = highWaterMark;
+    controller->m_started = true;
+
     return controller;
 }
 
@@ -371,5 +375,29 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     }
 
     return jsUndefined();
+}
+
+bool JSWritableStreamDefaultController::started() const
+{
+    return m_started;
+}
+
+void JSWritableStreamDefaultController::errorSteps()
+{
+    // Implementation of error steps for the controller
+    if (m_stream)
+        m_stream->error(globalObject(), jsUndefined());
+}
+
+JSValue JSWritableStreamDefaultController::performAbortAlgorithm(JSValue reason)
+{
+    if (!m_abortAlgorithm)
+        return jsUndefined();
+
+    MarkedArgumentBuffer args;
+    args.append(reason);
+
+    auto callData = JSC::getCallData(m_abortAlgorithm.get());
+    return call(globalObject(), m_abortAlgorithm.get(), callData, jsUndefined(), args);
 }
 }

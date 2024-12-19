@@ -135,6 +135,14 @@ export namespace t {
    * your use case.
    */
   export const any = builtinType<unknown>()("any");
+  /**
+   * Can only be used as an argument type.
+   * Tells the code generator to pass `*JSC.CallFrame` as a parameter
+   * Avoid this at all costs. This indicates the bindings generator is serverely
+   * incapable of processing your use case.
+   */
+  export const callFrame = builtinType<never>()("callFrame");
+
   /** Void function type */
   export const undefined = builtinType<undefined>()("undefined");
   /** Does not throw on parse. Equivalent to `!!value` */
@@ -276,6 +284,14 @@ export namespace t {
    */
   export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
     return new TypeImpl("zigEnum", { file, impl });
+  }
+
+  /**
+   * Must be the last argument. Collects zero or more arguments
+   * `t.rest(t.any)` passes `[]const JSValue` without allocating.
+   */
+  export function rest(...types: Type<any>[]): Type<any, "rest"> {
+    return new TypeImpl("rest", types as any);
   }
 }
 

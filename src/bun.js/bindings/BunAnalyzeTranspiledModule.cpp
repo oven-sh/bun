@@ -25,6 +25,7 @@
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/ExceptionScope.h"
 // #include "JavaScriptCore/StrongInlines.h"
+#include "ZigSourceProvider.h"
 
 // ref: JSModuleLoader.cpp
 // ref: ModuleAnalyzer.cpp
@@ -74,7 +75,7 @@ namespace JSC {
 String dumpRecordInfo(JSModuleRecord* moduleRecord);
 
 struct ModuleInfo;
-extern "C" JSModuleRecord* zig__ModuleInfo__parseFromSourceCode(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, const char* source_ptr, size_t source_len, int* failure_reason);
+extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, uint8_t* module_info_ptr, size_t module_info_len);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
@@ -185,24 +186,22 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         return promise;
     };
 
-    auto sourceCodeStdString = sourceCode.toUTF8().toStdString();
-
     VariableEnvironment declaredVariables = VariableEnvironment();
     VariableEnvironment lexicalVariables = VariableEnvironment();
 
-    int failure_reason = -1;
-    auto moduleRecord = zig__ModuleInfo__parseFromSourceCode(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, sourceCodeStdString.data(), sourceCodeStdString.size(), &failure_reason);
+    auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
+    if (provider->m_resolvedSource.__is_probably_real != 0xABEF) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("resolvedSource !isProbablyReal")))));
+    }
+
+    if (provider->m_resolvedSource.module_info_len == 0) {
+        // RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null; TODO uncomment the line below")))));
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, nullptr));
+    }
+
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, provider->m_resolvedSource.module_info_ptr, provider->m_resolvedSource.module_info_len);
     if (moduleRecord == nullptr) {
-        if (failure_reason == 1) {
-            // module does not have a <jsc-module-info> block. fall back to double-parse.
-            return fallbackParse(globalObject, moduleKey, sourceCode, promise);
-        } else if (failure_reason == 2) {
-            //
-            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
-        } else {
-            // :/
-            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
-        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
     bool compare = true;

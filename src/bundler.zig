@@ -1068,11 +1068,14 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
+        module_info_serialize_result: ?*std.ArrayList(u8),
     ) !usize {
         const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
+
+        if (module_info_serialize_result != null) bun.assert(format == .esm or format == .esm_ascii);
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1118,6 +1121,7 @@ pub const Bundler = struct {
                     .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
+                module_info_serialize_result,
             ),
             .esm_ascii => switch (bundler.options.target.isBun()) {
                 inline else => |is_bun| try js_printer.printAst(
@@ -1151,6 +1155,7 @@ pub const Bundler = struct {
                         .print_dce_annotations = bundler.options.emit_dce_annotations,
                     },
                     enable_source_map,
+                    module_info_serialize_result,
                 ),
             },
             else => unreachable,
@@ -1173,6 +1178,7 @@ pub const Bundler = struct {
             false,
             null,
             null,
+            null,
         );
     }
 
@@ -1183,6 +1189,7 @@ pub const Bundler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
+        module_info_serialize_result: ?*std.ArrayList(u8),
     ) !usize {
         if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
             return bundler.printWithSourceMapMaybe(
@@ -1194,6 +1201,7 @@ pub const Bundler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                module_info_serialize_result,
             );
         }
         return bundler.printWithSourceMapMaybe(
@@ -1205,6 +1213,7 @@ pub const Bundler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            module_info_serialize_result,
         );
     }
 

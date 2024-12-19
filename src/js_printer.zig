@@ -5815,6 +5815,7 @@ pub fn printAst(
     comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
+    module_info_serialize_result: ?*std.ArrayList(u8),
 ) !usize {
     var renamer: rename.Renamer = undefined;
     var no_op_renamer: rename.NoOpRenamer = undefined;
@@ -5913,9 +5914,12 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
-    var mi = if (PrinterType.may_have_module_info) ModuleInfo.init(opts.allocator);
-    defer if (PrinterType.may_have_module_info) mi.deinit();
-    if (PrinterType.may_have_module_info) printer.module_info = &mi;
+    if (module_info_serialize_result != null) bun.assert(PrinterType.may_have_module_info);
+    const have_module_info = PrinterType.may_have_module_info and module_info_serialize_result != null;
+
+    var module_info = if (PrinterType.may_have_module_info) ModuleInfo.init(opts.allocator);
+    defer if (PrinterType.may_have_module_info) module_info.deinit();
+    if (have_module_info) printer.module_info = &module_info;
 
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -5943,12 +5947,9 @@ pub fn printAst(
         }
     }
 
-    if (PrinterType.may_have_module_info) {
-        try mi.fixupIndirectExports();
-    }
-
-    if (PrinterType.may_have_module_info) {
-        try mi.serializeToComment(printer.writer.stdWriter());
+    if (have_module_info) {
+        try printer.module_info.?.fixupIndirectExports();
+        try printer.module_info.?.serialize(module_info_serialize_result.?.writer());
     }
 
     var sourcemap: []const u8 = "";
@@ -5961,11 +5962,7 @@ pub fn printAst(
         }
     }
     if (opts.runtime_transpiler_cache) |cache| {
-        var mi_buf = if (PrinterType.may_have_module_info) std.ArrayList(u8).init(bun.default_allocator);
-        defer if (PrinterType.may_have_module_info) mi_buf.deinit();
-        if (PrinterType.may_have_module_info) try mi.serialize(mi_buf.writer());
-
-        cache.put(printer.writer.ctx.getWritten(), sourcemap, if (PrinterType.may_have_module_info) mi_buf.items else "");
+        cache.put(printer.writer.ctx.getWritten(), sourcemap, if (have_module_info) module_info_serialize_result.?.items else "");
     }
 
     try printer.writer.done();

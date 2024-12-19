@@ -13,6 +13,8 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
+const ModuleInfo = analyze_transpiled_module.ModuleInfo;
 
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -640,6 +642,9 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
+            var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
+            // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
@@ -649,6 +654,7 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    &mi_serialized,
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -682,6 +688,7 @@ pub const RuntimeTranspilerStore = struct {
 
                 break :brk result;
             };
+
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = source_code,
@@ -689,6 +696,8 @@ pub const RuntimeTranspilerStore = struct {
                 .source_url = duped.createIfDifferent(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
+                .module_info_ptr = mi_serialized.items.ptr,
+                .module_info_len = mi_serialized.items.len,
             };
         }
     };
@@ -1407,6 +1416,9 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
+            var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
+            // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+
             {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
@@ -1416,6 +1428,7 @@ pub const ModuleLoader = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    &mi_serialized,
                 );
             }
 
@@ -1453,6 +1466,8 @@ pub const ModuleLoader = struct {
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
 
                 .hash = 0,
+                .module_info_ptr = mi_serialized.items.ptr,
+                .module_info_len = mi_serialized.items.len,
             };
         }
 
@@ -1885,6 +1900,10 @@ pub const ModuleLoader = struct {
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
                 defer source_code_printer.* = printer;
+
+                var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
+                // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
 
@@ -1894,6 +1913,7 @@ pub const ModuleLoader = struct {
                         &printer,
                         .esm_ascii,
                         mapper.get(),
+                        &mi_serialized,
                     );
                 };
 
@@ -1949,6 +1969,8 @@ pub const ModuleLoader = struct {
                     .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                     .hash = 0,
                     .tag = tag,
+                    .module_info_ptr = mi_serialized.items.ptr,
+                    .module_info_len = mi_serialized.items.len,
                 };
             },
             // provideFetch() should be called

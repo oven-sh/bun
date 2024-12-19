@@ -219,7 +219,9 @@ pub const ResolvedSource = extern struct {
     bytecode_cache: ?[*]u8 = null,
     bytecode_cache_size: usize = 0,
 
-    module_info: ?*anyopaque = null,
+    module_info_ptr: ?[*]const u8 = null,
+    module_info_len: usize = 0,
+    __is_probably_real: u32 = 0xABEF,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };

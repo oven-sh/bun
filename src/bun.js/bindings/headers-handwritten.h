@@ -107,7 +107,9 @@ typedef struct ResolvedSource {
     bool already_bundled;
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    void* module_info;
+    uint8_t* module_info_ptr;
+    size_t module_info_len;
+    uint32_t __is_probably_real;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

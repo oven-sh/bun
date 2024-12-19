@@ -295,8 +295,12 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     source_code: *const SourceCode,
     declared_variables: *VariableEnvironment,
     lexical_variables: *VariableEnvironment,
-    res: *ModuleInfoDeserialized,
+    module_info_ptr: [*]const u8,
+    module_info_len: usize,
 ) ?*JSModuleRecord {
+    const mi_cont = module_info_ptr[0..module_info_len];
+    const res = ModuleInfoDeserialized.parse(mi_cont) catch return null;
+
     var identifiers = IdentifierArray.create(res.strings_len);
     defer identifiers.destroy();
     {

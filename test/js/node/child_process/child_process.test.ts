@@ -1,11 +1,13 @@
 import { semver, write } from "bun";
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
+
 const debug = process.env.DEBUG ? console.log : () => {};
+const fixturePath = (filename: string): string => path.join(import.meta.dir, "fixtures", filename);
 
 const originalProcessEnv = process.env;
 beforeEach(() => {
@@ -463,4 +465,37 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.output).toEqual([null, null, null]);
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
+});
+
+describe("spawnSync()", () => {
+  let tmpdir: string;
+  beforeAll(() => {
+    tmpdir = tmpdirSync("bun.test.spawnSync-cwd-");
+  });
+  afterAll(() => {
+    try {
+      fs.rmdirSync(tmpdir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it.only("can set the cwd", () => {
+    const fixture = fixturePath("child-process-fs-writeFileSync.js");
+    const before = fs.readdirSync(tmpdir, "utf8");
+    const { stdout: stdoutBuf } = spawnSync(bunExe(), [fixture], {
+      cwd: tmpdir,
+      env: bunEnv,
+    });
+
+    // this fixture echos its `process.cwd()`. it should be in the temp dir,
+    // not whatever is in process.env.PWD
+    const stdout = stdoutBuf.toString("utf8");
+    expect(stdout).toMatch(tmpdir);
+
+    // fs.writeFileSync should respect the cwd. if it doesn't, the fixture file
+    // is overwritten.
+    const after = fs.readdirSync(tmpdir, "utf8");
+    expect(after).toBe(before);
+  });
 });

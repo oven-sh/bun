@@ -138,9 +138,13 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         do {
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
             if (ret == -EINTR) {
-                if (timeout_update_ctx) {
+                if (timeout_update_ctx && timeout) {
                     if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
                         timeout = NULL;
+                    }
+                    if (timeout && timeout->tv_sec == 0 && timeout->tv_nsec == 0) {
+                        ret = 0;
+                        break;
                     }
                 }
                 continue;
@@ -164,9 +168,15 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     do {
         ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
 
-        if (ret == -1 && errno == EINTR && timeout_update_ctx) {
-            if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
-                timeout = NULL;
+        if (ret == -1 && errno == EINTR) {
+            if (timeout_update_ctx && timeout) {
+                if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
+                    timeout = NULL;
+                }
+                if (timeout && timeout->tv_sec == 0 && timeout->tv_nsec == 0) {
+                    ret = 0;
+                    break;
+                }
             }
             continue;
         }
@@ -297,9 +307,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, struct timespec* timeout, void
     do {
         int rc = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
 
-        if (UNLIKELY(rc == -1 && errno == EINTR && timeout_update_ctx)) {
-            if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
-                timeout = NULL;
+        if (UNLIKELY(rc == -1 && errno == EINTR)) {
+            if (timeout_update_ctx && timeout) {
+                if (!Bun__updateTimeoutAfterEINTR(timeout_update_ctx, timeout)) {
+                    timeout = NULL;
+                }
+                if (timeout && timeout->tv_sec == 0 && timeout->tv_nsec == 0) {
+                    loop->num_ready_polls = 0;
+                    break;
+                }
             }
             continue;
         }

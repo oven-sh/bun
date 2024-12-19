@@ -230,7 +230,7 @@ var InternalResolver = class Resolver {
       .resolve(hostname, "AAAA")
       .then(
         addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(({ address }) => address));
+          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
         },
         error => {
           callback(withTranslatedError(error));

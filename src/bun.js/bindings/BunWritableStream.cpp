@@ -317,7 +317,7 @@ void WritableStreamDefaultControllerErrorSteps(JSWritableStreamDefaultController
     ASSERT(stream->state() == JSWritableStream::State::Writable);
 
     // 3. Perform ! WritableStreamStartErroring(stream, controller.[[signal]].[[error]]).
-    WritableStreamStartErroring(stream, controller->signalError());
+    WritableStreamStartErroring(stream, controller->abortSignal());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -429,7 +429,7 @@ static void WritableStreamFinishErroring(JSWritableStream* stream)
     // 14. Upon rejection of result with reason r,
     //     a. Reject pendingAbortRequest.[[promise]] with r.
     if (JSPromise* resultPromise = jsDynamicCast<JSPromise*>(result)) {
-        Bun::performPromiseThen(vm, globalObject, resultPromise,
+        Bun::then(globalObject, resultPromise,
             jsFunctionResolveAbortPromiseWithUndefined,
             jsFunctionRejectAbortPromiseWithReason);
     } else {

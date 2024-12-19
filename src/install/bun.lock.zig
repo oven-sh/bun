@@ -1213,21 +1213,26 @@ pub fn parseIntoBinaryLockfile(
     var optional_peers_buf: std.AutoHashMapUnmanaged(u64, void) = .{};
     defer optional_peers_buf.deinit(allocator);
 
-    if (maybe_root_pkg) |root_pkg| {
-        const maybe_name = if (root_pkg.get("name")) |name| name.asString(allocator) orelse {
+    const root_pkg_exr = maybe_root_pkg orelse {
+        try log.addError(source, workspaces.loc, "Expected root package");
+        return error.InvalidWorkspaceObject;
+    };
+
+    {
+        const maybe_name = if (root_pkg_exr.get("name")) |name| name.asString(allocator) orelse {
             try log.addError(source, name.loc, "Expected a string");
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source, &optional_peers_buf);
+        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf);
 
-        var pkg: BinaryLockfile.Package = .{};
-        pkg.meta.id = 0;
+        var root_pkg: BinaryLockfile.Package = .{};
+        root_pkg.meta.id = 0;
 
         if (maybe_name) |name| {
             const name_hash = String.Builder.stringHash(name);
-            pkg.name = try string_buf.appendWithHash(name, name_hash);
-            pkg.name_hash = name_hash;
+            root_pkg.name = try string_buf.appendWithHash(name, name_hash);
+            root_pkg.name_hash = name_hash;
         }
 
         workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
@@ -1257,15 +1262,12 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        pkg.dependencies = .{ .off = off, .len = len };
-        pkg.resolutions = .{ .off = off, .len = len };
+        root_pkg.dependencies = .{ .off = off, .len = len };
+        root_pkg.resolutions = .{ .off = off, .len = len };
 
-        pkg.meta.id = 0;
-        try lockfile.packages.append(allocator, pkg);
-        try lockfile.getOrPutID(0, pkg.name_hash);
-    } else {
-        try log.addError(source, workspaces.loc, "Expected root package");
-        return error.InvalidWorkspaceObject;
+        root_pkg.meta.id = 0;
+        try lockfile.packages.append(allocator, root_pkg);
+        try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
     var pkg_map = bun.StringArrayHashMap(PackageID).init(allocator);
@@ -1486,9 +1488,15 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                if (pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items))) |res_pkg_id| {
-                    lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
-                }
+                const res_pkg_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
+                    if (dep.behavior.optional) {
+                        continue;
+                    }
+                    try dependencyResolutionFailure(&dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                    return error.InvalidPackageInfo;
+                };
+
+                lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
             }
 
             // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
@@ -1528,26 +1536,10 @@ pub fn parseIntoBinaryLockfile(
                     }
 
                     if (offset == 0) {
-                        if (dep.behavior.isOptionalPeer()) {
+                        if (dep.behavior.optional) {
                             continue :deps;
                         }
-
-                        const behaviorStr = if (dep.behavior.isDev())
-                            " dev"
-                        else if (dep.behavior.isOptional())
-                            " optional"
-                        else if (dep.behavior.isPeer())
-                            " peer"
-                        else if (dep.behavior.isWorkspaceOnly())
-                            " workspace"
-                        else
-                            " prod";
-
-                        try log.addErrorFmt(source, key.loc, allocator, "Failed to resolve{s} dependency '{s}' for package '{s}'", .{
-                            behaviorStr,
-                            dep_name,
-                            pkg_path,
-                        });
+                        try dependencyResolutionFailure(&dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
                         return error.InvalidPackageInfo;
                     }
 
@@ -1608,6 +1600,32 @@ pub fn parseIntoBinaryLockfile(
     }
 
     lockfile.initEmpty(allocator);
+}
+
+fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
+    const behavior_str = if (dep.behavior.isDev())
+        "dev"
+    else if (dep.behavior.isOptional())
+        "optional"
+    else if (dep.behavior.isPeer())
+        "peer"
+    else if (dep.behavior.isWorkspaceOnly())
+        "workspace"
+    else
+        "prod";
+
+    if (pkg_path) |path| {
+        try log.addErrorFmt(source, loc, allocator, "Failed to resolve {s} dependency '{s}' for package '{s}'", .{
+            behavior_str,
+            dep.name.slice(buf),
+            path,
+        });
+    } else {
+        try log.addErrorFmt(source, loc, allocator, "Failed to resolve root {s} dependency '{s}'", .{
+            behavior_str,
+            dep.name.slice(buf),
+        });
+    }
 }
 
 fn parseAppendDependencies(

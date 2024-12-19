@@ -7033,6 +7033,7 @@ pub const PackageManager = struct {
             .optional_dependencies = true,
         },
         local_package_features: Features = .{
+            .optional_dependencies = true,
             .dev_dependencies = true,
             .workspaces = true,
         },
@@ -7441,9 +7442,24 @@ pub const PackageManager = struct {
                     this.enable.manifest_cache_control = false;
                 }
 
-                if (cli.omit.dev) {
-                    this.local_package_features.dev_dependencies = false;
-                }
+                // TODO: implement
+                // if (cli.omit) |omit| {
+                //     if (omit.dev) {
+                //         this.local_package_features.dev_dependencies = false;
+                //         // remote packages should never install dev dependencies
+                //         // (TODO: unless git dependency with postinstalls)
+                //     }
+
+                //     if (omit.optional) {
+                //         this.local_package_features.optional_dependencies = false;
+                //         this.remote_package_features.optional_dependencies = false;
+                //     }
+
+                //     if (omit.peer) {
+                //         this.local_package_features.peer_dependencies = false;
+                //         this.remote_package_features.peer_dependencies = false;
+                //     }
+                // }
 
                 if (cli.global or cli.ignore_scripts) {
                     this.do.run_scripts = false;
@@ -7456,8 +7472,6 @@ pub const PackageManager = struct {
                 if (cli.save_text_lockfile) |save_text_lockfile| {
                     this.save_text_lockfile = save_text_lockfile;
                 }
-
-                this.local_package_features.optional_dependencies = !cli.omit.optional;
 
                 const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
 
@@ -9541,8 +9555,7 @@ pub const PackageManager = struct {
         development: bool = false,
         optional: bool = false,
 
-        no_optional: bool = false,
-        omit: Omit = Omit{},
+        // omit: ?Omit = null,
 
         exact: bool = false,
 
@@ -9567,19 +9580,11 @@ pub const PackageManager = struct {
             },
         };
 
-        const Omit = struct {
-            dev: bool = false,
-            optional: bool = true,
-            peer: bool = false,
-
-            pub inline fn toFeatures(this: Omit) Features {
-                return .{
-                    .dev_dependencies = this.dev,
-                    .optional_dependencies = this.optional,
-                    .peer_dependencies = this.peer,
-                };
-            }
-        };
+        // const Omit = struct {
+        //     dev: bool = false,
+        //     optional: bool = false,
+        //     peer: bool = false,
+        // };
 
         pub fn printHelp(subcommand: Subcommand) void {
             switch (subcommand) {

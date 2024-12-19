@@ -311,3 +311,30 @@ exports[`hoisting text lockfile is hoisted 1`] = `
 }
 "
 `;
+
+exports[`it should ignore peerDependencies within workspaces 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "peerDependencies": {
+        "no-deps": ">=1.0.0",
+      },
+    },
+    "packages/baz": {
+      "name": "Baz",
+      "peerDependencies": {
+        "a-dep": ">=1.0.1",
+      },
+    },
+  },
+  "packages": {
+    "Baz": ["Baz@workspace:packages/baz", { "peerDependencies": { "a-dep": ">=1.0.1" } }],
+
+    "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+    "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],
+  }
+}
+"
+`;

@@ -1123,59 +1123,6 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should ignore peerDependencies within workspaces", async () => {
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "Foo",
-      version: "0.0.1",
-      workspaces: ["packages/baz"],
-      peerDependencies: {
-        Bar: ">=0.0.2",
-      },
-    }),
-  );
-  await mkdir(join(package_dir, "packages", "baz"), { recursive: true });
-  await writeFile(
-    join(package_dir, "packages", "baz", "package.json"),
-    JSON.stringify({
-      name: "Baz",
-      version: "0.0.3",
-      peerDependencies: {
-        Moo: ">=0.0.4",
-      },
-    }),
-  );
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `
-    [install]
-    peer = false
-    `,
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Baz"]);
-  expect(package_dir).toHaveWorkspaceLink(["Baz", "packages/baz"]);
-  await access(join(package_dir, "bun.lockb"));
-});
-
 it("should handle installing the same peerDependency with different versions", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

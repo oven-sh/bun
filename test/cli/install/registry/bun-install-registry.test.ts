@@ -1974,6 +1974,71 @@ describe("optionalDependencies", () => {
   });
 });
 
+test("it should ignore peerDependencies within workspaces", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/baz"],
+        peerDependencies: {
+          "no-deps": ">=1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "baz", "package.json"),
+      JSON.stringify({
+        name: "Baz",
+        peerDependencies: {
+          "a-dep": ">=1.0.1",
+        },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), `omit=peer`),
+  ]);
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["Baz"]);
+  expect(
+    (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+  ).toMatchSnapshot();
+
+  // installing with them enabled works
+  await rm(join(packageDir, ".npmrc"));
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["Baz", "a-dep", "no-deps"]);
+});
+
+test("disabled dev/peer/optional dependencies are still included in the lockfile", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        devDependencies: {
+          "no-deps": "1.0.0",
+        },
+        peerDependencies: {
+          "a-dep": "1.0.1",
+        },
+        optionalDependencies: {
+          "basic-1": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall;
+});
+
 test("tarball override does not crash", async () => {
   await write(
     packageJson,

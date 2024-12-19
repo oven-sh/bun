@@ -214,7 +214,7 @@ function styleText(format, text) {
       const formatCodes = inspect.colors[key];
       if (formatCodes == null) {
         const e = new Error(
-          `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+          `The value "${typeof key === "symbol" ? key.description : key}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
         );
         e.code = "ERR_INVALID_ARG_VALUE";
         throw e;

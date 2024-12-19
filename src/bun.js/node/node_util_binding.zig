@@ -151,7 +151,7 @@ fn split(
         for (lines.items) |out| {
             out.deref();
         }
-        lines.deinit(allocator);
+        lines.deinit(alloc);
     }
 
     const buffer: []const Char = if (encoding == .utf16)

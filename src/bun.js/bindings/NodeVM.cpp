@@ -195,7 +195,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     slot.setThisValue(sandbox);
 
-    if (!sandbox->put(sandbox, globalObject, propertyName, value, slot)) {
+    if (!sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot)) {
         return false;
     }
     RETURN_IF_EXCEPTION(scope, false);
@@ -251,6 +251,10 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // configurable, don't change it on the global or sandbox.
     if (isDeclaredOnGlobalProxy && (slot.attributes() & PropertyAttribute::ReadOnly) != 0 && (slot.attributes() & PropertyAttribute::DontDelete) != 0) {
         return Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow);
+    }
+
+    if (descriptor.isAccessorDescriptor()) {
+        return contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);

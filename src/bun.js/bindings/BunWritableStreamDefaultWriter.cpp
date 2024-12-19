@@ -424,4 +424,16 @@ void JSWritableStreamDefaultWriter::release()
     m_readyPromise->reject(vm(), jsUndefined());
 }
 
+void JSWritableStreamDefaultWriter::resolveClosedPromise(JSGlobalObject* globalObject, JSValue value)
+{
+    if (m_closedPromise)
+        m_closedPromise->resolve(globalObject, value);
+}
+
+void JSWritableStreamDefaultWriter::rejectClosedPromise(JSGlobalObject* globalObject, JSValue error)
+{
+    if (m_closedPromise)
+        m_closedPromise->reject(globalObject, error);
+}
+
 } // namespace Bun

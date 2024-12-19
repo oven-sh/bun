@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -10,6 +11,11 @@
 #include "JSAbortSignal.h"
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
+#include "BunStreamStructures.h"
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include "BunStreamInlines.h"
+#include "JSAbortSignal.h"
+#include "DOMJITIDLType.h"
 
 namespace Bun {
 
@@ -106,7 +112,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerErrorFunction, (JSGlob
         return {};
     }
 
-    return JSValue::encode(controller->error(callFrame->argument(0)));
+    return JSValue::encode(controller->error(globalObject, callFrame->argument(0)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetSignal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
@@ -142,6 +148,32 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetDesiredSize, (JSGlo
     default:
         return JSValue::encode(jsNumber(thisObject->getDesiredSize()));
     }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerCloseFulfill, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSWritableStream* stream = jsDynamicCast<JSWritableStream*>(callFrame->argument(1));
+    if (UNLIKELY(!stream))
+        return throwVMTypeError(globalObject, scope, "WritableStreamDefaultController.close called with invalid stream"_s);
+
+    stream->finishInFlightClose();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerCloseReject, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSWritableStream* stream = jsDynamicCast<JSWritableStream*>(callFrame->argument(1));
+    if (UNLIKELY(!stream))
+        return throwVMTypeError(globalObject, scope, "WritableStreamDefaultController.close called with invalid stream"_s);
+
+    stream->finishInFlightCloseWithError(callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
 }
 
 static const HashTableValue JSWritableStreamDefaultControllerPrototypeTableValues[] = {
@@ -183,29 +215,50 @@ JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
 void JSWritableStreamDefaultController::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    m_queue.set(vm, JSC::constructEmptyArray(vm, nullptr));
-    m_abortController.set(vm, WebCore::JSAbortController::create(vm, nullptr, nullptr));
+    m_queue.set(vm, this, JSC::constructEmptyArray(globalObject(), nullptr, 0));
+    m_abortController.initLater([](const JSC::LazyProperty<JSObject, WebCore::JSAbortController>::Initializer& init) {
+        Zig::GlobalObject* globalObject = defaultGlobalObject(init.owner->globalObject());
+        auto& scriptExecutionContext = *globalObject->scriptExecutionContext();
+        Ref<WebCore::AbortController> abortController = WebCore::AbortController::create(scriptExecutionContext);
+        JSAbortController* abortControllerValue = jsCast<JSAbortController*>(WebCore::toJSNewlyCreated<IDLInterface<WebCore::AbortController>>(*init.owner->globalObject(), *globalObject, WTFMove(abortController)));
+        init.set(abortControllerValue);
+    });
 }
 
 JSC::JSValue JSWritableStreamDefaultController::abortSignal() const
 {
     auto& vm = this->globalObject()->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    return WebCore::toJS<WebCore::IDLInterface<WebCore::AbortSignal>>(this->globalObject(), defaultGlobalObject(this->globalObject()), throwScope, m_abortController->wrapped().signal());
+    return WebCore::toJS<WebCore::IDLInterface<WebCore::AbortSignal>>(*this->globalObject(), throwScope, m_abortController.get(this)->wrapped().signal());
 }
 
-JSC::JSValue JSWritableStreamDefaultController::error(JSC::JSValue reason)
+JSC::JSValue JSWritableStreamDefaultController::error(JSGlobalObject* globalObject, JSValue reason)
 {
-    auto* globalObject = JSC::jsCast<JSC::JSGlobalObject*>(m_stream->globalObject());
-    JSC::VM& vm = globalObject->vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_stream->state() != JSWritableStream::State::Writable)
-        return JSC::jsUndefined();
+    // 1. Let stream be this.[[stream]].
+    JSWritableStream* stream = m_stream.get();
 
-    performWritableStreamDefaultControllerError(this, reason);
+    // 2. Assert: stream is not undefined.
+    ASSERT(stream);
 
-    RELEASE_AND_RETURN(scope, JSC::jsUndefined());
+    // 3. Let state be stream.[[state]].
+    auto state = stream->state();
+
+    // 4. Assert: state is "writable".
+    if (state != JSWritableStream::State::Writable)
+        return throwTypeError(globalObject, scope, "WritableStreamDefaultController.error called on non-writable stream"_s);
+
+    // 5. Perform ! WritableStreamDefaultControllerError(this, error).
+    m_writeAlgorithm.clear();
+    m_closeAlgorithm.clear();
+    m_abortAlgorithm.clear();
+    m_strategySizeAlgorithm.clear();
+
+    stream->error(globalObject, reason);
+
+    return jsUndefined();
 }
 
 bool JSWritableStreamDefaultController::shouldCallWrite() const
@@ -248,7 +301,7 @@ void JSWritableStreamDefaultController::visitAdditionalChildren(Visitor& visitor
     visitor.append(m_writeAlgorithm);
     visitor.append(m_strategySizeAlgorithm);
     visitor.append(m_queue);
-    visitor.append(m_abortController);
+    m_abortController.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);
@@ -261,4 +314,61 @@ const JSC::ClassInfo JSWritableStreamDefaultController::s_info = {
     nullptr,
     CREATE_METHOD_TABLE(JSWritableStreamDefaultController)
 };
+
+JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // 1. Let stream be this.[[stream]].
+    JSWritableStream* stream = m_stream.get();
+
+    // 2. Assert: stream is not undefined.
+    ASSERT(stream);
+
+    // 3. Let state be stream.[[state]].
+    auto state = stream->state();
+
+    // 4. Assert: state is "writable".
+    ASSERT(state == JSWritableStream::State::Writable);
+
+    // 5. Let closeRequest be stream.[[closeRequest]].
+    // 6. Assert: closeRequest is not undefined.
+    ASSERT(stream->closeRequest());
+
+    // 7. Perform ! WritableStreamDefaultControllerClearAlgorithms(this).
+    m_writeAlgorithm.clear();
+    m_closeAlgorithm.clear();
+    m_abortAlgorithm.clear();
+    m_strategySizeAlgorithm.clear();
+
+    // 8. Let sinkClosePromise be the result of performing this.[[closeAlgorithm]].
+    JSValue sinkClosePromise;
+    if (m_closeAlgorithm) {
+        JSObject* closeFunction = m_closeAlgorithm.get();
+        if (closeFunction) {
+            MarkedArgumentBuffer args;
+            ASSERT(!args.hasOverflowed());
+            sinkClosePromise = JSC::profiledCall(globalObject, JSC::ProfilingReason::Microtask, closeFunction, JSC::getCallData(closeFunction), jsUndefined(), args);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            sinkClosePromise = jsUndefined();
+        }
+    } else {
+        sinkClosePromise = jsUndefined();
+    }
+
+    // 9. Upon fulfillment of sinkClosePromise:
+    //    a. Perform ! WritableStreamFinishInFlightClose(stream).
+    // 10. Upon rejection of sinkClosePromise with reason r:
+    //    a. Perform ! WritableStreamFinishInFlightCloseWithError(stream, r).
+    if (JSPromise* promise = jsDynamicCast<JSPromise*>(sinkClosePromise)) {
+        Bun::then(globalObject, promise, jsWritableStreamDefaultControllerCloseFulfill, jsWritableStreamDefaultControllerCloseReject, stream);
+    } else {
+        // If not a promise, treat as fulfilled
+        stream->finishInFlightClose();
+    }
+
+    return jsUndefined();
+}
 }

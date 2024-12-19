@@ -3,6 +3,8 @@
 #include "BunWritableStream.h"
 #include "BunWritableStreamDefaultController.h"
 #include "BunWritableStreamDefaultWriter.h"
+#include "BunStreamStructures.h"
+#include "BunStreamInlines.h"
 
 namespace Bun {
 
@@ -499,8 +501,49 @@ JSValue JSWritableStream::abort(JSGlobalObject* globalObject, JSValue reason)
     if (isLocked())
         return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot abort a locked WritableStream"_s));
 
-    // 2. Return ! WritableStreamAbort(this, reason).
-    return Operations::WritableStreamAbort(globalObject, this, reason);
+    // 2. Let state be this.[[state]].
+    const auto state = m_state;
+
+    // 3. If state is "closed" or state is "errored", return a promise resolved with undefined.
+    if (state == State::Closed || state == State::Errored)
+        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+
+    // 4. If this.[[pendingAbortRequest]] is not undefined, return this.[[pendingAbortRequest]].[[promise]].
+    if (auto promise = m_pendingAbortRequestPromise.get())
+        return promise;
+
+    // 5. Assert: state is "writable" or state is "erroring".
+    ASSERT(state == State::Writable || state == State::Erroring);
+
+    // 6. Let wasAlreadyErroring be false.
+    bool wasAlreadyErroring = false;
+
+    // 7. If state is "erroring",
+    if (state == State::Erroring) {
+        // a. Set wasAlreadyErroring to true.
+        wasAlreadyErroring = true;
+        // b. Set reason to undefined.
+        reason = jsUndefined();
+    }
+
+    // 8. Let promise be a new promise.
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+
+    // 9. Set this.[[pendingAbortRequest]] to record {[[promise]]: promise, [[reason]]: reason, [[wasAlreadyErroring]]: wasAlreadyErroring}.
+    m_pendingAbortRequestPromise.set(vm, this, promise);
+    m_pendingAbortRequestReason.set(vm, this, reason);
+    m_wasAlreadyErroring = wasAlreadyErroring;
+
+    // 10. If wasAlreadyErroring is false, perform ! WritableStreamStartErroring(this, reason).
+    if (!wasAlreadyErroring)
+        Operations::WritableStreamStartErroring(this, reason);
+
+    // 11. If this.[[state]] is "errored", perform ! WritableStreamFinishErroring(this).
+    if (m_state == State::Errored)
+        Operations::WritableStreamFinishErroring(this);
+
+    // 12. Return promise.
+    return promise;
 }
 
 JSValue JSWritableStream::close(JSGlobalObject* globalObject)
@@ -508,22 +551,98 @@ JSValue JSWritableStream::close(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Cannot close locked stream
-    if (isLocked() || m_state == State::Errored)
-        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close a locked or errored WritableStream"_s));
+    // 1. If ! IsWritableStreamLocked(this) is true, return a promise rejected with a TypeError exception.
+    if (isLocked())
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close a locked WritableStream"_s));
 
-    // Cannot close if already closing
+    // 2. If ! WritableStreamCloseQueuedOrInFlight(this) is true, return a promise rejected with a TypeError exception.
     if (m_closeRequest || m_inFlightCloseRequest)
         return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close an already closing stream"_s));
 
-    // Create close promise
-    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    m_closeRequest.set(vm, this, promise);
+    // 3. Let state be this.[[state]].
+    const auto state = m_state;
 
-    // Note: The controller just queues up the close operation
+    // 4. If state is "closed", return a promise rejected with a TypeError exception.
+    if (state == State::Closed)
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close an already closed stream"_s));
+
+    // 5. If state is "errored", return a promise rejected with this.[[storedError]].
+    if (state == State::Errored)
+        return JSPromise::rejectedPromise(globalObject, m_storedError.get());
+
+    // 6. If state is "erroring", return a promise rejected with this.[[storedError]].
+    if (state == State::Erroring)
+        return JSPromise::rejectedPromise(globalObject, m_storedError.get());
+
+    // 7. Assert: state is "writable".
+    ASSERT(state == State::Writable);
+
+    // 8. Let closeRequest be ! WritableStreamCreateCloseRequest(this).
+    JSPromise* closeRequest = JSPromise::create(vm, globalObject->promiseStructure());
+    m_closeRequest.set(vm, this, closeRequest);
+
+    // 9. Perform ! WritableStreamDefaultControllerClose(this.[[controller]]).
     m_controller->close(globalObject);
 
-    RELEASE_AND_RETURN(scope, promise);
+    // 10. Return closeRequest.[[promise]].
+    return closeRequest;
+}
+
+void JSWritableStream::finishInFlightClose()
+{
+    VM& vm = m_controller->vm();
+    JSGlobalObject* globalObject = m_controller->globalObject();
+
+    // 1. Assert: this.[[inFlightCloseRequest]] is not undefined.
+    ASSERT(m_inFlightCloseRequest);
+
+    // 2. Resolve this.[[inFlightCloseRequest]] with undefined.
+    m_inFlightCloseRequest->resolve(globalObject, jsUndefined());
+
+    // 3. Set this.[[inFlightCloseRequest]] to undefined.
+    m_inFlightCloseRequest.clear();
+
+    // 4. Set this.[[state]] to "closed".
+    m_state = State::Closed;
+
+    // 5. Let writer be this.[[writer]].
+    auto* writer = m_writer.get();
+
+    // 6. If writer is not undefined,
+    if (writer) {
+        // a. Resolve writer.[[closedPromise]] with undefined.
+        writer->resolveClosedPromise(globalObject, jsUndefined());
+    }
+}
+
+void JSWritableStream::finishInFlightCloseWithError(JSValue error)
+{
+    VM& vm = m_controller->vm();
+    JSGlobalObject* globalObject = m_controller->globalObject();
+
+    // 1. Assert: this.[[inFlightCloseRequest]] is not undefined.
+    ASSERT(m_inFlightCloseRequest);
+
+    // 2. Reject this.[[inFlightCloseRequest]] with error.
+    m_inFlightCloseRequest->reject(globalObject, error);
+
+    // 3. Set this.[[inFlightCloseRequest]] to undefined.
+    m_inFlightCloseRequest.clear();
+
+    // 4. Set this.[[state]] to "errored".
+    m_state = State::Errored;
+
+    // 5. Set this.[[storedError]] to error.
+    m_storedError.set(vm, this, error);
+
+    // 6. Let writer be this.[[writer]].
+    auto* writer = m_writer.get();
+
+    // 7. If writer is not undefined,
+    if (writer) {
+        // a. Reject writer.[[closedPromise]] with error.
+        writer->rejectClosedPromise(globalObject, error);
+    }
 }
 
 }

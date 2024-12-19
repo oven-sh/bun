@@ -120,6 +120,9 @@ public:
 
     bool hasOperationMarkedInFlight() const { return m_inFlightWriteRequest || m_inFlightCloseRequest; }
 
+    void finishInFlightClose();
+    void finishInFlightCloseWithError(JSValue error);
+
 private:
     JSWritableStream(VM&, Structure*);
     void finishCreation(VM&);

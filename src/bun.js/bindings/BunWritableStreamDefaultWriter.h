@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "root.h"
@@ -33,6 +32,9 @@ public:
     JSC::JSPromise* closed() { return m_closedPromise.get(); }
     JSC::JSPromise* ready() { return m_readyPromise.get(); }
     double desiredSize();
+
+    void resolveClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+    void rejectClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
 
     // Internal APIs for C++ use
     JSWritableStream* stream() { return m_stream.get(); }

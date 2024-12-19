@@ -35,7 +35,8 @@ public:
     }
 
     // JavaScript-facing methods
-    JSC::JSValue error(JSC::JSValue reason);
+    JSC::JSValue error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    JSC::JSValue close(JSC::JSGlobalObject* globalObject);
 
     // C++-facing methods
     bool shouldCallWrite() const;
@@ -76,9 +77,11 @@ private:
 
     // Internal slots per spec
     JSC::WriteBarrier<JSWritableStream> m_stream;
-    JSC::WriteBarrier<JSC::JSPromise> m_abortAlgorithm;
-    JSC::WriteBarrier<JSC::JSPromise> m_closeAlgorithm;
-    JSC::WriteBarrier<JSC::JSPromise> m_writeAlgorithm;
+
+    // Functions for us to call.
+    JSC::WriteBarrier<JSC::JSObject> m_abortAlgorithm;
+    JSC::WriteBarrier<JSC::JSObject> m_closeAlgorithm;
+    JSC::WriteBarrier<JSC::JSObject> m_writeAlgorithm;
 
     double m_strategyHWM { 1.0 };
     JSC::WriteBarrier<JSC::JSObject> m_strategySizeAlgorithm;
@@ -88,7 +91,7 @@ private:
     bool m_writing { false };
     bool m_inFlightWriteRequest { false };
     bool m_closeRequested { false };
-    JSC::WriteBarrier<WebCore::JSAbortController> m_abortController;
+    JSC::LazyProperty<JSObject, WebCore::JSAbortController> m_abortController;
 };
 
 }

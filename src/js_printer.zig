@@ -5815,7 +5815,7 @@ pub fn printAst(
     comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
-    module_info_serialize_result: ?*std.ArrayList(u8),
+    module_info: ?*@import("analyze_transpiled_module.zig").ModuleInfo,
 ) !usize {
     var renamer: rename.Renamer = undefined;
     var no_op_renamer: rename.NoOpRenamer = undefined;
@@ -5914,12 +5914,10 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
-    if (module_info_serialize_result != null) bun.assert(PrinterType.may_have_module_info);
-    const have_module_info = PrinterType.may_have_module_info and module_info_serialize_result != null;
+    if (module_info != null) bun.assert(PrinterType.may_have_module_info);
+    const have_module_info = PrinterType.may_have_module_info and module_info != null;
 
-    var module_info = if (PrinterType.may_have_module_info) ModuleInfo.init(opts.allocator);
-    defer if (PrinterType.may_have_module_info) module_info.deinit();
-    if (have_module_info) printer.module_info = &module_info;
+    if (have_module_info) printer.module_info = module_info;
 
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -5948,8 +5946,7 @@ pub fn printAst(
     }
 
     if (have_module_info) {
-        try printer.module_info.?.fixupIndirectExports();
-        try printer.module_info.?.serialize(module_info_serialize_result.?.writer());
+        try module_info.?.finalize();
     }
 
     var sourcemap: []const u8 = "";
@@ -5962,7 +5959,10 @@ pub fn printAst(
         }
     }
     if (opts.runtime_transpiler_cache) |cache| {
-        cache.put(printer.writer.ctx.getWritten(), sourcemap, if (have_module_info) module_info_serialize_result.?.items else "");
+        var srlz_res = std.ArrayList(u8).init(bun.default_allocator);
+        defer srlz_res.deinit();
+        if (have_module_info) try module_info.?.asDeserialized().serialize(srlz_res.writer());
+        cache.put(printer.writer.ctx.getWritten(), sourcemap, srlz_res.items);
     }
 
     try printer.writer.done();

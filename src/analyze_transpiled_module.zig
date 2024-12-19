@@ -80,6 +80,21 @@ pub const ModuleInfoDeserialized = struct {
             .contains_import_meta = contains_import_meta,
         };
     }
+    pub fn serialize(self: *const ModuleInfoDeserialized, writer: anytype) !void {
+        try writer.writeInt(u32, @truncate(self.record_kinds.len), .little);
+        try writer.writeAll(std.mem.sliceAsBytes(self.record_kinds));
+        try writer.writeInt(u32, @truncate(self.buffer.len), .little);
+        try writer.writeAll(std.mem.sliceAsBytes(self.buffer));
+
+        try writer.writeInt(u32, @truncate(self.requested_modules_keys.len), .little);
+        try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_keys));
+        try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_values));
+
+        try writer.writeInt(u8, @intFromBool(self.contains_import_meta), .little);
+
+        try writer.writeInt(u32, @truncate(self.strings_len), .little);
+        try writer.writeAll(self.strings);
+    }
 };
 
 const StringMapKey = enum(u32) {
@@ -120,37 +135,13 @@ pub const ModuleInfo = struct {
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
     contains_import_meta: bool,
-    indirect_exports_fixed: bool = false,
+    finalized: bool = false,
 
-    pub fn serialize(self: *ModuleInfo, writer: anytype) !void {
-        bun.assert(self.indirect_exports_fixed);
-        try writer.writeInt(u32, @truncate(self.record_kinds.items.len), .little);
-        try writer.writeAll(std.mem.sliceAsBytes(self.record_kinds.items));
-        try writer.writeInt(u32, @truncate(self.buffer.items.len), .little);
-        try writer.writeAll(std.mem.sliceAsBytes(self.buffer.items));
+    _deserialized: ModuleInfoDeserialized = undefined,
 
-        try writer.writeInt(u32, @truncate(self.requested_modules.count()), .little);
-        try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules.keys()));
-        try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules.values()));
-
-        try writer.writeInt(u8, @intFromBool(self.contains_import_meta), .little);
-
-        try writer.writeInt(u32, @truncate(self.strings_map.count()), .little);
-        try writer.writeAll(self.strings_buf.items);
-    }
-    pub fn serializeToComment(self: *ModuleInfo, final_writer: anytype) !void {
-        var res = std.ArrayList(u8).init(bun.default_allocator);
-        defer res.deinit();
-        const writer = res.writer();
-        try self.serialize(writer);
-
-        const enc_buf = try bun.default_allocator.alloc(u8, std.base64.standard.Encoder.calcSize(res.items.len));
-        defer bun.default_allocator.free(enc_buf);
-        const enc_res = std.base64.standard.Encoder.encode(enc_buf, res.items);
-
-        try final_writer.writeAll("\n// <jsc-module-info>\n// ");
-        try final_writer.writeAll(enc_res);
-        try final_writer.writeAll("\n// </jsc-module-info>\n");
+    pub fn asDeserialized(self: *ModuleInfo) *ModuleInfoDeserialized {
+        bun.assert(self.finalized);
+        return &self._deserialized;
     }
 
     pub const FetchParameters = enum(u32) {
@@ -173,7 +164,7 @@ pub const ModuleInfo = struct {
     }
 
     fn _addRecord(self: *ModuleInfo, kind: RecordKind, data: []const StringID) !void {
-        bun.assert(!self.indirect_exports_fixed);
+        bun.assert(!self.finalized);
         bun.assert(data.len == kind.len() catch unreachable);
         try self.record_kinds.append(kind);
         try self.buffer.appendSlice(data);
@@ -203,6 +194,11 @@ pub const ModuleInfo = struct {
         try self._addRecord(.export_info_star, &.{try self.str(module_name)});
     }
 
+    pub fn create(gpa: std.mem.Allocator) !*ModuleInfo {
+        const res = try gpa.create(ModuleInfo);
+        res.* = ModuleInfo.init(gpa);
+        return res;
+    }
     pub fn init(allocator: std.mem.Allocator) ModuleInfo {
         return .{
             .gpa = allocator,
@@ -220,6 +216,11 @@ pub const ModuleInfo = struct {
         self.requested_modules.deinit();
         self.buffer.deinit();
         self.record_kinds.deinit();
+    }
+    pub fn destroy(self: *ModuleInfo) void {
+        const alloc = self.gpa;
+        self.deinit();
+        alloc.destroy(self);
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
         if (std.mem.indexOfScalar(u8, value, 0) != null) return error.StrContainsNullByte;
@@ -243,8 +244,8 @@ pub const ModuleInfo = struct {
     }
 
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
-    pub fn fixupIndirectExports(self: *ModuleInfo) !void {
-        bun.assert(!self.indirect_exports_fixed);
+    pub fn finalize(self: *ModuleInfo) !void {
+        bun.assert(!self.finalized);
         var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID }).init(bun.default_allocator);
         defer local_name_to_module_name.deinit();
         {
@@ -270,7 +271,18 @@ pub const ModuleInfo = struct {
                 i += k.len() catch unreachable;
             }
         }
-        self.indirect_exports_fixed = true;
+
+        self._deserialized = .{
+            .strings_len = @truncate(self.strings_buf.items.len),
+            .strings = self.strings_buf.items,
+            .requested_modules_keys = self.requested_modules.keys(),
+            .requested_modules_values = self.requested_modules.values(),
+            .buffer = self.buffer.items,
+            .record_kinds = self.record_kinds.items,
+            .contains_import_meta = self.contains_import_meta,
+        };
+
+        self.finalized = true;
     }
 };
 pub const StringID = enum(u32) {
@@ -295,12 +307,8 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     source_code: *const SourceCode,
     declared_variables: *VariableEnvironment,
     lexical_variables: *VariableEnvironment,
-    module_info_ptr: [*]const u8,
-    module_info_len: usize,
+    res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
-    const mi_cont = module_info_ptr[0..module_info_len];
-    const res = ModuleInfoDeserialized.parse(mi_cont) catch return null;
-
     var identifiers = IdentifierArray.create(res.strings_len);
     defer identifiers.destroy();
     {

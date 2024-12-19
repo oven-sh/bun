@@ -26,6 +26,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 // #include "JavaScriptCore/StrongInlines.h"
 #include "ZigSourceProvider.h"
+#include "BunAnalyzeTranspiledModule.h"
 
 // ref: JSModuleLoader.cpp
 // ref: ModuleAnalyzer.cpp
@@ -74,8 +75,7 @@ namespace JSC {
 
 String dumpRecordInfo(JSModuleRecord* moduleRecord);
 
-struct ModuleInfo;
-extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, uint8_t* module_info_ptr, size_t module_info_len);
+extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
@@ -196,7 +196,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("resolvedSource !isProbablyReal")))));
     }
 
-    if (provider->m_resolvedSource.module_info_len == 0) {
+    if (provider->m_resolvedSource.module_info == nullptr) {
 #if PROFILE_MODE
         dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
@@ -205,7 +205,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 #endif
     }
 
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, provider->m_resolvedSource.module_info_ptr, provider->m_resolvedSource.module_info_len);
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, provider->m_resolvedSource.module_info);
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }

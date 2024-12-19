@@ -3,6 +3,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include "BunAnalyzeTranspiledModule.h"
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -107,8 +108,7 @@ typedef struct ResolvedSource {
     bool already_bundled;
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    uint8_t* module_info_ptr;
-    size_t module_info_len;
+    bun_ModuleInfoDeserialized* module_info;
     uint32_t __is_probably_real;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;

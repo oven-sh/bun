@@ -642,8 +642,8 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
-            var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
-            // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+            const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
                 var mapper = vm.sourceMapHandler(&printer);
@@ -654,7 +654,7 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
-                    &mi_serialized,
+                    module_info,
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -696,8 +696,7 @@ pub const RuntimeTranspilerStore = struct {
                 .source_url = duped.createIfDifferent(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
-                .module_info_ptr = mi_serialized.items.ptr,
-                .module_info_len = mi_serialized.items.len,
+                .module_info = module_info.asDeserialized(),
             };
         }
     };
@@ -1416,8 +1415,8 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
-            var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
-            // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+            const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
@@ -1428,7 +1427,7 @@ pub const ModuleLoader = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
-                    &mi_serialized,
+                    module_info,
                 );
             }
 
@@ -1466,8 +1465,7 @@ pub const ModuleLoader = struct {
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
 
                 .hash = 0,
-                .module_info_ptr = mi_serialized.items.ptr,
-                .module_info_len = mi_serialized.items.len,
+                .module_info = module_info.asDeserialized(),
             };
         }
 
@@ -1901,8 +1899,8 @@ pub const ModuleLoader = struct {
                 printer.ctx.reset();
                 defer source_code_printer.* = printer;
 
-                var mi_serialized = std.ArrayList(u8).init(bun.default_allocator);
-                // defer mi_serialized.deinit(); // TODO: do not leak mi_serialized
+                const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+                // defer module_info.destroy(); // TODO: do not leak module_info
 
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
@@ -1913,7 +1911,7 @@ pub const ModuleLoader = struct {
                         &printer,
                         .esm_ascii,
                         mapper.get(),
-                        &mi_serialized,
+                        module_info,
                     );
                 };
 
@@ -1969,8 +1967,7 @@ pub const ModuleLoader = struct {
                     .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                     .hash = 0,
                     .tag = tag,
-                    .module_info_ptr = mi_serialized.items.ptr,
-                    .module_info_len = mi_serialized.items.len,
+                    .module_info = module_info.asDeserialized(),
                 };
             },
             // provideFetch() should be called

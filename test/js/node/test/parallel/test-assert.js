@@ -27,7 +27,7 @@ require('../../harness');
 
 const {invalidArgTypeHelper} = require('../common');
 const {inspect} = require('util');
-const {test} = require('bun:test');
+const {test} = require('node:test');
 const vm = require('vm');
 // const { createTest } = require('node-harness');
 // const { test } = createTest(__filename);

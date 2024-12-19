@@ -82,9 +82,40 @@ pub const ModuleInfoDeserialized = struct {
     }
 };
 
+const StringMapKey = enum(u32) {
+    get_or_put = std.math.maxInt(u32),
+    _,
+};
+pub const StringContext = struct {
+    get_or_put_key: []const u8,
+    strings_buf: []const u8,
+
+    fn getStr(self: @This(), s: StringMapKey) []const u8 {
+        switch (s) {
+            .get_or_put => return self.get_or_put_key,
+            else => {
+                const rem = self.strings_buf[@intFromEnum(s)..];
+                const idx = std.mem.indexOfScalar(u8, rem, 0).?;
+                return rem[0..idx];
+            },
+        }
+    }
+    pub fn hash(self: @This(), s: StringMapKey) u32 {
+        return @as(u32, @truncate(std.hash.Wyhash.hash(0, self.getStr(s))));
+    }
+    pub fn eql(self: @This(), a: StringMapKey, b: StringMapKey, _: usize) bool {
+        if (a == .get_or_put or b == .get_or_put) {
+            return bun.strings.eqlLong(self.getStr(a), self.getStr(b), true);
+        }
+        return a == b;
+    }
+};
+
 pub const ModuleInfo = struct {
     /// all strings in wtf-8. index in hashmap = StringID
-    strings: bun.StringArrayHashMap(void),
+    gpa: std.mem.Allocator,
+    strings_map: std.ArrayHashMapUnmanaged(StringMapKey, void, StringContext, true),
+    strings_buf: std.ArrayListUnmanaged(u8),
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
@@ -104,11 +135,8 @@ pub const ModuleInfo = struct {
 
         try writer.writeInt(u8, @intFromBool(self.contains_import_meta), .little);
 
-        try writer.writeInt(u32, @truncate(self.strings.count()), .little);
-        for (self.strings.keys()) |s| {
-            try writer.writeAll(s);
-            try writer.writeByte(0);
-        }
+        try writer.writeInt(u32, @truncate(self.strings_map.count()), .little);
+        try writer.writeAll(self.strings_buf.items);
     }
     pub fn serializeToComment(self: *ModuleInfo, final_writer: anytype) !void {
         var res = std.ArrayList(u8).init(bun.default_allocator);
@@ -177,7 +205,9 @@ pub const ModuleInfo = struct {
 
     pub fn init(allocator: std.mem.Allocator) ModuleInfo {
         return .{
-            .strings = bun.StringArrayHashMap(void).init(allocator),
+            .gpa = allocator,
+            .strings_map = .{},
+            .strings_buf = .{},
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .buffer = std.ArrayList(StringID).init(allocator),
             .record_kinds = std.ArrayList(RecordKind).init(allocator),
@@ -185,18 +215,24 @@ pub const ModuleInfo = struct {
         };
     }
     pub fn deinit(self: *ModuleInfo) void {
-        for (self.strings.keys()) |string| self.strings.allocator.free(string);
-        self.strings.deinit();
+        self.strings_map.deinit(self.gpa);
+        self.strings_buf.deinit(self.gpa);
         self.requested_modules.deinit();
         self.buffer.deinit();
         self.record_kinds.deinit();
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
         if (std.mem.indexOfScalar(u8, value, 0) != null) return error.StrContainsNullByte;
-        const gpres = try self.strings.getOrPut(value);
+        const gpres = try self.strings_map.getOrPutContext(self.gpa, .get_or_put, .{
+            .get_or_put_key = value,
+            .strings_buf = self.strings_buf.items,
+        });
         if (gpres.found_existing) return @enumFromInt(@as(u32, @intCast(gpres.index)));
-        gpres.key_ptr.* = try self.strings.allocator.dupe(u8, value);
+
+        gpres.key_ptr.* = @enumFromInt(@as(u32, @truncate(self.strings_buf.items.len)));
         gpres.value_ptr.* = {};
+        try self.strings_buf.appendSlice(self.gpa, value);
+        try self.strings_buf.append(self.gpa, 0);
         return @enumFromInt(@as(u32, @intCast(gpres.index)));
     }
     pub const star_default = "*default*";
@@ -209,7 +245,7 @@ pub const ModuleInfo = struct {
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
     pub fn fixupIndirectExports(self: *ModuleInfo) !void {
         bun.assert(!self.indirect_exports_fixed);
-        var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID }).init(self.strings.allocator);
+        var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID }).init(bun.default_allocator);
         defer local_name_to_module_name.deinit();
         {
             var i: usize = 0;
@@ -252,40 +288,15 @@ export fn zig__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, rece
     stderr.print("DIFF:\n{}\n", .{formatter}) catch {};
 }
 
-fn fail(result: *c_int, code: c_int) ?*JSModuleRecord {
-    result.* = code;
-    return null;
-}
-export fn zig__ModuleInfo__parseFromSourceCode(
+export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     globalObject: *bun.JSC.JSGlobalObject,
     vm: *bun.JSC.VM,
     module_key: *const IdentifierArray,
     source_code: *const SourceCode,
     declared_variables: *VariableEnvironment,
     lexical_variables: *VariableEnvironment,
-    source_ptr: [*]const u8,
-    source_len: usize,
-    failure_reason: *c_int,
+    res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
-    const source = source_ptr[0..source_len];
-    const l3 = std.mem.lastIndexOfScalar(u8, source, '\n') orelse return fail(failure_reason, 1);
-    const l2 = std.mem.lastIndexOfScalar(u8, source[0..l3], '\n') orelse return fail(failure_reason, 1);
-    const l1 = std.mem.lastIndexOfScalar(u8, source[0..l2], '\n') orelse return fail(failure_reason, 1);
-    const l0 = std.mem.lastIndexOfScalar(u8, source[0..l1], '\n') orelse return fail(failure_reason, 1);
-
-    if (l3 + 1 != source.len) return fail(failure_reason, 1);
-
-    if (!std.mem.eql(u8, source[l0..l1], "\n// <jsc-module-info>")) return fail(failure_reason, 1);
-    if (!std.mem.startsWith(u8, source[l1..l2], "\n// ")) return fail(failure_reason, 1);
-    if (!std.mem.eql(u8, source[l2..l3], "\n// </jsc-module-info>")) return fail(failure_reason, 1);
-    const json_part = source[l1 + "\n// ".len .. l2];
-
-    const dec_res = bun.default_allocator.alloc(u8, std.base64.standard.Decoder.calcSizeForSlice(json_part) catch return fail(failure_reason, 2)) catch bun.outOfMemory();
-    defer bun.default_allocator.free(dec_res);
-    std.base64.standard.Decoder.decode(dec_res, json_part) catch return fail(failure_reason, 2);
-
-    const res = ModuleInfoDeserialized.parse(dec_res) catch return fail(failure_reason, 2);
-
     var identifiers = IdentifierArray.create(res.strings_len);
     defer identifiers.destroy();
     {
@@ -305,12 +316,12 @@ export fn zig__ModuleInfo__parseFromSourceCode(
     {
         var i: usize = 0;
         for (res.record_kinds) |k| {
-            if (i + (k.len() catch 0) > res.buffer.len) return fail(failure_reason, 2);
+            if (i + (k.len() catch 0) > res.buffer.len) return null;
             switch (k) {
                 .declared_variable => declared_variables.add(identifiers, res.buffer[i]),
                 .lexical_variable => lexical_variables.add(identifiers, res.buffer[i]),
                 .import_info_single, .import_info_namespace, .export_info_indirect, .export_info_local, .export_info_namespace, .export_info_star => {},
-                else => return fail(failure_reason, 2),
+                else => return null,
             }
             i += k.len() catch unreachable; // handled above
         }

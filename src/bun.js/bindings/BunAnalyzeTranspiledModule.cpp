@@ -198,6 +198,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     if (provider->m_resolvedSource.module_info_len == 0) {
 #if PROFILE_MODE
+        if (moduleKey == Identifier::fromLatin1(vm, "bun:main")) {
+            // it is forgiven
+            RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, nullptr));
+        }
+        dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
 #else
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, nullptr));

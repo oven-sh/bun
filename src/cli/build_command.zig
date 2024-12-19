@@ -217,6 +217,13 @@ pub const BuildCommand = struct {
         try this_bundler.configureDefines();
         this_bundler.configureLinker();
 
+        if (bun.FeatureFlags.breaking_changes_1_2) {
+            // This is currently done in DevServer by default, but not in Bun.build
+            if (!this_bundler.options.production) {
+                try this_bundler.options.conditions.appendSlice(&.{"development"});
+            }
+        }
+
         this_bundler.resolver.opts = this_bundler.options;
         this_bundler.options.jsx.development = !this_bundler.options.production;
         this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
@@ -237,6 +244,7 @@ pub const BuildCommand = struct {
             client_bundler.options = this_bundler.options;
             client_bundler.options.target = .browser;
             client_bundler.options.server_components = true;
+            client_bundler.options.conditions = try this_bundler.options.conditions.clone();
             try this_bundler.options.conditions.appendSlice(&.{"react-server"});
             this_bundler.options.react_fast_refresh = false;
             this_bundler.options.minify_syntax = true;

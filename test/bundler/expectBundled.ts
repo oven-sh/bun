@@ -1034,6 +1034,7 @@ function expectBundled(
           ignoreDCEAnnotations,
           experimentalCss,
           drop,
+          define: define ?? {},
         } as BuildConfig;
 
         if (dotenv) {
@@ -1050,12 +1051,9 @@ function expectBundled(
             const debugFile = `import path from 'path';
 import assert from 'assert';
 const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
+const options = ${JSON.stringify({ ...buildConfig, throw: true, plugins: undefined }, null, 2)};
 options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
 const build = await Bun.build(options);
-if (build.logs) {
-  throw build.logs;
-}
 for (const [key, blob] of build.outputs) {
   await Bun.write(path.join(options.outdir, blob.path), blob.result);
 }

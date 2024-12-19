@@ -2,19 +2,19 @@
 'use strict';
 
 // const {
-  //   ArrayPrototypeShift,
-  //   Error,
-  // ErrorCaptureStackTrace,
-  //   FunctionPrototypeBind,
-  //   RegExpPrototypeSymbolReplace,
-  //   SafeMap,
-  //   StringPrototypeCharCodeAt,
-  //   StringPrototypeIncludes,
-  //   StringPrototypeIndexOf,
-  //   StringPrototypeReplace,
-  //   StringPrototypeSlice,
-  //   StringPrototypeSplit,
-  //   StringPrototypeStartsWith,
+//   ArrayPrototypeShift,
+//   Error,
+// ErrorCaptureStackTrace,
+//   FunctionPrototypeBind,
+//   RegExpPrototypeSymbolReplace,
+//   SafeMap,
+//   StringPrototypeCharCodeAt,
+//   StringPrototypeIncludes,
+//   StringPrototypeIndexOf,
+//   StringPrototypeReplace,
+//   StringPrototypeSlice,
+//   StringPrototypeSplit,
+//   StringPrototypeStartsWith,
 // } = require("internal/primordials");
 
 var AssertionError;
@@ -174,23 +174,19 @@ function getErrMessage(message: string, value: unknown, fn: Function): string | 
   // const err = {};
   // ErrorCaptureStackTrace(err, fn);
   // if (errorStackTraceLimitIsWritable) Error.stackTraceLimit = tmpLimit;
-
   // overrideStackTrace.set(err, (_, stack) => stack);
   // const call = err.stack[0];
   //
-  if (fn.name === "ok") {
-    return `The expression evaluated to a falsy value:\n\n  assert.ok(${value})\n`;
-  }
-
+  // if (fn.name === "ok") {
+  //   return `The expression evaluated to a falsy value:\n\n  assert.ok(${value})\n`;
+  // }
   //   let filename = call.getFileName();
   //   const line = call.getLineNumber() - 1;
   //   let column = call.getColumnNumber() - 1;
   //   let identifier;
   //   let code;
-
   //   if (filename) {
   //     identifier = `${filename}${line}${column}`;
-
   //     // Skip Node.js modules!
   //     if (StringPrototypeStartsWith(filename, 'node:') &&
   //         BuiltinModule.exists(StringPrototypeSlice(filename, 5))) {
@@ -200,30 +196,25 @@ function getErrMessage(message: string, value: unknown, fn: Function): string | 
   //   } else {
   //     return message;
   //   }
-
   //   if (errorCache.has(identifier)) {
   //     return errorCache.get(identifier);
   //   }
-
   //   let fd;
   //   try {
   //     // Set the stack trace limit to zero. This makes sure unexpected token
   //     // errors are handled faster.
   //     if (errorStackTraceLimitIsWritable) Error.stackTraceLimit = 0;
-
   //     if (filename) {
   //       if (decoder === undefined) {
   //         const { StringDecoder } = require('string_decoder');
   //         decoder = new StringDecoder('utf8');
   //       }
-
   //       // ESM file prop is a file proto. Convert that to path.
   //       // This ensure opensync will not throw ENOENT for ESM files.
   //       const fileProtoPrefix = 'file://';
   //       if (StringPrototypeStartsWith(filename, fileProtoPrefix)) {
   //         filename = Bun.fileURLToPath(filename);
   //       }
-
   //       fd = openSync(filename, 'r', 0o666);
   //       // Reset column and message.
   //       ({ 0: column, 1: message } = getCode(fd, line, column));
@@ -256,7 +247,6 @@ function getErrMessage(message: string, value: unknown, fn: Function): string | 
   //     // Make sure to always set the cache! No matter if the message is
   //     // undefined or not
   //     errorCache.set(identifier, message);
-
   //     return message;
   //   } catch {
   //     // Invalidate cache to prevent trying to read this part again.

@@ -78,8 +78,11 @@ const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
 
 function ErrorCaptureStackTrace(targetObject, maybeStartStackFn) {
   Error.captureStackTrace(targetObject, maybeStartStackFn);
-  // Remove the second line, which is this function
-  targetObject.stack = targetObject.stack.replace(/.*\n.*/, "$1");
+
+  if (maybeStartStackFn === undefined) {
+    // Remove the second line, which is this function
+    targetObject.stack = targetObject.stack.replace(/.*\n.*/, "$1");
+  }
 }
 
 const arrayProtoPush = Array.prototype.push;

@@ -881,8 +881,7 @@ test('Additional asserts', () => {
       code: 'ERR_ASSERTION',
       constructor: assert.AssertionError,
       generatedMessage: true,
-      message: 'The expression evaluated to a falsy value:\n\n  ' +
-        'assert.ok(0)\n'
+      message: '0 == true'
     }
   );
   assert.throws(
@@ -1037,14 +1036,14 @@ test('Additional asserts', () => {
     {
       code: 'ERR_ASSERTION',
       constructor: assert.AssertionError,
-      message: 'The expression evaluated to a falsy value:\n\n  assert.ok(false)\n',
+      message: 'false == true'
     }
   );
   assert.throws(
     () => eval('console.log("FOO");\nassert.ok(1 === 2);'),
     {
       code: 'ERR_ASSERTION',
-      message: 'The expression evaluated to a falsy value:\n\n  assert.ok(false)\n',
+      message: 'false == true'
     }
   );
 

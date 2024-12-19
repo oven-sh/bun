@@ -133,7 +133,8 @@ NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* stru
 
 Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
+    // ~IsImmutablePrototypeExoticObject is necessary for JSDOM to work (it relies on __proto__ = on the GlobalObject).
+    return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
 void NodeVMGlobalObject::finishCreation(JSC::VM&)

@@ -3952,9 +3952,10 @@ pub const Parser = struct {
 
                     if (uses_any_import_statements) {
                         exports_kind = .esm;
-
-                        // Otherwise, if they use CommonJS features its CommonJS
-                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                    }
+                    // Otherwise, if they use CommonJS features its CommonJS.
+                    // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
+                    else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename or (!p.options.bundle and p.module_scope.strict_mode == .explicit_strict_mode)) {
                         exports_kind = .cjs;
                     } else {
                         // If unknown, we default to ESM

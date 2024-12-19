@@ -126,7 +126,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetSignal, (JSGlobalOb
         return {};
     }
 
-    return JSValue::encode(thisObject->abortSignal());
+    return JSValue::encode(toJS<IDLInterface<WebCore::AbortSignal>>(*lexicalGlobalObject, *defaultGlobalObject(thisObject->globalObject()), scope, thisObject->abortSignal()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetDesiredSize, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
@@ -225,11 +225,11 @@ void JSWritableStreamDefaultController::finishCreation(JSC::VM& vm)
     });
 }
 
-JSC::JSValue JSWritableStreamDefaultController::abortSignal() const
+Ref<WebCore::AbortSignal> JSWritableStreamDefaultController::abortSignal() const
 {
-    auto& vm = this->globalObject()->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    return WebCore::toJS<WebCore::IDLInterface<WebCore::AbortSignal>>(*this->globalObject(), throwScope, m_abortController.get(this)->wrapped().signal());
+    auto* abortController = m_abortController.getInitializedOnMainThread(this);
+    auto& impl = abortController->wrapped();
+    return impl.protectedSignal();
 }
 
 JSC::JSValue JSWritableStreamDefaultController::error(JSGlobalObject* globalObject, JSValue reason)
@@ -336,6 +336,8 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     // 6. Assert: closeRequest is not undefined.
     ASSERT(stream->closeRequest());
 
+    JSObject* closeFunction = m_closeAlgorithm.get();
+
     // 7. Perform ! WritableStreamDefaultControllerClearAlgorithms(this).
     m_writeAlgorithm.clear();
     m_closeAlgorithm.clear();
@@ -345,7 +347,6 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     // 8. Let sinkClosePromise be the result of performing this.[[closeAlgorithm]].
     JSValue sinkClosePromise;
     if (m_closeAlgorithm) {
-        JSObject* closeFunction = m_closeAlgorithm.get();
         if (closeFunction) {
             MarkedArgumentBuffer args;
             ASSERT(!args.hasOverflowed());

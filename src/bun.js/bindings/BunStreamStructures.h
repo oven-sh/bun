@@ -26,6 +26,7 @@ struct StreamStructures {
     LazyProperty<JSGlobalObject, Structure> m_transformStreamStructure;
     LazyProperty<JSGlobalObject, Structure> m_transformStreamDefaultControllerStructure;
     LazyProperty<JSGlobalObject, JSObject> m_transformStreamConstructor;
+    LazyProperty<JSGlobalObject, Structure> m_writableStreamStructure;
 
 public:
     Structure* getReadableStreamStructure(const JSGlobalObject* globalObject) const { return m_readableStreamStructure.getInitializedOnMainThread(globalObject); }
@@ -35,6 +36,7 @@ public:
     Structure* getTransformStreamStructure(const JSGlobalObject* globalObject) const { return m_transformStreamStructure.getInitializedOnMainThread(globalObject); }
     Structure* getTransformStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_transformStreamDefaultControllerStructure.getInitializedOnMainThread(globalObject); }
     JSObject* getTransformStreamConstructor(const JSGlobalObject* globalObject) const { return m_transformStreamConstructor.getInitializedOnMainThread(globalObject); }
+    Structure* getWritableStreamStructure(const JSGlobalObject* globalObject) const { return m_writableStreamStructure.getInitializedOnMainThread(globalObject); }
 };
 
 } // namespace Bun

@@ -309,6 +309,7 @@ namespace Operations {
 // WritableStreamDefaultControllerErrorSteps(stream.[[writableStreamController]]).
 void WritableStreamDefaultControllerErrorSteps(JSWritableStreamDefaultController* controller)
 {
+    auto* stream = controller->stream();
     // 1. Let stream be controller.[[controlledWritableStream]].
     ASSERT(stream);
 

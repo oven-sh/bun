@@ -6,6 +6,8 @@
 
 namespace WebCore {
 class JSAbortController;
+class JSAbortSignal;
+class AbortSignal;
 }
 
 namespace Bun {
@@ -45,19 +47,19 @@ public:
     // For garbage collection
     DECLARE_VISIT_CHILDREN;
 
-    JSC::JSValue abortSignal() const;
+    Ref<WebCore::AbortSignal> abortSignal() const;
 
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
 
     JSWritableStream* stream() const { return m_stream.get(); }
-    JSC::JSPromise* abortAlgorithm() const { return m_abortAlgorithm.get(); }
-    JSC::JSPromise* closeAlgorithm() const { return m_closeAlgorithm.get(); }
-    JSC::JSPromise* writeAlgorithm() const { return m_writeAlgorithm.get(); }
+    JSC::JSObject* abortAlgorithm() const { return m_abortAlgorithm.get(); }
+    JSC::JSObject* closeAlgorithm() const { return m_closeAlgorithm.get(); }
+    JSC::JSObject* writeAlgorithm() const { return m_writeAlgorithm.get(); }
 
     void setStream(JSC::VM& vm, JSWritableStream* stream) { m_stream.set(vm, this, stream); }
-    void setAbortAlgorithm(JSC::VM& vm, JSC::JSPromise* abortAlgorithm) { m_abortAlgorithm.set(vm, this, abortAlgorithm); }
-    void setCloseAlgorithm(JSC::VM& vm, JSC::JSPromise* closeAlgorithm) { m_closeAlgorithm.set(vm, this, closeAlgorithm); }
-    void setWriteAlgorithm(JSC::VM& vm, JSC::JSPromise* writeAlgorithm) { m_writeAlgorithm.set(vm, this, writeAlgorithm); }
+    void setAbortAlgorithm(JSC::VM& vm, JSC::JSObject* abortAlgorithm) { m_abortAlgorithm.set(vm, this, abortAlgorithm); }
+    void setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm) { m_closeAlgorithm.set(vm, this, closeAlgorithm); }
+    void setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm) { m_writeAlgorithm.set(vm, this, writeAlgorithm); }
 
     void clearQueue() { m_queue.clear(); }
 

@@ -373,14 +373,22 @@ pub fn loadFromDir(
 
     switch (result) {
         .ok => {
-            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null) {
+            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null and manager != null) {
 
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.
 
-                const text_lockfile_bytes = TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile) catch |err| {
+                var writer_buf = MutableString.initEmpty(allocator);
+                var buffered_writer = writer_buf.bufferedWriter();
+                const writer = buffered_writer.writer();
+
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
+
+                buffered_writer.flush() catch bun.outOfMemory();
+
+                const text_lockfile_bytes = writer_buf.list.items;
 
                 const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
@@ -2238,13 +2246,23 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         assert(FileSystem.instance_loaded);
     }
 
-    const bytes = if (save_format == .text)
-        TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this) catch |err| {
-            switch (err) {
+    const bytes = bytes: {
+        if (save_format == .text) {
+            var writer_buf = MutableString.initEmpty(bun.default_allocator);
+            var buffered_writer = writer_buf.bufferedWriter();
+            const writer = buffered_writer.writer();
+
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
-            }
+            };
+
+            buffered_writer.flush() catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            };
+
+            break :bytes writer_buf.list.items;
         }
-    else bytes: {
+
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
 
         var total_size: usize = 0;

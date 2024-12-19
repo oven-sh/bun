@@ -4283,7 +4283,7 @@ pub const PackageManager = struct {
             // Do we need to download the tarball?
             .extract => extract: {
                 const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
-                bun.debugAssert(this.network_dedupe_map.contains(task_id));
+                bun.debugAssert(!this.network_dedupe_map.contains(task_id));
 
                 break :extract .{
                     .package = package,
@@ -5348,15 +5348,13 @@ pub const PackageManager = struct {
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
                                         if (loaded_manifest) |*manifest| manifest else null,
-                                        dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
+                                        dependency.behavior.isOptional(),
                                     );
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
-                                if (this.options.do.install_peer_dependencies) {
-                                    try this.peer_dependencies.writeItem(id);
-                                    return;
-                                }
+                                try this.peer_dependencies.writeItem(id);
+                                return;
                             }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -5428,9 +5426,7 @@ pub const PackageManager = struct {
 
                     if (dependency.behavior.isPeer()) {
                         if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies) {
-                                try this.peer_dependencies.writeItem(id);
-                            }
+                            try this.peer_dependencies.writeItem(id);
                             return;
                         }
                     }
@@ -5453,9 +5449,7 @@ pub const PackageManager = struct {
 
                     if (dependency.behavior.isPeer()) {
                         if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies) {
-                                try this.peer_dependencies.writeItem(id);
-                            }
+                            try this.peer_dependencies.writeItem(id);
                             return;
                         }
                     }
@@ -5505,9 +5499,7 @@ pub const PackageManager = struct {
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies) {
-                            try this.peer_dependencies.writeItem(id);
-                        }
+                        try this.peer_dependencies.writeItem(id);
                         return;
                     }
                 }
@@ -5694,9 +5686,7 @@ pub const PackageManager = struct {
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies) {
-                            try this.peer_dependencies.writeItem(id);
-                        }
+                        try this.peer_dependencies.writeItem(id);
                         return;
                     }
                 }
@@ -7273,11 +7263,18 @@ pub const PackageManager = struct {
 
                 if (config.save_dev) |save| {
                     this.local_package_features.dev_dependencies = save;
+                    // remote packages should never install dev dependencies
+                    // (TODO: unless git dependency with postinstalls)
+                }
+
+                if (config.save_optional) |save| {
+                    this.remote_package_features.optional_dependencies = save;
+                    this.local_package_features.optional_dependencies = save;
                 }
 
                 if (config.save_peer) |save| {
-                    this.do.install_peer_dependencies = save;
                     this.remote_package_features.peer_dependencies = save;
+                    this.local_package_features.peer_dependencies = save;
                 }
 
                 if (config.exact) |exact| {
@@ -7305,11 +7302,6 @@ pub const PackageManager = struct {
 
                 if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
-                }
-
-                if (config.save_optional) |save| {
-                    this.remote_package_features.optional_dependencies = save;
-                    this.local_package_features.optional_dependencies = save;
                 }
 
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -7572,7 +7564,6 @@ pub const PackageManager = struct {
             print_meta_hash_string: bool = false,
             verify_integrity: bool = true,
             summary: bool = true,
-            install_peer_dependencies: bool = true,
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
         };
@@ -12275,6 +12266,7 @@ pub const PackageManager = struct {
         options: *const PackageManager.Options,
         metas: []const Lockfile.Package.Meta,
         names: []const String,
+        pkg_dependencies: []const Lockfile.DependencySlice,
         pkg_name_hashes: []const PackageNameHash,
         bins: []const Bin,
         resolutions: []Resolution,
@@ -12304,6 +12296,7 @@ pub const PackageManager = struct {
         trees: []TreeContext,
 
         seen_bin_links: bun.StringHashMap(void),
+        workspace_pkg_ids: []const PackageID,
 
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
@@ -12653,6 +12646,7 @@ pub const PackageManager = struct {
             this.pkg_name_hashes = packages.items(.name_hash);
             this.bins = packages.items(.bin);
             this.resolutions = packages.items(.resolution);
+            this.pkg_dependencies = packages.items(.dependencies);
 
             // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
             // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -13517,20 +13511,40 @@ pub const PackageManager = struct {
             return false;
         }
 
+        fn isPackageDisabled(this: *PackageInstaller, dep_id: DependencyID, pkg_id: PackageID) bool {
+            if (this.metas[pkg_id].isDisabled()) return true;
+
+            const dep = this.lockfile.buffers.dependencies.items[dep_id];
+
+            if (this.pkg_dependencies[0].contains(dep_id)) {
+                // This is a direct dependency of the root package
+                return !dep.behavior.isEnabled(this.manager.options.local_package_features);
+            }
+
+            for (this.workspace_pkg_ids) |workspace_pkg_id| {
+                if (this.pkg_dependencies[workspace_pkg_id].contains(dep_id)) {
+                    // This is a direct dependency of a workspace
+                    return !dep.behavior.isEnabled(this.manager.options.local_package_features);
+                }
+            }
+
+            // This is a transitive dependency
+            return !dep.behavior.isEnabled(this.manager.options.remote_package_features);
+        }
+
         pub fn installPackage(
             this: *PackageInstaller,
-            dependency_id: DependencyID,
+            dep_id: DependencyID,
             comptime log_level: Options.LogLevel,
         ) void {
-            const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
-            const meta = &this.metas[package_id];
-            const is_pending_package_install = false;
+            const package_id = this.lockfile.buffers.resolutions.items[dep_id];
 
-            if (meta.isDisabled()) {
+            if (this.isPackageDisabled(dep_id, package_id)) {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
                 if (comptime log_level.isVerbose()) {
+                    const meta = &this.metas[package_id];
                     const name = this.lockfile.str(&this.names[package_id]);
                     if (!meta.os.isMatch() and !meta.arch.isMatch()) {
                         Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
@@ -13541,6 +13555,7 @@ pub const PackageManager = struct {
                     }
                 }
 
+                const is_pending_package_install = false;
                 this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             }
@@ -13549,8 +13564,9 @@ pub const PackageManager = struct {
             const resolution = &this.resolutions[package_id];
 
             const needs_verify = true;
+            const is_pending_package_install = false;
             this.installPackageWithNameAndResolution(
-                dependency_id,
+                dep_id,
                 package_id,
                 log_level,
                 name,
@@ -13751,17 +13767,6 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
-        const original_lockfile = this.lockfile;
-        defer this.lockfile = original_lockfile;
-        if (!this.options.local_package_features.dev_dependencies) {
-            this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
-                this,
-                this.options.local_package_features,
-                this.options.enable.exact_versions,
-                log_level,
-            );
-        }
-
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -13916,6 +13921,26 @@ pub const PackageManager = struct {
                     break :trusted_deps set;
                 };
 
+                var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
+                if (this.lockfile.packages.len > 0) {
+                    const resolutions = this.lockfile.buffers.resolutions.items;
+                    const pkg_resolutions = this.lockfile.packages.items(.resolution);
+
+                    // TODO: should probably move this to cleaning step
+
+                    // workspace packages should only exist in the first
+                    // tree because  all workspaces are root dependencies.
+                    const root_deps = this.lockfile.packages.items(.dependencies)[0];
+                    for (root_deps.begin()..root_deps.end()) |dep_id| {
+                        if (dep_id == invalid_dependency_id) continue;
+                        const pkg_id = resolutions[dep_id];
+                        if (pkg_id == invalid_package_id) continue;
+                        if (pkg_resolutions[pkg_id].tag == .workspace) {
+                            workspace_pkg_ids.append(this.allocator, pkg_id) catch bun.outOfMemory();
+                        }
+                    }
+                }
+
                 break :brk PackageInstaller{
                     .manager = this,
                     .options = &this.options,
@@ -13925,6 +13950,7 @@ pub const PackageManager = struct {
                     .names = parts.items(.name),
                     .pkg_name_hashes = parts.items(.name_hash),
                     .resolutions = parts.items(.resolution),
+                    .pkg_dependencies = parts.items(.dependencies),
                     .lockfile = this.lockfile,
                     .node = &install_node,
                     .node_modules = .{
@@ -13964,6 +13990,7 @@ pub const PackageManager = struct {
                     },
                     .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
                     .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
+                    .workspace_pkg_ids = workspace_pkg_ids.items,
                 };
             };
 
@@ -14701,9 +14728,7 @@ pub const PackageManager = struct {
                 try waitForEverythingExceptPeers(manager);
             }
 
-            if (manager.options.do.install_peer_dependencies) {
-                try waitForPeers(manager);
-            }
+            try waitForPeers(manager);
 
             if (comptime log_level.showProgress()) {
                 manager.endProgressBar();

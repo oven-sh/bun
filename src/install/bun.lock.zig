@@ -246,11 +246,7 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile) OOM!string {
-        var writer_buf = MutableString.initEmpty(allocator);
-        var buffered_writer = writer_buf.bufferedWriter();
-        var writer = buffered_writer.writer();
-
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile, writer: anytype) @TypeOf(writer).Error!void {
         const buf = lockfile.buffers.string_bytes.items;
         const deps_buf = lockfile.buffers.dependencies.items;
         const resolution_buf = lockfile.buffers.resolutions.items;
@@ -594,15 +590,17 @@ pub const Stringifier = struct {
                         TreeDepsSortCtx.isLessThan,
                     );
 
-                    // first index is resolution for all dependency types
-                    // npm         -> [ "name@version", registry or "" (default), deps..., integrity, ... ]
-                    // symlink     -> [ "name@link:path", deps..., ... ]
-                    // folder      -> [ "name@path", deps..., ... ]
-                    // workspace   -> [ "name@workspace:path", version or "", deps..., ... ]
-                    // tarball     -> [ "name@tarball", deps..., ... ]
-                    // root        -> [ "name@root:", bins ]
-                    // git         -> [ "name@git+repo", deps..., ... ]
-                    // github      -> [ "name@github:user/repo", deps..., ... ]
+                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+
+                    // first index is resolution for each type of package
+                    // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+                    // symlink     -> [ "name@link:path", INFO ]
+                    // folder      -> [ "name@file:path", INFO ]
+                    // workspace   -> [ "name@workspace:path", INFO ]
+                    // tarball     -> [ "name@tarball", INFO ]
+                    // root        -> [ "name@root:", { bin } ]
+                    // git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+                    // github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
 
                     switch (res.tag) {
                         .root => {
@@ -716,9 +714,6 @@ pub const Stringifier = struct {
         }
         try decIndent(writer, indent);
         try writer.writeAll("}\n");
-
-        try buffered_writer.flush();
-        return writer_buf.list.items;
     }
 
     /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
@@ -1536,7 +1531,7 @@ pub fn parseIntoBinaryLockfile(
                         if (dep.behavior.isOptionalPeer()) {
                             continue :deps;
                         }
-                        try log.addError(source, key.loc, "Unable to resolve dependencies for package");
+
                         const behaviorStr = if (dep.behavior.isDev())
                             " dev"
                         else if (dep.behavior.isOptional())

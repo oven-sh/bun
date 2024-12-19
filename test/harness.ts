@@ -18,8 +18,10 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const isBuildKite = process.env.BUILDKITE === "true";
 export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isMusl = isLinux && libcFamily === "musl";
+export const isGlibc = isLinux && libcFamily === "glibc";
+export const isBuildKite = process.env.BUILDKITE === "true";
 export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
@@ -43,17 +45,26 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
 
+const ciEnv = { ...bunEnv };
+
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
+    delete ciEnv[key];
     delete bunEnv[key];
   }
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete ciEnv[key];
     delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUILDKITE")) {
+    delete bunEnv[key];
+    delete process.env[key];
   }
 }
 
@@ -152,25 +163,29 @@ export type DirectoryTree = {
     | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  async function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, raw_contents] of Object.entries(tree)) {
-      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
-      const joined = join(base, name);
-      if (name.includes("/")) {
-        const dir = dirname(name);
-        if (dir !== name && dir !== ".") {
-          fs.mkdirSync(join(base, dir), { recursive: true });
-        }
+export async function makeTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
-        fs.mkdirSync(joined);
-        makeTree(joined, contents);
-        continue;
-      }
-      fs.writeFileSync(joined, contents);
     }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTree(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
   }
+}
+
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
   return base;
@@ -535,6 +550,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -574,6 +593,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     // workspaces don't need a version
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
@@ -1318,6 +1341,7 @@ export function getSecret(name: string): string | undefined {
     const { exitCode, stdout } = spawnSync({
       cmd: ["buildkite-agent", "secret", "get", name],
       stdout: "pipe",
+      env: ciEnv,
       stderr: "inherit",
     });
     if (exitCode === 0) {

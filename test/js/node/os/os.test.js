@@ -222,3 +222,22 @@ describe("toString works like node", () => {
     });
   }
 });
+
+it("getPriority system error object", () => {
+  try {
+    os.getPriority(-1);
+    expect.unreachable();
+  } catch (err) {
+    expect(err.name).toBe("SystemError");
+    expect(err.message).toBe("A system error occurred: uv_os_getpriority returned ESRCH (no such process)");
+    expect(err.code).toBe("ERR_SYSTEM_ERROR");
+    expect(err.info).toEqual({
+      errno: isWindows ? -4040 : -3,
+      code: "ESRCH",
+      message: "no such process",
+      syscall: "uv_os_getpriority",
+    });
+    expect(err.errno).toBe(isWindows ? -4040 : -3);
+    expect(err.syscall).toBe("uv_os_getpriority");
+  }
+});

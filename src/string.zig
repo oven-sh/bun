@@ -47,6 +47,10 @@ pub const WTFStringImplStruct = extern struct {
         return this.m_refCount / s_refCountIncrement;
     }
 
+    pub fn memoryCost(this: WTFStringImpl) usize {
+        return this.byteLength();
+    }
+
     pub fn isStatic(this: WTFStringImpl) bool {
         return this.m_refCount & s_refCountIncrement != 0;
     }
@@ -1481,3 +1485,8 @@ pub const SliceWithUnderlyingString = struct {
         return this.underlying.toJS(globalObject);
     }
 };
+
+comptime {
+    bun.assert_eql(@sizeOf(bun.String), 24);
+    bun.assert_eql(@alignOf(bun.String), 8);
+}

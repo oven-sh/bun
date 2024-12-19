@@ -34,7 +34,7 @@ const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
+pub const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
@@ -500,6 +500,7 @@ pub const PackageJSONVersionChecker = struct {
                     }
 
                     if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+
                     has_properties = true;
                 }
 
@@ -741,41 +742,6 @@ pub fn parse(
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
 pub fn parsePackageJSONUTF8(
-    source: *const logger.Source,
-    log: *logger.Log,
-    allocator: std.mem.Allocator,
-) !Expr {
-    const len = source.contents.len;
-
-    switch (len) {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-        },
-        // This is a fast pass I guess
-        2 => {
-            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
-            }
-        },
-        else => {},
-    }
-
-    var parser = try JSONLikeParser(.{
-        .is_json = true,
-        .allow_comments = true,
-        .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
-    bun.assert(parser.source().contents.len > 0);
-
-    return try parser.parseExpr(false, true);
-}
-
-pub fn parsePackageJSONUTF8AlwaysDecode(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,

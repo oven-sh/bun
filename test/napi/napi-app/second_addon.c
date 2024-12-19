@@ -31,7 +31,35 @@ static napi_value get_instance_data(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static napi_value try_unwrap(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  if (argc != 1) {
+    napi_throw_error(env, NULL, "Wrong number of arguments to try_unwrap");
+    return NULL;
+  }
+
+  double *pointer;
+  if (napi_unwrap(env, argv[0], (void **)(&pointer)) != napi_ok) {
+    napi_value undefined;
+    NODE_API_CALL(env, napi_get_undefined(env, &undefined));
+    return undefined;
+  } else {
+    napi_value number;
+    NODE_API_CALL(env, napi_create_double(env, *pointer, &number));
+    return number;
+  }
+}
+
 /* napi_value */ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
+  napi_value try_unwrap_function;
+  NODE_API_CALL(env,
+                napi_create_function(env, "try_unwrap", NAPI_AUTO_LENGTH,
+                                     try_unwrap, NULL, &try_unwrap_function));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "try_unwrap",
+                                             try_unwrap_function));
+
   napi_value get_instance_data_function;
   NODE_API_CALL(env, napi_create_function(env, "get_instance_data",
                                           NAPI_AUTO_LENGTH, get_instance_data,

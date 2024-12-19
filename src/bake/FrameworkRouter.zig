@@ -1084,10 +1084,10 @@ pub const JSFrameworkRouter = struct {
     const validators = bun.JSC.Node.validators;
 
     pub fn getBindings(global: *JSC.JSGlobalObject) JSC.JSValue {
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
             .FrameworkRouter = codegen.getConstructor(global),
-        }).toJS();
+        }, global).toJS();
     }
 
     pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !*JSFrameworkRouter {
@@ -1165,7 +1165,7 @@ pub const JSFrameworkRouter = struct {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 
-            return global.createObjectFromStruct(.{
+            return JSC.JSObject.create(.{
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
@@ -1176,7 +1176,7 @@ pub const JSFrameworkRouter = struct {
                     break :params obj;
                 } else .null,
                 .route = try jsfr.routeToJsonInverse(global, index, alloc),
-            }).toJS();
+            }, global).toJS();
         }
 
         return .null;
@@ -1193,7 +1193,7 @@ pub const JSFrameworkRouter = struct {
 
     fn routeToJson(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1212,12 +1212,12 @@ pub const JSFrameworkRouter = struct {
                 }
                 break :brk arr;
             },
-        }).toJS();
+        }, global).toJS();
     }
 
     fn routeToJsonInverse(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1226,7 +1226,7 @@ pub const JSFrameworkRouter = struct {
                 try routeToJsonInverse(jsfr, global, parent, allocator)
             else
                 .null,
-        }).toJS();
+        }, global).toJS();
     }
 
     pub fn finalize(this: *JSFrameworkRouter) void {

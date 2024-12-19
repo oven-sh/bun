@@ -8,6 +8,20 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
+
 pub fn getTotalMemory() usize {
     return uv.uv_get_total_memory();
 }

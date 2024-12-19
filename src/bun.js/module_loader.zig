@@ -87,6 +87,7 @@ const Async = bun.Async;
 const String = bun.String;
 
 const debug = Output.scoped(.ModuleLoader, true);
+const panic = std.debug.panic;
 
 inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
@@ -184,9 +185,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                bun.fmt.formatJSONStringUTF8(specifier),
-                bun.fmt.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
+                bun.fmt.formatJSONStringUTF8(specifier, .{}),
+                bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -1767,7 +1768,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                         .tag = .exports_object,
                     };
                 }
@@ -2462,6 +2463,15 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.InternalForTesting, specifier);
                 },
 
+                .@"internal/test/binding" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"internal:test/binding", specifier);
+                },
+
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sql" => {
@@ -2675,7 +2685,6 @@ pub const HardcodedModule = enum {
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sql",
     @"bun:sqlite",
-    @"bun:internal-for-testing",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2736,6 +2745,9 @@ pub const HardcodedModule = enum {
     @"node:diagnostics_channel",
     @"node:dgram",
     @"node:cluster",
+    // these are gated behind '--expose-internals'
+    @"bun:internal-for-testing",
+    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2815,6 +2827,8 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
+
+            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
@@ -2956,6 +2970,8 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
+
+            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
         const bun_extra_alias_kvs = .{

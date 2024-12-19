@@ -574,8 +574,13 @@ pub const AddrInfo_hints = extern struct {
     }
 };
 
+pub const ChannelOptions = struct {
+    timeout: ?i32 = null,
+    tries: ?i32 = null,
+};
+
 pub const Channel = opaque {
-    pub fn init(comptime Container: type, this: *Container) ?Error {
+    pub fn init(comptime Container: type, this: *Container, options: ChannelOptions) ?Error {
         var channel: *Channel = undefined;
 
         libraryInit();
@@ -595,8 +600,8 @@ pub const Channel = opaque {
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
-        opts.timeout = -1;
-        opts.tries = 4;
+        opts.timeout = options.timeout orelse -1;
+        opts.tries = options.tries orelse 4;
 
         const optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS |

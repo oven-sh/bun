@@ -90,30 +90,121 @@ function setServersOn(servers, object) {
   object.setServers(triples);
 }
 
-function lookup(domain, options, callback) {
-  if (typeof options == "function") {
-    callback = options;
-  }
-
-  if (typeof callback !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("callback must be a function");
-  }
-
-  if (typeof options == "number") {
-    options = { family: options };
-  }
-
-  if (domain !== domain || (typeof domain !== "number" && !domain)) {
-    console.warn(
-      `DeprecationWarning: The provided hostname "${String(
-        domain,
-      )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-    );
-    callback(null, null, 4);
+function validateFlagsOption(options) {
+  if (options.flags === undefined) {
     return;
   }
 
-  dns.lookup(domain, translateLookupOptions(options)).then(res => {
+  validateNumber(options.flags);
+
+  if ((options.flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
+    throw $ERR_INVALID_ARG_VALUE(`The "hints" option is invalid. Received: ${options.flags}`);
+  }
+}
+
+function validateFamily(family) {
+  if (family !== 6 && family !== 4 && family !== 0) {
+    throw $ERR_INVALID_ARG_VALUE(`The "family" option must be one of 0, 4 or 6. Received: ${String(family)}`);
+  }
+}
+
+function validateFamilyOption(options) {
+  if (options.family != null) {
+    switch (options.family) {
+      case "IPv4":
+        options.family = 4;
+        break;
+      case "IPv6":
+        options.family = 6;
+        break;
+      default:
+        validateFamily(options.family);
+        break;
+    }
+  }
+}
+
+function validateAllOption(options) {
+  if (options.all !== undefined) {
+    validateBoolean(options.all);
+  }
+}
+
+function validateVerbatimOption(options) {
+  if (options.verbatim !== undefined) {
+    validateBoolean(options.verbatim);
+  }
+}
+
+function validateOrderOption(options) {
+  if (options.order !== undefined) {
+    if (!["ipv4first", "ipv6first", "verbatim"].includes(options.order)) {
+      throw $ERR_INVALID_ARG_VALUE(`The "order" option is invalid. Received: ${String(options.order)}`);
+    }
+  }
+}
+
+function translateLookupOptions(options) {
+  if (!options || typeof options !== "object") {
+    options = { family: options };
+  }
+
+  let { family, order, verbatim, hints: flags, all } = options;
+
+  if (order === undefined && typeof verbatim === "boolean") {
+    order = verbatim ? "verbatim" : "ipv4first";
+  }
+
+  return {
+    family,
+    flags,
+    all,
+    order,
+    verbatim,
+  };
+}
+
+function validateLookupOptions(options) {
+  validateFlagsOption(options);
+  validateFamilyOption(options);
+  validateAllOption(options);
+  validateVerbatimOption(options);
+  validateOrderOption(options);
+}
+
+function lookup(hostname, options, callback) {
+  if (typeof hostname !== "string" && hostname) {
+    throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+  }
+
+  if (typeof options === "function") {
+    callback = options;
+    options = { family: 0 };
+  } else if (typeof options === "number") {
+    validateFunction(callback, "callback");
+    validateFamily(options);
+    options = { family: options };
+  } else if (options !== undefined && typeof options !== "object") {
+    validateFunction(arguments.length === 2 ? options : callback, "callback");
+    throw $ERR_INVALID_ARG_TYPE("options", ["integer", "object"], options);
+  }
+
+  validateFunction(callback, "callback");
+
+  options = translateLookupOptions(options);
+  validateLookupOptions(options);
+
+  if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
+    console.warn(
+      `DeprecationWarning: The provided hostname "${String(
+        hostname,
+      )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+    );
+    callback(null, []);
+    return;
+  }
+
+  dns.lookup(hostname, options).then(res => {
     throwIfEmpty(res);
     res.sort((a, b) => a.family - b.family);
 
@@ -536,27 +627,36 @@ const promisifyResolveX = ttl => {
   }
 };
 
-const translateLookupOptions = ({ family, order, verbatim, hints: flags, all }) => ({
-  family,
-  flags,
-  all,
-  order,
-  verbatim,
-});
-
 // promisified versions
 const promises = {
-  lookup(domain, options) {
-    if (!options || typeof options !== "object") {
-      options = {};
+  lookup(hostname, options) {
+    if (typeof hostname !== "string" && hostname) {
+      throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+    }
+
+    if (typeof options === "number") {
+      validateFamily(options);
+      options = { family: options };
+    } else if (options !== undefined && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", ["integer", "object"], options);
     }
 
     options = translateLookupOptions(options);
+    validateLookupOptions(options);
+
+    if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
+      console.warn(
+        `DeprecationWarning: The provided hostname "${String(
+          hostname,
+        )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+      );
+      return Promise.resolve([]);
+    }
 
     if (options.all) {
-      return translateErrorCode(dns.lookup(domain, options).then(promisifyLookupAll));
+      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll));
     }
-    return translateErrorCode(dns.lookup(domain, options).then(promisifyLookup));
+    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup));
   },
 
   lookupService(address, port) {

@@ -636,6 +636,7 @@ describe("'bun run' priority", async () => {
         "test": "echo scripts/test",
         "sample.js": "echo scripts/sample.js",
         "§'.js": 'echo "scripts/§\'.js"',
+        "test.todo": "echo scripts/test.todo",
       },
       main: "main.js",
     }),
@@ -679,6 +680,8 @@ describe("'bun run' priority", async () => {
     { command: ["./sample.js"], stdout: "sample.js", stderr: "" },
     { command: ["sample"], stdout: "sample.js", stderr: "" },
     { command: ["./sample"], stdout: "sample.js", stderr: "" },
+
+    { command: ["test.todo"], stdout: "scripts/test.todo", stderr: "$ echo scripts/test.todo" },
 
     { command: ["§'.js"], stdout: "scripts/§'.js", stderr: '$ echo "scripts/§\'.js"' },
     { command: ["./§'.js"], stdout: "§'.js", stderr: "" },

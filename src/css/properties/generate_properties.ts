@@ -287,7 +287,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
-      .all, .unparsed => true,
+      .unparsed => |*u| u.eql(&rhs.unparsed),
+      .all => true,
       .custom => |*c| c.eql(&rhs.custom),
     };
   }
@@ -1077,6 +1078,7 @@ generateCode({
   "margin-right": {
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "margin", category: "physical" },
+    eval_branch_quota: 5000,
   },
   "margin-block-start": {
     ty: "LengthPercentageOrAuto",

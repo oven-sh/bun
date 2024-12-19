@@ -587,3 +587,23 @@ exports[`snapshots unicode surrogate halves 1`] = `
 exports[\`abc 1\`] = \`"😊abc\\\`\\\${def} �, � "\`;
 "
 `;
+
+exports[`error inline snapshots 1`] = `"hello"`;
+
+exports[`error inline snapshots 2`] = `undefined`;
+
+exports[`error inline snapshots 3`] = `undefined`;
+
+exports[`error inline snapshots 4`] = `undefined`;
+
+exports[`error inline snapshots: hint 1`] = `undefined`;
+
+exports[`snapshot numbering 1`] = `"item one"`;
+
+exports[`snapshot numbering 2`] = `"snap"`;
+
+exports[`snapshot numbering 4`] = `"snap"`;
+
+exports[`snapshot numbering 6`] = `"hello"`;
+
+exports[`snapshot numbering: hinted 1`] = `"hello"`;

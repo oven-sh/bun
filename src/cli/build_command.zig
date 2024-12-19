@@ -211,8 +211,18 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
 
+        this_bundler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_bundler.options.env.prefix = ctx.bundler_options.env_prefix;
+
         try this_bundler.configureDefines();
         this_bundler.configureLinker();
+
+        if (bun.FeatureFlags.breaking_changes_1_2) {
+            // This is currently done in DevServer by default, but not in Bun.build
+            if (!this_bundler.options.production) {
+                try this_bundler.options.conditions.appendSlice(&.{"development"});
+            }
+        }
 
         this_bundler.resolver.opts = this_bundler.options;
         this_bundler.options.jsx.development = !this_bundler.options.production;
@@ -234,6 +244,7 @@ pub const BuildCommand = struct {
             client_bundler.options = this_bundler.options;
             client_bundler.options.target = .browser;
             client_bundler.options.server_components = true;
+            client_bundler.options.conditions = try this_bundler.options.conditions.clone();
             try this_bundler.options.conditions.appendSlice(&.{"react-server"});
             this_bundler.options.react_fast_refresh = false;
             this_bundler.options.minify_syntax = true;

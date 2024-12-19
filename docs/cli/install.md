@@ -149,7 +149,8 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
     "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
     "moment": "git@github.com:moment/moment.git",
     "zod": "github:colinhacks/zod",
-    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
   }
 }
 ```
@@ -172,6 +173,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false

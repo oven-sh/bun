@@ -13,7 +13,7 @@ const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
-const options = @import("options.zig");
+pub const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const js_printer = bun.js_printer;
@@ -958,6 +958,7 @@ pub const Bundler = struct {
                         return null;
                     }
                     const result = sheet.toCss(alloc, bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
                         .minify = bundler.options.minify_whitespace,
                     }, null) catch |e| {
                         bun.handleErrorReturnTrace(e, @errorReturnTrace());

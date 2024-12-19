@@ -1686,6 +1686,29 @@ pub const AnyRequestContext = struct {
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
+
+    pub fn memoryCost(self: AnyRequestContext) usize {
+        if (self.tagged_pointer.isNull()) {
+            return 0;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).memoryCost();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
     pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
         return self.tagged_pointer.get(T);
     }
@@ -1908,6 +1931,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
+
+        pub fn memoryCost(this: *const RequestContext) usize {
+            // The Sink and ByteStream aren't owned by this.
+            return @sizeOf(RequestContext) + this.request_body_buf.capacity + this.response_buf_owned.capacity + this.blob.memoryCost();
+        }
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -4463,6 +4491,13 @@ pub const ServerWebSocket = struct {
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
     pub usingnamespace bun.New(ServerWebSocket);
+
+    pub fn memoryCost(this: *const ServerWebSocket) usize {
+        if (this.flags.closed) {
+            return @sizeOf(ServerWebSocket);
+        }
+        return this.websocket().memoryCost() + @sizeOf(ServerWebSocket);
+    }
 
     const log = Output.scoped(.WebSocketServer, false);
 

@@ -99,6 +99,15 @@ function finishSocket(hasError) {
   detachSocket(this);
   this.emit("close", hasError);
 }
+
+function destroyNT(self, err) {
+  self.destroy(err);
+}
+function destroyWhenAborted(err) {
+  if (!this.destroyed) {
+    this.destroy(err.target.reason);
+  }
+}
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
 // is overly vague, and makes it seem like the user's code is to blame.
@@ -479,9 +488,12 @@ const Socket = (function (InternalSocket) {
           },
         };
       }
-
       if (signal) {
-        signal.addEventListener("abort", () => this.destroy());
+        if (signal.aborted) {
+          process.nextTick(destroyNT, this, signal.reason);
+        } else {
+          signal.addEventListener("abort", destroyWhenAborted.bind(this));
+        }
       }
     }
 

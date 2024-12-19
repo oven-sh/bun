@@ -67,13 +67,7 @@ optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT $
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
 
-if(ENABLE_CANARY AND BUILDKITE)
-  execute_process(
-    COMMAND buildkite-agent meta-data get "canary"
-    OUTPUT_VARIABLE DEFAULT_CANARY_REVISION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-elseif(ENABLE_CANARY)
+if(ENABLE_CANARY)
   set(DEFAULT_CANARY_REVISION "1")
 else()
   set(DEFAULT_CANARY_REVISION "0")

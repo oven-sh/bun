@@ -1544,7 +1544,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1553,6 +1553,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -1618,6 +1638,15 @@ declare module "bun" {
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     *
+     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+     * as most usage of `Bun.build` forgets to check for errors.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -2131,6 +2160,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -3899,7 +3930,7 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
-    /** 
+    /**
      * The directory to perform file-based resolutions in.
      */
     resolveDir: string;

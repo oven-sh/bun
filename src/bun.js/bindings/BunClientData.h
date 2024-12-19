@@ -58,6 +58,7 @@ public:
     }
 
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
+    JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
 
 private:
     Lock m_lock;

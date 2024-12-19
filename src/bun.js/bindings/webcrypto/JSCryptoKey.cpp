@@ -88,9 +88,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr std::pair<ComparableASCIILiteral, CryptoKey::Type> mappings[] = {
-        { "private", CryptoKey::Type::Private },
-        { "public", CryptoKey::Type::Public },
-        { "secret", CryptoKey::Type::Secret },
+        { "private"_s, CryptoKey::Type::Private },
+        { "public"_s, CryptoKey::Type::Public },
+        { "secret"_s, CryptoKey::Type::Secret },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))

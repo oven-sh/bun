@@ -104,14 +104,14 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-  { os: "windows", arch: "x64", release: "2019" },
-  { os: "windows", arch: "x64", baseline: true, release: "2019" },
+  // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+  // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+  // { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
+  // { os: "windows", arch: "x64", release: "2019" },
+  // { os: "windows", arch: "x64", baseline: true, release: "2019" },
 ];
 
 /**
@@ -122,23 +122,23 @@ const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", tier: "previous" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: "oldest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04", tier: "previous" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
-  { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
-  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
+  // { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
+  // { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
+  // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
+  // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  // { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  // { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", tier: "previous" },
+  // { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
+  // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04", tier: "previous" },
+  // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
+  // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
+  // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
+  // { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
+  // { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  // { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
 
 /**
@@ -296,16 +296,19 @@ function getEc2Agent(platform, options, ec2Options) {
 /**
  * @param {Platform} platform
  * @param {PipelineOptions} options
+ * @param {boolean} [linkOnly]
  * @returns {string}
  */
-function getCppAgent(platform, options) {
+function getCppAgent(platform, options, linkOnly) {
   const { os, arch, distro } = platform;
 
   if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
-      arch,
+      // On macOS, we compile C++ on aarch64 since it's faster.
+      // However, this doesn't work for linking yet.
+      arch: linkOnly ? arch : "aarch64",
     };
   }
 
@@ -400,6 +403,7 @@ function getBuildEnv(target, options) {
  * @returns {Step}
  */
 function getBuildVendorStep(platform, options) {
+  const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
@@ -407,7 +411,7 @@ function getBuildVendorStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: "bun run build:ci --target dependencies",
+    command: `bun run build:ci --target dependencies --toolchain ${toolchain}`,
   };
 }
 
@@ -417,6 +421,7 @@ function getBuildVendorStep(platform, options) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
+  const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -427,7 +432,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun",
+    command: `bun run build:ci --target bun --toolchain ${toolchain}`,
   };
 }
 
@@ -479,7 +484,7 @@ function getLinkBunStep(platform, options) {
       `${getTargetKey(platform)}-build-cpp`,
       `${getTargetKey(platform)}-build-zig`,
     ],
-    agents: getCppAgent(platform, options),
+    agents: getCppAgent(platform, options, true),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {

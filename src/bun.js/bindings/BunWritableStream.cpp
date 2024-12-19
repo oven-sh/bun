@@ -1,6 +1,8 @@
 #include "root.h"
 
 #include "BunWritableStream.h"
+#include "BunWritableStreamDefaultController.h"
+#include "BunWritableStreamDefaultWriter.h"
 
 namespace Bun {
 
@@ -302,6 +304,19 @@ JSValue JSWritableStream::error(JSGlobalObject* globalObject, JSValue error)
 
 namespace Operations {
 
+// WritableStreamDefaultControllerErrorSteps(stream.[[writableStreamController]]).
+void WritableStreamDefaultControllerErrorSteps(JSWritableStreamDefaultController* controller)
+{
+    // 1. Let stream be controller.[[controlledWritableStream]].
+    ASSERT(stream);
+
+    // 2. Assert: stream.[[state]] is "writable".
+    ASSERT(stream->state() == JSWritableStream::State::Writable);
+
+    // 3. Perform ! WritableStreamStartErroring(stream, controller.[[signal]].[[error]]).
+    WritableStreamStartErroring(stream, controller->signalError());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -426,7 +441,7 @@ static JSValue WritableStreamAbort(JSGlobalObject* globalObject, JSWritableStrea
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Let state be stream.[[state]].
-    auto state = stream->state();
+    const auto state = stream->state();
 
     // 2. If state is "closed" or state is "errored", return a promise resolved with undefined.
     if (state == JSWritableStream::State::Closed || state == JSWritableStream::State::Errored) {
@@ -434,8 +449,8 @@ static JSValue WritableStreamAbort(JSGlobalObject* globalObject, JSWritableStrea
     }
 
     // 3. If stream.[[pendingAbortRequest]] is not undefined, return stream.[[pendingAbortRequest]].[[promise]].
-    if (stream->pendingAbortRequest())
-        return stream->pendingAbortRequest();
+    if (auto promise = stream->pendingAbortRequestPromise())
+        return promise;
 
     // 4. Assert: state is "writable" or state is "erroring".
     ASSERT(state == JSWritableStream::State::Writable || state == JSWritableStream::State::Erroring);
@@ -456,22 +471,23 @@ static JSValue WritableStreamAbort(JSGlobalObject* globalObject, JSWritableStrea
 
     // 8. Set stream.[[pendingAbortRequest]] to record {[[promise]]: promise, [[reason]]: reason,
     //    [[wasAlreadyErroring]]: wasAlreadyErroring}.
-    stream->setPendingAbortRequest(promise, reason, wasAlreadyErroring);
+    stream->setPendingAbortRequest(vm, promise, reason, wasAlreadyErroring);
 
     // 9. If wasAlreadyErroring is false, perform ! WritableStreamStartErroring(stream, reason).
     if (!wasAlreadyErroring) {
         WritableStreamStartErroring(stream, reason);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // 10. If stream.[[state]] is "errored", perform ! WritableStreamFinishErroring(stream).
     if (stream->state() == JSWritableStream::State::Errored) {
         WritableStreamFinishErroring(stream);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // 11. Return promise.
     return promise;
 }
-
 }
 
 JSValue JSWritableStream::abort(JSGlobalObject* globalObject, JSValue reason)
@@ -493,33 +509,21 @@ JSValue JSWritableStream::close(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Cannot close locked stream
-    if (isLocked())
-        return throwVMTypeError(globalObject, scope, "Cannot close a locked WritableStream"_s);
-
-    // Cannot close unless in writable state
-    if (m_state != State::Writable)
-        return throwVMTypeError(globalObject, scope, "Cannot close stream in non-writable state"_s);
+    if (isLocked() || m_state == State::Errored)
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close a locked or errored WritableStream"_s));
 
     // Cannot close if already closing
     if (m_closeRequest || m_inFlightCloseRequest)
-        return throwVMTypeError(globalObject, scope, "Cannot close an already closing stream"_s);
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Cannot close an already closing stream"_s));
 
     // Create close promise
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     m_closeRequest.set(vm, this, promise);
 
-    // If we have in-flight write request, wait for it to finish
-    if (m_inFlightWriteRequest) {
-        RELEASE_AND_RETURN(scope, promise);
-    }
-
     // Note: The controller just queues up the close operation
     m_controller->close(globalObject);
 
-    m_inFlightCloseRequest.set(vm, this, m_closeRequest.get());
-    m_closeRequest.clear();
-
-    RELEASE_AND_RETURN(scope, m_inFlightCloseRequest.get());
+    RELEASE_AND_RETURN(scope, promise);
 }
 
 }

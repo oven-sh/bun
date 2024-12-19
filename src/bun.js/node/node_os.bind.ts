@@ -45,7 +45,7 @@ export const networkInterfaces = fn({
 });
 export const release = fn({
   args: {},
-  ret: t.DOMString,
+  ret: t.BunString,
 });
 export const totalmem = fn({
   args: {},

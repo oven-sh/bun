@@ -18,10 +18,6 @@ const string = bun.string;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSUint8Array = JSC.JSUint8Array;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;

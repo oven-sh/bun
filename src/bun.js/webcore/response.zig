@@ -19,10 +19,6 @@ const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -455,12 +451,12 @@ pub const Response = struct {
             if (@intFromEnum(url_string_value) != 0) {
                 url_string = url_string_value.getZigString(globalThis);
             }
-            url_string_slice = url_string.toSlice(getAllocator(globalThis));
+            url_string_slice = url_string.toSlice(default_allocator);
             var did_succeed = false;
             defer {
                 if (!did_succeed) {
-                    response.body.deinit(bun.default_allocator);
-                    response.init.deinit(bun.default_allocator);
+                    response.body.deinit(default_allocator);
+                    response.init.deinit(default_allocator);
                 }
             }
 

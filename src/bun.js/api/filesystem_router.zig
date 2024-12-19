@@ -14,7 +14,6 @@ const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
 const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
 const JSError = Base.JSError;
 const JSValue = JSC.JSValue;

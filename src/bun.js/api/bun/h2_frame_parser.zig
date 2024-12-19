@@ -1,4 +1,3 @@
-const getAllocator = @import("../../base.zig").getAllocator;
 const bun = @import("root").bun;
 const Output = bun.Output;
 const std = @import("std");

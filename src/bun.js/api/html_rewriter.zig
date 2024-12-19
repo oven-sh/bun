@@ -5,7 +5,6 @@ const JSC = bun.JSC;
 const WebCore = @import("../webcore/response.zig");
 const ZigString = JSC.ZigString;
 const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Response = WebCore.Response;
@@ -69,9 +68,7 @@ pub const HTMLRewriter = struct {
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
             return throwLOLHTMLError(global);
-        const handler_ = try ElementHandler.init(global, listener);
-        const handler = getAllocator(global).create(ElementHandler) catch bun.outOfMemory();
-        handler.* = handler_;
+        const handler = bun.new(ElementHandler, try ElementHandler.init(global, listener));
 
         this.builder.addElementContentHandlers(
             selector,
@@ -112,10 +109,7 @@ pub const HTMLRewriter = struct {
         listener: JSValue,
         callFrame: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const handler_ = try DocumentHandler.init(global, listener);
-
-        const handler = getAllocator(global).create(DocumentHandler) catch bun.outOfMemory();
-        handler.* = handler_;
+        const handler = bun.new(DocumentHandler, try DocumentHandler.init(global, listener));
 
         // If this fails, subsequent calls to write or end should throw
         this.builder.addDocumentContentHandlers(

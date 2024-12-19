@@ -7,7 +7,7 @@ const HTTPClient = bun.http;
 const JSC = bun.JSC;
 const js = JSC.C;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = bun.http.Method;
 const FetchHeaders = JSC.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
@@ -18,12 +18,8 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-
-const Environment = @import("../../env.zig");
+const ArrayBuffer = JSC.ArrayBuffer;
+const Environment = bun.Environment;
 const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
@@ -281,13 +277,13 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.default).toJS(globalThis);
+        return ZigString.init("default").toJS(globalThis);
     }
     pub fn getCredentials(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.include).toJS(globalThis);
+        return ZigString.init("include").toJS(globalThis);
     }
     pub fn getDestination(
         _: *Request,
@@ -329,7 +325,7 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.navigate).toJS(globalThis);
+        return ZigString.init("navigate").toJS(globalThis);
     }
 
     pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -360,7 +356,7 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.follow).toJS(globalThis);
+        return ZigString.init("follow").toJS(globalThis);
     }
     pub fn getReferrer(
         this: *Request,

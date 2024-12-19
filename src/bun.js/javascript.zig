@@ -53,7 +53,6 @@ const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
-const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
 

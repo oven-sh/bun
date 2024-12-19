@@ -448,9 +448,9 @@ pub const String = extern struct {
     ///
     /// If the length is too large, this will return a dead string.
     pub fn createUninitialized(
-        comptime kind: WTFStringEncoding,
+        comptime kind: WTFString.Encoding,
         len: usize,
-    ) struct { String, [](kind.Byte()) } {
+    ) struct { String, [](kind.Char()) } {
         bun.assert(len > 0);
         return switch (comptime kind) {
             .latin1 => createUninitializedLatin1(len),
@@ -699,7 +699,7 @@ pub const String = extern struct {
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
-    pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
+    pub fn createExternalGloballyAllocated(comptime kind: WTFString.Encoding, bytes: []kind.Char()) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
 

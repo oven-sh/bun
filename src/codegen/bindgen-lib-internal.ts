@@ -861,6 +861,21 @@ export function registerFunction(opts: FuncOptions) {
   return func;
 }
 
+interface AttributeOptions {
+  type: TypeImpl;
+  name: string;
+}
+
+// class Attribute {
+//   type: TypeImpl;
+//   name?: string;
+//   class?: string;
+// }
+
+export function registerAttribute(opts: AttributeOptions) {
+  throw new Error("TODO");
+}
+
 function validateVariant(variant: any) {
   let minRequiredArgs = 0;
   let seenOptionalArgument = false;

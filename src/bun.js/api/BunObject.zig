@@ -216,7 +216,6 @@ const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
@@ -446,7 +445,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     const value = arguments[0];
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
+    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -506,7 +505,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const value = arguments[0];
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 

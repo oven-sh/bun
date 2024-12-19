@@ -312,3 +312,11 @@ export interface FuncVariant {
 export function fn(opts: FuncOptions) {
   return registerFunction(opts) as FuncReference;
 }
+
+// export function getterReadonly<T>(returnType: Type<T>) {
+//   return registerAttribute({ type: returnType, readonly: true });
+// }
+
+// export function getterSetter<T>(returnType: Type<T>) {
+//   return registerAttribute({ type: returnType, readonly: true });
+// }

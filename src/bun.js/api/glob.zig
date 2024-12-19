@@ -17,7 +17,6 @@ const JSValue = @import("../bindings/bindings.zig").JSValue;
 const ZigString = @import("../bindings/bindings.zig").ZigString;
 const Base = @import("../base.zig");
 const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
-const getAllocator = Base.getAllocator;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
 const isAllAscii = @import("../../string_immutable.zig").isAllASCII;
 const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
@@ -281,7 +280,7 @@ fn makeGlobWalker(
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -340,7 +339,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 }
 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -363,7 +362,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -389,7 +388,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
 }
 
 pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
     var arena = Arena.init(alloc);
     defer arena.deinit();
 

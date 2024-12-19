@@ -99,51 +99,6 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
     }
 }
 
-pub const Properties = struct {
-    pub const UTF8 = struct {
-        pub var filepath: string = "filepath";
-
-        pub const module: string = "module";
-        pub const globalThis: string = "globalThis";
-        pub const exports: string = "exports";
-        pub const log: string = "log";
-        pub const debug: string = "debug";
-        pub const name: string = "name";
-        pub const info: string = "info";
-        pub const error_: string = "error";
-        pub const warn: string = "warn";
-        pub const console: string = "console";
-        pub const require: string = "require";
-        pub const description: string = "description";
-        pub const initialize_bundled_module: string = "$$m";
-        pub const load_module_function: string = "$lOaDuRcOdE$";
-        pub const window: string = "window";
-        pub const default: string = "default";
-        pub const include: string = "include";
-
-        pub const env: string = "env";
-
-        pub const GET = "GET";
-        pub const PUT = "PUT";
-        pub const POST = "POST";
-        pub const PATCH = "PATCH";
-        pub const HEAD = "HEAD";
-        pub const OPTIONS = "OPTIONS";
-
-        pub const navigate = "navigate";
-        pub const follow = "follow";
-    };
-
-    pub const Refs = struct {
-        pub var empty_string_ptr = [_]u8{0};
-        pub var empty_string: js.JSStringRef = undefined;
-    };
-
-    pub fn init() void {
-        Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
-    }
-};
-
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 

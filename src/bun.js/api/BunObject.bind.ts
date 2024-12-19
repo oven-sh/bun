@@ -8,7 +8,7 @@ export const BracesOptions = t.dictionary({
 export const braces = fn({
   args: {
     global: t.globalObject,
-    input: t.DOMString,
+    input: t.BunString,
     options: BracesOptions.default({}),
   },
   ret: t.any,

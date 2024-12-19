@@ -146,17 +146,18 @@ pub const Blob = struct {
     }
 
     const ReadFileUV = @import("./blob/ReadFile.zig").ReadFileUV;
+    pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
+        bloblog("doReadFromS3", .{});
 
+        const WrappedFn = struct {
+            pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
+                return JSC.toJSHostValue(g, Function(b, g, by, .clone));
+            }
+        };
+        return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
+    }
     pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFile", .{});
-        if (this.isS3()) {
-            const WrappedFn = struct {
-                pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-                    return JSC.toJSHostValue(g, Function(b, g, by, .clone));
-                }
-            };
-            return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
-        }
 
         const Handler = NewReadFileHandler(Function);
 
@@ -1691,6 +1692,7 @@ pub const Blob = struct {
             return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
                 .bytes => this.data.bytes.len,
                 .file => 0,
+                .s3 => |s3| s3.estimatedSize(),
             } else 0;
         }
 
@@ -3241,12 +3243,12 @@ pub const Blob = struct {
     pub const S3Store = struct {
         pathlike: JSC.Node.PathLike,
         mime_type: http.MimeType = http.MimeType.other,
-        credentials: AWSCredentials,
+        credentials: *AWSCredentials,
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;
         }
 
-        pub fn getCredentials(this: *@This()) AWSCredentials {
+        pub fn getCredentials(this: *@This()) *AWSCredentials {
             return this.credentials;
         }
 
@@ -3256,14 +3258,13 @@ pub const Blob = struct {
 
         pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials) S3Store {
             return .{
-                .credentials = credentials,
+                .credentials = credentials.dupe(),
                 .pathlike = pathlike,
                 .mime_type = mime_type orelse http.MimeType.other,
             };
         }
-        pub fn estimatedSize(this: *@This()) usize {
-            // TODO: credentials size here
-            return this.pathlike.estimatedSize();
+        pub fn estimatedSize(this: *const @This()) usize {
+            return this.pathlike.estimatedSize() + this.credentials.estimatedSize();
         }
 
         pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
@@ -3272,7 +3273,7 @@ pub const Blob = struct {
             } else {
                 this.pathlike.deinit();
             }
-            //TODO: clear credentials
+            this.credentials.deref();
         }
     };
 
@@ -3693,7 +3694,7 @@ pub const Blob = struct {
             const credentials = this.store.?.data.s3.getCredentials();
             const path = this.store.?.data.s3.path();
 
-            const result = credentials.signRequest(path, method, null, .{ .expires = expires }) catch |sign_err| {
+            const result = credentials.signRequest(path, method, null, null, .{ .expires = expires }) catch |sign_err| {
                 return switch (sign_err) {
                     error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                     error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
@@ -3737,11 +3738,10 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("Blob is detached", .{});
         };
         if (this.isS3()) {
-            const env = globalThis.bunVM().bundler.env;
             const credentials = this.store.?.data.s3.getCredentials();
             const path = this.store.?.data.s3.path();
 
-            return try credentials.s3WritableStream(path, globalThis, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            return try credentials.s3WritableStream(path, globalThis);
         }
         if (store.data != .file) {
             return globalThis.throwInvalidArguments("Blob is read-only", .{});
@@ -4477,7 +4477,7 @@ pub const Blob = struct {
     }
 
     pub fn needsToReadFile(this: *const Blob) bool {
-        return this.store != null and this.store.?.data == .file;
+        return this.store != null and (this.store.?.data == .file);
     }
 
     pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
@@ -4569,6 +4569,9 @@ pub const Blob = struct {
         if (this.needsToReadFile()) {
             return this.doReadFile(toStringWithBytes, global);
         }
+        if (this.isS3()) {
+            return this.doReadFromS3(toStringWithBytes, global);
+        }
 
         const view_: []u8 =
             @constCast(this.sharedView());
@@ -4582,6 +4585,9 @@ pub const Blob = struct {
     pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toJSONWithBytes, global);
+        }
+        if (this.isS3()) {
+            return this.doReadFromS3(toJSONWithBytes, global);
         }
 
         const view_ = this.sharedView();
@@ -4745,6 +4751,10 @@ pub const Blob = struct {
             return this.doReadFile(WithBytesFn, global);
         }
 
+        if (this.isS3()) {
+            return this.doReadFromS3(WithBytesFn, global);
+        }
+
         const view_ = this.sharedView();
         if (view_.len == 0)
             return JSC.ArrayBuffer.create(global, "", TypedArrayView);
@@ -4755,6 +4765,9 @@ pub const Blob = struct {
     pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toFormDataWithBytes, global);
+        }
+        if (this.isS3()) {
+            return this.doReadFromS3(toFormDataWithBytes, global);
         }
 
         const view_ = this.sharedView();

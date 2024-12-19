@@ -43,7 +43,7 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
-const AWS = @import("../../s3.zig").AWSCredentials;
+const S3MultiPartUpload = @import("../../s3.zig").MultiPartUpload;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -2633,14 +2633,27 @@ pub const FetchTaskletChunkedRequestSink = struct {
     buffer: bun.io.StreamBuffer,
     ended: bool = false,
     done: bool = false,
+    encoded: bool = true,
+
+    endPromise: JSC.JSPromise.Strong = .{},
 
     auto_flusher: AutoFlusher = AutoFlusher{},
 
     pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
     const HTTPWritableStream = union(enum) {
         fetch: *JSC.WebCore.Fetch.FetchTasklet,
-        s3_upload: *AWS.S3HttpStreamUpload,
+        s3_upload: *S3MultiPartUpload,
     };
+
+    fn getHighWaterMark(this: *@This()) Blob.SizeType {
+        if (this.task) |task| {
+            return switch (task) {
+                .s3_upload => |s3| @truncate(s3.partSizeInBytes()),
+                else => this.highWaterMark,
+            };
+        }
+        return this.highWaterMark;
+    }
     fn unregisterAutoFlusher(this: *@This()) void {
         if (this.auto_flusher.registered)
             AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
@@ -2724,19 +2737,22 @@ pub const FetchTaskletChunkedRequestSink = struct {
 
         if (this.task) |task| {
             if (is_last) this.done = true;
+            if (this.encoded) {
+                if (data.len == 0) {
+                    sendRequestData(task, bun.http.end_of_chunked_http1_1_encoding_response_body, true);
+                    return;
+                }
 
-            if (data.len == 0) {
-                sendRequestData(task, bun.http.end_of_chunked_http1_1_encoding_response_body, true);
-                return;
-            }
-
-            // chunk encoding is really simple
-            if (is_last) {
-                const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
-                sendRequestData(task, chunk, true);
+                // chunk encoding is really simple
+                if (is_last) {
+                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
+                    sendRequestData(task, chunk, true);
+                } else {
+                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
+                    sendRequestData(task, chunk, false);
+                }
             } else {
-                const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
-                sendRequestData(task, chunk, false);
+                sendRequestData(task, data, is_last);
             }
         }
     }
@@ -2788,14 +2804,14 @@ pub const FetchTaskletChunkedRequestSink = struct {
         const bytes = data.slice();
         const len = @as(Blob.SizeType, @truncate(bytes.len));
 
-        if (this.buffer.size() == 0 and len >= this.highWaterMark) {
+        if (this.buffer.size() == 0 and len >= this.getHighWaterMark()) {
             // fast path:
             // - large-ish chunk
             this.send(bytes, false) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
             return .{ .owned = len };
-        } else if (this.buffer.size() + len >= this.highWaterMark) {
+        } else if (this.buffer.size() + len >= this.getHighWaterMark()) {
             _ = this.buffer.write(bytes) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
@@ -2822,7 +2838,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
         const bytes = data.slice();
         const len = @as(Blob.SizeType, @truncate(bytes.len));
 
-        if (this.buffer.size() == 0 and len >= this.highWaterMark) {
+        if (this.buffer.size() == 0 and len >= this.getHighWaterMark()) {
             // common case
             if (strings.isAllASCII(bytes)) {
                 // fast path:
@@ -2841,7 +2857,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
             return .{ .owned = len };
-        } else if (this.buffer.size() + len >= this.highWaterMark) {
+        } else if (this.buffer.size() + len >= this.getHighWaterMark()) {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
             this.buffer.writeLatin1(bytes) catch {
@@ -2873,7 +2889,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
         };
 
         const readable = this.buffer.slice();
-        if (readable.len >= this.highWaterMark) {
+        if (readable.len >= this.getHighWaterMark()) {
             _ = this.internalFlush() catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
@@ -2898,18 +2914,20 @@ pub const FetchTaskletChunkedRequestSink = struct {
         return .{ .result = {} };
     }
     pub fn endFromJS(this: *@This(), _: *JSGlobalObject) JSC.Maybe(JSValue) {
-        if (this.ended) {
+        if (!this.ended) {
+            if (this.done) {
+                this.ended = true;
+                this.signal.close(null);
+                this.finalize();
+            } else {
+                _ = this.end(null);
+            }
+        }
+        const promise = this.endPromise.valueOrEmpty();
+        if (promise.isEmptyOrUndefinedOrNull()) {
             return .{ .result = JSC.JSValue.jsNumber(0) };
         }
-
-        if (this.done) {
-            this.ended = true;
-            this.signal.close(null);
-            this.finalize();
-            return .{ .result = JSC.JSValue.jsNumber(0) };
-        }
-        _ = this.end(null);
-        return .{ .result = JSC.JSValue.jsNumber(0) };
+        return .{ .result = promise };
     }
     pub fn toJS(this: *@This(), globalThis: *JSGlobalObject) JSValue {
         return JSSink.createObject(globalThis, this, 0);

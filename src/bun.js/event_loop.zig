@@ -20,7 +20,6 @@ const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const AWS = @import("../s3.zig").AWSCredentials;
 const S3HttpSimpleTask = AWS.S3HttpSimpleTask;
-const S3HttpStreamUpload = AWS.S3HttpStreamUpload;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -411,7 +410,6 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     S3HttpSimpleTask,
-    S3HttpStreamUpload,
     PosixSignalTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
@@ -1014,10 +1012,7 @@ pub const EventLoop = struct {
                     var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
                     s3_task.onResponse();
                 },
-                .S3HttpStreamUpload => {
-                    var s3_task: *S3HttpStreamUpload = task.get(S3HttpStreamUpload).?;
-                    s3_task.onResponse();
-                },
+
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                     globWalkTask.*.runFromJS();

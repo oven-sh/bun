@@ -870,7 +870,4 @@ BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 
 
-BUN_DECLARE_HOST_FUNCTION(Bun__S3HttpStreamUpload__onResolveRequestStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__S3HttpStreamUpload__onRejectRequestStream);
-
 #endif

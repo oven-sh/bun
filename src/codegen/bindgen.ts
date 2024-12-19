@@ -33,6 +33,7 @@ import {
   NodeValidator,
   cAbiIntegerLimits,
   extInternalDispatchVariant,
+  TypeData,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
@@ -139,6 +140,10 @@ function resolveComplexArgumentStrategy(
   }
 
   switch (type.kind) {
+    case "sequence": {
+      const child = type.data as TypeData<"sequence">;
+      break;
+    }
     default:
       throw new Error(`TODO: resolveComplexArgumentStrategy for ${type.kind}`);
   }

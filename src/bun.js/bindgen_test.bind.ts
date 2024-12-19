@@ -18,3 +18,13 @@ export const requiredAndOptionalArg = fn({
   },
   ret: t.i32,
 });
+
+// export const HeadersInit = t.oneOf(t.sequence(t.sequence(t.ByteString)), t.record(t.ByteString));
+export const HeadersInit = t.sequence(t.DOMString);
+
+export const headersInit = fn({
+  args: {
+    a: HeadersInit,
+  },
+  ret: t.i32,
+});

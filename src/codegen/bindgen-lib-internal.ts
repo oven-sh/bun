@@ -70,7 +70,7 @@ interface TypeDataDefs {
   oneOf: TypeImpl[];
   dictionary: DictionaryField[];
 }
-type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
+export type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
 export const enum NodeValidator {
   validateInteger = "validateInteger",

@@ -758,10 +758,7 @@ pub const Request = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Request {
-        const arguments_ = callframe.arguments_old(2);
-        const arguments = arguments_.ptr[0..arguments_.len];
-
-        const request = try constructInto(globalThis, arguments);
+        const request = try constructInto(globalThis, callframe.arguments());
         return Request.new(request);
     }
 
@@ -800,7 +797,6 @@ pub const Request = struct {
                 }
             }
         }
-
         return js_wrapper;
     }
 

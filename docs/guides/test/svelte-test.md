@@ -1,8 +1,8 @@
 ---
-name: "import, require, and test Svelte components with bun:test"
+name: "import, require, and test Svelte components with bun test"
 ---
 
-Bun's [Plugin API](/docs/runtime/plugins) lets you add custom loaders to your project and the `test.preload` option in `bunfig.toml` lets you ensure your loaders start before your tests run.
+Bun's [Plugin API](/docs/runtime/plugins) lets you add custom loaders to your project. The `test.preload` option in `bunfig.toml` lets you configure your loader to start before your tests run.
 
 To get started, save this plugin in your project.
 

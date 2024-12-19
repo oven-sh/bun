@@ -147,7 +147,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
                     _s.value.ZigString.markUTF16();
                     break :blk _s;
                 },
-                    // bun.String.fromUTF16(@ptrCast(buf)),
+                // bun.String.fromUTF16(@ptrCast(buf)),
             };
             try lines.append(allocator, s); // include the newline
             start = end;

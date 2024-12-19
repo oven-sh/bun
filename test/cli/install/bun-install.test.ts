@@ -8447,6 +8447,8 @@ test("providing invalid url in lockfile does not crash", async () => {
   });
 
   const err = await Bun.readableStreamToText(stderr);
-  expect(err).toContain("error: invalid url 'invalid-url' for package 'jquery'");
+  expect(err).toContain(
+    'error: Expected tarball URL to start with https:// or http://, got "invalid-url" while fetching package "jquery"',
+  );
   expect(await exited).toBe(1);
 });

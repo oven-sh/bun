@@ -102,7 +102,7 @@ function getTargetLabel(target) {
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14" },
+  // { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
   // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -118,8 +118,8 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
+  // { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
+  // { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   // { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },

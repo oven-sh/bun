@@ -1146,7 +1146,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return createError(globalObject, str);
     })();
 
-    errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    if (!errorInstance->hasProperty(lexicalGlobalObject, vm.propertyNames->name)) {
+        errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    }
 
     auto ident = Identifier::fromString(vm, "warning"_s);
     if (process->wrapped().hasEventListeners(ident)) {

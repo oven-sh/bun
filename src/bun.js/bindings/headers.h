@@ -869,5 +869,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectRequestStream);
+
 
 #endif

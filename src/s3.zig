@@ -399,6 +399,7 @@ pub const AWSCredentials = struct {
                     .stat,
                     .delete,
                     .commit,
+                    .part,
                     => |callback| callback(.{
                         .failure = .{
                             .code = code,
@@ -458,9 +459,11 @@ pub const AWSCredentials = struct {
                 code = @errorName(err);
             } else if (this.result.body) |body| {
                 const bytes = body.list.items;
+                var has_error = false;
                 if (bytes.len > 0) {
                     message = bytes[0..];
                     if (strings.indexOf(bytes, "<Error>") != null) {
+                        has_error = true;
                         if (strings.indexOf(bytes, "<Code>")) |start| {
                             if (strings.indexOf(bytes, "</Code>")) |end| {
                                 code = bytes[start + "<Code>".len .. end];
@@ -471,9 +474,10 @@ pub const AWSCredentials = struct {
                                 message = bytes[start + "<Message>".len .. end];
                             }
                         }
-                    } else if (status == 200 or status == 206) {
-                        return false;
                     }
+                }
+                if (!has_error and status == 200 or status == 206) {
+                    return false;
                 }
             } else if (status == 200 or status == 206) {
                 return false;
@@ -566,9 +570,12 @@ pub const AWSCredentials = struct {
                     }
                 },
                 .part => |callback| {
-                    // commit multipart upload can fail with status 200
                     if (!this.failIfContainsError(response.status_code)) {
-                        callback(response.headers.get("etag"), this.callback_context);
+                        if (response.headers.get("etag")) |etag| {
+                            callback(.{ .etag = etag }, this.callback_context);
+                        } else {
+                            this.fail();
+                        }
                     }
                 },
             }
@@ -679,62 +686,176 @@ pub const AWSCredentials = struct {
         this.executeSimpleS3Request(path, .PUT, .{ .upload = callback }, callback_context, proxy_url, content, null, null);
     }
 
+    const S3UploadStreamWrapper = struct {
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
+        callback: *const fn (S3UploadResult, *anyopaque) void,
+        callback_context: *anyopaque,
+        ref_count: u32 = 0,
+        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+        pub fn resolve(result: S3UploadResult, self: *@This()) void {
+            const sink = self.sink;
+            defer self.deref();
+            switch (result) {
+                .success => {},
+                .failure => {
+                    if (!sink.done) {
+                        sink.abort();
+                        return;
+                    }
+                },
+            }
+            self.callback(result);
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.readable_stream_ref.deinit();
+            self.sink.finalize();
+            self.sink.destroy();
+            self.destroy();
+        }
+    };
+    pub fn onUploadStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        var args = callframe.arguments_old(2);
+        var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
+        defer this.deref();
+        if (this.readable_stream_ref.get()) |stream| {
+            stream.done(globalThis);
+        }
+        this.readable_stream_ref.deinit();
+
+        return .undefined;
+    }
+
+    pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(2);
+        var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
+        defer this.deref();
+        if (this.readable_stream_ref.get()) |stream| {
+            stream.cancel(globalThis);
+            this.readable_stream_ref.deinit();
+        }
+        if (this.sink.task) |task| {
+            if (task == .s3_upload) {
+                task.s3_upload.fail(.{
+                    .code = "UnknownError",
+                    .message = "ReadableStream ended with an error",
+                });
+            }
+        }
+        return .undefined;
+    }
+    pub const shim = JSC.Shimmer("Bun", "S3UploadStream", @This());
+
+    pub const Export = shim.exportFunctions(.{
+        .onResolveRequestStream = onUploadStreamResolveRequestStream,
+        .onRejectRequestStream = onUploadStreamRejectRequestStream,
+    });
+    comptime {
+        const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
+        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
+        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    }
+
     /// consumes the readable stream and upload to s3
-    // pub fn s3UploadStream(this: *const @This(), path: []const u8, readable_stream: *JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-    //     var result = this.signRequest(path, .PUT, null, null) catch |sign_err| {
-    //         return switch (sign_err) {
-    //             error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
-    //             error.InvalidMethod => callback.fail("MissingCredentials", "method must be GET, PUT, DELETE or HEAD when using s3 protocol", callback_context),
-    //             error.InvalidPath => callback.fail("InvalidPath", "invalid s3 bucket, key combination", callback_context),
-    //             else => callback.fail("SignError", "failed to retrieve s3 content check your credentials", callback_context),
-    //         };
-    //     };
+    pub fn s3UploadStream(this: *const @This(), path: []const u8, readable_stream: *JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+        this.ref(); // ref the credentials
+        const task = MultiPartUpload.new(.{
+            .options = .{},
+            .credentials = this,
+            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
+            .callback_context = undefined,
+            .globalThis = globalThis,
+            .vm = JSC.VirtualMachine.get(),
+        });
 
-    //     const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
-    //     const task = S3HttpStreamUpload.new(.{
-    //         .http = undefined,
-    //         .sign_result = result,
-    //         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
-    //         .callback_context = callback_context,
-    //         .callback = callback,
-    //         .headers = headers,
-    //         .vm = JSC.VirtualMachine.get(),
-    //     });
-    //     task.poll_ref.ref(task.vm);
+        task.poll_ref.ref(task.vm);
 
-    //     const url = bun.URL.parse(result.url);
+        task.ref(); // + 1 for the stream
 
-    //     task.http = bun.http.AsyncHTTP.init(
-    //         bun.default_allocator,
-    //         .PUT,
-    //         url,
-    //         task.headers.entries,
-    //         task.headers.buf.items,
-    //         &task.response_buffer,
-    //         "",
-    //         bun.http.HTTPClientResult.Callback.New(
-    //             *S3HttpStreamUpload,
-    //             S3HttpStreamUpload.http_callback,
-    //         ).init(task),
-    //         .follow,
-    //         .{
-    //             .http_proxy = if (proxy_url) |proxy| bun.URL.parse(proxy) else null,
-    //         },
-    //     );
-    //     task.http.client.flags.is_streaming_request_body = true;
-    //     task.http.request_body = .{
-    //         .stream = .{
-    //             .buffer = .{},
-    //             .ended = false,
-    //         },
-    //     };
-    //     // queue http request
-    //     bun.http.HTTPThread.init(&.{});
-    //     var batch = bun.ThreadPool.Batch{};
-    //     task.http.schedule(bun.default_allocator, &batch);
-    //     task.ref(); // +1 for the http thread
-    //     bun.http.http_thread.schedule(batch);
-    // }
+        var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
+            .task = .{ .s3_upload = task },
+            .buffer = .{},
+            .globalThis = globalThis,
+            .encoded = false,
+        }).toSink();
+        const ctx = S3UploadStreamWrapper.new(.{
+            .readable_stream = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
+            .sink = &response_stream.sink,
+            .callback = callback,
+            .callback_context = callback_context,
+        });
+        task.callback_context = @ptrCast(ctx);
+        var signal = &response_stream.sink.signal;
+
+        signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        bun.assert(signal.isDead());
+
+        // We are already corked!
+        const assignment_result: JSC.JSValue = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.assignToStream(
+            globalThis,
+            readable_stream.value,
+            response_stream,
+            @as(**anyopaque, @ptrCast(&signal.ptr)),
+        );
+
+        assignment_result.ensureStillAlive();
+
+        // assert that it was updated
+        bun.assert(!signal.isDead());
+
+        if (assignment_result.toError()) |_| {
+            readable_stream.cancel(globalThis);
+            return task.fail(.{
+                .code = "UnknownError",
+                .message = "ReadableStream ended with an error",
+            });
+        }
+
+        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+            this.javascript_vm.drainMicrotasks();
+
+            assignment_result.ensureStillAlive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if (assignment_result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .pending => {
+                        ctx.ref();
+                        assignment_result.then(
+                            globalThis,
+                            task.callback_context,
+                            onUploadStreamResolveRequestStream,
+                            onUploadStreamRejectRequestStream,
+                        );
+                    },
+                    .fulfilled => {
+                        readable_stream.done(globalThis);
+                    },
+                    .rejected => {
+                        readable_stream.cancel(globalThis);
+
+                        return task.fail(.{
+                            .code = "UnknownError",
+                            .message = "ReadableStream ended with an error",
+                        });
+                    },
+                }
+                return;
+            } else {
+                readable_stream.cancel(globalThis);
+                return task.fail(.{
+                    .code = "UnknownError",
+                    .message = "ReadableStream ended with an error",
+                });
+            }
+        }
+    }
     /// returns a writable stream that writes to the s3 path
     pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
@@ -818,7 +939,7 @@ pub const MultiPartUpload = struct {
     upload_id: []const u8 = "",
     uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
 
-    multipart_etags: std.ArrayListUnmanaged(MultiPartUpload.UploadPart.UploadPartResult) = .{},
+    multipart_etags: std.ArrayListUnmanaged(UploadPart.UploadPartResult) = .{},
     multipart_upload_list: bun.ByteList = .{},
 
     state: enum {
@@ -865,7 +986,7 @@ pub const MultiPartUpload = struct {
             number: u16,
             etag: []const u8,
         };
-        fn sortEtags(_: *anyopaque, a: UploadPart.UploadPartResult, b: UploadPart.UploadPartResult) bool {
+        fn sortEtags(_: *MultiPartUpload, a: UploadPart.UploadPartResult, b: UploadPart.UploadPartResult) bool {
             return a.number < b.number;
         }
 
@@ -880,25 +1001,21 @@ pub const MultiPartUpload = struct {
             this.state = .completed;
 
             switch (result) {
-                .failure => {
+                .failure => |err| {
                     if (this.retry > 0) {
                         this.retry -= 1;
                         // retry failed
                         this.perform();
                         return;
                     } else {
-                        return this.ctx.fail(if (result == .not_found) .{
-                            .code = "UnknownError",
-                            .message = "Failed to send part of multipart upload",
-                        } else result.failure);
+                        return this.ctx.fail(err);
                     }
                 },
                 .etag => |etag| {
-
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
-                        .etag = bun.default_allocator.dupe(etag),
+                        .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
                     }) catch bun.outOfMemory();
 
                     defer this.ctx.deref();
@@ -916,7 +1033,7 @@ pub const MultiPartUpload = struct {
                 this.partNumber,
                 this.ctx.upload_id,
             }) catch unreachable;
-            this.ctx.credentials.executeSimpleS3Request(this.ctx.path, .PUT, .{ .upload = @ptrCast(&onPartResponse) }, this, this.ctx.proxyUrl(), this.data, null, searchParams);
+            this.ctx.credentials.executeSimpleS3Request(this.ctx.path, .PUT, .{ .part = @ptrCast(&onPartResponse) }, this, this.ctx.proxyUrl(), this.data, null, searchParams);
         }
         pub fn start(this: *@This()) void {
             if (this.state != .pending) return;
@@ -945,11 +1062,11 @@ pub const MultiPartUpload = struct {
         bun.default_allocator.free(this.path);
         this.credentials.deref();
         this.uploadid_buffer.deinit();
-        for (this.multipart_etags) |tag| {
+        for (this.multipart_etags.items) |tag| {
             bun.default_allocator.free(tag.etag);
         }
-        if (this.multipart_upload_list.cap > 0)
-            this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
+        if (this.multipart_etags.capacity > 0)
+            this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
             this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
         this.destroy();
@@ -1027,7 +1144,7 @@ pub const MultiPartUpload = struct {
             this.done();
         }
     }
-    fn fail(this: *@This(), _err: AWS.S3Error) void {
+    pub fn fail(this: *@This(), _err: AWS.S3Error) void {
         for (this.queue.items) |*task| {
             task.cancel();
         }
@@ -1048,7 +1165,7 @@ pub const MultiPartUpload = struct {
             this.state = .finished;
 
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
-            this.multipart_upload_list.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+            this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
             for (this.multipart_etags.items) |tag| {
                 this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
 

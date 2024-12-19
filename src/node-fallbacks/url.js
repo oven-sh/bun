@@ -1,3 +1,9 @@
+/**
+ * Browser polyfill for the `"url"` module.
+ *
+ * Imported on usage in `bun build --target=browser`
+ */
+// -----------------------------------------------------------------------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a

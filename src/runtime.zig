@@ -71,9 +71,9 @@ pub const Fallback = struct {
 
     pub inline fn errorJS() string {
         return if (Environment.codegen_embed)
-            @embedFile("bun-error/bun-error.css")
+            @embedFile("bun-error/index.js")
         else
-            bun.runtimeEmbedFile(.codegen, "bun-error/bun-error.css");
+            bun.runtimeEmbedFile(.codegen, "bun-error/index.js");
     }
 
     pub inline fn errorCSS() string {
@@ -162,13 +162,14 @@ pub const Runtime = struct {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
-
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
+        /// Control how the parser handles server components and server functions.
+        server_components: ServerComponentsMode = .none,
 
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
@@ -273,38 +274,57 @@ pub const Runtime = struct {
 
             pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
         };
+
+        pub const ServerComponentsMode = enum {
+            /// Server components is disabled, strings "use client" and "use server" mean nothing.
+            none,
+            /// This is a server-side file outside of the SSR graph, but not a "use server" file.
+            /// - Handle functions with "use server", creating secret exports for them.
+            wrap_anon_server_functions,
+            /// This is a "use client" file on the server, and separate_ssr_graph is off.
+            /// - Wrap all exports in a call to `registerClientReference`
+            /// - Ban "use server" functions???
+            wrap_exports_for_client_reference,
+            /// This is a "use server" file on the server
+            /// - Wrap all exports in a call to `registerServerReference`
+            /// - Ban "use server" functions, since this directive is already applied.
+            wrap_exports_for_server_reference,
+            /// This is a client side file.
+            /// - Ban "use server" functions since it is on the client-side
+            client_side,
+
+            pub fn wrapsExports(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_client_reference,
+                    .wrap_exports_for_server_reference,
+                    => true,
+                    else => false,
+                };
+            }
+        };
     };
 
     pub const Names = struct {
         pub const ActivateFunction = "activate";
     };
 
-    /// See js_parser.StaticSymbolName
-    pub const GeneratedSymbol = struct {
-        primary: Ref,
-        backup: Ref,
-        ref: Ref,
-
-        pub const empty: GeneratedSymbol = .{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None };
-    };
-
     // If you change this, remember to update "runtime.js"
     pub const Imports = struct {
-        __name: ?GeneratedSymbol = null,
-        __require: ?GeneratedSymbol = null,
-        __export: ?GeneratedSymbol = null,
-        __reExport: ?GeneratedSymbol = null,
-        __exportValue: ?GeneratedSymbol = null,
-        __exportDefault: ?GeneratedSymbol = null,
+        __name: ?Ref = null,
+        __require: ?Ref = null,
+        __export: ?Ref = null,
+        __reExport: ?Ref = null,
+        __exportValue: ?Ref = null,
+        __exportDefault: ?Ref = null,
         // __refreshRuntime: ?GeneratedSymbol = null,
         // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-        __merge: ?GeneratedSymbol = null,
-        __legacyDecorateClassTS: ?GeneratedSymbol = null,
-        __legacyDecorateParamTS: ?GeneratedSymbol = null,
-        __legacyMetadataTS: ?GeneratedSymbol = null,
-        @"$$typeof": ?GeneratedSymbol = null,
-        __using: ?GeneratedSymbol = null,
-        __callDispose: ?GeneratedSymbol = null,
+        __merge: ?Ref = null,
+        __legacyDecorateClassTS: ?Ref = null,
+        __legacyDecorateParamTS: ?Ref = null,
+        __legacyMetadataTS: ?Ref = null,
+        @"$$typeof": ?Ref = null,
+        __using: ?Ref = null,
+        __callDispose: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -369,7 +389,7 @@ pub const Runtime = struct {
                     switch (this.i) {
                         inline 0...all.len - 1 => |t| {
                             if (@field(this.runtime_imports, all[t])) |val| {
-                                return Entry{ .key = t, .value = val.ref };
+                                return Entry{ .key = t, .value = val };
                             }
                         },
                         else => {
@@ -400,15 +420,15 @@ pub const Runtime = struct {
             return false;
         }
 
-        pub fn put(imports: *Imports, comptime key: string, generated_symbol: GeneratedSymbol) void {
-            @field(imports, key) = generated_symbol;
+        pub fn put(imports: *Imports, comptime key: string, ref: Ref) void {
+            @field(imports, key) = ref;
         }
 
         pub fn at(
             imports: *Imports,
             comptime key: string,
         ) ?Ref {
-            return (@field(imports, key) orelse return null).ref;
+            return (@field(imports, key) orelse return null);
         }
 
         pub fn get(
@@ -416,7 +436,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null),
                 else => null,
             };
         }

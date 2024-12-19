@@ -40,13 +40,25 @@ pub const Composes = struct {
     loc: Location,
 
     pub fn parse(input: *css.Parser) css.Result(Composes) {
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+        const loc = input.currentSourceLocation();
+        var names: CustomIdentList = .{};
+        while (input.tryParse(parseOneIdent, .{}).asValue()) |name| {
+            names.append(input.allocator(), name);
+        }
+
+        if (names.len() == 0) return .{ .err = input.newCustomError(css.ParserError{ .invalid_declaration = {} }) };
+
+        const from = if (input.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk()) switch (Specifier.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        } else null;
+
+        return .{ .result = Composes{ .names = names, .from = from, .loc = Location.fromSourceLocation(loc) } };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
-        for (this.names.items) |name| {
+        for (this.names.slice()) |name| {
             if (first) {
                 first = false;
             } else {
@@ -60,6 +72,25 @@ pub const Composes = struct {
             try from.toCss(W, dest);
         }
     }
+
+    fn parseOneIdent(input: *css.Parser) css.Result(CustomIdent) {
+        const name: CustomIdent = switch (CustomIdent.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+
+        if (bun.strings.eqlCaseInsensitiveASCII(name.v, "from", true)) return .{ .err = input.newErrorForNextToken() };
+
+        return .{ .result = name };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// Defines where the class names referenced in the `composes` property are located.
@@ -72,6 +103,10 @@ pub const Specifier = union(enum) {
     file: []const u8,
     /// The referenced name comes from a source index (used during bundling).
     source_index: u32,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
         if (input.tryParse(css.Parser.expectString, .{}).asValue()) |file| {
@@ -87,5 +122,13 @@ pub const Specifier = union(enum) {
             .file => |file| css.serializer.serializeString(file, dest) catch return dest.addFmtError(),
             .source_index => {},
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };

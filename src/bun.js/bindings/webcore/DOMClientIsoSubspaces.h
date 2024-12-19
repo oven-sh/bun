@@ -50,12 +50,14 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -697,9 +699,9 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformancePaintTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRemoteDOMWindow;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserverEntry;

@@ -727,6 +727,19 @@ JSCommonJSModule* JSCommonJSModule::create(
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
 
+size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+    size_t additionalSize = 0;
+    if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
+        additionalSize += thisObject->sourceCode.view().length();
+        if (!thisObject->sourceCode.view().is8Bit()) {
+            additionalSize *= 2;
+        }
+    }
+    return Base::estimatedSize(cell, vm) + additionalSize;
+}
+
 void JSCommonJSModule::destroy(JSC::JSCell* cell)
 {
     static_cast<JSCommonJSModule*>(cell)->JSCommonJSModule::~JSCommonJSModule();
@@ -763,7 +776,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = globalObject->vm();
-    const Identifier& esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -795,9 +808,23 @@ void populateESMExports(
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
 
-    if (result.isObject()) {
-        auto* exports = result.getObject();
-        bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
+    if (auto* exports = result.getObject()) {
+        bool hasESModuleMarker = false;
+        if (!ignoreESModuleAnnotation) {
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+                JSValue value = slot.getValue(globalObject, esModuleMarker);
+                if (!value.isUndefinedOrNull()) {
+                    if (value.pureToBoolean() == TriState::True) {
+                        hasESModuleMarker = true;
+                    }
+                }
+            }
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+        }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
@@ -985,9 +1012,14 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (auto* id = thisObject->m_id.get()) {
         if (!id->isRope()) {
             auto label = id->tryGetValue(false);
-            analyzer.setLabelForCell(cell, label);
+            analyzer.setLabelForCell(cell, makeString("CommonJS Module: "_s, StringView(label)));
+        } else {
+            analyzer.setLabelForCell(cell, "CommonJS Module"_s);
         }
+    } else {
+        analyzer.setLabelForCell(cell, "CommonJS Module"_s);
     }
+
     Base::analyzeHeap(cell, analyzer);
 }
 

@@ -81,7 +81,7 @@ static const WTF::String toString(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(std::span { untag(str.ptr), str.len });
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
@@ -168,18 +168,18 @@ static const WTF::String toStringCopy(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        UChar* out = nullptr;
+        std::span<UChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (UNLIKELY(!impl))
             return WTF::String();
-        memcpy(out, untag(str.ptr), str.len * sizeof(UChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(UChar));
         return WTF::String(WTFMove(impl));
     } else {
-        LChar* out = nullptr;
+        std::span<LChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (UNLIKELY(!impl))
             return WTF::String();
-        memcpy(out, untag(str.ptr), str.len * sizeof(LChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
         return WTF::String(WTFMove(impl));
     }
 }

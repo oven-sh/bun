@@ -1,0 +1,44 @@
+{
+	"name": "optional-lifecycle-fail",
+	"versions": {
+		"1.1.1": {
+			"name": "optional-lifecycle-fail",
+			"version": "1.1.1",
+			"optionalDependencies": {
+				"lifecycle-fail": "1.1.1"
+			},
+			"_id": "optional-lifecycle-fail@1.1.1",
+			"_integrity": "sha512-1nfxe/RpzOaJm7RVSeIux8UMUvrbVDgCCN9lJ1IlnOzd4B6oy9BoKjM4Ij+d9Cmjy+WvhaDKd6AndadHZw5aRw==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-1nfxe/RpzOaJm7RVSeIux8UMUvrbVDgCCN9lJ1IlnOzd4B6oy9BoKjM4Ij+d9Cmjy+WvhaDKd6AndadHZw5aRw==",
+			"shasum": "3b030a54938f24912a19b4a865210fcac6172350",
+			"dist": {
+				"integrity": "sha512-1nfxe/RpzOaJm7RVSeIux8UMUvrbVDgCCN9lJ1IlnOzd4B6oy9BoKjM4Ij+d9Cmjy+WvhaDKd6AndadHZw5aRw==",
+				"shasum": "3b030a54938f24912a19b4a865210fcac6172350",
+				"tarball": "http://http://localhost:4873/optional-lifecycle-fail/-/optional-lifecycle-fail-1.1.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-10-24T03:05:13.038Z",
+		"created": "2024-10-24T03:05:13.038Z",
+		"1.1.1": "2024-10-24T03:05:13.038Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.1.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"optional-lifecycle-fail-1.1.1.tgz": {
+			"shasum": "3b030a54938f24912a19b4a865210fcac6172350",
+			"version": "1.1.1"
+		}
+	},
+	"_rev": "",
+	"_id": "optional-lifecycle-fail",
+	"readme": ""
+}

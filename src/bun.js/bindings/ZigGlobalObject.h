@@ -51,6 +51,7 @@ class GlobalInternals;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 
 namespace WebCore {
@@ -99,10 +100,7 @@ public:
 
     static constexpr const JSC::ClassInfo* info() { return &s_info; }
 
-    static JSC::Structure* createStructure(JSC::VM& vm)
-    {
-        return JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
-    }
+    static JSC::Structure* createStructure(JSC::VM& vm);
 
     // Make binding code generation easier.
     GlobalObject* globalObject() { return this; }
@@ -123,33 +121,10 @@ public:
         return m_guardedObjects;
     }
 
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
-    {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &s_globalObjectMethodTable);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
-    {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &s_globalObjectMethodTable);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
-    {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, methodTable);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable)
-    {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, methodTable);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);
 
     const JSDOMStructureMap& structures() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
@@ -191,8 +166,7 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    void formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStack = JSC::jsUndefined());
+    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -235,6 +209,11 @@ public:
     JSC::JSObject* HTTPSResponseSink() { return m_JSHTTPSResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* FetchTaskletChunkedRequestSinkStructure() const { return m_JSFetchTaskletChunkedRequestSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FetchTaskletChunkedRequestSink() { return m_JSFetchTaskletChunkedRequestSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FetchTaskletChunkedRequestSinkPrototype() const { return m_JSFetchTaskletChunkedRequestSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableFetchTaskletChunkedRequestSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
@@ -288,6 +267,7 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
+    Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -354,8 +334,10 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__FetchTasklet__onRejectRequestStream,
+        Bun__FetchTasklet__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 24;
+    static constexpr size_t promiseFunctionsSize = 26;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -374,6 +356,8 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    double INSPECT_MAX_BYTES = 50;
+    bool isInsideErrorPrepareStackTraceCallback = false;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -408,6 +392,10 @@ public:
 
     // When a napi module initializes on dlopen, we need to know what the value is
     mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
+
+    // This is the result of dlopen()ing a napi module.
+    // We will add it to the resulting napi value.
+    void* m_pendingNapiModuleDlopenHandle = nullptr;
 
     // The handle scope where all new NAPI values will be created. You must not pass any napi_values
     // back to a NAPI function without putting them in the handle scope, as the NAPI function may
@@ -476,6 +464,12 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
+    // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
+    // Should only use JSCell* keys and NapiTypeTag values.
+    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
+
+    JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
+
     Bun::JSMockModule mockModule;
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
@@ -483,7 +477,7 @@ public:
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
-
+    Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -499,6 +493,7 @@ private:
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
+    Bun::Http2CommonStrings m_http2_commongStrings;
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
@@ -520,6 +515,8 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSFetchTaskletChunkedRequestSinkClassStructure;
+
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
@@ -549,6 +546,7 @@ public:
     LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFetchTaskletChunkedRequestControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
@@ -575,6 +573,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
     LazyProperty<JSGlobalObject, v8::shim::GlobalInternals> m_V8GlobalInternals;
@@ -584,6 +583,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

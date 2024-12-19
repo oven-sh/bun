@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 019ff6e1e879ff4533f2a857cab5028b6b95ab53)
+  set(WEBKIT_VERSION 3845bf370ff4e9a5c0b96036255142c7904be963)
 endif()
 
 if(WEBKIT_LOCAL)
@@ -63,12 +63,16 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(LINUX AND ABI STREQUAL "musl")
+  set(WEBKIT_SUFFIX "-musl")
+endif()
+
 if(DEBUG)
-  set(WEBKIT_SUFFIX "-debug")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO AND NOT WIN32)
-  set(WEBKIT_SUFFIX "-lto")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-lto")
 else()
-  set(WEBKIT_SUFFIX "")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
 set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})

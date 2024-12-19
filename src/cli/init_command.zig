@@ -21,10 +21,9 @@ const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;
 
-fn exists(path: anytype) bool {
-    return bun.sys.exists(path);
-}
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -210,7 +209,7 @@ pub const InitCommand = struct {
                 };
 
                 for (paths_to_try) |path| {
-                    if (exists(path)) {
+                    if (existsZ(path)) {
                         fields.entry_point = bun.asByteSlice(path);
                         break :infer;
                     }
@@ -279,16 +278,16 @@ pub const InitCommand = struct {
 
         var steps = Steps{};
 
-        steps.write_gitignore = !exists(".gitignore");
+        steps.write_gitignore = !existsZ(".gitignore");
 
-        steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
+        steps.write_readme = !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
 
         steps.write_tsconfig = brk: {
-            if (exists("tsconfig.json")) {
+            if (existsZ("tsconfig.json")) {
                 break :brk false;
             }
 
-            if (exists("jsconfig.json")) {
+            if (existsZ("jsconfig.json")) {
                 break :brk false;
             }
 
@@ -436,7 +435,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }
@@ -444,7 +443,7 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        if (exists("package.json")) {
+        if (existsZ("package.json")) {
             var process = std.process.Child.init(
                 &.{
                     try bun.selfExePath(),

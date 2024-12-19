@@ -189,13 +189,13 @@ pub const FileSystem = struct {
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 break :brk EntryStore.instance.append(.{
@@ -788,7 +788,9 @@ pub const FileSystem = struct {
 
         pub const Limit = struct {
             pub var handles: usize = 0;
+            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
             pub var stack: usize = 0;
+            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -797,26 +799,46 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
-            inline for (LIMITS, 0..) |limit_type, i| {
-                const limit = try std.posix.getrlimit(limit_type);
-
+            blk: {
+                const resource = std.posix.rlimit_resource.STACK;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.stack_before = limit;
                 if (limit.cur < limit.max) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    if (std.posix.setrlimit(limit_type, new_limit)) {
-                        if (i == 1) {
-                            Limit.handles = limit.max;
-                        } else {
-                            Limit.stack = limit.max;
-                        }
-                    } else |_| {}
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    Limit.stack = limit.max;
                 }
-
-                if (i == LIMITS.len - 1) return limit.max;
             }
+            var file_limit: usize = 0;
+            blk: {
+                const resource = std.posix.rlimit_resource.NOFILE;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.handles_before = limit;
+                file_limit = limit.max;
+                Limit.handles = file_limit;
+                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
+                    // musl has extremely low defaults here, so we really want
+                    // to enable this on musl or tests will start failing.
+                    @max(limit.max, 163840)
+                else
+                    // apparently, requesting too high of a number can cause other processes to not start.
+                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+                    limit.max;
+                if (limit.cur < max_to_use) {
+                    var new_limit = std.mem.zeroes(std.posix.rlimit);
+                    new_limit.cur = max_to_use;
+                    new_limit.max = max_to_use;
+
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    file_limit = new_limit.max;
+                    Limit.handles = file_limit;
+                }
+            }
+            return file_limit;
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
@@ -1033,7 +1055,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
@@ -1625,11 +1647,15 @@ threadlocal var normalize_buf: [1024]u8 = undefined;
 threadlocal var join_buf: [1024]u8 = undefined;
 
 pub const Path = struct {
+    /// The display path. In the bundler, this is relative to the current
+    /// working directory. Since it can be emitted in bundles (and used
+    /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
+    /// The location of this resource. For the `file` namespace, this is
+    /// an absolute path with native slashes.
     text: string,
-    // TODO(@paperdave): remove the default of this field.
-    namespace: string = "unspecified",
-    // TODO(@paperdave): investigate removing or simplifying this property
+    namespace: string,
+    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
@@ -1890,6 +1916,13 @@ pub const Path = struct {
 
     pub fn isJSXFile(this: *const Path) bool {
         return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
+    }
+
+    pub fn keyForIncrementalGraph(path: *const Path) []const u8 {
+        return if (path.isFile())
+            path.text
+        else
+            path.pretty;
     }
 };
 

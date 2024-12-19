@@ -1,25 +1,18 @@
 {
-  "extends": "./tsconfig.base.json",
+  "files": [],
+  "include": [],
   "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    // "skipLibCheck": true,
-    "allowJs": true
+    "emitDecoratorMetadata": true
   },
-  "include": [".", "packages/bun-types/index.d.ts"],
-  "exclude": [
-    "src/test",
-    "src/js/out",
-    // "src/js/builtins",
-    "packages",
-    "bench",
-    "examples/*/*",
-    "test",
-    "vendor",
-    "bun-webkit",
-    "vendor/WebKit",
-    "src/api/demo",
-    "node_modules"
-  ],
-  "files": ["src/js/builtins.d.ts"]
+  "references": [
+    //
+    { "path": "./src" },
+    { "path": "./src/bake" },
+    { "path": "./src/js" },
+    { "path": "./test" },
+    { "path": "./packages/bun-types" }
+  ]
 }

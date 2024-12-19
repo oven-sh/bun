@@ -6,7 +6,6 @@ import { createServer } from "net";
 import { join } from "path";
 import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
-const isWindows = process.platform === "win32";
 const COMMON_CERT = { ...tls };
 
 describe("WebSocket", () => {

@@ -43,6 +43,14 @@ pub const SupportsCondition = union(enum) {
         property_id: css.PropertyId,
         /// The raw value of the declaration.
         value: []const u8,
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
 
     /// A selector to evaluate.
@@ -51,10 +59,27 @@ pub const SupportsCondition = union(enum) {
     /// An unknown condition.
     unknown: []const u8,
 
+    pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .not => |not| {
+                not.deinit(allocator);
+                allocator.destroy(not);
+            },
+            inline .@"and", .@"or" => |*list| {
+                css.deepDeinit(SupportsCondition, allocator, list);
+            },
+            .declaration => {},
+            .selector => {},
+            .unknown => {},
+        }
+    }
+
+    pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
+        return css.implementEql(SupportsCondition, this, other);
+    }
+
     pub fn deepClone(this: *const SupportsCondition, allocator: std.mem.Allocator) SupportsCondition {
-        _ = allocator; // autofix
-        _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        return css.implementDeepClone(SupportsCondition, this, allocator);
     }
 
     fn needsParens(this: *const SupportsCondition, parent: *const SupportsCondition) bool {
@@ -246,7 +271,14 @@ pub const SupportsCondition = union(enum) {
                     if (res.isOk()) return res;
                 }
             },
-            .open_curly => {},
+            .open_paren => {
+                const res = input.tryParse(struct {
+                    pub fn parseFn(i: *css.Parser) Result(SupportsCondition) {
+                        return i.parseNestedBlock(SupportsCondition, {}, css.voidWrap(SupportsCondition, parse));
+                    }
+                }.parseFn, .{});
+                if (res.isOk()) return res;
+            },
             else => return .{ .err = location.newUnexpectedTokenError(tok.*) },
         }
 
@@ -302,22 +334,19 @@ pub const SupportsCondition = union(enum) {
 
                 const name = property_id.name();
                 var first = true;
-                inline for (std.meta.fields(css.VendorPrefix)) |field_| {
-                    const field: std.builtin.Type.StructField = field_;
-                    if (!(comptime std.mem.eql(u8, field.name, "__unused"))) {
-                        if (@field(prefix, field.name)) {
-                            if (first) {
-                                first = false;
-                            } else {
-                                try dest.writeStr(") or (");
-                            }
-
-                            var p = css.VendorPrefix{};
-                            @field(p, field.name) = true;
-                            css.serializer.serializeName(name, dest) catch return dest.addFmtError();
-                            try dest.delim(':', false);
-                            try dest.writeStr(value);
+                inline for (css.VendorPrefix.FIELDS) |field| {
+                    if (@field(prefix, field)) {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.writeStr(") or (");
                         }
+
+                        var p = css.VendorPrefix{};
+                        @field(p, field) = true;
+                        css.serializer.serializeName(name, dest) catch return dest.addFmtError();
+                        try dest.delim(':', false);
+                        try dest.writeStr(value);
                     }
                 }
 
@@ -379,11 +408,16 @@ pub fn SupportsRule(comptime R: type) type {
             try dest.writeChar('}');
         }
 
-        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(void, css.MinifyError) {
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix
-            @panic(css.todo_stuff.depth);
+            // TODO: Implement this
+            return;
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
         }
     };
 }

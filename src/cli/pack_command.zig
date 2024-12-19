@@ -102,11 +102,10 @@ pub const PackCommand = struct {
         Output.flush();
 
         var lockfile: Lockfile = undefined;
-        const load_from_disk_result = lockfile.loadFromDisk(
+        const load_from_disk_result = lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             false,
         );
 
@@ -136,12 +135,7 @@ pub const PackCommand = struct {
                     }
 
                     if (manager.log.hasErrors()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
-                                Output.errorWriter(),
-                                enable_ansi_colors,
-                            ),
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
 
                     Global.crash();
@@ -1090,11 +1084,7 @@ pub const PackCommand = struct {
             },
             .parse_err => |err| {
                 Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                manager.log.print(Output.errorWriter()) catch {};
                 Global.crash();
             },
             .entry => |entry| entry,
@@ -1148,6 +1138,8 @@ pub const PackCommand = struct {
             }
         }
 
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+
         var this_bundler: bun.bundler.Bundler = undefined;
 
         _ = RunCommand.configureEnvForRun(
@@ -1167,6 +1159,7 @@ pub const PackCommand = struct {
         };
 
         const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+        try manager.env.map.put("npm_command", "pack");
 
         const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8 = post_scripts: {
             // --ignore-scripts
@@ -1401,6 +1394,7 @@ pub const PackCommand = struct {
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
                     .script_env = this_bundler.env,
+                    .normalized_pkg_info = "",
                 };
             }
 
@@ -1500,7 +1494,7 @@ pub const PackCommand = struct {
 
         var entry = Archive.Entry.new2(archive);
 
-        const package_json = archive_with_progress: {
+        {
             var progress: if (log_level == .silent) void else Progress = if (comptime log_level == .silent) {} else .{};
             var node = if (comptime log_level == .silent) {} else node: {
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
@@ -1510,7 +1504,7 @@ pub const PackCommand = struct {
             };
             defer if (comptime log_level != .silent) node.end();
 
-            entry, const edited_package_json = try editAndArchivePackageJSON(ctx, archive, entry, root_dir, json);
+            entry = try archivePackageJSON(ctx, archive, entry, root_dir, edited_package_json);
             if (comptime log_level != .silent) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {
@@ -1575,9 +1569,7 @@ pub const PackCommand = struct {
                     bins,
                 );
             }
-
-            break :archive_with_progress edited_package_json;
-        };
+        }
 
         entry.free();
 
@@ -1655,12 +1647,25 @@ pub const PackCommand = struct {
             ctx.stats.packed_size = size;
         };
 
+        const normalized_pkg_info: if (for_publish) string else void = if (comptime for_publish)
+            try Publish.normalizedPackage(
+                ctx.allocator,
+                manager,
+                package_name,
+                package_version,
+                &json.root,
+                json.source,
+                shasum,
+                integrity,
+                abs_tarball_dest,
+            );
+
         printArchivedFilesAndPackages(
             ctx,
             root_dir,
             false,
             pack_list,
-            package_json.len,
+            edited_package_json.len,
         );
 
         if (comptime !for_publish) {
@@ -1715,6 +1720,7 @@ pub const PackCommand = struct {
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
                 .script_env = this_bundler.env,
+                .normalized_pkg_info = normalized_pkg_info,
             };
         }
     }
@@ -1785,15 +1791,13 @@ pub const PackCommand = struct {
         }
     };
 
-    fn editAndArchivePackageJSON(
+    fn archivePackageJSON(
         ctx: *Context,
         archive: *Archive,
         entry: *Archive.Entry,
         root_dir: std.fs.Dir,
-        json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
-    ) OOM!struct { *Archive.Entry, string } {
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
-
+        edited_package_json: string,
+    ) OOM!*Archive.Entry {
         const stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
             Output.err(err, "failed to stat package.json", .{});
             Global.crash();
@@ -1818,7 +1822,7 @@ pub const PackCommand = struct {
 
         ctx.stats.unpacked_size += @intCast(archive.writeData(edited_package_json));
 
-        return .{ entry.clear(), edited_package_json };
+        return entry.clear();
     }
 
     fn addArchiveEntry(
@@ -2293,11 +2297,10 @@ pub const bindings = struct {
     //     return obj;
     // }
 
-    pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
-        const args = callFrame.arguments(1).slice();
+    pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        const args = callFrame.arguments_old(1).slice();
         if (args.len < 1 or !args[0].isString()) {
-            global.throw("expected tarball path string argument", .{});
-            return .zero;
+            return global.throw("expected tarball path string argument", .{});
         }
 
         const tarball_path_str = args[0].toBunString(global);
@@ -2307,14 +2310,12 @@ pub const bindings = struct {
         defer tarball_path.deinit();
 
         const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
-            global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         });
         defer tarball_file.close();
 
         const tarball = tarball_file.readToEnd(bun.default_allocator).unwrap() catch |err| {
-            global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         };
         defer bun.default_allocator.free(tarball);
 
@@ -2348,38 +2349,33 @@ pub const bindings = struct {
 
         switch (archive.readSupportFormatTar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support tar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support tar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFormatGnutar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gnutar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gnutar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFilterGzip()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readSetOptions("read_concatenated_archives")) {
             .failed, .fatal, .warn => {
-                global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readOpenMemory(tarball)) {
             .failed, .fatal, .warn => {
-                global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
             },
             else => {},
         }
@@ -2395,8 +2391,7 @@ pub const bindings = struct {
                 .eof => unreachable,
                 .retry => continue,
                 .failed, .fatal => {
-                    global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
-                    return .zero;
+                    return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
                     const pathname = archive_entry.pathname();
@@ -2416,11 +2411,10 @@ pub const bindings = struct {
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            global.throw("failed to read archive entry \"{}\": {s}", .{
+                            return global.throw("failed to read archive entry \"{}\": {s}", .{
                                 bun.fmt.fmtPath(u8, pathname, .{}),
                                 Archive.errorString(@ptrCast(archive)),
                             });
-                            return .zero;
                         }
                         read_buf.items.len = @intCast(read);
                         entry_info.contents = String.createUTF8(read_buf.items);
@@ -2433,15 +2427,13 @@ pub const bindings = struct {
 
         switch (archive.readClose()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readFree()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }

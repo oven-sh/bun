@@ -15,6 +15,9 @@ declare function $debug(...args: any[]): void;
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 
+/** Asserts the input is a promise. Returns `true` if the promise is resolved */
+declare function $isPromiseResolved(promise: Promise<any>): boolean;
+
 declare const IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
@@ -546,3 +549,16 @@ declare interface Error {
  */
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
+/**
+ * Convert a function to a class-like object.
+ *
+ * This does:
+ * - Sets the name of the function to the given name
+ * - Sets .prototype to Object.create(base?.prototype, { constructor: { value: fn } })
+ * - Calls Object.setPrototypeOf(fn, base ?? Function.prototype)
+ *
+ * @param fn - The function to convert to a class
+ * @param name - The name of the class
+ * @param base - The base class to inherit from
+ */
+declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);

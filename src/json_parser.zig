@@ -34,7 +34,7 @@ const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
+pub const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
@@ -115,7 +115,6 @@ fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
         opts.ignore_trailing_escape_sequences,
         opts.json_warn_duplicate_keys,
         opts.was_originally_macro,
-        opts.always_decode_escape_sequences,
         opts.guess_indentation,
     );
 }
@@ -128,7 +127,6 @@ fn JSONLikeParser_(
     comptime opts_ignore_trailing_escape_sequences: bool,
     comptime opts_json_warn_duplicate_keys: bool,
     comptime opts_was_originally_macro: bool,
-    comptime opts_always_decode_escape_sequences: bool,
     comptime opts_guess_indentation: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
@@ -139,7 +137,6 @@ fn JSONLikeParser_(
         .ignore_trailing_escape_sequences = opts_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = opts_json_warn_duplicate_keys,
         .was_originally_macro = opts_was_originally_macro,
-        .always_decode_escape_sequences = opts_always_decode_escape_sequences,
         .guess_indentation = opts_guess_indentation,
     };
     return struct {
@@ -193,7 +190,7 @@ fn JSONLikeParser_(
                     return newExpr(E.Null{}, loc);
                 },
                 .t_string_literal => {
-                    var str: E.String = p.lexer.toEString();
+                    var str: E.String = try p.lexer.toEString();
                     if (comptime force_utf8) {
                         str.toUTF8(p.allocator) catch unreachable;
                     }
@@ -282,9 +279,9 @@ fn JSONLikeParser_(
                         }
 
                         const str = if (comptime force_utf8)
-                            p.lexer.toUTF8EString()
+                            try p.lexer.toUTF8EString()
                         else
-                            p.lexer.toEString();
+                            try p.lexer.toEString();
 
                         const key_range = p.lexer.range();
                         const key = newExpr(str, key_range.loc);
@@ -297,7 +294,7 @@ fn JSONLikeParser_(
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{try str.string(p.allocator)}) catch unreachable;
                             }
                         }
 
@@ -419,7 +416,7 @@ pub const PackageJSONVersionChecker = struct {
                 return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
-                const str: E.String = p.lexer.toEString();
+                const str: E.String = try p.lexer.toEString();
 
                 try p.lexer.next();
                 return newExpr(str, loc);
@@ -466,7 +463,7 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    const str = p.lexer.toEString();
+                    const str = try p.lexer.toEString();
                     const key_range = p.lexer.range();
 
                     const key = newExpr(str, key_range.loc);
@@ -503,6 +500,7 @@ pub const PackageJSONVersionChecker = struct {
                     }
 
                     if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+
                     has_properties = true;
                 }
 
@@ -770,43 +768,6 @@ pub fn parsePackageJSONUTF8(
 
     var parser = try JSONLikeParser(.{
         .is_json = true,
-        .always_decode_escape_sequences = false,
-        .allow_comments = true,
-        .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
-    bun.assert(parser.source().contents.len > 0);
-
-    return try parser.parseExpr(false, true);
-}
-
-pub fn parsePackageJSONUTF8AlwaysDecode(
-    source: *const logger.Source,
-    log: *logger.Log,
-    allocator: std.mem.Allocator,
-) !Expr {
-    const len = source.contents.len;
-
-    switch (len) {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-        },
-        // This is a fast pass I guess
-        2 => {
-            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
-            }
-        },
-        else => {},
-    }
-
-    var parser = try JSONLikeParser(.{
-        .is_json = true,
-        .always_decode_escape_sequences = true,
         .allow_comments = true,
         .allow_trailing_commas = true,
     }).init(allocator, source.*, log);

@@ -3,6 +3,14 @@ const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
+pub fn OptionalChild(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    if (tyinfo != .Pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
+    const child = @typeInfo(tyinfo.Pointer.child);
+    if (child != .Optional) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
+    return child.Optional.child;
+}
+
 pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {
@@ -189,4 +197,128 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
             .fields = &tuple_fields,
         },
     });
+}
+
+pub fn hasStableMemoryLayout(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Type => true,
+        .Void => true,
+        .Bool => true,
+        .Int => true,
+        .Float => true,
+        .Enum => {
+            // not supporting this rn
+            if (tyinfo.Enum.is_exhaustive) return false;
+            return hasStableMemoryLayout(tyinfo.Enum.tag_type);
+        },
+        .Struct => switch (tyinfo.Struct.layout) {
+            .auto => {
+                inline for (tyinfo.Struct.fields) |field| {
+                    if (!hasStableMemoryLayout(field.field_type)) return false;
+                }
+                return true;
+            },
+            .@"extern" => true,
+            .@"packed" => false,
+        },
+        .Union => switch (tyinfo.Union.layout) {
+            .auto => {
+                if (tyinfo.Union.tag_type == null or !hasStableMemoryLayout(tyinfo.Union.tag_type.?)) return false;
+
+                inline for (tyinfo.Union.fields) |field| {
+                    if (!hasStableMemoryLayout(field.type)) return false;
+                }
+
+                return true;
+            },
+            .@"extern" => true,
+            .@"packed" => false,
+        },
+        else => true,
+    };
+}
+
+pub fn isSimpleCopyType(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Void => true,
+        .Bool => true,
+        .Int => true,
+        .Float => true,
+        .Enum => true,
+        .Struct => {
+            inline for (tyinfo.Struct.fields) |field| {
+                if (!isSimpleCopyType(field.type)) return false;
+            }
+            return true;
+        },
+        .Union => {
+            inline for (tyinfo.Union.fields) |field| {
+                if (!isSimpleCopyType(field.type)) return false;
+            }
+            return true;
+        },
+        .Optional => return isSimpleCopyType(tyinfo.Optional.child),
+        else => false,
+    };
+}
+
+pub fn isScalar(comptime T: type) bool {
+    return switch (T) {
+        i32, u32, i64, u64, f32, f64, bool => true,
+        else => {
+            const tyinfo = @typeInfo(T);
+            if (tyinfo == .Enum) return true;
+            return false;
+        },
+    };
+}
+
+pub fn isSimpleEqlType(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Type => true,
+        .Void => true,
+        .Bool => true,
+        .Int => true,
+        .Float => true,
+        .Enum => true,
+        else => false,
+    };
+}
+
+pub const ListContainerType = enum {
+    array_list,
+    baby_list,
+    small_list,
+};
+pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContainerType, child: type } {
+    const tyinfo = @typeInfo(T);
+    if (tyinfo == .Struct) {
+        // Looks like array list
+        if (tyinfo.Struct.fields.len == 2 and
+            std.mem.eql(u8, tyinfo.Struct.fields[0].name, "items") and
+            std.mem.eql(u8, tyinfo.Struct.fields[1].name, "capacity"))
+            return .{ .list = .array_list, .child = std.meta.Child(tyinfo.Struct.fields[0].type) };
+
+        // Looks like babylist
+        if (tyinfo.Struct.fields.len == 3 and
+            std.mem.eql(u8, tyinfo.Struct.fields[0].name, "ptr") and
+            std.mem.eql(u8, tyinfo.Struct.fields[1].name, "len") and
+            std.mem.eql(u8, tyinfo.Struct.fields[2].name, "cap"))
+            return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.Struct.fields[0].type) };
+
+        // Looks like SmallList
+        if (tyinfo.Struct.fields.len == 2 and
+            std.mem.eql(u8, tyinfo.Struct.fields[0].name, "capacity") and
+            std.mem.eql(u8, tyinfo.Struct.fields[1].name, "data")) return .{
+            .list = .small_list,
+            .child = std.meta.Child(
+                @typeInfo(tyinfo.Struct.fields[1].type).Union.fields[0].type,
+            ),
+        };
+    }
+
+    return null;
 }

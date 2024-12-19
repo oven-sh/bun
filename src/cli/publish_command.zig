@@ -32,6 +32,9 @@ const Npm = install.Npm;
 const Run = bun.CLI.RunCommand;
 const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
+const E = bun.JSAst.E;
+const G = bun.JSAst.G;
+const BabyList = bun.BabyList;
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
@@ -47,6 +50,8 @@ pub const PublishCommand = struct {
             shasum: sha.SHA1.Digest,
             integrity: sha.SHA512.Digest,
             uses_workspaces: bool,
+
+            normalized_pkg_info: string,
 
             publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
             postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
@@ -163,9 +168,7 @@ pub const PublishCommand = struct {
 
                 const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
 
-                const package_name, const package_version = package_info: {
-                    defer ctx.allocator.free(package_json_contents);
-
+                const package_name, const package_version, var json, const json_source = package_info: {
                     const source = logger.Source.initPathString("package.json", package_json_contents);
                     const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
                         return switch (err) {
@@ -213,7 +216,7 @@ pub const PublishCommand = struct {
                     const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
                     if (version.len == 0) return error.InvalidPackageVersion;
 
-                    break :package_info .{ name, version };
+                    break :package_info .{ name, version, json, source };
                 };
 
                 var shasum: sha.SHA1.Digest = undefined;
@@ -229,6 +232,18 @@ pub const PublishCommand = struct {
 
                 sha512.update(tarball_bytes);
                 sha512.final(&integrity);
+
+                const normalized_pkg_info = try normalizedPackage(
+                    ctx.allocator,
+                    manager,
+                    package_name,
+                    package_version,
+                    &json,
+                    json_source,
+                    shasum,
+                    integrity,
+                    abs_tarball_path,
+                );
 
                 Pack.Context.printSummary(
                     .{
@@ -253,6 +268,7 @@ pub const PublishCommand = struct {
                     .uses_workspaces = false,
                     .command_ctx = ctx,
                     .script_env = {},
+                    .normalized_pkg_info = normalized_pkg_info,
                 };
             }
 
@@ -265,11 +281,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -298,11 +313,7 @@ pub const PublishCommand = struct {
                             }
 
                             if (manager.log.hasErrors()) {
-                                switch (Output.enable_ansi_colors) {
-                                    inline else => |enable_ansi_colors| {
-                                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                    },
-                                }
+                                manager.log.print(Output.errorWriter()) catch {};
                             }
 
                             Global.crash();
@@ -351,11 +362,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("failed to find package.json in tarball '{s}'", .{cli.positionals[1]});
                     },
                     error.InvalidPackageJSON => {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| {
-                                manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                            },
-                        }
+                        manager.log.print(Output.errorWriter()) catch {};
                         Output.errGeneric("failed to parse tarball package.json", .{});
                     },
                     error.PrivatePackage => {
@@ -433,6 +440,8 @@ pub const PublishCommand = struct {
 
         if (manager.options.do.run_scripts) {
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            try context.script_env.map.put("npm_command", "publish");
+
             if (context.publish_script) |publish_script| {
                 _ = Run.runPackageScriptForeground(
                     context.command_ctx,
@@ -508,7 +517,7 @@ pub const PublishCommand = struct {
         // dry-run stops here
         if (ctx.manager.options.dry_run) return;
 
-        const publish_req_body = try constructPublishRequestBody(directory_publish, ctx, registry);
+        const publish_req_body = try constructPublishRequestBody(directory_publish, ctx);
 
         var print_buf: std.ArrayListUnmanaged(u8) = .{};
         defer print_buf.deinit(ctx.allocator);
@@ -859,6 +868,338 @@ pub const PublishCommand = struct {
         };
     }
 
+    pub fn normalizedPackage(
+        allocator: std.mem.Allocator,
+        manager: *PackageManager,
+        package_name: string,
+        package_version: string,
+        json: *Expr,
+        json_source: logger.Source,
+        shasum: sha.SHA1.Digest,
+        integrity: sha.SHA512.Digest,
+        abs_tarball_path: stringZ,
+    ) OOM!string {
+        bun.assertWithLocation(json.isObject(), @src());
+
+        const registry = manager.scopeForPackageName(package_name);
+
+        const version_without_build_tag = Dependency.withoutBuildTag(package_version);
+
+        const integrity_fmt = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)});
+
+        try json.setString(allocator, "_id", try std.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
+        try json.setString(allocator, "_integrity", integrity_fmt);
+        try json.setString(allocator, "_nodeVersion", Environment.reported_nodejs_version);
+        // TODO: npm version
+        try json.setString(allocator, "_npmVersion", "10.8.3");
+        try json.setString(allocator, "integrity", integrity_fmt);
+        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}));
+
+        var dist_props = try allocator.alloc(G.Property, 3);
+        dist_props[0] = .{
+            .key = Expr.init(
+                E.String,
+                .{ .data = "integrity" },
+                logger.Loc.Empty,
+            ),
+            .value = Expr.init(
+                E.String,
+                .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
+                logger.Loc.Empty,
+            ),
+        };
+        dist_props[1] = .{
+            .key = Expr.init(
+                E.String,
+                .{ .data = "shasum" },
+                logger.Loc.Empty,
+            ),
+            .value = Expr.init(
+                E.String,
+                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}) },
+                logger.Loc.Empty,
+            ),
+        };
+        dist_props[2] = .{
+            .key = Expr.init(
+                E.String,
+                .{ .data = "tarball" },
+                logger.Loc.Empty,
+            ),
+            .value = Expr.init(
+                E.String,
+                .{
+                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{s}", .{
+                        strings.withoutTrailingSlash(registry.url.href),
+                        package_name,
+                        std.fs.path.basename(abs_tarball_path),
+                    }),
+                },
+                logger.Loc.Empty,
+            ),
+        };
+
+        try json.set(allocator, "dist", Expr.init(
+            E.Object,
+            .{ .properties = G.Property.List.init(dist_props) },
+            logger.Loc.Empty,
+        ));
+
+        {
+            const workspace_root = bun.sys.openA(
+                strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"),
+                bun.O.DIRECTORY,
+                0,
+            ).unwrap() catch |err| {
+                Output.err(err, "failed to open workspace directory", .{});
+                Global.crash();
+            };
+            defer _ = bun.sys.close(workspace_root);
+
+            try normalizeBin(
+                allocator,
+                json,
+                package_name,
+                workspace_root,
+            );
+        }
+
+        const buffer_writer = try bun.js_printer.BufferWriter.init(allocator);
+        var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
+
+        const written = bun.js_printer.printJSON(
+            @TypeOf(&writer),
+            &writer,
+            json.*,
+            &json_source,
+            .{
+                .minify_whitespace = true,
+            },
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+                else => {
+                    Output.errGeneric("failed to print normalized package.json: {s}", .{@errorName(err)});
+                    Global.crash();
+                },
+            }
+        };
+        _ = written;
+
+        return writer.ctx.writtenWithoutTrailingZero();
+    }
+
+    fn normalizeBin(
+        allocator: std.mem.Allocator,
+        json: *Expr,
+        package_name: string,
+        workspace_root: bun.FileDescriptor,
+    ) OOM!void {
+        var path_buf: bun.PathBuffer = undefined;
+        if (json.asProperty("bin")) |bin_query| {
+            switch (bin_query.expr.data) {
+                .e_string => |bin_str| {
+                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    const normalized = strings.withoutPrefixComptimeZ(
+                        path.normalizeBufZ(
+                            try bin_str.string(allocator),
+                            &path_buf,
+                            .posix,
+                        ),
+                        "./",
+                    );
+                    if (!bun.sys.existsAt(workspace_root, normalized)) {
+                        Output.warn("bin '{s}' does not exist", .{normalized});
+                    }
+
+                    try bin_props.append(.{
+                        .key = Expr.init(
+                            E.String,
+                            .{ .data = package_name },
+                            logger.Loc.Empty,
+                        ),
+                        .value = Expr.init(
+                            E.String,
+                            .{ .data = try allocator.dupe(u8, normalized) },
+                            logger.Loc.Empty,
+                        ),
+                    });
+
+                    json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
+                        E.Object,
+                        .{
+                            .properties = G.Property.List.fromList(bin_props),
+                        },
+                        logger.Loc.Empty,
+                    );
+                },
+                .e_object => |bin_obj| {
+                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    for (bin_obj.properties.slice()) |bin_prop| {
+                        const key = key: {
+                            if (bin_prop.key) |key| {
+                                if (key.isString() and key.data.e_string.len() != 0) {
+                                    break :key try allocator.dupeZ(
+                                        u8,
+                                        strings.withoutPrefixComptime(
+                                            path.normalizeBuf(
+                                                try key.data.e_string.string(allocator),
+                                                &path_buf,
+                                                .posix,
+                                            ),
+                                            "./",
+                                        ),
+                                    );
+                                }
+                            }
+
+                            continue;
+                        };
+
+                        if (key.len == 0) {
+                            continue;
+                        }
+
+                        const value = value: {
+                            if (bin_prop.value) |value| {
+                                if (value.isString() and value.data.e_string.len() != 0) {
+                                    break :value try allocator.dupeZ(
+                                        u8,
+                                        strings.withoutPrefixComptimeZ(
+                                            // replace separators
+                                            path.normalizeBufZ(
+                                                try value.data.e_string.string(allocator),
+                                                &path_buf,
+                                                .posix,
+                                            ),
+                                            "./",
+                                        ),
+                                    );
+                                }
+                            }
+
+                            continue;
+                        };
+                        if (value.len == 0) {
+                            continue;
+                        }
+
+                        if (!bun.sys.existsAt(workspace_root, value)) {
+                            Output.warn("bin '{s}' does not exist", .{value});
+                        }
+
+                        try bin_props.append(.{
+                            .key = Expr.init(
+                                E.String,
+                                .{ .data = key },
+                                logger.Loc.Empty,
+                            ),
+                            .value = Expr.init(
+                                E.String,
+                                .{ .data = value },
+                                logger.Loc.Empty,
+                            ),
+                        });
+                    }
+
+                    json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
+                        E.Object,
+                        .{ .properties = G.Property.List.fromList(bin_props) },
+                        logger.Loc.Empty,
+                    );
+                },
+                else => {},
+            }
+        } else if (json.asProperty("directories")) |directories_query| {
+            if (directories_query.expr.asProperty("bin")) |bin_query| {
+                const bin_dir_str = bin_query.expr.asString(allocator) orelse {
+                    return;
+                };
+                var bin_props = std.ArrayList(G.Property).init(allocator);
+                const normalized_bin_dir = try allocator.dupeZ(
+                    u8,
+                    strings.withoutTrailingSlash(
+                        strings.withoutPrefixComptime(
+                            path.normalizeBuf(
+                                bin_dir_str,
+                                &path_buf,
+                                .posix,
+                            ),
+                            "./",
+                        ),
+                    ),
+                );
+
+                if (normalized_bin_dir.len == 0) {
+                    return;
+                }
+
+                const bin_dir = bun.sys.openat(workspace_root, normalized_bin_dir, bun.O.DIRECTORY, 0).unwrap() catch |err| {
+                    if (err == error.ENOENT) {
+                        Output.warn("bin directory '{s}' does not exist", .{normalized_bin_dir});
+                        return;
+                    } else {
+                        Output.err(err, "failed to open bin directory: '{s}'", .{normalized_bin_dir});
+                        Global.crash();
+                    }
+                };
+
+                var dirs: std.ArrayListUnmanaged(struct { std.fs.Dir, string, bool }) = .{};
+                defer dirs.deinit(allocator);
+
+                try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir, false });
+
+                while (dirs.popOrNull()) |dir_info| {
+                    var dir, const dir_subpath, const close_dir = dir_info;
+                    defer if (close_dir) dir.close();
+
+                    var iter = bun.DirIterator.iterate(dir, .u8);
+                    while (iter.next().unwrap() catch null) |entry| {
+                        const name, const subpath = name_and_subpath: {
+                            const name = entry.name.slice();
+                            const join = try bun.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                                dir_subpath,
+                                // only using posix separators
+                                if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
+                                strings.withoutTrailingSlash(name),
+                            });
+
+                            break :name_and_subpath .{ join[join.len - name.len ..][0..name.len :0], join };
+                        };
+
+                        if (name.len == 0 or (name.len == 1 and name[0] == '.') or (name.len == 2 and name[0] == '.' and name[1] == '.')) {
+                            continue;
+                        }
+
+                        try bin_props.append(.{
+                            .key = Expr.init(
+                                E.String,
+                                .{ .data = std.fs.path.basenamePosix(subpath) },
+                                logger.Loc.Empty,
+                            ),
+                            .value = Expr.init(
+                                E.String,
+                                .{ .data = subpath },
+                                logger.Loc.Empty,
+                            ),
+                        });
+
+                        if (entry.kind == .directory) {
+                            const subdir = dir.openDirZ(name, .{ .iterate = true }) catch {
+                                continue;
+                            };
+                            try dirs.append(allocator, .{ subdir, subpath, true });
+                        }
+                    }
+                }
+
+                try json.set(allocator, "bin", Expr.init(E.Object, .{ .properties = G.Property.List.fromList(bin_props) }, logger.Loc.Empty));
+            }
+        }
+
+        // no bins
+    }
+
     fn constructPublishHeaders(
         allocator: std.mem.Allocator,
         print_buf: *std.ArrayListUnmanaged(u8),
@@ -978,7 +1319,6 @@ pub const PublishCommand = struct {
     fn constructPublishRequestBody(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
-        registry: *const Npm.Registry.Scope,
     ) OOM![]const u8 {
         const tag = if (ctx.manager.options.publish_config.tag.len > 0)
             ctx.manager.options.publish_config.tag
@@ -1009,38 +1349,9 @@ pub const PublishCommand = struct {
 
         // "versions"
         {
-            try writer.print(",\"versions\":{{\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
+            try writer.print(",\"versions\":{{\"{s}\":{s}}}", .{
                 version_without_build_tag,
-                ctx.package_name,
-                version_without_build_tag,
-            });
-
-            try writer.print(",\"_id\": \"{s}@{s}\"", .{
-                ctx.package_name,
-                version_without_build_tag,
-            });
-
-            try writer.print(",\"_integrity\":\"{}\"", .{
-                bun.fmt.integrity(ctx.integrity, .full),
-            });
-
-            try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
-                Environment.reported_nodejs_version,
-                // TODO: npm version
-                "10.8.3",
-            });
-
-            try writer.print(",\"dist\":{{\"integrity\":\"{}\",\"shasum\":\"{s}\"", .{
-                bun.fmt.integrity(ctx.integrity, .full),
-                bun.fmt.bytesToHex(ctx.shasum, .lower),
-            });
-
-            // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/libnpmpublish/lib/publish.js#L118
-            // https:// -> http://
-            try writer.print(",\"tarball\":\"http://{s}/{s}/-/{s}\"}}}}}}", .{
-                strings.withoutTrailingSlash(registry.url.href),
-                ctx.package_name,
-                std.fs.path.basename(ctx.abs_tarball_path),
+                ctx.normalized_pkg_info,
             });
         }
 

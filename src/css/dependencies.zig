@@ -41,6 +41,14 @@ pub const Location = struct {
             .column = loc.column,
         };
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// An `@import` dependency.
@@ -62,7 +70,7 @@ pub const ImportDependency = struct {
                 allocator,
                 css.css_rules.supports.SupportsCondition,
                 supports,
-                css.PrinterOptions{},
+                css.PrinterOptions.default(),
                 null,
             ) catch bun.Output.panic(
                 "Unreachable code: failed to stringify SupportsCondition.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
@@ -72,7 +80,7 @@ pub const ImportDependency = struct {
         } else null;
 
         const media = if (rule.media.media_queries.items.len > 0) media: {
-            const s = css.to_css.string(allocator, css.MediaList, &rule.media, css.PrinterOptions{}, null) catch bun.Output.panic(
+            const s = css.to_css.string(allocator, css.MediaList, &rule.media, css.PrinterOptions.default(), null) catch bun.Output.panic(
                 "Unreachable code: failed to stringify MediaList.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
                 .{},
             );

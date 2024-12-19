@@ -40,6 +40,31 @@ describe("bundler", () => {
     "vm": "no-op",
     "zlib": "polyfill",
   };
+
+  itBundled("browser/NodeBuffer#12272", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as buffer from "node:buffer";
+        import { Buffer } from "buffer";
+        import Buffer2 from "buffer";
+        import { Blob, File } from "buffer";
+        if (Buffer !== Buffer2) throw new Error("Buffer is not the same");
+        if (Blob !== globalThis.Blob) throw new Error("Blob is not the same");
+        if (File !== globalThis.File) throw new Error("File is not the same");
+        if (Buffer.from("foo").toString("hex") !== "666f6f") throw new Error("Buffer.from is broken");
+        if (buffer.isAscii("foo") !== true) throw new Error("Buffer.isAscii is broken");
+        if (Buffer2.alloc(10, 'b').toString("hex") !== "62626262626262626262") throw new Error("Buffer.alloc is broken");
+        console.log("Success!");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "Success!",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `
@@ -56,7 +81,7 @@ describe("bundler", () => {
       stdout: "function\nfunction\nundefined",
     },
     onAfterBundle(api) {
-      api.expectFile('out.js').not.toInclude('import ');
+      api.expectFile("out.js").not.toInclude("import ");
     },
   });
   itBundled("browser/NodeTTY", {
@@ -73,7 +98,7 @@ describe("bundler", () => {
       stdout: "function\nfunction\nfalse",
     },
     onAfterBundle(api) {
-      api.expectFile('out.js').not.toInclude('import ');
+      api.expectFile("out.js").not.toInclude("import ");
     },
   });
   // TODO: use nodePolyfillList to generate the code in here.

@@ -63,6 +63,39 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
   expect(svelte_version).toBe("3.0.0");
 });
 
+test("migrate package with dependency on root package", async () => {
+  const testDir = tmpdirSync();
+
+  fs.cpSync(join(import.meta.dir, "migrate-package-with-dependency-on-root"), testDir, { recursive: true });
+
+  const { stdout } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: join(testDir),
+    stdout: "pipe",
+  });
+
+  expect(stdout.toString()).toContain("success!");
+  expect(fs.existsSync(join(testDir, "node_modules", "test-pkg", "package.json"))).toBeTrue();
+});
+
+test("migrate package with npm dependency that resolves to a git package", async () => {
+  const testDir = tmpdirSync();
+
+  fs.cpSync(join(import.meta.dir, "npm-version-to-git-resolution"), testDir, { recursive: true });
+
+  const { exitCode } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "pipe",
+  });
+
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "node_modules", "jquery", "package.json")).json()).toHaveProperty(
+    "name",
+    "install-test",
+  );
+});
+
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
   const testDir = tmpdirSync();
 

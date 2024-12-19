@@ -100,7 +100,7 @@ describe("Server", () => {
   });
 
   test("should not allow Bun.serve with invalid tls option", () => {
-    [1, "string", true, Symbol("symbol"), false].forEach(value => {
+    [1, "string", true, Symbol("symbol")].forEach(value => {
       expect(() => {
         using server = Bun.serve({
           //@ts-ignore
@@ -316,6 +316,27 @@ describe("Server", () => {
       expect(response.url).toBe(url);
     }
   });
+
+
+  test('server should return a body for a OPTIONS Request', async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    {
+      const url = `http://${server.hostname}:${server.port}/`;
+      const response = await fetch(new Request(url, {
+        method: 'OPTIONS',
+      }));
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    }
+  });
+
+
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;
@@ -435,7 +456,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr).toBeEmpty();
+    expect(stderr.toString('utf-8')).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });

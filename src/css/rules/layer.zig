@@ -38,14 +38,14 @@ pub const LayerName = struct {
 
     pub fn deepClone(this: *const LayerName, allocator: std.mem.Allocator) LayerName {
         return LayerName{
-            .v = this.v.clone(allocator) catch bun.outOfMemory(),
+            .v = this.v.clone(allocator),
         };
     }
 
     pub fn eql(lhs: *const LayerName, rhs: *const LayerName) bool {
-        if (lhs.v.items.len != rhs.v.items.len) return false;
-        for (lhs.v.items, 0..) |part, i| {
-            if (!bun.strings.eql(part, rhs.v.items[i])) return false;
+        if (lhs.v.len() != rhs.v.len()) return false;
+        for (lhs.v.slice(), 0..) |part, i| {
+            if (!bun.strings.eql(part, rhs.v.at(@intCast(i)).*)) return false;
         }
         return true;
     }
@@ -59,7 +59,7 @@ pub const LayerName = struct {
         parts.append(
             input.allocator(),
             ident,
-        ) catch bun.outOfMemory();
+        );
 
         while (true) {
             const Fn = struct {
@@ -101,7 +101,7 @@ pub const LayerName = struct {
                 parts.append(
                     input.allocator(),
                     name,
-                ) catch bun.outOfMemory();
+                );
             }
 
             return .{ .result = LayerName{ .v = parts } };
@@ -110,7 +110,7 @@ pub const LayerName = struct {
 
     pub fn toCss(this: *const LayerName, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         var first = true;
-        for (this.v.items) |name| {
+        for (this.v.slice()) |name| {
             if (first) {
                 first = false;
             } else {
@@ -154,6 +154,10 @@ pub fn LayerBlockRule(comptime R: type) type {
             try dest.newline();
             try dest.writeChar('}');
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -174,5 +178,9 @@ pub const LayerStatementRule = struct {
         try dest.writeStr("@layer ");
         try css.to_css.fromList(LayerName, &this.names, W, dest);
         try dest.writeChar(';');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

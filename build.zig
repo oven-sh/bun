@@ -165,7 +165,7 @@ pub fn build(b: *Build) !void {
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const os, const arch = brk: {
+    const os, const arch, const abi = brk: {
         // resolve the target query to pick up what operating system and cpu
         // architecture that is desired. this information is used to slightly
         // refine the query.
@@ -179,7 +179,8 @@ pub fn build(b: *Build) !void {
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
-        break :brk .{ os, arch };
+        const abi = temp_resolved.result.abi;
+        break :brk .{ os, arch, abi };
     };
 
     // target must be refined to support older but very popular devices on
@@ -191,7 +192,7 @@ pub fn build(b: *Build) !void {
     }
 
     target_query.os_version_min = getOSVersionMin(os);
-    target_query.glibc_version = getOSGlibCVersion(os);
+    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os) else null;
 
     const target = b.resolveTargetQuery(target_query);
 
@@ -235,9 +236,10 @@ pub fn build(b: *Build) !void {
         ),
 
         .sha = sha: {
-            const sha = b.option([]const u8, "sha", "Force the git sha") orelse
-                b.graph.env_map.get("GITHUB_SHA") orelse
-                b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
+            const sha_buildoption = b.option([]const u8, "sha", "Force the git sha");
+            const sha_github = b.graph.env_map.get("GITHUB_SHA");
+            const sha_env = b.graph.env_map.get("GIT_SHA");
+            const sha = sha_buildoption orelse sha_github orelse sha_env orelse fetch_sha: {
                 const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
@@ -313,6 +315,8 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
         });
     }
 
@@ -323,22 +327,41 @@ pub fn build(b: *Build) !void {
             .{ .os = .windows, .arch = .x86_64 },
         });
     }
+
+    // zig build translate-c-headers
+    {
+        const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
+        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+    }
+
+    // zig build enum-extractor
+    {
+        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
+        // const exe = b.addExecutable(.{
+        //     .name = "enum_extractor",
+        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+        //     .target = b.graph.host,
+        //     .optimize = .Debug,
+        // });
+        // const run = b.addRunArtifact(exe);
+        // step.dependOn(&run.step);
+    }
 }
 
-pub inline fn addMultiCheck(
+pub fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch },
+    to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
 ) void {
-    inline for (to_check) |check| {
-        inline for (.{ .Debug, .ReleaseFast }) |mode| {
+    for (to_check) |check| {
+        for ([_]std.builtin.Mode{ .Debug, .ReleaseFast }) |mode| {
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
                 .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
                 .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = getOSGlibCVersion(check.os),
+                .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
 
             var options: BunBuildOptions = .{
@@ -361,6 +384,25 @@ pub inline fn addMultiCheck(
             parent_step.dependOn(&obj.step);
         }
     }
+}
+
+fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.TranslateC {
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c-headers-for-zig.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    inline for ([_](struct { []const u8, bool }){
+        .{ "WINDOWS", translate_c.target.result.os.tag == .windows },
+        .{ "POSIX", translate_c.target.result.os.tag != .windows },
+        .{ "LINUX", translate_c.target.result.os.tag == .linux },
+        .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+    }) |entry| {
+        const str, const value = entry;
+        translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
+    }
+    return translate_c;
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
@@ -410,6 +452,10 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
+
     return obj;
 }
 
@@ -478,6 +524,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "runtime.out.js" },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },

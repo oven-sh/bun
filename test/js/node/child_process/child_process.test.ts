@@ -279,6 +279,33 @@ describe("spawn()", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
+
+  describe("stdio", () => {
+    it("ignore", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "ignore" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("inherit", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "inherit" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("pipe", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "pipe" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+    it.todo("overlapped", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+  });
 });
 
 describe("execFile()", () => {
@@ -417,3 +444,23 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+
+  expect(signal).toBe("SIGTRAP");
+});
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

@@ -37,6 +37,10 @@ pub const SyntaxString = union(enum) {
 
     const This = @This();
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         try dest.writeChar('"');
         switch (this.*) {
@@ -84,7 +88,7 @@ pub const SyntaxString = union(enum) {
 
         // PERF(alloc): count first?
         while (true) {
-            const component = switch (SyntaxComponent.parseString(trimmed_input)) {
+            const component = switch (SyntaxComponent.parseString(&trimmed_input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
@@ -256,8 +260,7 @@ pub const SyntaxComponent = struct {
     kind: SyntaxComponentKind,
     multiplier: Multiplier,
 
-    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponent, void) {
-        var input = input_;
+    pub fn parseString(input: *[]const u8) css.Maybe(SyntaxComponent, void) {
         const kind = switch (SyntaxComponentKind.parseString(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -272,11 +275,11 @@ pub const SyntaxComponent = struct {
         }
 
         var multiplier: Multiplier = .none;
-        if (bun.strings.startsWithChar(input, '+')) {
-            input = input[1..];
+        if (bun.strings.startsWithChar(input.*, '+')) {
+            input.* = input.*[1..];
             multiplier = .space;
-        } else if (bun.strings.startsWithChar(input, '#')) {
-            input = input[1..];
+        } else if (bun.strings.startsWithChar(input.*, '#')) {
+            input.* = input.*[1..];
             multiplier = .comma;
         }
 
@@ -290,6 +293,10 @@ pub const SyntaxComponent = struct {
             .comma => dest.writeChar('#'),
             .space => dest.writeChar('+'),
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -326,13 +333,13 @@ pub const SyntaxComponentKind = union(enum) {
     /// A literal component.
     literal: []const u8,
 
-    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponentKind, void) {
+    pub fn parseString(input: *[]const u8) css.Maybe(SyntaxComponentKind, void) {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
-        var input = std.mem.trimLeft(u8, input_, SPACE_CHARACTERS);
-        if (bun.strings.startsWithChar(input, '<')) {
+        input.* = std.mem.trimLeft(u8, input.*, SPACE_CHARACTERS);
+        if (bun.strings.startsWithChar(input.*, '<')) {
             // https://drafts.css-houdini.org/css-properties-values-api/#consume-data-type-name
-            const end_idx = std.mem.indexOfScalar(u8, input, '>') orelse return .{ .err = {} };
-            const name = input[1..end_idx];
+            const end_idx = std.mem.indexOfScalar(u8, input.*, '>') orelse return .{ .err = {} };
+            const name = input.*[1..end_idx];
             // todo_stuff.match_ignore_ascii_case
             const component: SyntaxComponentKind = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
                 .length
@@ -365,17 +372,17 @@ pub const SyntaxComponentKind = union(enum) {
             else
                 return .{ .err = {} };
 
-            input = input[end_idx + 1 ..];
+            input.* = input.*[end_idx + 1 ..];
             return .{ .result = component };
-        } else if (input.len > 0 and isIdentStart(input[0])) {
+        } else if (input.len > 0 and isIdentStart(input.*[0])) {
             // A literal.
             var end_idx: usize = 0;
             while (end_idx < input.len and
-                isNameCodePoint(input[end_idx])) : (end_idx +=
-                bun.strings.utf8ByteSequenceLengthUnsafe(input[end_idx]))
+                isNameCodePoint(input.*[end_idx])) : (end_idx +=
+                bun.strings.utf8ByteSequenceLengthUnsafe(input.*[end_idx]))
             {}
-            const literal = input[0..end_idx];
-            input = input[end_idx..];
+            const literal = input.*[0..end_idx];
+            input.* = input.*[end_idx..];
             return .{ .result = SyntaxComponentKind{ .literal = literal } };
         } else {
             return .{ .err = {} };
@@ -410,6 +417,10 @@ pub const SyntaxComponentKind = union(enum) {
     fn isNameCodePoint(c: u8) bool {
         // https://drafts.csswg.org/css-syntax-3/#ident-code-point
         return isIdentStart(c) or c >= '0' and c <= '9' or c == '-';
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -450,6 +461,10 @@ pub const ParsedComponent = union(enum) {
         components: ArrayList(ParsedComponent),
         /// A multiplier describing how the components repeat.
         multiplier: Multiplier,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A raw token stream.
     token_list: css.css_properties.custom.TokenList,
@@ -490,6 +505,10 @@ pub const ParsedComponent = union(enum) {
             },
             .token_list => |*t| try t.toCss(W, dest, false),
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

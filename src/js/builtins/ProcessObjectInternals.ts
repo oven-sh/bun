@@ -126,7 +126,7 @@ export function getStdinStream(fd) {
 
   let stream_destroyed = false;
   let stream_endEmitted = false;
-  stream.on = function (event, listener) {
+  stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
     //
@@ -195,6 +195,10 @@ export function getStdinStream(fd) {
         }
       }
     } catch (err) {
+      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+        // Not a bug. Happens in unref().
+        return;
+      }
       stream.destroy(err);
     }
   }
@@ -212,6 +216,7 @@ export function getStdinStream(fd) {
     $debug('on("resume");');
     ref();
     stream._undestroy();
+    stream_destroyed = false;
   });
 
   stream._readableState.reading = false;

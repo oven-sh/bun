@@ -72,6 +72,10 @@ pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix = [8]u16{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
+pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
+pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
+pub const nt_maxpath_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
+
 const std = @import("std");
 const Environment = bun.Environment;
 
@@ -3387,8 +3391,8 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
     };
 }
 
-pub fn WSAGetLastError() !void {
-    return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
+pub fn WSAGetLastError() ?SystemErrno {
+    return SystemErrno.init(@intFromEnum(std.os.windows.ws2_32.WSAGetLastError()));
 }
 
 // BOOL CreateDirectoryExW(

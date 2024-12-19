@@ -43,8 +43,6 @@ else if (Environment.isDebug)
     std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
 else if (Environment.is_canary)
     std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
-else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha_short})
 else
     std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
@@ -68,7 +66,6 @@ else
     "unknown";
 
 pub inline fn getStartTime() i128 {
-    if (Environment.isTest) return 0;
     return bun.start_time;
 }
 
@@ -118,6 +115,10 @@ pub fn exit(code: u32) noreturn {
 
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
+        .windows => {
+            Bun__onExit();
+            std.os.windows.kernel32.ExitProcess(code);
+        },
         else => bun.C.quick_exit(@bitCast(code)),
     }
 }
@@ -126,7 +127,20 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
     Output.Source.Stdio.restore();
 
+    // clear segfault handler
     bun.crash_handler.resetSegfaultHandler();
+
+    // clear signal handler
+    if (bun.Environment.os != .windows) {
+        var sa: std.c.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.empty_sigset,
+            .flags = std.posix.SA.RESETHAND,
+        };
+        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    }
+
+    // kill self
     _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }

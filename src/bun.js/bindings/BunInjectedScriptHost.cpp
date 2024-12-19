@@ -144,16 +144,16 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
-            if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
-                auto* array = constructEmptyArray(exec, nullptr);
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
-                RETURN_IF_EXCEPTION(scope, {});
-                return array;
-            }
-
             if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
+                RETURN_IF_EXCEPTION(scope, {});
+                return array;
+            }
+        } else if (type == JSAsJSONType) {
+            if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
+                auto* array = constructEmptyArray(exec, nullptr);
+                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }

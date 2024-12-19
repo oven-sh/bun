@@ -1,43 +1,35 @@
-import type {
-  AnyFunction,
-  BuildConfig,
-  BunPlugin,
-  OnLoadCallback,
-  OnLoadResultObject,
-  OnLoadResultSourceCode,
-  OnResolveCallback,
-  PluginBuilder,
-  PluginConstraints,
-} from "bun";
+import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
+type AnyFunction = (...args: any[]) => any;
 
-// This API expects 4 functions:
-// It should be generic enough to reuse for Bun.plugin() eventually, too.
 interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
+  /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
   ): void;
+  /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
-  addError(internalID, error, number): void;
+  /** Binding to `JSBundlerPlugin__addError` */
+  addError(internalID: number, error: any, which: number): void;
   addFilter(filter, namespace, number): void;
+  generateDeferPromise(id: number): Promise<void>;
+  promises: Array<Promise<any>> | undefined;
 }
 
 // Extra types
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
 interface BuildConfigExt extends BuildConfig {
-  // we support esbuild-style entryPoints
+  // we support esbuild-style 'entryPoints' capitalization
   entryPoints?: string[];
   // plugins is guaranteed to not be null
   plugins: BunPlugin[];
 }
 interface PluginBuilderExt extends PluginBuilder {
-  // these functions aren't implemented yet, so we dont publicly expose them
   resolve: AnyFunction;
-  onStart: AnyFunction;
   onEnd: AnyFunction;
   onDispose: AnyFunction;
   // we partially support initialOptions. it's read-only and a subset of
@@ -47,17 +39,46 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
-export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
+type BeforeOnParseExternal = unknown;
+
+export function runSetupFunction(
+  this: BundlerPlugin,
+  setup: Setup,
+  config: BuildConfigExt,
+  promises: Array<Promise<any>> | undefined,
+  is_last: boolean,
+  isBake: boolean,
+) {
+  this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onBeforeParsePlugins = new Map<
+    string,
+    [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
+  >();
 
-  function validate(filterObject: PluginConstraints, callback, map) {
+  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
 
-    if (!callback || !$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
+    let isOnBeforeParse = false;
+    if (map === onBeforeParsePlugins) {
+      isOnBeforeParse = true;
+      // TODO: how to check if it a napi module here?
+      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+        throw new TypeError(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
+        );
+      }
+
+      if (typeof symbol !== "string") {
+        throw new TypeError("onBeforeParse `symbol` must be a string");
+      }
+    } else {
+      if (!callback || !$isCallable(callback)) {
+        throw new TypeError("lmao callback must be a function");
+      }
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -85,23 +106,49 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     var callbacks = map.$get(namespace);
 
     if (!callbacks) {
-      map.$set(namespace, [[filter, callback]]);
+      map.$set(namespace, [isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]]);
     } else {
-      $arrayPush(callbacks, [filter, callback]);
+      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]);
     }
   }
 
   function onLoad(filterObject, callback) {
-    validate(filterObject, callback, onLoadPlugins);
+    validate(filterObject, callback, onLoadPlugins, undefined, undefined);
   }
 
   function onResolve(filterObject, callback) {
-    validate(filterObject, callback, onResolvePlugins);
+    validate(filterObject, callback, onResolvePlugins, undefined, undefined);
+  }
+
+  function onBeforeParse(
+    filterObject,
+    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
+  ) {
+    validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
+  }
+
+  const self = this;
+  function onStart(callback) {
+    if (isBake) {
+      throw new TypeError("onStart() is not supported in Bake yet");
+    }
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
+
+    const ret = callback();
+    if ($isPromise(ret)) {
+      if (($getPromiseInternalField(ret, $promiseFieldFlags) & $promiseStateMask) != $promiseStateFulfilled) {
+        self.promises ??= [];
+        self.promises.push(ret);
+      }
+    }
   }
 
   const processSetupResult = () => {
     var anyOnLoad = false,
-      anyOnResolve = false;
+      anyOnResolve = false,
+      anyOnBeforeParse = false;
 
     for (var [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
@@ -114,6 +161,13 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 0);
         anyOnResolve = true;
+      }
+    }
+
+    for (let [namespace, callbacks] of onBeforeParsePlugins.entries()) {
+      for (let [filter, addon, symbol, external] of callbacks) {
+        this.onBeforeParse(filter, namespace, addon, symbol, external);
+        anyOnBeforeParse = true;
       }
     }
 
@@ -151,7 +205,11 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       }
     }
 
-    return anyOnLoad || anyOnResolve;
+    if (is_last) {
+      this.promises = undefined;
+    }
+
+    return this.promises;
   };
 
   var setupResult = setup({
@@ -160,7 +218,8 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
-    onStart: notImplementedIssueFn(2771, "On-start callbacks"),
+    onBeforeParse,
+    onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
@@ -184,8 +243,19 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
       setupResult = $getPromiseInternalField(setupResult, $promiseFieldReactionsOrResult);
     } else {
-      return setupResult.$then(processSetupResult);
+      return setupResult.$then(() => {
+        if (is_last && self.promises !== undefined && self.promises.length > 0) {
+          const awaitAll = Promise.all(self.promises);
+          return awaitAll.$then(processSetupResult);
+        }
+        return processSetupResult();
+      });
     }
+  }
+
+  if (is_last && this.promises !== undefined && this.promises.length > 0) {
+    const awaitAll = Promise.all(this.promises);
+    return awaitAll.$then(processSetupResult);
   }
 
   return processSetupResult();
@@ -209,7 +279,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          // resolveDir
+          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
           kind,
           // pluginData
         });
@@ -295,11 +365,19 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId) {
+export function runOnLoadPlugins(
+  this: BundlerPlugin,
+  internalID,
+  path,
+  namespace,
+  defaultLoaderId,
+  isServerSide: boolean,
+) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
-  var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
+  const generateDefer = () => this.generateDeferPromise(internalID);
+  var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
@@ -314,6 +392,8 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           // suffix
           // pluginData
           loader: defaultLoader,
+          defer: generateDefer,
+          side: isServerSide ? "server" : "client",
         });
 
         while (
@@ -332,7 +412,19 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as OnLoadResultSourceCode & OnLoadResultObject;
+        var { contents, loader = defaultLoader } = result as any;
+        if ((loader as any) === "object") {
+          if (!("exports" in result)) {
+            throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
+          }
+          try {
+            contents = JSON.stringify(result.exports);
+            loader = "json";
+          } catch (e) {
+            throw new TypeError("When using Bun.build, onLoad plugin must return a JSON-serializable object: " + e);
+          }
+        }
+
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }
@@ -346,14 +438,14 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader);
         return null;
       }
     }
 
     this.onLoadAsync(internalID, null, null);
     return null;
-  })(internalID, path, namespace, loaderName);
+  })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 
   while (
     promiseResult &&

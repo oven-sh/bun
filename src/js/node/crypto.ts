@@ -4,7 +4,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
-
+const { CryptoHasher } = Bun;
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -1203,7 +1203,7 @@ var require_browser2 = __commonJS({
       this._hasher.update(data, encoding);
       return this;
     };
-    LazyHash.prototype.digest = function update(data, encoding) {
+    LazyHash.prototype.digest = function digest(data, encoding) {
       this._checkFinalized();
       this._finalized = true;
       return this._hasher.digest(data, encoding);
@@ -1334,8 +1334,8 @@ var require_browser2 = __commonJS({
       });
     }
 
-    module.exports = function createHash(algorithm) {
-      return new LazyHash(algorithm);
+    module.exports = function createHash(algorithm, options) {
+      return new LazyHash(algorithm, options);
     };
 
     module.exports.createHash = module.exports;
@@ -11443,8 +11443,6 @@ var require_browser9 = __commonJS({
   },
 });
 
-const { CryptoHasher } = globalThis.Bun;
-
 // node_modules/randomfill/browser.js
 var require_browser11 = __commonJS({
   "node_modules/randomfill/browser.js"(exports) {
@@ -11560,8 +11558,7 @@ var require_crypto_browserify2 = __commonJS({
 // crypto.js
 var crypto_exports = require_crypto_browserify2();
 
-var DEFAULT_ENCODING = "buffer",
-  getRandomValues = array => crypto.getRandomValues(array),
+var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
   timingSafeEqual =
     "timingSafeEqual" in crypto
@@ -11578,7 +11575,7 @@ var DEFAULT_ENCODING = "buffer",
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
           let res = crypto.scryptSync(password, salt, keylen, options);
-          return DEFAULT_ENCODING !== "buffer" ? new Buffer(res).toString(DEFAULT_ENCODING) : new Buffer(res);
+          return new Buffer(res);
         }
       : void 0,
   scrypt =
@@ -11592,11 +11589,7 @@ var DEFAULT_ENCODING = "buffer",
           }
           try {
             let result = crypto.scryptSync(password, salt, keylen, options);
-            process.nextTick(
-              callback,
-              null,
-              DEFAULT_ENCODING !== "buffer" ? new Buffer(result).toString(DEFAULT_ENCODING) : new Buffer(result),
-            );
+            process.nextTick(callback, null, new Buffer(result));
           } catch (err2) {
             throw err2;
           }
@@ -12040,18 +12033,23 @@ crypto_exports.publicDecrypt = function (key, message) {
   return doAsymmetricSign(key, message, publicDecrypt, true);
 };
 
-__export(crypto_exports, {
-  DEFAULT_ENCODING: () => DEFAULT_ENCODING,
-  getRandomValues: () => getRandomValues,
-  randomUUID: () => randomUUID,
-  randomInt: () => randomInt,
-  getCurves: () => getCurves,
-  scrypt: () => scrypt,
-  scryptSync: () => scryptSync,
-  timingSafeEqual: () => timingSafeEqual,
-  webcrypto: () => webcrypto,
-  subtle: () => _subtle,
-});
+crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
+  return CryptoHasher.hash(algorithm, input, outputEncoding);
+};
+
+crypto_exports.getFips = function getFips() {
+  return 0;
+};
+
+crypto_exports.getRandomValues = getRandomValues;
+crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomInt = randomInt;
+crypto_exports.getCurves = getCurves;
+crypto_exports.scrypt = scrypt;
+crypto_exports.scryptSync = scryptSync;
+crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.webcrypto = webcrypto;
+crypto_exports.subtle = _subtle;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

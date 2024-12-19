@@ -68,4 +68,8 @@ pub const Ratio = struct {
     pub fn addF32(this: Ratio, _: std.mem.Allocator, other: f32) Ratio {
         return .{ .numerator = this.numerator + other, .denominator = this.denominator };
     }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };

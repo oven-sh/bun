@@ -1,16 +1,20 @@
-#include <node.h>
-
-#include <napi.h>
+#include "napi_with_version.h"
+#include "utils.h"
+#include "wrap_tests.h"
 
 #include <array>
 #include <cassert>
+#include <cinttypes>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <string>
 #include <thread>
+#include <utility>
 
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;
@@ -25,23 +29,6 @@ napi_value fail_fmt(napi_env env, const char *fmt, ...) {
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   return fail(env, buf);
-}
-
-napi_value ok(napi_env env) {
-  napi_value result;
-  napi_get_undefined(env, &result);
-  return result;
-}
-
-static void run_gc(const Napi::CallbackInfo &info) {
-  info[0].As<Napi::Function>().Call(0, nullptr);
-}
-
-// calls napi_typeof and asserts it returns napi_ok
-static napi_valuetype get_typeof(napi_env env, napi_value value) {
-  napi_valuetype result;
-  assert(napi_typeof(env, value, &result) == napi_ok);
-  return result;
 }
 
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
@@ -592,33 +579,6 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
-static const char *napi_valuetype_to_string(napi_valuetype type) {
-  switch (type) {
-  case napi_undefined:
-    return "undefined";
-  case napi_null:
-    return "null";
-  case napi_boolean:
-    return "boolean";
-  case napi_number:
-    return "number";
-  case napi_string:
-    return "string";
-  case napi_symbol:
-    return "symbol";
-  case napi_object:
-    return "object";
-  case napi_function:
-    return "function";
-  case napi_external:
-    return "external";
-  case napi_bigint:
-    return "bigint";
-  default:
-    return "unknown";
-  }
-}
-
 // calls a function (the sole argument) which must throw. catches and returns
 // the thrown error
 napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
@@ -786,6 +746,336 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
   }
 }
 
+// double_to_i32(any): number|undefined
+napi_value double_to_i32(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value input = info[0];
+
+  int32_t integer;
+  napi_value result;
+  napi_status status = napi_get_value_int32(env, input, &integer);
+  if (status == napi_ok) {
+    assert(napi_create_int32(env, integer, &result) == napi_ok);
+  } else {
+    assert(status == napi_number_expected);
+    assert(napi_get_undefined(env, &result) == napi_ok);
+  }
+  return result;
+}
+
+// double_to_u32(any): number|undefined
+napi_value double_to_u32(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value input = info[0];
+
+  uint32_t integer;
+  napi_value result;
+  napi_status status = napi_get_value_uint32(env, input, &integer);
+  if (status == napi_ok) {
+    assert(napi_create_uint32(env, integer, &result) == napi_ok);
+  } else {
+    assert(status == napi_number_expected);
+    assert(napi_get_undefined(env, &result) == napi_ok);
+  }
+  return result;
+}
+
+// double_to_i64(any): number|undefined
+napi_value double_to_i64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value input = info[0];
+
+  int64_t integer;
+  napi_value result;
+  napi_status status = napi_get_value_int64(env, input, &integer);
+  if (status == napi_ok) {
+    assert(napi_create_int64(env, integer, &result) == napi_ok);
+  } else {
+    assert(status == napi_number_expected);
+    assert(napi_get_undefined(env, &result) == napi_ok);
+  }
+  return result;
+}
+
+// test from the C++ side
+napi_value test_number_integer_conversions(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  using f64_limits = std::numeric_limits<double>;
+  using i32_limits = std::numeric_limits<int32_t>;
+  using u32_limits = std::numeric_limits<uint32_t>;
+  using i64_limits = std::numeric_limits<int64_t>;
+
+  std::array<std::pair<double, int32_t>, 14> i32_cases{{
+      // special values
+      {f64_limits::infinity(), 0},
+      {-f64_limits::infinity(), 0},
+      {f64_limits::quiet_NaN(), 0},
+      // normal
+      {0.0, 0},
+      {1.0, 1},
+      {-1.0, -1},
+      // truncation
+      {1.25, 1},
+      {-1.25, -1},
+      // limits
+      {i32_limits::min(), i32_limits::min()},
+      {i32_limits::max(), i32_limits::max()},
+      // wrap around
+      {static_cast<double>(i32_limits::min()) - 1.0, i32_limits::max()},
+      {static_cast<double>(i32_limits::max()) + 1.0, i32_limits::min()},
+      {static_cast<double>(i32_limits::min()) - 2.0, i32_limits::max() - 1},
+      {static_cast<double>(i32_limits::max()) + 2.0, i32_limits::min() + 1},
+  }};
+
+  for (const auto &[in, expected_out] : i32_cases) {
+    napi_value js_in;
+    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    int32_t out_from_napi;
+    assert(napi_get_value_int32(env, js_in, &out_from_napi) == napi_ok);
+    assert(out_from_napi == expected_out);
+  }
+
+  std::array<std::pair<double, uint32_t>, 12> u32_cases{{
+      // special values
+      {f64_limits::infinity(), 0},
+      {-f64_limits::infinity(), 0},
+      {f64_limits::quiet_NaN(), 0},
+      // normal
+      {0.0, 0},
+      {1.0, 1},
+      // truncation
+      {1.25, 1},
+      {-1.25, u32_limits::max()},
+      // limits
+      {u32_limits::max(), u32_limits::max()},
+      // wrap around
+      {-1.0, u32_limits::max()},
+      {static_cast<double>(u32_limits::max()) + 1.0, 0},
+      {-2.0, u32_limits::max() - 1},
+      {static_cast<double>(u32_limits::max()) + 2.0, 1},
+
+  }};
+
+  for (const auto &[in, expected_out] : u32_cases) {
+    napi_value js_in;
+    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    uint32_t out_from_napi;
+    assert(napi_get_value_uint32(env, js_in, &out_from_napi) == napi_ok);
+    assert(out_from_napi == expected_out);
+  }
+
+  std::array<std::pair<double, int64_t>, 12> i64_cases{
+      {// special values
+       {f64_limits::infinity(), 0},
+       {-f64_limits::infinity(), 0},
+       {f64_limits::quiet_NaN(), 0},
+       // normal
+       {0.0, 0},
+       {1.0, 1},
+       {-1.0, -1},
+       // truncation
+       {1.25, 1},
+       {-1.25, -1},
+       // limits
+       // i64 max can't be precisely represented as double so it would round to
+       // 1
+       // + i64 max, which would clamp and we don't want that yet. so we test
+       // the
+       // largest double smaller than i64 max instead (which is i64 max - 1024)
+       {i64_limits::min(), i64_limits::min()},
+       {std::nextafter(static_cast<double>(i64_limits::max()), 0.0),
+        static_cast<int64_t>(
+            std::nextafter(static_cast<double>(i64_limits::max()), 0.0))},
+       // clamp
+       {i64_limits::min() - 4096.0, i64_limits::min()},
+       {i64_limits::max() + 4096.0, i64_limits::max()}}};
+
+  for (const auto &[in, expected_out] : i64_cases) {
+    napi_value js_in;
+    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    int64_t out_from_napi;
+    assert(napi_get_value_int64(env, js_in, &out_from_napi) == napi_ok);
+    assert(out_from_napi == expected_out);
+  }
+
+  return ok(env);
+}
+
+napi_value make_empty_array(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_size = info[0];
+  uint32_t size;
+  assert(napi_get_value_uint32(env, js_size, &size) == napi_ok);
+  napi_value array;
+  assert(napi_create_array_with_length(env, size, &array) == napi_ok);
+  return array;
+}
+
+// add_tag(object, lower, upper)
+static napi_value add_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+
+  napi_status status = napi_type_tag_object(env, object, &tag);
+  if (status != napi_ok) {
+    char buf[1024];
+    snprintf(buf, sizeof buf, "status = %d", status);
+    napi_throw_error(env, nullptr, buf);
+  }
+  return env.Undefined();
+}
+
+// check_tag(object, lower, upper): bool
+static napi_value check_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+  bool matches;
+  assert(napi_check_object_type_tag(env, object, &tag, &matches) == napi_ok);
+  return Napi::Boolean::New(env, matches);
+}
+
+// try_add_tag(object, lower, upper): bool
+// true if success
+static napi_value try_add_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+
+  napi_status status = napi_type_tag_object(env, object, &tag);
+  bool pending;
+  assert(napi_is_exception_pending(env, &pending) == napi_ok);
+  if (pending) {
+    napi_value ignore_exception;
+    assert(napi_get_and_clear_last_exception(env, &ignore_exception) ==
+           napi_ok);
+    (void)ignore_exception;
+  }
+
+  return Napi::Boolean::New(env, status == napi_ok);
+}
+
+static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    int64_t result = 0;
+    bool lossless = false;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_int64 return for non-bigint: %d\n",
+             napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_int64 result: %" PRId64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    uint64_t result;
+    bool lossless;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_uint64 return for non-bigint: %d\n",
+             napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_uint64 result: %" PRIu64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value bigint;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 5, &bigint));
+
+  int64_t result_signed;
+  uint64_t result_unsigned;
+  bool lossless;
+
+  printf("status (int64, null result) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, nullptr, &lossless));
+  printf("status (int64, null lossless) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, &result_signed, nullptr));
+  printf("status (uint64, null result) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, nullptr, &lossless));
+  printf("status (uint64, null lossless) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, &result_unsigned, nullptr));
+
+  return ok(env);
+}
+
+static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
+  // create bigints by passing weird parameters to napi_create_bigint_words
+  napi_env env = info.Env();
+
+  std::array<napi_value, 5> bigints;
+  std::array<uint64_t, 4> words{{123, 0, 0, 0}};
+
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 0, &bigints[0]));
+  NODE_API_CALL(env, napi_create_bigint_uint64(env, 0, &bigints[1]));
+  // sign is not 0 or 1 (should be interpreted as negative)
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 2, 1, words.data(), &bigints[2]));
+  // leading zeroes in word representation
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 0, 4, words.data(), &bigints[3]));
+  // zero
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 1, 0, words.data(), &bigints[4]));
+
+  napi_value array;
+  NODE_API_CALL(env,
+                napi_create_array_with_length(env, bigints.size(), &array));
+  for (size_t i = 0; i < bigints.size(); i++) {
+    NODE_API_CALL(env, napi_set_element(env, array, (uint32_t)i, bigints[i]));
+  }
+  return array;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -840,9 +1130,25 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, call_and_get_exception));
   exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
   exports.Set("perform_get", Napi::Function::New(env, perform_get));
+  exports.Set("double_to_i32", Napi::Function::New(env, double_to_i32));
+  exports.Set("double_to_u32", Napi::Function::New(env, double_to_u32));
+  exports.Set("double_to_i64", Napi::Function::New(env, double_to_i64));
+  exports.Set("test_number_integer_conversions",
+              Napi::Function::New(env, test_number_integer_conversions));
+  exports.Set("make_empty_array", Napi::Function::New(env, make_empty_array));
   exports.Set("throw_error", Napi::Function::New(env, throw_error));
   exports.Set("create_and_throw_error",
               Napi::Function::New(env, create_and_throw_error));
+  exports.Set("add_tag", Napi::Function::New(env, add_tag));
+  exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
+  exports.Set("check_tag", Napi::Function::New(env, check_tag));
+  exports.Set("bigint_to_i64", Napi::Function::New(env, bigint_to_i64));
+  exports.Set("bigint_to_u64", Napi::Function::New(env, bigint_to_u64));
+  exports.Set("bigint_to_64_null", Napi::Function::New(env, bigint_to_64_null));
+  exports.Set("create_weird_bigints",
+              Napi::Function::New(env, create_weird_bigints));
+
+  napitests::register_wrap_tests(env, exports);
 
   return exports;
 }

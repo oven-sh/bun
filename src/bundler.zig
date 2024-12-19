@@ -13,9 +13,9 @@ const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
-const options = @import("options.zig");
+pub const options = @import("options.zig");
 const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
@@ -51,6 +51,7 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
@@ -153,7 +154,7 @@ pub const PluginRunner = struct {
         log: *logger.Log,
         loc: logger.Loc,
         target: JSC.JSGlobalObject.BunPluginTarget,
-    ) ?Fs.Path {
+    ) bun.JSError!?Fs.Path {
         var global = this.global_object;
         const namespace_slice = extractNamespace(specifier);
         const namespace = if (namespace_slice.len > 0 and !strings.eqlComptime(namespace_slice, "file"))
@@ -166,7 +167,7 @@ pub const PluginRunner = struct {
             bun.String.init(importer),
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = try on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             log.addError(null, loc, "Expected \"path\" to be a string") catch unreachable;
@@ -199,7 +200,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (try on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
@@ -248,13 +249,7 @@ pub const PluginRunner = struct {
         }
     }
 
-    pub fn onResolveJSC(
-        this: *const PluginRunner,
-        namespace: bun.String,
-        specifier: bun.String,
-        importer: bun.String,
-        target: JSC.JSGlobalObject.BunPluginTarget,
-    ) ?JSC.ErrorableString {
+    pub fn onResolveJSC(this: *const PluginRunner, namespace: bun.String, specifier: bun.String, importer: bun.String, target: JSC.JSGlobalObject.BunPluginTarget) bun.JSError!?JSC.ErrorableString {
         var global = this.global_object;
         const on_resolve_plugin = global.runOnResolvePlugins(
             if (namespace.length() > 0 and !namespace.eqlComptime("file"))
@@ -265,7 +260,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = try on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             return JSC.ErrorableString.err(
@@ -295,7 +290,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (try on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     return JSC.ErrorableString.err(
                         error.JSErrorObject,
@@ -449,7 +444,7 @@ pub const Bundler = struct {
             };
 
             // Only re-query if we previously had something cached.
-            if (bundler.resolver.bustDirCache(buster_name)) {
+            if (bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                 if (_resolveEntryPoint(bundler, entry_point)) |result|
                     return result
                 else |_| {
@@ -865,6 +860,9 @@ pub const Bundler = struct {
             .src_path = file_path,
             .loader = loader,
             .value = undefined,
+            .side = null,
+            .entry_point_index = null,
+            .output_kind = .chunk,
         };
 
         switch (loader) {
@@ -916,7 +914,7 @@ pub const Bundler = struct {
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro, .kit_server_components_ssr => try bundler.print(
+                    .bun, .bun_macro, .bake_server_components_ssr => try bundler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -948,23 +946,25 @@ pub const Bundler = struct {
                         bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                         return null;
                     };
-                    const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                    _ = source; //
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
-                        .result => |v| {
-                            const result = v.toCss(alloc, bun.css.PrinterOptions{
-                                .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
-                            }, null) catch |e| {
-                                bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                                return null;
-                            };
-                            output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
-                        },
+                    var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
+                        .result => |v| v,
                         .err => |e| {
                             bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} parsing", .{e}) catch unreachable;
                             return null;
                         },
+                    };
+                    if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
+                        return null;
                     }
+                    const result = sheet.toCss(alloc, bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
+                        .minify = bundler.options.minify_whitespace,
+                    }, null) catch |e| {
+                        bun.handleErrorReturnTrace(e, @errorReturnTrace());
+                        return null;
+                    };
+                    output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
                 } else {
                     var file: bun.sys.File = undefined;
 
@@ -1053,9 +1053,6 @@ pub const Bundler = struct {
                     },
                 };
             },
-
-            // // TODO:
-            // else => {},
         }
 
         return output_file;
@@ -1299,6 +1296,18 @@ pub const Bundler = struct {
                 break :brk logger.Source.initPathString(path.text, "");
             }
 
+            if (strings.startsWith(path.text, "data:")) {
+                const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                const body = data_url.decodeData(this_parse.allocator) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                break :brk logger.Source.initPathString(path.text, body);
+            }
+
             const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                 if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
                 bundler.fs,
@@ -1368,9 +1377,6 @@ pub const Bundler = struct {
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
 
-                opts.features.react_fast_refresh = opts.features.hot_module_reloading and
-                    jsx.parse and
-                    bundler.options.react_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();
@@ -1452,11 +1458,11 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        JSON.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
+                        JSON.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, bundler.log, allocator) catch return null
+                    TOML.parse(&source, bundler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1583,7 +1589,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.UTF8String, js_ast.E.UTF8String{
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{

@@ -14,6 +14,7 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
@@ -1543,7 +1544,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1552,6 +1553,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -1612,6 +1633,20 @@ declare module "bun" {
      * Enable CSS support.
      */
     experimentalCss?: boolean;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     *
+     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+     * as most usage of `Bun.build` forgets to check for errors.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -1645,7 +1680,7 @@ declare module "bun" {
    * automatically run in a worker thread.
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -1748,7 +1783,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1787,7 +1822,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -2125,6 +2160,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -3018,6 +3055,7 @@ declare module "bun" {
     colors?: boolean;
     depth?: number;
     sorted?: boolean;
+    compact?: boolean;
   }
 
   /**
@@ -3033,6 +3071,14 @@ declare module "bun" {
      * That can be used to declare custom inspect functions.
      */
     const custom: typeof import("util").inspect.custom;
+
+    /**
+     * Pretty-print an object or array as a table
+     *
+     * Like {@link console.table}, except it returns a string
+     */
+    function table(tabularData: object | unknown[], properties?: string[], options?: { colors?: boolean }): string;
+    function table(tabularData: object | unknown[], options?: { colors?: boolean }): string;
   }
 
   interface MMapOptions {
@@ -3099,32 +3145,50 @@ declare module "bun" {
      * @example \x1b[38;2;100;200;200m
      */
     | "ansi"
+      | "ansi-16"
+      | "ansi-16m"
       /**
        * 256 color ANSI color string, for use in terminals which don't support true color
        *
        * Tries to match closest 24-bit color to 256 color palette
        */
-      | "ansi256"
+      | "ansi-256"
+      /**
+       * Picks the format that produces the shortest output
+       */
+      | "css"
       /**
        * Lowercase hex color string without alpha
-       * @example #aabb11
+       * @example #ff9800
        */
       | "hex"
       /**
+       * Uppercase hex color string without alpha
+       * @example #FF9800
+       */
+      | "HEX"
+      /**
+       * @example hsl(35.764706, 1, 0.5)
+       */
+      | "hsl"
+      /**
+       * @example lab(0.72732764, 33.938198, -25.311619)
+       */
+      | "lab"
+      /**
+       * @example 16750592
+       */
+      | "number"
+      /**
        * RGB color string without alpha
-       * rgb(100, 200, 200)
+       * @example rgb(255, 152, 0)
        */
       | "rgb"
       /**
        * RGB color string with alpha
-       * rgba(100, 200, 200, 0.5)
+       * @example rgba(255, 152, 0, 1)
        */
-      | "rgba"
-      | "hsl"
-      | "lab"
-      | "css"
-      | "lab"
-      | "HEX",
+      | "rgba",
   ): string | null;
 
   function color(
@@ -3217,7 +3281,7 @@ declare module "bun" {
   }
   const unsafe: Unsafe;
 
-  type DigestEncoding = "hex" | "base64";
+  type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
    * Are ANSI colors enabled for stdin and stdout?
@@ -3753,7 +3817,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
 
   interface PluginConstraints {
     /**
@@ -3841,10 +3905,17 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3859,6 +3930,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /**
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -3888,7 +3963,30 @@ declare module "bun" {
     args: OnResolveArgs,
   ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
 
+  type FFIFunctionCallable = Function & {
+    // Making a nominally typed function so that the user must get it from dlopen
+    readonly __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+  };
+
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
+    onBeforeParse(
+      constraints: PluginConstraints,
+      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+    ): void;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -4330,6 +4428,35 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4434,16 +4561,26 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
+  }
+
+  interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
+    fd: number;
   }
 
   /**
@@ -5429,6 +5566,57 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
 }
 
 // extends lib.dom.d.ts

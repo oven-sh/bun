@@ -106,6 +106,9 @@ public:
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
+    bool isDependent() const { return m_isDependent; }
+
+    size_t memoryCost() const;
 
 private:
     enum class Aborted : bool {
@@ -116,7 +119,6 @@ private:
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
 
-    bool isDependent() const { return m_isDependent; }
     void markAsDependent() { m_isDependent = true; }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);

@@ -435,8 +435,8 @@ function getBuildCppStep(platform, options) {
     },
     command:
       toolchain === "darwin-x64"
-        ? "bun run build:ci --target bun"
-        : `bun run build:ci --target bun --toolchain ${toolchain}`,
+        ? `bun run build:ci --target bun --toolchain ${toolchain}`
+        : "bun run build:ci --target bun",
   };
 }
 

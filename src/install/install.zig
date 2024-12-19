@@ -1028,10 +1028,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             skipped: u32 = 0,
             successfully_installed: ?Bitset = null,
 
-            /// The lockfile used by `installPackages`. Might be different from the lockfile
-            /// on disk if `--production` is used and dev dependencies are removed.
-            lockfile_used_for_install: *Lockfile,
-
             /// Package name hash -> number of scripts skipped.
             /// Multiple versions of the same package might add to the count, and each version
             /// might have a different number of scripts
@@ -12320,7 +12316,6 @@ pub const PackageManager = struct {
         trees: []TreeContext,
 
         seen_bin_links: bun.StringHashMap(void),
-        workspace_pkg_ids: []const PackageID,
 
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
@@ -13535,54 +13530,12 @@ pub const PackageManager = struct {
             return false;
         }
 
-        fn isPackageDisabled(this: *PackageInstaller, dep_id: DependencyID, pkg_id: PackageID) bool {
-            if (this.metas[pkg_id].isDisabled()) return true;
-
-            const dep = this.lockfile.buffers.dependencies.items[dep_id];
-
-            if (this.pkg_dependencies[0].contains(dep_id)) {
-                // This is a direct dependency of the root package
-                return !dep.behavior.isEnabled(this.manager.options.local_package_features);
-            }
-
-            for (this.workspace_pkg_ids) |workspace_pkg_id| {
-                if (this.pkg_dependencies[workspace_pkg_id].contains(dep_id)) {
-                    // This is a direct dependency of a workspace
-                    return !dep.behavior.isEnabled(this.manager.options.local_package_features);
-                }
-            }
-
-            // This is a transitive dependency
-            return !dep.behavior.isEnabled(this.manager.options.remote_package_features);
-        }
-
         pub fn installPackage(
             this: *PackageInstaller,
             dep_id: DependencyID,
             comptime log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dep_id];
-
-            if (this.isPackageDisabled(dep_id, package_id)) {
-                if (comptime log_level.showProgress()) {
-                    this.node.completeOne();
-                }
-                if (comptime log_level.isVerbose()) {
-                    const meta = &this.metas[package_id];
-                    const name = this.lockfile.str(&this.names[package_id]);
-                    if (!meta.os.isMatch() and !meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
-                    } else if (!meta.os.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
-                    } else if (!meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
-                    }
-                }
-
-                const is_pending_package_install = false;
-                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
-                return;
-            }
 
             const name = this.names[package_id];
             const resolution = &this.resolutions[package_id];
@@ -13791,6 +13744,25 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
+        const original_trees = this.lockfile.buffers.trees;
+        const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
+
+        const filtered = try this.lockfile.filter(this.log, this);
+
+        this.lockfile.buffers.trees = .{
+            .items = filtered.trees,
+            .capacity = filtered.trees.len,
+        };
+        this.lockfile.buffers.hoisted_dependencies = .{
+            .items = filtered.dep_ids,
+            .capacity = filtered.dep_ids.len,
+        };
+
+        defer {
+            this.lockfile.buffers.trees = original_trees;
+            this.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids;
+        }
+
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -13803,7 +13775,7 @@ pub const PackageManager = struct {
             root_node = progress.start("", 0);
             download_node = root_node.start(ProgressStrings.download(), 0);
 
-            install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
+            install_node = root_node.start(ProgressStrings.install(), this.lockfile.buffers.hoisted_dependencies.items.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
@@ -13854,9 +13826,7 @@ pub const PackageManager = struct {
             skip_delete = false;
         }
 
-        var summary = PackageInstall.Summary{
-            .lockfile_used_for_install = this.lockfile,
-        };
+        var summary = PackageInstall.Summary{};
 
         {
             var iterator = Lockfile.Tree.Iterator(.node_modules).init(this.lockfile);
@@ -13945,26 +13915,6 @@ pub const PackageManager = struct {
                     break :trusted_deps set;
                 };
 
-                var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
-                if (this.lockfile.packages.len > 0) {
-                    const resolutions = this.lockfile.buffers.resolutions.items;
-                    const pkg_resolutions = this.lockfile.packages.items(.resolution);
-
-                    // TODO: should probably move this to cleaning step
-
-                    // workspace packages should only exist in the first
-                    // tree because  all workspaces are root dependencies.
-                    const root_deps = this.lockfile.packages.items(.dependencies)[0];
-                    for (root_deps.begin()..root_deps.end()) |dep_id| {
-                        if (dep_id == invalid_dependency_id) continue;
-                        const pkg_id = resolutions[dep_id];
-                        if (pkg_id == invalid_package_id) continue;
-                        if (pkg_resolutions[pkg_id].tag == .workspace) {
-                            workspace_pkg_ids.append(this.allocator, pkg_id) catch bun.outOfMemory();
-                        }
-                    }
-                }
-
                 break :brk PackageInstaller{
                     .manager = this,
                     .options = &this.options,
@@ -14014,7 +13964,6 @@ pub const PackageManager = struct {
                     },
                     .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
                     .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
-                    .workspace_pkg_ids = workspace_pkg_ids.items,
                 };
             };
 
@@ -14881,9 +14830,7 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
-        var install_summary = PackageInstall.Summary{
-            .lockfile_used_for_install = manager.lockfile,
-        };
+        var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
@@ -15047,7 +14994,7 @@ pub const PackageManager = struct {
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
                 var printer = Lockfile.Printer{
-                    .lockfile = install_summary.lockfile_used_for_install,
+                    .lockfile = manager.lockfile,
                     .options = manager.options,
                     .updates = manager.update_requests,
                     .successfully_installed = install_summary.successfully_installed,
@@ -15167,6 +15114,7 @@ pub const PackageManager = struct {
         const lockfile = this.lockfile;
         const resolutions_lists: []const Lockfile.DependencyIDSlice = lockfile.packages.items(.resolutions);
         const dependency_lists: []const Lockfile.DependencySlice = lockfile.packages.items(.dependencies);
+        const pkg_resolutions = lockfile.packages.items(.resolution);
         const dependencies_buffer = lockfile.buffers.dependencies.items;
         const resolutions_buffer = lockfile.buffers.resolutions.items;
         const end: PackageID = @truncate(lockfile.packages.len);
@@ -15174,7 +15122,6 @@ pub const PackageManager = struct {
         var any_failed = false;
         const string_buf = lockfile.buffers.string_bytes.items;
 
-        const root_list = resolutions_lists[0];
         for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
             for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
                 if (package_id < end) continue;
@@ -15183,13 +15130,13 @@ pub const PackageManager = struct {
                 //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
                 if (failed_dep.behavior.isPeer()) continue;
 
+                const features = switch (pkg_resolutions[parent_id].tag) {
+                    .root, .workspace, .folder => this.options.local_package_features,
+                    else => this.options.remote_package_features,
+                };
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(
-                    if (root_list.contains(@truncate(parent_id)))
-                        this.options.local_package_features
-                    else
-                        this.options.remote_package_features,
-                )) continue;
+                if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(features)) continue;
+
                 if (log_level != .silent) {
                     if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
                         Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{

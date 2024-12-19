@@ -598,7 +598,7 @@ pub const Stringifier = struct {
                     // folder      -> [ "name@file:path", INFO ]
                     // workspace   -> [ "name@workspace:path", INFO ]
                     // tarball     -> [ "name@tarball", INFO ]
-                    // root        -> [ "name@root:", { bin } ]
+                    // root        -> [ "name@root:", { bin, binDir } ]
                     // git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
                     // github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
 
@@ -1587,7 +1587,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log, if (manager) |pm| pm.options.local_package_features.dev_dependencies else true) catch |err| {
+        lockfile.hoist(log) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {

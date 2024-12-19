@@ -660,82 +660,88 @@ pub const Tree = struct {
         return .{ rel, depth };
     }
 
-    const Builder = struct {
-        allocator: Allocator,
-        name_hashes: []const PackageNameHash,
-        list: bun.MultiArrayList(Entry) = .{},
-        resolutions: []const PackageID,
-        dependencies: []const Dependency,
-        resolution_lists: []const Lockfile.DependencyIDSlice,
-        queue: Lockfile.TreeFiller,
-        log: *logger.Log,
-        lockfile: *Lockfile,
-        prefer_dev_dependencies: bool = false,
-        sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
+    const BuilderMethod = enum { hoist, filter_and_hoist };
 
-        pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
-            this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
-        }
+    pub fn Builder(comptime method: BuilderMethod) type {
+        return struct {
+            allocator: Allocator,
+            name_hashes: []const PackageNameHash,
+            list: bun.MultiArrayList(Entry) = .{},
+            resolutions: []const PackageID,
+            dependencies: []const Dependency,
+            resolution_lists: []const Lockfile.DependencyIDSlice,
+            queue: Lockfile.TreeFiller,
+            log: *logger.Log,
+            lockfile: *Lockfile,
+            manager: if (method == .hoist) void else *const PackageManager,
+            sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
 
-        pub fn buf(this: *const Builder) []const u8 {
-            return this.lockfile.buffers.string_bytes.items;
-        }
-
-        pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
-            return this.lockfile.packages.items(.name)[id].fmt(this.lockfile.buffers.string_bytes.items);
-        }
-
-        pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
-            return this.lockfile.packages.items(.resolution)[id].fmt(this.lockfile.buffers.string_bytes.items, .auto);
-        }
-
-        pub const Entry = struct {
-            tree: Tree,
-            dependencies: Lockfile.DependencyIDList,
-        };
-
-        /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
-        pub fn clean(this: *Builder) !DependencyIDList {
-            const end = @as(Id, @truncate(this.list.len));
-            var i: Id = 0;
-            var total: u32 = 0;
-            const trees = this.list.items(.tree);
-            const dependencies = this.list.items(.dependencies);
-
-            while (i < end) : (i += 1) {
-                total += trees[i].dependencies.len;
+            pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
+                this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
             }
 
-            var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
-            var next = PackageIDSlice{};
+            pub fn buf(this: *const @This()) []const u8 {
+                return this.lockfile.buffers.string_bytes.items;
+            }
 
-            for (trees, dependencies) |*tree, *child| {
-                if (tree.dependencies.len > 0) {
-                    const len = @as(PackageID, @truncate(child.items.len));
-                    next.off += next.len;
-                    next.len = len;
-                    tree.dependencies = next;
-                    dependency_ids.appendSliceAssumeCapacity(child.items);
-                    child.deinit(this.allocator);
+            pub fn packageName(this: *@This(), id: PackageID) String.Formatter {
+                return this.lockfile.packages.items(.name)[id].fmt(this.lockfile.buffers.string_bytes.items);
+            }
+
+            pub fn packageVersion(this: *@This(), id: PackageID) Resolution.Formatter {
+                return this.lockfile.packages.items(.resolution)[id].fmt(this.lockfile.buffers.string_bytes.items, .auto);
+            }
+
+            pub const Entry = struct {
+                tree: Tree,
+                dependencies: Lockfile.DependencyIDList,
+            };
+
+            /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
+            pub fn clean(this: *@This()) OOM!DependencyIDList {
+                const end = @as(Id, @truncate(this.list.len));
+                var i: Id = 0;
+                var total: u32 = 0;
+                const trees = this.list.items(.tree);
+                const dependencies = this.list.items(.dependencies);
+
+                while (i < end) : (i += 1) {
+                    total += trees[i].dependencies.len;
                 }
-            }
-            this.queue.deinit();
-            this.sort_buf.deinit(this.allocator);
 
-            return dependency_ids;
-        }
-    };
+                var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
+                var next = PackageIDSlice{};
+
+                for (trees, dependencies) |*tree, *child| {
+                    if (tree.dependencies.len > 0) {
+                        const len = @as(PackageID, @truncate(child.items.len));
+                        next.off += next.len;
+                        next.len = len;
+                        tree.dependencies = next;
+                        dependency_ids.appendSliceAssumeCapacity(child.items);
+                        child.deinit(this.allocator);
+                    }
+                }
+                this.queue.deinit();
+                this.sort_buf.deinit(this.allocator);
+
+                return dependency_ids;
+            }
+        };
+    }
 
     pub fn processSubtree(
         this: *const Tree,
         dependency_id: DependencyID,
-        builder: *Builder,
+        comptime method: BuilderMethod,
+        builder: *Builder(method),
+        log_level: if (method == .hoist) void else PackageManager.Options.LogLevel,
     ) SubtreeError!void {
-        const package_id = switch (dependency_id) {
+        const parent_pkg_id = switch (dependency_id) {
             root_dep_id => 0,
             else => |id| builder.resolutions[id],
         };
-        const resolution_list = builder.resolution_lists[package_id];
+        const resolution_list = builder.resolution_lists[parent_pkg_id];
 
         if (resolution_list.len == 0) return;
 
@@ -754,7 +760,11 @@ pub const Tree = struct {
         const next: *Tree = &trees[builder.list.len - 1];
         const name_hashes: []const PackageNameHash = builder.name_hashes;
         const max_package_id = @as(PackageID, @truncate(name_hashes.len));
-        const resolutions = builder.lockfile.packages.items(.resolution);
+
+        const pkgs = builder.lockfile.packages.slice();
+        const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_metas = pkgs.items(.meta);
+        const pkg_names = pkgs.items(.name);
 
         builder.sort_buf.clearRetainingCapacity();
         try builder.sort_buf.ensureUnusedCapacity(builder.allocator, resolution_list.len);
@@ -787,21 +797,48 @@ pub const Tree = struct {
         );
 
         for (builder.sort_buf.items) |dep_id| {
-            const pid = builder.resolutions[dep_id];
+            const pkg_id = builder.resolutions[dep_id];
             // Skip unresolved packages, e.g. "peerDependencies"
-            if (pid >= max_package_id) continue;
+            if (pkg_id >= max_package_id) continue;
+
+            // filter out disabled dependencies
+            if (comptime method == .filter_and_hoist) {
+                if (builder.lockfile.isPackageDisabled(
+                    dep_id,
+                    switch (pkg_resolutions[parent_pkg_id].tag) {
+                        .root, .workspace, .folder => builder.manager.options.local_package_features,
+                        else => builder.manager.options.remote_package_features,
+                    },
+                    &pkg_metas[pkg_id],
+                )) {
+                    if (log_level.isVerbose()) {
+                        const meta = pkg_metas[pkg_id];
+                        const name = builder.lockfile.str(&pkg_names[pkg_id]);
+                        if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+                            Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
+                        } else if (!meta.os.isMatch()) {
+                            Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
+                        } else if (!meta.arch.isMatch()) {
+                            Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
+                        }
+                    }
+
+                    continue;
+                }
+            }
 
             const dependency = builder.dependencies[dep_id];
             // Do not hoist folder dependencies
-            const res: HoistResult = if (resolutions[pid].tag == .folder)
+            const res: HoistResult = if (pkg_resolutions[pkg_id].tag == .folder)
                 .{ .dest_id = next.id }
             else
                 try next.hoistDependency(
                     true,
-                    pid,
+                    pkg_id,
                     &dependency,
                     dependency_lists,
                     trees,
+                    method,
                     builder,
                 );
 
@@ -819,7 +856,7 @@ pub const Tree = struct {
                 .dest_id => |dest_id| {
                     dependency_lists[dest_id].append(builder.allocator, dep_id) catch bun.outOfMemory();
                     trees[dest_id].dependencies.len += 1;
-                    if (builder.resolution_lists[pid].len > 0) {
+                    if (builder.resolution_lists[pkg_id].len > 0) {
                         try builder.queue.writeItem(.{
                             .tree_id = dest_id,
                             .dependency_id = dep_id,
@@ -847,7 +884,8 @@ pub const Tree = struct {
         dependency: *const Dependency,
         dependency_lists: []Lockfile.DependencyIDList,
         trees: []Tree,
-        builder: *Builder,
+        comptime method: BuilderMethod,
+        builder: *Builder(method),
     ) !HoistResult {
         const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
         for (0..this_dependencies.len) |i| {
@@ -861,14 +899,11 @@ pub const Tree = struct {
             }
 
             if (comptime as_defined) {
-                // same dev dependency as another package in the same package.json, but different version.
-                // choose dev dep over other if enabled
                 if (dep.behavior.isDev() != dependency.behavior.isDev()) {
-                    if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                        return .hoisted; // 1
-                    }
-
-                    return .dependency_loop; // 3
+                    // will only happen in workspaces and root package because
+                    // dev dependencies won't be included in other types of
+                    // dependencies
+                    return .hoisted; // 1
                 }
             }
 
@@ -915,6 +950,7 @@ pub const Tree = struct {
                 dependency,
                 dependency_lists,
                 trees,
+                method,
                 builder,
             ) catch unreachable;
             if (!as_defined or id != .dependency_loop) return id; // 1 or 2
@@ -924,6 +960,19 @@ pub const Tree = struct {
         return .{ .dest_id = this.id }; // 2
     }
 };
+
+pub fn isPackageDisabled(
+    lockfile: *const Lockfile,
+    dep_id: DependencyID,
+    features: Features,
+    meta: *const Package.Meta,
+) bool {
+    if (meta.isDisabled()) return true;
+
+    const dep = lockfile.buffers.dependencies.items[dep_id];
+
+    return !dep.behavior.isEnabled(features);
+}
 
 /// This conditionally clones the lockfile with root packages marked as non-resolved
 /// that do not satisfy `Features`. The package may still end up installed even
@@ -1387,7 +1436,7 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            try this.lockfile.hoist(this.log, this.manager.options.local_package_features.dev_dependencies);
+            try this.lockfile.hoist(this.log);
         }
 
         // capacity is used for calculating byte size
@@ -1397,10 +1446,10 @@ const Cloner = struct {
     }
 };
 
-pub fn hoist(lockfile: *Lockfile, log: *logger.Log, prefer_dev_dependencies: bool) Tree.SubtreeError!void {
+pub fn hoist(lockfile: *Lockfile, log: *logger.Log) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
-    var builder = Tree.Builder{
+    var builder = Tree.Builder(.hoist){
         .name_hashes = slice.items(.name_hash),
         .queue = TreeFiller.init(allocator),
         .resolution_lists = slice.items(.resolutions),
@@ -1409,13 +1458,13 @@ pub fn hoist(lockfile: *Lockfile, log: *logger.Log, prefer_dev_dependencies: boo
         .dependencies = lockfile.buffers.dependencies.items,
         .log = log,
         .lockfile = lockfile,
-        .prefer_dev_dependencies = prefer_dev_dependencies,
+        .manager = {},
     };
 
-    try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
+    try (Tree{}).processSubtree(Tree.root_dep_id, .hoist, &builder, {});
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
-        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, &builder);
+        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, .hoist, &builder, {});
     }
 
     lockfile.buffers.hoisted_dependencies = try builder.clean();
@@ -1426,6 +1475,42 @@ pub fn hoist(lockfile: *Lockfile, log: *logger.Log, prefer_dev_dependencies: boo
             .capacity = final.len,
         };
     }
+}
+
+const FilterResult = struct {
+    trees: []Tree,
+    dep_ids: []DependencyID,
+};
+
+pub fn filter(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+    manager: *const PackageManager,
+) Tree.SubtreeError!FilterResult {
+    const allocator = lockfile.allocator;
+    var slice = lockfile.packages.slice();
+    var builder = Tree.Builder(.filter_and_hoist){
+        .name_hashes = slice.items(.name_hash),
+        .queue = TreeFiller.init(allocator),
+        .resolution_lists = slice.items(.resolutions),
+        .resolutions = lockfile.buffers.resolutions.items,
+        .allocator = allocator,
+        .dependencies = lockfile.buffers.dependencies.items,
+        .log = log,
+        .lockfile = lockfile,
+        .manager = manager,
+    };
+
+    try (Tree{}).processSubtree(Tree.root_dep_id, .filter_and_hoist, &builder, manager.options.log_level);
+    // This goes breadth-first
+    while (builder.queue.readItem()) |item| {
+        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, .filter_and_hoist, &builder, manager.options.log_level);
+    }
+
+    return .{
+        .trees = builder.list.items(.tree),
+        .dep_ids = (try builder.clean()).items,
+    };
 }
 
 const PendingResolution = struct {

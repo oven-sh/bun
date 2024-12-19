@@ -1747,7 +1747,7 @@ pub const DNSResolver = struct {
     pending_cname_cache_cares: CnamePendingCache = CnamePendingCache.init(),
     pending_a_cache_cares: APendingCache = APendingCache.init(),
     pending_aaaa_cache_cares: AAAAPendingCache = AAAAPendingCache.init(),
-    pending_addr_cache_crares: AddrPendingCache = AddrPendingCache.init(),
+    pending_addr_cache_cares: AddrPendingCache = AddrPendingCache.init(),
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
@@ -1800,8 +1800,8 @@ pub const DNSResolver = struct {
     const NSPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ns").PendingCacheKey, 32);
     const PtrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ptr").PendingCacheKey, 32);
     const CnamePendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "cname").PendingCacheKey, 32);
-    const APendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "a").PendingCacheKey, 32);
-    const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "aaaa").PendingCacheKey, 32);
+    const APendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttl, "a").PendingCacheKey, 32);
+    const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttl, "aaaa").PendingCacheKey, 32);
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
@@ -1949,7 +1949,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn drainPendingAddrCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) void {
-        const key = this.getKey(index, "pending_addr_cache_crares", GetHostByAddrInfoRequest);
+        const key = this.getKey(index, "pending_addr_cache_cares", GetHostByAddrInfoRequest);
 
         var addr = result orelse {
             var pending: ?*CAresReverse = key.lookup.head.next;
@@ -2347,10 +2347,10 @@ pub const DNSResolver = struct {
 
         switch (record_type) {
             RecordType.A => {
-                return resolver.doResolveCAres(c_ares.struct_hostent, "a", name.slice(), globalThis);
+                return resolver.doResolveCAres(c_ares.hostent_with_ttl, "a", name.slice(), globalThis);
             },
             RecordType.AAAA => {
-                return resolver.doResolveCAres(c_ares.struct_hostent, "aaaa", name.slice(), globalThis);
+                return resolver.doResolveCAres(c_ares.hostent_with_ttl, "aaaa", name.slice(), globalThis);
             },
             RecordType.CAA => {
                 return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
@@ -2413,7 +2413,7 @@ pub const DNSResolver = struct {
         var cache = resolver.getOrPutIntoResolvePendingCache(
             GetHostByAddrInfoRequest,
             key,
-            "pending_addr_cache_crares",
+            "pending_addr_cache_cares",
         );
         if (cache == .inflight) {
             var cares_reverse = CAresReverse.init(globalThis, globalThis.allocator(), ip) catch unreachable;
@@ -2426,7 +2426,7 @@ pub const DNSResolver = struct {
             resolver,
             ip,
             globalThis,
-            "pending_addr_cache_crares",
+            "pending_addr_cache_cares",
         ) catch unreachable;
 
         const promise = request.tail.promise.value();

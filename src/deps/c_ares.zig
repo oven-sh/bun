@@ -192,6 +192,7 @@ pub const Options = extern struct {
     evsys: ares_evsys_t = 0,
     server_failover_opts: struct_ares_server_failover_options = @import("std").mem.zeroes(struct_ares_server_failover_options),
 };
+
 pub const struct_hostent = extern struct {
     h_name: [*c]u8,
     h_aliases: [*c][*c]u8,
@@ -200,39 +201,38 @@ pub const struct_hostent = extern struct {
     h_addr_list: [*c][*c]u8,
 
     pub fn toJSResponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
-
-        // A cname lookup always returns a single record but we follow the common API here.
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
-            if (this.h_name != null) {
-                const array = JSC.JSValue.createEmptyArray(globalThis, 1);
-                const h_name_len = bun.len(this.h_name);
-                const h_name_slice = this.h_name[0..h_name_len];
-                array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toJS(globalThis));
-                return array;
-            }
-            return JSC.JSValue.createEmptyArray(globalThis, 0);
-        } else {
-            if (this.h_aliases == null) {
+            // A cname lookup always returns a single record but we follow the common API here.
+            if (this.h_name == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-
-            var count: u32 = 0;
-            while (this.h_aliases[count] != null) {
-                count += 1;
-            }
-
-            const array = JSC.JSValue.createEmptyArray(globalThis, count);
-            count = 0;
-
-            while (this.h_aliases[count]) |alias| {
-                const alias_len = bun.len(alias);
-                const alias_slice = alias[0..alias_len];
-                array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
-                count += 1;
-            }
-
+            const array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            const h_name_len = bun.len(this.h_name);
+            const h_name_slice = this.h_name[0..h_name_len];
+            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toJS(globalThis));
             return array;
         }
+
+        if (this.h_aliases == null) {
+            return JSC.JSValue.createEmptyArray(globalThis, 0);
+        }
+
+        var count: u32 = 0;
+        while (this.h_aliases[count] != null) {
+            count += 1;
+        }
+
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+        count = 0;
+
+        while (this.h_aliases[count]) |alias| {
+            const alias_len = bun.len(alias);
+            const alias_slice = alias[0..alias_len];
+            array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
+            count += 1;
+        }
+
+        return array;
     }
 
     pub fn Callback(comptime Type: type) type {
@@ -269,7 +269,17 @@ pub const struct_hostent = extern struct {
                 }
 
                 var start: [*c]struct_hostent = undefined;
-                if (comptime strings.eqlComptime(lookup_name, "ns")) {
+                if (comptime strings.eqlComptime(lookup_name, "cname")) {
+                    var addrttls: [256]struct_ares_addrttl = undefined;
+                    var naddrttls: i32 = 256;
+
+                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    function(this, null, timeouts, start);
+                } else if (comptime strings.eqlComptime(lookup_name, "ns")) {
                     const result = ares_parse_ns_reply(buffer, buffer_length, &start);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
@@ -283,16 +293,8 @@ pub const struct_hostent = extern struct {
                         return;
                     }
                     function(this, null, timeouts, start);
-                } else if (comptime strings.eqlComptime(lookup_name, "cname")) {
-                    var addrttls: [256]struct_ares_addrttl = undefined;
-                    var naddrttls: i32 = 256;
-
-                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
-                    if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
-                    }
-                    function(this, null, timeouts, start);
+                } else {
+                    @compileError(std.fmt.comptimePrint("Unsupported struct_hostent record type: {s}", .{lookup_name}));
                 }
             }
         }.handle;
@@ -300,6 +302,116 @@ pub const struct_hostent = extern struct {
 
     pub fn deinit(this: *struct_hostent) void {
         ares_free_hostent(this);
+    }
+};
+
+pub const hostent_with_ttl = struct {
+    hostent: *struct_hostent,
+    ttl: ?c_int,
+
+    pub fn toJSResponse(this: *hostent_with_ttl, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
+        if (comptime strings.eqlComptime(lookup_name, "a") or strings.eqlComptime(lookup_name, "aaaa")) {
+            if (this.hostent.h_addr_list == null) {
+                return JSC.JSValue.createEmptyArray(globalThis, 0);
+            }
+
+            var count: u32 = 0;
+            while (this.hostent.h_addr_list[count] != null) {
+                count += 1;
+            }
+
+            const array = JSC.JSValue.createEmptyArray(globalThis, count);
+            count = 0;
+
+            const address_key = JSC.ZigString.init("address").withEncoding();
+            const ttl_key = JSC.ZigString.init("ttl").withEncoding();
+
+            while (this.hostent.h_addr_list[count]) |addr| : (count += 1) {
+                const addr_string = (if (this.hostent.h_addrtype == std.posix.AF.INET6)
+                    bun.dns.addressToJS(&std.net.Address.initIp6(addr[0..16].*, 0, 0, 0), globalThis)
+                else
+                    bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
+
+                const result_object = JSC.JSValue.createObject2(globalThis, &address_key, &ttl_key, addr_string, JSC.jsNumber(this.ttl orelse 0));
+                array.putIndex(globalThis, count, result_object);
+            }
+
+            return array;
+        } else {
+            @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttl record type: {s}", .{lookup_name}));
+        }
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttl) void;
+    }
+
+    pub fn hostCallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_host_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttl) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, hostent);
+            }
+        }.handle;
+    }
+
+    pub fn callbackWrapper(
+        comptime lookup_name: []const u8,
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var start: [*c]struct_hostent = undefined;
+                if (comptime strings.eqlComptime(lookup_name, "a")) {
+                    var addrttls: [256]struct_ares_addrttl = undefined;
+                    var naddrttls: c_int = 256;
+
+                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    var with_ttl = bun.default_allocator.create(hostent_with_ttl) catch bun.outOfMemory();
+                    with_ttl.hostent = start;
+                    with_ttl.ttl = if (naddrttls > 0) addrttls[0].ttl else null;
+                    function(this, null, timeouts, with_ttl);
+                } else if (comptime strings.eqlComptime(lookup_name, "aaaa")) {
+                    var addr6ttls: [256]struct_ares_addr6ttl = undefined;
+                    var naddr6ttls: c_int = 256;
+
+                    const result = ares_parse_aaaa_reply(buffer, buffer_length, &start, &addr6ttls, &naddr6ttls);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    var with_ttl = bun.default_allocator.create(hostent_with_ttl) catch bun.outOfMemory();
+                    with_ttl.hostent = start;
+                    with_ttl.ttl = if (naddr6ttls > 0) addr6ttls[0].ttl else null;
+                    function(this, null, timeouts, with_ttl);
+                } else {
+                    @compileError(std.fmt.comptimePrint("Unsupported struct_hostent record type: {s}", .{lookup_name}));
+                }
+            }
+        }.handle;
+    }
+
+    pub fn deinit(this: *hostent_with_ttl) void {
+        this.hostent.deinit();
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -351,7 +463,7 @@ pub const struct_nameinfo = extern struct {
     }
 };
 
-pub const struct_timeval = opaque {};
+pub const struct_timeval = std.posix.timeval;
 pub const struct_Channeldata = opaque {};
 pub const AddrInfo_cname = extern struct {
     ttl: c_int,
@@ -730,7 +842,7 @@ pub const struct_ares_in6_addr = extern struct {
     _S6_un: union_unnamed_2,
 };
 pub const struct_ares_addrttl = extern struct {
-    ipaddr: struct_in_addr,
+    ipaddr: u32,
     ttl: c_int,
 };
 pub const struct_ares_addr6ttl = extern struct {

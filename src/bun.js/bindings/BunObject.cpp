@@ -33,7 +33,12 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+
+#ifdef WIN32
+#include <ws2def.h>
+#else
 #include <netdb.h>
+#endif
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);

@@ -1690,6 +1690,12 @@ pub const BundleV2 = struct {
             bundler.configureLinker();
             try bundler.configureDefines();
 
+            if (bun.FeatureFlags.breaking_changes_1_2) {
+                if (!bundler.options.production) {
+                    try bundler.options.conditions.appendSlice(&.{"development"});
+                }
+            }
+
             bundler.resolver.opts = bundler.options;
         }
 

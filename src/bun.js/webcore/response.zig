@@ -912,6 +912,13 @@ pub const Fetch = struct {
                 };
             }
 
+            pub fn isS3(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.isS3(),
+                    else => false,
+                };
+            }
+
             pub fn hasContentTypeFromUser(this: *HTTPRequestBody) bool {
                 return switch (this.*) {
                     .AnyBlob => |blob| blob.hasContentTypeFromUser(),
@@ -3156,38 +3163,38 @@ pub const Fetch = struct {
                     }
                 }
 
-                // TODO: make this async + lazy
-                const res = JSC.Node.NodeFS.readFile(
-                    globalThis.bunVM().nodeFS(),
-                    .{
-                        .encoding = .buffer,
-                        .path = .{ .fd = opened_fd },
-                        .offset = body.AnyBlob.Blob.offset,
-                        .max_size = body.AnyBlob.Blob.size,
-                    },
-                    .sync,
-                );
+                // is a file we can use chunked here
 
-                if (body.store().?.data.file.pathlike == .path) {
-                    _ = bun.sys.close(opened_fd);
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                    var old = body;
+                    defer old.detach();
+                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                    break :prepare_body;
                 }
+                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start file stream", .{}));
+                body.detach();
 
-                switch (res) {
-                    .err => |err| {
-                        is_error = true;
-                        const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
-                        body.detach();
-
-                        return rejected_value;
-                    },
-                    .result => |result| {
-                        body.detach();
-                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
-                        http_body = .{ .AnyBlob = body.AnyBlob };
-                    },
-                }
+                return rejected_value;
             }
         }
+
+        if (body.isS3()) {
+            prepare_body: {
+                // is a S3 file we can use chunked here
+
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                    var old = body;
+                    defer old.detach();
+                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                    break :prepare_body;
+                }
+                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
+                body.detach();
+
+                return rejected_value;
+            }
+        }
+
         if (url.isS3()) {
             // get ENV config
             var credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
@@ -3197,6 +3204,8 @@ pub const Fetch = struct {
             var regionSlice: ?ZigString.Slice = null;
             var endpointSlice: ?ZigString.Slice = null;
             var bucketSlice: ?ZigString.Slice = null;
+
+            const multipart_options: s3.MultiPartUpload.MultiPartUploadOptions = .{};
 
             defer {
                 // cleanup s3 options
@@ -3267,6 +3276,78 @@ pub const Fetch = struct {
                         }
                     }
                 }
+            }
+
+            if (body == .ReadableStream) {
+                // we cannot direct stream to s3
+                defer body.ReadableStream.deinit();
+                const Wrapper = struct {
+                    promise: JSC.JSPromise.Strong,
+                    url: ZigURL,
+                    url_proxy_buffer: []const u8,
+                    pub usingnamespace bun.New(@This());
+
+                    pub fn resolve(result: s3.AWSCredentials.S3UploadResult, self: *@This()) void {
+                        if (self.promise.globalObject()) |global| {
+                            switch (result) {
+                                .success => {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{ .value = .Empty },
+                                        .redirected = false,
+                                        .init = .{ .method = .PUT, .status_code = 200 },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                                .failure => |err| {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{
+                                            .value = .{
+                                                .InternalBlob = .{
+                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                                    .was_string = true,
+                                                },
+                                            },
+                                        },
+                                        .redirected = false,
+                                        .init = .{
+                                            .method = .PUT,
+                                            .status_code = 500,
+                                            .status_text = bun.String.createAtomIfPossible(err.code),
+                                        },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                            }
+                        }
+                        bun.default_allocator.free(self.url_proxy_buffer);
+                        self.destroy();
+                    }
+                };
+                if (method != .PUT and method != .POST) {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
+                }
+                const promise = JSC.JSPromise.Strong.init(globalThis);
+
+                const s3_stream = Wrapper.new(.{
+                    .url = url,
+                    .url_proxy_buffer = url_proxy_buffer,
+                    .promise = promise,
+                });
+
+                const promise_value = promise.value();
+                _ = credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, multipart_options, @ptrCast(&Wrapper.resolve), s3_stream);
+                url = .{};
+                url_proxy_buffer = "";
+                return promise_value;
+            }
+            if (method == .POST) {
+                method = .PUT;
             }
 
             // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost

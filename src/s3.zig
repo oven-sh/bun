@@ -666,17 +666,37 @@ pub const AWSCredentials = struct {
     pub fn s3DownloadSlice(this: *const @This(), path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
         const range = brk: {
             if (size) |size_| {
+                if (offset == 0) break :brk null;
+
                 var end = (offset + size_);
                 if (size_ > 0) {
                     end -= 1;
                 }
                 break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
             }
+            if (offset == 0) break :brk null;
             break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
         };
 
         this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range, null);
     }
+
+    // pub fn s3DownloadStream(this: *@This(), path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque) void {
+    //     const range = brk: {
+    //         if (size) |size_| {
+    //             if (offset == 0) return null;
+
+    //             var end = (offset + size_);
+    //             if (size_ > 0) {
+    //                 end -= 1;
+    //             }
+    //             break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+    //         }
+    //         if (offset == 0) return null;
+    //         break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+    //     };
+
+    // }
 
     pub fn s3Delete(this: *const @This(), path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
         this.executeSimpleS3Request(path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null, null);
@@ -691,7 +711,7 @@ pub const AWSCredentials = struct {
         sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
         callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
-        ref_count: u32 = 0,
+        ref_count: u32 = 1,
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
         pub fn resolve(result: S3UploadResult, self: *@This()) void {
             const sink = self.sink;
@@ -935,6 +955,7 @@ pub const AWSCredentials = struct {
 pub const MultiPartUpload = struct {
     pub const MAX_SINGLE_UPLOAD_SIZE: usize = 4294967296; // we limit to 4 GiB
     pub const OneMiB: usize = 1048576;
+    pub const DefaultPartSize = OneMiB * 5;
     const MAX_QUEUE_SIZE = 64; // dont make sense more than this because we use fetch anything greater will be 64
     const AWS = AWSCredentials;
     queue: std.ArrayListUnmanaged(UploadPart) = .{},

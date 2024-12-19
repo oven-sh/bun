@@ -3670,7 +3670,7 @@ pub const Blob = struct {
         return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
-    fn isS3(this: *Blob) bool {
+    fn isS3(this: *const Blob) bool {
         if (this.store) |store| {
             return store.data == .s3;
         }
@@ -5542,6 +5542,13 @@ pub const AnyBlob = union(enum) {
     pub fn needsToReadFile(self: *const @This()) bool {
         return switch (self.*) {
             .Blob => self.Blob.needsToReadFile(),
+            .WTFStringImpl, .InternalBlob => false,
+        };
+    }
+
+    pub fn isS3(self: *const @This()) bool {
+        return switch (self.*) {
+            .Blob => self.Blob.isS3(),
             .WTFStringImpl, .InternalBlob => false,
         };
     }

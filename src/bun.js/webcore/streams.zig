@@ -361,6 +361,9 @@ pub const ReadableStream = struct {
                     .globalThis = globalThis,
                     .context = .{
                         .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
+                        .start_offset = blob.offset,
+                        .max_size = if (blob.size != Blob.max_size) blob.size else null,
+
                         .lazy = .{
                             .blob = store,
                         },
@@ -3896,6 +3899,8 @@ pub const FileReader = struct {
     pending_view: []u8 = &.{},
     fd: bun.FileDescriptor = bun.invalid_fd,
     start_offset: ?usize = null,
+    max_size: ?usize = null,
+    total_readed: usize = 0,
     started: bool = false,
     waiting_for_onReaderDone: bool = false,
     event_loop: JSC.EventLoopHandle,
@@ -4174,15 +4179,32 @@ pub const FileReader = struct {
     }
 
     pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
-        const buf = init_buf;
+        var buf = init_buf;
         log("onReadChunk() = {d} ({s})", .{ buf.len, @tagName(state) });
 
         if (this.done) {
             this.reader.close();
             return false;
         }
+        var close = false;
+        defer if (close) this.reader.close();
+        var hasMore = state != .eof;
 
-        const hasMore = state != .eof;
+        if (buf.len > 0) {
+            if (this.max_size) |max_size| {
+                if (this.total_readed >= max_size) return false;
+                const len = @min(max_size - this.total_readed, buf.len);
+                if (buf.len > len) {
+                    buf = buf[0..len];
+                }
+                this.total_readed += len;
+
+                if (buf.len == 0) {
+                    close = true;
+                    hasMore = false;
+                }
+            }
+        }
 
         if (this.read_inside_on_pull != .none) {
             switch (this.read_inside_on_pull) {

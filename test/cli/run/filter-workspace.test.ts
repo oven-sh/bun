@@ -87,6 +87,7 @@ function runInCwdSuccess({
   command = ["present"],
   auto = false,
   env = {},
+  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -95,47 +96,44 @@ function runInCwdSuccess({
   command?: string[];
   auto?: boolean;
   env?: Record<string, string | undefined>;
+  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
 
-  // Split command into flags and script name
-  const [flags, scriptName] = command.reduce(([flags, script], arg, i, arr) => {
-    if (arg.startsWith("--")) {
-      flags.push(arg);
-      // Include flag value if next arg exists and isn't a flag
-      if (arr[i + 1] && !arr[i + 1].startsWith("--")) {
-        flags.push(arr[i + 1]);
-      }
-    } else if (!flags.includes(`--${arg}`) && !arr[i - 1]?.startsWith("--")) {
-      script = arg;
+  // Add elide-lines first if specified
+  if (elideCount !== undefined) {
+    cmd.push("--elide-lines", elideCount.toString());
+  }
+
+  if (Array.isArray(pattern)) {
+    for (const p of pattern) {
+      cmd.push("--filter", p);
     }
-    return [flags, script];
-  }, [[] as string[], undefined as string | undefined]);
+  } else {
+    cmd.push("--filter", pattern);
+  }
 
-  // Build command: flags -> filter -> script
-  cmd.push(...flags);
-  cmd.push("--filter", ...(Array.isArray(pattern) ? pattern : [pattern]));
-  if (scriptName) cmd.push(scriptName);
+  for (const c of command) {
+    cmd.push(c);
+  }
 
-  const { exitCode, stdout } = spawnSync({
+  const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
     env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
-
   const stdoutval = stdout.toString();
   for (const r of Array.isArray(target_pattern) ? target_pattern : [target_pattern]) {
     expect(stdoutval).toMatch(r);
   }
-
   if (antipattern !== undefined) {
     for (const r of Array.isArray(antipattern) ? antipattern : [antipattern]) {
       expect(stdoutval).not.toMatch(r);
     }
   }
-
+  // expect(stderr.toString()).toBeEmpty();
   expect(exitCode).toBe(0);
 }
 
@@ -462,6 +460,7 @@ describe("bun", () => {
         /(?:log_line[\s\S]*?){20}/,
       ],
       command: ["script"],
+      elideCount: 10,
     });
   });
 
@@ -495,7 +494,8 @@ describe("bun", () => {
         /\[5 lines elided\]/,
         /(?:log_line[\s\S]*?){20}/,
       ],
-      command: ["--elide-lines", "15", "script"],
+      command: ["script"],
+      elideCount: 15,
     });
   });
 
@@ -524,7 +524,8 @@ describe("bun", () => {
       env: { FORCE_COLOR: "1" },
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
-      command: ["--elide-lines", "0", "script"],
+      command: ["script"],
+      elideCount: 0,
     });
   });
 });

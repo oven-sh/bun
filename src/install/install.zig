@@ -7442,24 +7442,23 @@ pub const PackageManager = struct {
                     this.enable.manifest_cache_control = false;
                 }
 
-                // TODO: implement
-                // if (cli.omit) |omit| {
-                //     if (omit.dev) {
-                //         this.local_package_features.dev_dependencies = false;
-                //         // remote packages should never install dev dependencies
-                //         // (TODO: unless git dependency with postinstalls)
-                //     }
+                if (cli.omit) |omit| {
+                    if (omit.dev) {
+                        this.local_package_features.dev_dependencies = false;
+                        // remote packages should never install dev dependencies
+                        // (TODO: unless git dependency with postinstalls)
+                    }
 
-                //     if (omit.optional) {
-                //         this.local_package_features.optional_dependencies = false;
-                //         this.remote_package_features.optional_dependencies = false;
-                //     }
+                    if (omit.optional) {
+                        this.local_package_features.optional_dependencies = false;
+                        this.remote_package_features.optional_dependencies = false;
+                    }
 
-                //     if (omit.peer) {
-                //         this.local_package_features.peer_dependencies = false;
-                //         this.remote_package_features.peer_dependencies = false;
-                //     }
-                // }
+                    if (omit.peer) {
+                        this.local_package_features.peer_dependencies = false;
+                        this.remote_package_features.peer_dependencies = false;
+                    }
+                }
 
                 if (cli.global or cli.ignore_scripts) {
                     this.do.run_scripts = false;
@@ -9443,6 +9442,7 @@ pub const PackageManager = struct {
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
         clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
         clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
+        clap.parseParam("--omit <STR>...                       Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9555,7 +9555,7 @@ pub const PackageManager = struct {
         development: bool = false,
         optional: bool = false,
 
-        // omit: ?Omit = null,
+        omit: ?Omit = null,
 
         exact: bool = false,
 
@@ -9580,11 +9580,11 @@ pub const PackageManager = struct {
             },
         };
 
-        // const Omit = struct {
-        //     dev: bool = false,
-        //     optional: bool = false,
-        //     peer: bool = false,
-        // };
+        const Omit = struct {
+            dev: bool = false,
+            optional: bool = false,
+            peer: bool = false,
+        };
 
         pub fn printHelp(subcommand: Subcommand) void {
             switch (subcommand) {
@@ -9918,6 +9918,25 @@ pub const PackageManager = struct {
 
             if (args.flag("--save-text-lockfile")) {
                 cli.save_text_lockfile = true;
+            }
+
+            const omit_values = args.options("--omit");
+
+            if (omit_values.len > 0) {
+                var omit: Omit = .{};
+                for (omit_values) |omit_value| {
+                    if (strings.eqlComptime(omit_value, "dev")) {
+                        omit.dev = true;
+                    } else if (strings.eqlComptime(omit_value, "optional")) {
+                        omit.optional = true;
+                    } else if (strings.eqlComptime(omit_value, "peer")) {
+                        omit.peer = true;
+                    } else {
+                        Output.errGeneric("invalid `omit` value: '{s}'", .{omit_value});
+                        Global.crash();
+                    }
+                }
+                cli.omit = omit;
             }
 
             // commands that support --filter

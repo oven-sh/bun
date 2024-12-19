@@ -689,23 +689,30 @@ pub const AWSCredentials = struct {
     const S3UploadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
-        callback: *const fn (S3UploadResult, *anyopaque) void,
+        callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
         ref_count: u32 = 0,
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
         pub fn resolve(result: S3UploadResult, self: *@This()) void {
             const sink = self.sink;
             defer self.deref();
-            switch (result) {
-                .success => {},
-                .failure => {
-                    if (!sink.done) {
-                        sink.abort();
-                        return;
-                    }
-                },
+            if (sink.endPromise.globalObject()) |globalObject| {
+                switch (result) {
+                    .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
+                    .failure => |err| {
+                        if (!sink.done) {
+                            sink.abort();
+                            return;
+                        }
+                        const js_err = globalObject.createErrorInstance("{s}", .{err.message});
+                        js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
+                        sink.endPromise.rejectOnNextTick(globalObject, js_err);
+                    },
+                }
             }
-            self.callback(result);
+            if (self.callback) |callback| {
+                callback(result, self.callback_context);
+            }
         }
 
         pub fn deinit(self: *@This()) void {
@@ -731,6 +738,10 @@ pub const AWSCredentials = struct {
         const args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
+        const err = args.ptr[0];
+
+        this.sink.endPromise.rejectOnNextTick(globalThis, err);
+
         if (this.readable_stream_ref.get()) |stream| {
             stream.cancel(globalThis);
             this.readable_stream_ref.deinit();
@@ -759,15 +770,15 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *const @This(), path: []const u8, readable_stream: *JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
         const task = MultiPartUpload.new(.{
-            .options = .{},
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
             .callback_context = undefined,
             .globalThis = globalThis,
+            .options = options,
             .vm = JSC.VirtualMachine.get(),
         });
 
@@ -780,9 +791,11 @@ pub const AWSCredentials = struct {
             .buffer = .{},
             .globalThis = globalThis,
             .encoded = false,
+            .endPromise = JSC.JSPromise.Strong.init(globalThis),
         }).toSink();
+        const endPromise = response_stream.sink.endPromise.value();
         const ctx = S3UploadStreamWrapper.new(.{
-            .readable_stream = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
+            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
             .sink = &response_stream.sink,
             .callback = callback,
             .callback_context = callback_context,
@@ -810,16 +823,18 @@ pub const AWSCredentials = struct {
         // assert that it was updated
         bun.assert(!signal.isDead());
 
-        if (assignment_result.toError()) |_| {
+        if (assignment_result.toError()) |err| {
             readable_stream.cancel(globalThis);
-            return task.fail(.{
+            response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
+            task.fail(.{
                 .code = "UnknownError",
                 .message = "ReadableStream ended with an error",
             });
+            return endPromise;
         }
 
         if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-            this.javascript_vm.drainMicrotasks();
+            task.vm.drainMicrotasks();
 
             assignment_result.ensureStillAlive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
@@ -839,39 +854,43 @@ pub const AWSCredentials = struct {
                     },
                     .rejected => {
                         readable_stream.cancel(globalThis);
+                        response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
 
-                        return task.fail(.{
+                        task.fail(.{
                             .code = "UnknownError",
                             .message = "ReadableStream ended with an error",
                         });
                     },
                 }
-                return;
             } else {
                 readable_stream.cancel(globalThis);
-                return task.fail(.{
+                response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
+
+                task.fail(.{
                     .code = "UnknownError",
                     .message = "ReadableStream ended with an error",
                 });
             }
         }
+        return endPromise;
     }
     /// returns a writable stream that writes to the s3 path
-    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
             pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
-                const globalObject = sink.endPromise.strong.globalThis.?;
-                switch (result) {
-                    .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
-                    .failure => |err| {
-                        if (!sink.done) {
-                            sink.abort();
-                            return;
-                        }
-                        const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                        js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-                        sink.endPromise.rejectOnNextTick(globalObject, js_err);
-                    },
+                if (sink.endPromise.globalObject()) |globalObject| {
+                    switch (result) {
+                        .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
+                        .failure => |err| {
+                            if (!sink.done) {
+                                sink.abort();
+                                return;
+                            }
+                            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
+                            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
+                            sink.endPromise.rejectOnNextTick(globalObject, js_err);
+                        },
+                    }
                 }
                 sink.finalize();
                 sink.destroy();
@@ -879,12 +898,12 @@ pub const AWSCredentials = struct {
         };
         this.ref(); // ref the credentials
         const task = MultiPartUpload.new(.{
-            .options = .{},
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .callback = @ptrCast(&Wrapper.callback),
             .callback_context = undefined,
             .globalThis = globalThis,
+            .options = options,
             .vm = JSC.VirtualMachine.get(),
         });
 
@@ -915,7 +934,7 @@ pub const AWSCredentials = struct {
 
 pub const MultiPartUpload = struct {
     pub const MAX_SINGLE_UPLOAD_SIZE: usize = 4294967296; // we limit to 4 GiB
-    const OneMiB: usize = 1048576;
+    pub const OneMiB: usize = 1048576;
     const MAX_QUEUE_SIZE = 64; // dont make sense more than this because we use fetch anything greater will be 64
     const AWS = AWSCredentials;
     queue: std.ArrayListUnmanaged(UploadPart) = .{},

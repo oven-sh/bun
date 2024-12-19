@@ -2460,6 +2460,10 @@ pub const JSPromise = extern struct {
             return this.strong.get() orelse .zero;
         }
 
+        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
+            return this.strong.globalThis;
+        }
+
         pub fn swap(this: *Strong) *JSC.JSPromise {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();

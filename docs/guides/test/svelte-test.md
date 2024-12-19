@@ -3,7 +3,7 @@ name: "Test Svelte components with bun:test"
 description: "import & require .svelte files in your tests in bun's jest-compatible test api, bun:test"
 ---
 
-Bun's [Plugin API](/docs/runtime/plugins.md) lets you add custom loaders to your project and the `test.preload` option in `bunfig.toml` lets you ensure your loaders start before your tests run.
+Bun's [Plugin API](/docs/runtime/plugins) lets you add custom loaders to your project and the `test.preload` option in `bunfig.toml` lets you ensure your loaders start before your tests run.
 
 To support tests that import or require `*.svelte` files
 

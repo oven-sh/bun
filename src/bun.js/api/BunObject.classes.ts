@@ -8,7 +8,7 @@ export default [
     finalize: true,
     configurable: false,
     hasPendingActivity: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       maxRSS: {
@@ -49,7 +49,7 @@ export default [
     hasPendingActivity: true,
     configurable: false,
     memoryCost: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       pid: {

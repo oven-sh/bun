@@ -7,7 +7,7 @@ export default [
     finalize: true,
     hasPendingActivity: true,
     configurable: false,
-    klass: {
+    staticFields: {
       //   escapeString: {
       //     fn: "escapeString",
       //   },
@@ -44,7 +44,7 @@ export default [
     configurable: false,
     hasPendingActivity: true,
     JSType: "0b11101110",
-    klass: {},
+    staticFields: {},
     proto: {
       run: {
         fn: "doRun",

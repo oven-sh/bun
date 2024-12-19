@@ -41,7 +41,6 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -1869,7 +1868,7 @@ pub const Interpreter = struct {
         return &this.root_io;
     }
 
-    fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
+    fn getVmArgsUtf8(this: *Interpreter, argv: []const *bun.wtf.String, idx: u8) []const u8 {
         if (this.vm_args_utf8.items.len != argv.len) {
             this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
             for (argv) |arg| {

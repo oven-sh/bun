@@ -75,7 +75,7 @@ function source(name) {
           }
         : {}),
     },
-    klass: {},
+    staticFields: {},
     values: ["pendingPromise", "onCloseCallback", "onDrainCallback"],
   });
 }

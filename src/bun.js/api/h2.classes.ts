@@ -108,6 +108,6 @@ export default [
     },
     finalize: true,
     construct: true,
-    klass: {},
+    staticFields: {},
   }),
 ];

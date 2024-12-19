@@ -29,7 +29,7 @@ export default [
         cache: true,
       },
     },
-    klass: {},
+    staticFields: {},
   }),
 
   define({
@@ -48,7 +48,7 @@ export default [
         length: 1,
       },
     },
-    klass: {},
+    staticFields: {},
   }),
 
   define({
@@ -92,6 +92,6 @@ export default [
         cache: "scriptSrc",
       },
     },
-    klass: {},
+    staticFields: {},
   }),
 ];

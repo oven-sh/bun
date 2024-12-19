@@ -5,7 +5,7 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+const wtf = bun.wtf;
 
 const Bool = std.atomic.Value(bool);
 
@@ -35,8 +35,8 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
-    argv: ?[]const WTFStringImpl,
-    execArgv: ?[]const WTFStringImpl,
+    argv: ?[]const *wtf.StringImpl,
+    execArgv: ?[]const *wtf.StringImpl,
 
     pub const Status = enum(u8) {
         start,
@@ -175,9 +175,9 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
-        argv_ptr: ?[*]WTFStringImpl,
+        argv_ptr: ?[*]*wtf.StringImpl,
         argv_len: u32,
-        execArgv_ptr: ?[*]WTFStringImpl,
+        execArgv_ptr: ?[*]*wtf.StringImpl,
         execArgv_len: u32,
         preload_modules_ptr: ?[*]bun.String,
         preload_modules_len: u32,

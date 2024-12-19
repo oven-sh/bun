@@ -32,7 +32,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
-const RegularExpression = bun.RegularExpression;
+const RegularExpression = bun.wtf.RegularExpression;
 
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;

@@ -63,7 +63,10 @@ function resolveVariantStrategies(vari: Variant, name: string) {
         // regarding by-value extern structs in C functions.
         // type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
         // Always pass an argument by-pointer for now.
-        type: abiType === "*anyopaque" || abiType === "*JSGlobalObject" ? "c-abi-value" : "c-abi-pointer",
+        type:
+          abiType === "*anyopaque" || abiType === "*JSGlobalObject" || abiType === "*bun.wtf.String"
+            ? "c-abi-value"
+            : "c-abi-pointer",
         abiType,
       };
       continue;
@@ -341,9 +344,10 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         case "DOMString":
         case "USVString":
         case "ByteString":
-          cpp.line(
-            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.toWTFString()));`,
-          );
+          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out));`);
+          break;
+        case "BunString":
+          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDLDOMString>(*global, out.toWTFString()));`);
           break;
       }
       break;
@@ -479,10 +483,11 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.add(`${type.cppName()} `);
         }
-        cpp.line(`${storageLocation} = Bun::toString(${temp});`);
+        cpp.line(`${storageLocation} = ${temp}.impl();`);
         break;
       }
-      case "UTF8String": {
+      case "UTF8String":
+      case "BunString": {
         const temp = cpp.nextTemporaryName("wtfString");
         cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
@@ -793,15 +798,6 @@ function zigTypeNameInner(type: TypeImpl): string {
     return namespace ? `${namespace}.${type.name()}` : type.name();
   }
   switch (type.kind) {
-    case "USVString":
-    case "DOMString":
-    case "ByteString":
-    case "UTF8String":
-      return "bun.String";
-    case "boolean":
-      return "bool";
-    case "usize":
-      return "usize";
     case "globalObject":
     case "zigVirtualMachine":
       return "*JSC.JSGlobalObject";

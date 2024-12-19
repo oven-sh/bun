@@ -78,7 +78,7 @@ function generate(name) {
         getter: "getDevelopment",
       },
     },
-    klass: {},
+    staticFields: {},
     finalize: true,
     construct: true,
     noConstructor: true,
@@ -203,6 +203,6 @@ export default [
     },
     finalize: true,
     construct: true,
-    klass: {},
+    staticFields: {},
   }),
 ];

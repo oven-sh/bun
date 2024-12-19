@@ -9,7 +9,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -21,7 +21,7 @@ export default [
     JSType: "0b11101110",
     values: ["constructorValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -33,7 +33,7 @@ export default [
     JSType: "0b11101110",
     values: ["numberValue", "digitsValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -45,7 +45,7 @@ export default [
     JSType: "0b11101110",
     values: ["objectValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -57,7 +57,7 @@ export default [
     JSType: "0b11101110",
     values: ["stringValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -69,7 +69,7 @@ export default [
     JSType: "0b11101110",
     values: ["testValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -81,7 +81,7 @@ export default [
     JSType: "0b11101110",
     values: ["arrayValue"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {},
   }),
   define({
@@ -93,7 +93,7 @@ export default [
     JSType: "0b11101110",
     values: ["matcherFn", "capturedArgs"],
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       asymmetricMatch: {
         fn: "asymmetricMatch",
@@ -109,7 +109,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       utils: {
         getter: "getUtils",
@@ -137,7 +137,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       stringify: {
         fn: "stringify",
@@ -165,7 +165,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       anything: {
         fn: "anything",
@@ -217,7 +217,7 @@ export default [
     JSType: "0b11101110",
     values: ["capturedValue", "resultValue"],
     configurable: false,
-    klass: {
+    staticFields: {
       extend: {
         fn: "extend",
         length: 1,

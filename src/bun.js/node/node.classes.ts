@@ -8,7 +8,7 @@ export default [
     finalize: true,
     configurable: false,
     hasPendingActivity: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       ref: {
@@ -37,7 +37,7 @@ export default [
     finalize: true,
     configurable: false,
     hasPendingActivity: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       ref: {
@@ -61,7 +61,7 @@ export default [
     noConstructor: true,
     finalize: true,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       ref: {
@@ -91,7 +91,7 @@ export default [
     name: "Stats",
     construct: true,
     finalize: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
 
     // TODO: generate-classes needs to handle Object.create properly when
@@ -233,7 +233,7 @@ export default [
     name: "BigIntStats",
     construct: true,
     finalize: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
 
     // TODO: generate-classes needs to handle Object.create properly when
@@ -389,7 +389,7 @@ export default [
     construct: true,
     finalize: true,
 
-    klass: {},
+    staticFields: {},
 
     // TODO: generate-classes needs to handle Object.create properly when
     // functions are used. The functions need a fallback implementation to use
@@ -446,7 +446,7 @@ export default [
     noConstructor: true,
     finalize: true,
 
-    klass: {},
+    staticFields: {},
     proto: {
       appendFile: { fn: "appendFile", length: 4 },
       appendFileSync: { fn: "appendFileSync", length: 3 },

@@ -9,7 +9,7 @@ export default [
     finalize: true,
     configurable: false,
     // estimatedSize: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     values: ["callback"],
 
@@ -32,7 +32,7 @@ export default [
     finalize: true,
     configurable: false,
     estimatedSize: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     values: ["callback"],
 

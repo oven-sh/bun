@@ -4775,7 +4775,7 @@ pub const AnyBlob = union(enum) {
     Blob: Blob,
     // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
-    WTFStringImpl: bun.WTF.StringImpl,
+    WTFStringImpl: *bun.wtf.String,
 
     /// Assumed that AnyBlob itself is covered by the caller.
     pub fn memoryCost(this: *const AnyBlob) usize {

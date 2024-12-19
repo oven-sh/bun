@@ -68,9 +68,28 @@ function implementation. To pass to JavaScript, use
 
 ## Strings
 
-The type for receiving strings is one of [`t.DOMString`](https://webidl.spec.whatwg.org/#idl-DOMString), [`t.ByteString`](https://webidl.spec.whatwg.org/#idl-ByteString), and [`t.USVString`](https://webidl.spec.whatwg.org/#idl-USVString). These map directly to their WebIDL counterparts, and have slightly different conversion logic. Bindgen will pass BunString to native code in all cases.
+The type for receiving strings is one of [`t.DOMString`](https://webidl.spec.whatwg.org/#idl-DOMString), [`t.ByteString`](https://webidl.spec.whatwg.org/#idl-ByteString), and [`t.USVString`](https://webidl.spec.whatwg.org/#idl-USVString). These map directly to their WebIDL counterparts, and have slightly different conversion logic. Bindgen will pass `*bun.wtf.String` to native code in these cases. When in doubt, prefer DOMString.
 
-When in doubt, use DOMString.
+WebKit's strings are encoded in either UTF-8 or UTF-16. In Zig you can specialize your handling with `.data()`
+
+```zig
+pub fn something(str: *wtf.String) void {
+    switch(str.data()) {
+        .latin1 => |chars| somethingWithType(u8, chars),
+        .utf16 => |chars| somethingWithType(u16, chars),
+    }
+}
+
+const wtf = bun.wtf;
+```
+
+{% callout %}
+
+In Zig code, `*wtf.String` is always a mutable pointer type, as opposed to `WTF::String` in C++, which is a value type.
+
+{% /callout %}
+
+To return a string, use `t.BunString` and the `bun.String` type.
 
 `t.UTF8String` can be used in place of `t.DOMString`, but will call `bun.String.toUTF8`. The native callback gets `[]const u8` (WTF-8 data) passed to native code, freeing it after the function returns.
 
@@ -99,7 +118,7 @@ export const action = fn({
       args: {
         a: t.DOMString,
       },
-      ret: t.DOMString,
+      ret: t.BunString,
     },
   ]
 });
@@ -142,7 +161,7 @@ export const fmtString = fn({
     code: t.UTF8String,
     formatter: Formatter,
   },
-  ret: t.DOMString,
+  ret: t.BunString,
 });
 ```
 

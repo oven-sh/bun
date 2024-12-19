@@ -53,7 +53,10 @@ export interface ClassDefinition {
   call?: boolean;
   finalize?: boolean;
   overridesToJS?: boolean;
-  klass: Record<string, Field>;
+  /**
+   * Static class fields / methods.
+   */
+  staticFields: Record<string, Field>;
   proto: Record<string, Field>;
   values?: string[];
   JSType?: string;
@@ -76,7 +79,6 @@ export interface ClassDefinition {
    */
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
-  isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
 
   getInternalProperties?: boolean;
@@ -99,7 +101,7 @@ export interface CustomField {
 
 export function define(
   {
-    klass = {},
+    staticFields = {},
     proto = {},
     values = [],
     overridesToJS = false,
@@ -118,8 +120,8 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(
-      Object.entries(klass)
+    staticFields: Object.fromEntries(
+      Object.entries(staticFields)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
           v.DOMJIT = undefined;

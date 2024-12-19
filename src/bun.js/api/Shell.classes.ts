@@ -8,7 +8,7 @@ export default [
     finalize: true,
     hasPendingActivity: true,
     configurable: false,
-    klass: {},
+    staticFields: {},
     values: ["resolve", "reject"],
     proto: {
       run: {

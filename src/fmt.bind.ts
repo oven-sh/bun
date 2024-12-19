@@ -11,5 +11,5 @@ export const fmtString = fn({
     code: t.UTF8String,
     formatter: Formatter,
   },
-  ret: t.DOMString,
+  ret: t.BunString,
 });

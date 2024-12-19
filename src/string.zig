@@ -12,13 +12,40 @@ pub const BufferOwnership = enum(u32) {
     BufferExternal,
 };
 
-pub const WTFStringImpl = *WTFStringImplStruct;
-
-pub const WTFStringImplStruct = extern struct {
+/// `bun.wtf.String` Web Template Framework String
+///
+/// A ref-counted string type in either Latin1 (8-bit) or UTF-16 encoding.
+/// The contents of the string are immutable, as it may have multiple
+/// references. This string type is used by JSC::JSString, meaning bytes
+/// can be transferred directly to and from the JavaScript engine.
+///
+/// ***  Prefer using `bun.String` instead of  ***
+/// *** this when the caller is not JavaScript ***
+//
+// Binding for `WTF::StringImpl` defined in `wtf/text/StringImpl.h`
+//
+// There is not a wrapper like `WTF::String` in C++ because Zig does not have
+// automatic reference counting. A `*bun.wtf.String` (pointer) acts as
+// a C++ `WTF::String` (non-pointer)
+pub const WTFString = extern struct {
     m_refCount: u32 = 0,
     m_length: u32 = 0,
     m_ptr: extern union { latin1: [*]const u8, utf16: [*]const u16 },
     m_hashAndFlags: u32 = 0,
+
+    pub const max_length = std.math.maxInt(u32);
+
+    pub const Encoding = enum {
+        latin1,
+        utf16,
+
+        pub fn Char(comptime this: Encoding) type {
+            return switch (this) {
+                .latin1 => u8,
+                .utf16 => u16,
+            };
+        }
+    };
 
     // ---------------------------------------------------------------------
     // These details must stay in sync with WTFStringImpl.h in WebKit!
@@ -43,65 +70,33 @@ pub const WTFStringImplStruct = extern struct {
 
     // ---------------------------------------------------------------------
 
-    pub fn refCount(this: WTFStringImpl) u32 {
-        return this.m_refCount / s_refCountIncrement;
+    pub const Data = union(enum) {
+        latin1: []const u8,
+        utf16: []const u16,
+    };
+
+    /// Decode the contents of the string as either latin1 ([]const u8) or utf16 ([]const u16)
+    pub fn data(string: *const WTFString) Data {
+        return if (string.is8Bit())
+            .{ .latin1 = string.latin1Slice() }
+        else
+            .{ .utf16 = string.utf16Slice() };
     }
 
-    pub fn memoryCost(this: WTFStringImpl) usize {
-        return this.byteLength();
-    }
-
-    pub fn isStatic(this: WTFStringImpl) bool {
-        return this.m_refCount & s_refCountIncrement != 0;
-    }
-
-    pub fn byteLength(this: WTFStringImpl) usize {
-        return if (this.is8Bit()) this.m_length else this.m_length * 2;
-    }
-
-    extern fn WTFStringImpl__isThreadSafe(WTFStringImpl) bool;
-    pub fn isThreadSafe(this: WTFStringImpl) bool {
-        return WTFStringImpl__isThreadSafe(this);
-    }
-
-    pub fn byteSlice(this: WTFStringImpl) []const u8 {
-        return this.m_ptr.latin1[0..this.byteLength()];
-    }
-
-    pub inline fn is8Bit(self: WTFStringImpl) bool {
-        return (self.m_hashAndFlags & s_hashFlag8BitBuffer) != 0;
-    }
-
-    pub inline fn length(self: WTFStringImpl) u32 {
-        return self.m_length;
-    }
-
-    pub inline fn utf16Slice(self: WTFStringImpl) []const u16 {
+    /// Asserts that the slice is in utf16 / 16-bit encoding
+    pub inline fn utf16Slice(self: *const WTFString) []const u16 {
         bun.assert(!is8Bit(self));
         return self.m_ptr.utf16[0..length(self)];
     }
 
-    pub inline fn latin1Slice(self: WTFStringImpl) []const u8 {
+    /// Asserts that the slice is in latin1 / 8-bit encoding
+    pub inline fn latin1Slice(self: *const WTFString) []const u8 {
         bun.assert(is8Bit(self));
         return self.m_ptr.latin1[0..length(self)];
     }
 
-    /// Caller must ensure that the string is 8-bit and ASCII.
-    pub inline fn utf8Slice(self: WTFStringImpl) []const u8 {
-        if (comptime bun.Environment.allow_assert)
-            bun.assert(canUseAsUTF8(self));
-        return self.m_ptr.latin1[0..length(self)];
-    }
-
-    pub fn toZigString(this: WTFStringImpl) ZigString {
-        if (this.is8Bit()) {
-            return ZigString.init(this.latin1Slice());
-        } else {
-            return ZigString.initUTF16(this.utf16Slice());
-        }
-    }
-
-    pub inline fn deref(self: WTFStringImpl) void {
+    /// Decrement the reference count.
+    pub inline fn deref(self: *WTFString) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(current_count > 0);
@@ -113,7 +108,8 @@ pub const WTFStringImplStruct = extern struct {
         }
     }
 
-    pub inline fn ref(self: WTFStringImpl) void {
+    /// Increment the reference count.
+    pub inline fn ref(self: *WTFString) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(current_count > 0);
@@ -121,19 +117,63 @@ pub const WTFStringImplStruct = extern struct {
         bun.assert(self.refCount() > current_count or self.isStatic());
     }
 
-    pub fn toLatin1Slice(this: WTFStringImpl) ZigString.Slice {
+    pub fn refCount(this: *const WTFString) u32 {
+        return this.m_refCount / s_refCountIncrement;
+    }
+
+    pub fn memoryCost(this: *const WTFString) usize {
+        return this.byteLength();
+    }
+
+    pub fn isStatic(this: *const WTFString) bool {
+        return this.m_refCount & s_refCountIncrement != 0;
+    }
+
+    pub fn byteLength(this: *const WTFString) usize {
+        return if (this.is8Bit()) this.m_length else this.m_length * 2;
+    }
+
+    extern fn WTFStringImpl__isThreadSafe(*const WTFString) bool;
+    pub fn isThreadSafe(this: *const WTFString) bool {
+        return WTFStringImpl__isThreadSafe(this);
+    }
+
+    pub inline fn is8Bit(self: *const WTFString) bool {
+        return (self.m_hashAndFlags & s_hashFlag8BitBuffer) != 0;
+    }
+
+    pub inline fn length(self: *const WTFString) u32 {
+        return self.m_length;
+    }
+
+    /// Caller must ensure that the string is 8-bit and ASCII.
+    pub inline fn utf8Slice(self: *const WTFString) []const u8 {
+        if (comptime bun.Environment.allow_assert)
+            bun.assert(canUseAsUTF8(self));
+        return self.m_ptr.latin1[0..length(self)];
+    }
+
+    pub fn toZigString(this: *WTFString) ZigString {
+        if (this.is8Bit()) {
+            return ZigString.init(this.latin1Slice());
+        } else {
+            return ZigString.initUTF16(this.utf16Slice());
+        }
+    }
+
+    fn toLatin1Slice(this: *WTFString) ZigString.Slice {
         this.ref();
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
-    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    extern fn Bun__WTFStringImpl__ensureHash(this: *WTFString) void;
     /// Compute the hash() if necessary
-    pub fn ensureHash(this: WTFStringImpl) void {
+    pub fn ensureHash(this: *WTFString) void {
         JSC.markBinding(@src());
         Bun__WTFStringImpl__ensureHash(this);
     }
 
-    pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8(this: *WTFString, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
@@ -148,9 +188,7 @@ pub const WTFStringImplStruct = extern struct {
         );
     }
 
-    pub const max = std.math.maxInt(u32);
-
-    pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8WithoutRef(this: *WTFString, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
@@ -165,7 +203,7 @@ pub const WTFStringImplStruct = extern struct {
         );
     }
 
-    pub fn toOwnedSliceZ(this: WTFStringImpl, allocator: std.mem.Allocator) [:0]u8 {
+    pub fn toOwnedSliceZ(this: *WTFString, allocator: std.mem.Allocator) [:0]u8 {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1Z(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return utf8.items[0 .. utf8.items.len - 1 :0];
@@ -176,7 +214,7 @@ pub const WTFStringImplStruct = extern struct {
         return bun.strings.toUTF8AllocZ(allocator, this.utf16Slice()) catch bun.outOfMemory();
     }
 
-    pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
+    pub fn toUTF8IfNeeded(this: *WTFString, allocator: std.mem.Allocator) ?ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
@@ -193,11 +231,11 @@ pub const WTFStringImplStruct = extern struct {
 
     /// Avoid using this in code paths that are about to get the string as a UTF-8
     /// In that case, use toUTF8IfNeeded instead.
-    pub fn canUseAsUTF8(this: WTFStringImpl) bool {
+    pub fn canUseAsUTF8(this: *const WTFString) bool {
         return this.is8Bit() and bun.strings.isAllASCII(this.latin1Slice());
     }
 
-    pub fn utf8ByteLength(this: WTFStringImpl) usize {
+    pub fn utf8ByteLength(this: *const WTFString) usize {
         if (this.is8Bit()) {
             const input = this.latin1Slice();
             return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU8(input.ptr, input.len, .utf8) else 0;
@@ -207,33 +245,37 @@ pub const WTFStringImplStruct = extern struct {
         }
     }
 
-    pub fn utf16ByteLength(this: WTFStringImpl) usize {
+    fn utf16ByteLength(this: *const WTFString) usize {
         // All latin1 characters fit in a single UTF-16 code unit.
         return this.length() * 2;
     }
 
-    pub fn latin1ByteLength(this: WTFStringImpl) usize {
+    fn latin1ByteLength(this: *const WTFString) usize {
         // Not all UTF-16 characters fit are representable in latin1.
         // Those get truncated?
         return this.length();
     }
 
-    pub fn refCountAllocator(self: WTFStringImpl) std.mem.Allocator {
+    pub fn refCountAllocator(self: *WTFString) std.mem.Allocator {
         return std.mem.Allocator{ .ptr = self, .vtable = StringImplAllocator.VTablePtr };
     }
 
-    pub fn hasPrefix(self: WTFStringImpl, text: []const u8) bool {
+    pub fn hasPrefix(self: *const WTFString, text: []const u8) bool {
         return Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
     }
 
-    extern fn Bun__WTFStringImpl__deref(self: WTFStringImpl) void;
-    extern fn Bun__WTFStringImpl__ref(self: WTFStringImpl) void;
-    extern fn Bun__WTFStringImpl__hasPrefix(self: *const WTFStringImplStruct, offset: [*]const u8, length: usize) bool;
+    fn asRawByteSlice(this: *const WTFString) []const u8 {
+        return this.m_ptr.latin1[0..this.byteLength()];
+    }
+
+    extern fn Bun__WTFStringImpl__deref(self: *const WTFString) void;
+    extern fn Bun__WTFStringImpl__ref(self: *const WTFString) void;
+    extern fn Bun__WTFStringImpl__hasPrefix(self: *const WTFString, offset: [*]const u8, length: usize) bool;
 };
 
 pub const StringImplAllocator = struct {
     fn alloc(ptr: *anyopaque, len: usize, _: u8, _: usize) ?[*]u8 {
-        var this = bun.cast(WTFStringImpl, ptr);
+        const this = bun.cast(*WTFString, ptr);
         const len_ = this.byteLength();
 
         if (len_ != len) {
@@ -257,7 +299,7 @@ pub const StringImplAllocator = struct {
         _: u8,
         _: usize,
     ) void {
-        var this = bun.cast(WTFStringImpl, ptr);
+        const this = bun.cast(*WTFString, ptr);
         bun.assert(this.latin1Slice().ptr == buf.ptr);
         bun.assert(this.latin1Slice().len == buf.len);
         this.deref();
@@ -272,46 +314,51 @@ pub const StringImplAllocator = struct {
     pub const VTablePtr = &VTable;
 };
 
-pub const Tag = enum(u8) {
-    /// String is not valid. Observed on some failed operations.
-    /// To prevent crashes, this value acts similarly to .Empty (such as length = 0)
-    Dead = 0,
-    /// String is backed by a WTF::StringImpl from JavaScriptCore.
-    /// Can be in either `latin1` or `utf16le` encodings.
-    WTFStringImpl = 1,
-    /// Memory has an unknown owner, likely in Bun's Zig codebase. If `isGloballyAllocated`
-    /// is set, then it is owned by mimalloc. When converted to JSValue it has to be cloned
-    /// into a WTF::String.
-    /// Can be in either `utf8` or `utf16le` encodings.
-    ZigString = 2,
-    /// Static memory that is guaranteed to never be freed. When converted to WTF::String,
-    /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
-    /// Can be in either `utf8` or `utf16le` encodings.
-    StaticZigString = 3,
-    /// String is ""
-    Empty = 4,
-};
-
 const ZigString = bun.JSC.ZigString;
 
-pub const StringImpl = extern union {
-    ZigString: ZigString,
-    WTFStringImpl: WTFStringImpl,
-    StaticZigString: ZigString,
-    Dead: void,
-    Empty: void,
-};
-
-/// Prefer using String instead of ZigString in new code.
+/// A string from Zig or C++, in either latin1, utf8, or utf16 encodings.
+/// The advantage of this over the WTF string type is that this type
+/// can represent data in UTF-8 without the need for conversion. The
+/// disadvantage is data in UTF-8 must be converted to interface in
+/// JavaScript.
+///
+/// Prefer this instead of ZigString directly in new code.
+/// Prefer this over wtf.String when Zig is the one constructing the string.
 pub const String = extern struct {
-    pub const name = "BunString";
-
     tag: Tag,
-    value: StringImpl,
+    value: Value,
 
     pub const empty = String{ .tag = .Empty, .value = .{ .Empty = {} } };
-
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
+
+    pub const Tag = enum(u8) {
+        /// String is not valid. Observed on some failed operations.
+        /// To prevent crashes, this value acts similarly to .Empty (such as length = 0)
+        Dead = 0,
+        /// String is backed by a WTF::StringImpl from JavaScriptCore.
+        /// Can be in either `latin1` or `utf16le` encodings.
+        WTFStringImpl = 1,
+        /// Memory has an unknown owner, likely in Bun's Zig codebase. If `isGloballyAllocated`
+        /// is set, then it is owned by mimalloc. When converted to JSValue it has to be cloned
+        /// into a WTF::String.
+        /// Can be in either `utf8` or `utf16le` encodings.
+        ZigString = 2,
+        /// Static memory that is guaranteed to never be freed. When converted to WTF::String,
+        /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
+        /// Can be in either `utf8` or `utf16le` encodings.
+        StaticZigString = 3,
+        /// String is ""
+        Empty = 4,
+    };
+
+    pub const Value = extern union {
+        ZigString: ZigString,
+        WTFStringImpl: *WTFString,
+        StaticZigString: ZigString,
+        Dead: void,
+        Empty: void,
+    };
+
     pub const StringImplAllocator = Parent.StringImplAllocator;
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
@@ -392,18 +439,6 @@ pub const String = extern struct {
             @constCast(wtf.m_ptr.utf16[0..wtf.m_length]),
         };
     }
-
-    const WTFStringEncoding = enum {
-        latin1,
-        utf16,
-
-        pub fn Byte(comptime this: WTFStringEncoding) type {
-            return switch (this) {
-                .latin1 => u8,
-                .utf16 => u16,
-            };
-        }
-    };
 
     /// Allocate memory for a WTF::String of a given length and encoding, and
     /// return the string and a mutable slice for that string.
@@ -565,7 +600,7 @@ pub const String = extern struct {
             ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value } },
             [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.fromBytes(value) } },
             [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.from16Slice(value) } },
-            WTFStringImpl => .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
+            *WTFString => .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
             *const ZigString, *ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
             *const [0:0]u8 => .{ .tag = .Empty, .value = .{ .Empty = {} } },
             else => {
@@ -867,7 +902,7 @@ pub const String = extern struct {
     pub fn byteSlice(this: String) []const u8 {
         return switch (this.tag) {
             .ZigString, .StaticZigString => this.value.ZigString.byteSlice(),
-            .WTFStringImpl => this.value.WTFStringImpl.byteSlice(),
+            .WTFStringImpl => this.value.WTFStringImpl.asRawByteSlice(),
             else => &[_]u8{},
         };
     }

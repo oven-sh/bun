@@ -19,7 +19,7 @@ const json_parser = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
-const RegularExpression = bun.RegularExpression;
+const RegularExpression = bun.wtf.RegularExpression;
 const builtin = @import("builtin");
 const File = bun.sys.File;
 

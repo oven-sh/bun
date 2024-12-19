@@ -2076,14 +2076,13 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 pub const String = @import("./string.zig").String;
 pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
 
-pub const WTF = struct {
-    /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+/// WebKit's "Web Template Framework"
+pub const wtf = struct {
+    pub const String = @import("./string.zig").WTFString;
+    pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
-
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
 pub inline fn assertComptime() void {
     var x = 0; // if you hit an error on this line, you are not in a comptime context

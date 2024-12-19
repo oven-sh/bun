@@ -554,7 +554,7 @@ class ${name} final : public JSC::InternalFunction {
 
 function generateConstructorImpl(typeName, obj: ClassDefinition) {
   const name = constructorName(typeName);
-  const { klass: fields } = obj;
+  const { staticFields: fields } = obj;
   const hashTable =
     Object.keys(fields).length > 0 ? generateHashTable(name, classSymbolName, typeName, obj, fields, false) : "";
 
@@ -1192,7 +1192,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
-  var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
+  var { staticFields, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
 
   if (zigOnly) return "";
 
@@ -1203,7 +1203,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     obj.estimatedSize ||
     Object.keys(callbacks).length ||
     obj.hasPendingActivity ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
+    [...Object.values(staticFields), ...Object.values(proto)].find(a => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
@@ -1328,13 +1328,13 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           })
           .join("\n")}
 
-        ${domJITTypeCheckFields(proto, klass)}
+        ${domJITTypeCheckFields(proto, staticFields)}
 
         ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
 
-        ${renderCachedFieldsHeader(typeName, klass, proto, values)}
+        ${renderCachedFieldsHeader(typeName, staticFields, proto, values)}
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
     };
     ${suffix}
@@ -1360,7 +1360,7 @@ function domJITTypeCheckFields(proto, klass) {
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
   const {
-    klass: fields,
+    staticFields: fields,
     finalize,
     proto,
     construct,
@@ -1656,7 +1656,7 @@ function generateImpl(typeName, obj) {
 function generateZig(
   typeName,
   {
-    klass = {},
+    staticFields: klass = {},
     proto = {},
     construct,
     finalize,

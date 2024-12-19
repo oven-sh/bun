@@ -7,7 +7,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       encoding: {
         getter: "getEncoding",
@@ -37,7 +37,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       encode: {
         fn: "encode",

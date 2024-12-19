@@ -297,7 +297,7 @@ pub const Body = struct {
         ///     })
         ///
         /// This works for .json(), too.
-        WTFStringImpl: bun.WTF.StringImpl,
+        WTFStringImpl: *bun.wtf.String,
         /// Single-use Blob
         /// Avoids a heap allocation.
         InternalBlob: InternalBlob,
@@ -427,7 +427,7 @@ pub const Body = struct {
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,
-                .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
+                .WTFStringImpl => this.WTFStringImpl.memoryCost(),
                 .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,

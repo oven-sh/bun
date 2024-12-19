@@ -195,7 +195,11 @@ export namespace t {
    */
   export const ByteString = builtinType<string>()("ByteString");
   /**
-   * DOMString but encoded as `[]const u8`
+   * DOMString but encoded as `bun.String`. Prefer using `DOMString` instead.
+   */
+  export const BunString = builtinType<string>()("BunString");
+  /**
+   * DOMString but encoded as `[]const u8`. Prefer using `DOMString` instead.
    */
   export const UTF8String = builtinType<string>()("UTF8String");
 

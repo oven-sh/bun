@@ -7,7 +7,7 @@ export default [
     finalize: true,
     hasPendingActivity: true,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       scan: {

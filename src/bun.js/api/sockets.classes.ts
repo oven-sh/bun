@@ -206,7 +206,7 @@ function generate(ssl) {
     },
     finalize: true,
     construct: true,
-    klass: {},
+    staticFields: {},
   });
 }
 export default [
@@ -260,7 +260,7 @@ export default [
     },
     finalize: true,
     construct: true,
-    klass: {},
+    staticFields: {},
   }),
 
   define({
@@ -323,6 +323,6 @@ export default [
         getter: "getClosed",
       },
     },
-    klass: {},
+    staticFields: {},
   }),
 ];

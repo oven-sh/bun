@@ -7,7 +7,7 @@ const named = names.map(name => {
     construct: true,
     finalize: true,
     configurable: false,
-    klass: {
+    staticFields: {
       hash: {
         fn: "hash",
         length: 2,
@@ -73,14 +73,14 @@ export default [
         length: 2,
       },
     },
-    klass: {},
+    staticFields: {},
   }),
   ...named,
   define({
     name: "CryptoHasher",
     construct: true,
     finalize: true,
-    klass: {
+    staticFields: {
       hash: {
         fn: "hash",
         length: 2,

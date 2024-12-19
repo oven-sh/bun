@@ -4177,14 +4177,21 @@ pub const FFIObject = struct {
     }
 };
 
-pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
+pub fn stringWidth(str: *bun.wtf.String, opts: gen.StringWidthOptions) usize {
     if (str.length() == 0)
         return 0;
 
-    if (opts.count_ansi_escape_codes)
-        return str.visibleWidth(!opts.ambiguous_is_narrow);
+    if (opts.count_ansi_escape_codes) {
+        return switch (str.data()) {
+            .latin1 => |data| bun.strings.visible.width.latin1(data),
+            .utf16 => |data| bun.strings.visible.width.utf16(data, !opts.ambiguous_is_narrow),
+        };
+    }
 
-    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
+    return switch (str.data()) {
+        .latin1 => |data| bun.strings.visible.width.exclude_ansi_colors.latin1(data),
+        .utf16 => |data| bun.strings.visible.width.exclude_ansi_colors.utf16(data, !opts.ambiguous_is_narrow),
+    };
 }
 
 /// EnvironmentVariables is runtime defined.

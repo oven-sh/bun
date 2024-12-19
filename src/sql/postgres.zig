@@ -1730,7 +1730,7 @@ pub const PostgresSQLConnection = struct {
 
         pub const Value = extern union {
             null: u8,
-            string: bun.WTF.StringImpl,
+            string: *bun.wtf.String,
             float8: f64,
             int4: i32,
             int8: i64,
@@ -1738,7 +1738,7 @@ pub const PostgresSQLConnection = struct {
             date: f64,
             date_with_time_zone: f64,
             bytea: [2]usize,
-            json: bun.WTF.StringImpl,
+            json: *bun.wtf.String,
             array: Array,
             typed_array: TypedArray,
         };

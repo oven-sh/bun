@@ -5,7 +5,7 @@ export default [
     name: "Request",
     construct: true,
     finalize: true,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
@@ -72,7 +72,7 @@ export default [
     configurable: false,
     estimatedSize: true,
     overridesToJS: true,
-    klass: {
+    staticFields: {
       json: {
         fn: "constructJSON",
       },
@@ -128,7 +128,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
-    klass: {},
+    staticFields: {},
     configurable: false,
     structuredClone: { transferable: false, tag: 254 },
     estimatedSize: true,

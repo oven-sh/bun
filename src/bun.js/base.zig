@@ -224,10 +224,6 @@ pub fn toInvalidArguments(
     return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
-pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
-    return default_allocator;
-}
-
 /// Print a JSValue to stdout; this is only meant for debugging purposes
 pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
@@ -681,15 +677,12 @@ pub const MarkedArrayBuffer = struct {
     }
 };
 
-// expensive heap reference-counted string type
-// only use this for big strings
-// like source code
-// not little ones
+/// Deprecated: Prefer bun.String or *bun.wtf.String
 pub const RefString = struct {
     ptr: [*]const u8 = undefined,
     len: usize = 0,
     hash: Hash = 0,
-    impl: bun.WTF.StringImpl,
+    impl: *bun.wtf.String,
 
     allocator: std.mem.Allocator,
 

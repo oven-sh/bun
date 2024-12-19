@@ -8,7 +8,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       setCwd: {
         fn: "setCwd",

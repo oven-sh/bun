@@ -7,7 +7,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       scanImports: {
@@ -34,7 +34,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       text: { fn: "getText" },

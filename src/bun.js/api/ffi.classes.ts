@@ -6,7 +6,7 @@ export default [
     construct: true,
     noConstructor: true,
     finalize: true,
-    klass: {},
+    staticFields: {},
     proto: {
       close: {
         fn: "close",

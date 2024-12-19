@@ -22,7 +22,6 @@ const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
 const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -782,7 +781,7 @@ pub const Request = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const this_value = callframe.this();
-        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        var cloned = this.clone(bun.default_allocator, globalThis);
 
         if (globalThis.hasException()) {
             cloned.finalize();
@@ -874,7 +873,7 @@ pub const Request = struct {
         return headers;
     }
 
-    /// Returns the headers of the request. This will not look at the request contex to get the headers.
+    /// Returns the headers of the request. This will not look at the request context to get the headers.
     pub fn getFetchHeaders(
         this: *Request,
     ) ?*FetchHeaders {

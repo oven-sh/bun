@@ -7,7 +7,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
-    klass: {},
+    staticFields: {},
     proto: {
       on: {
         fn: "on",
@@ -30,7 +30,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       before: {
         fn: "before",
@@ -67,7 +67,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       name: {
         getter: "name",
@@ -90,7 +90,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       append: {
         fn: "append",
@@ -105,7 +105,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       before: {
         fn: "before",
@@ -139,7 +139,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       before: {
         fn: "before",
@@ -166,7 +166,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       next: {
         fn: "next",
@@ -185,7 +185,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
-    klass: {},
+    staticFields: {},
     proto: {
       getAttribute: {
         fn: "getAttribute",

@@ -186,6 +186,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "ByteString":
       case "DOMString":
       case "USVString":
+        return "*bun.wtf.String";
+      case "BunString":
       case "UTF8String":
         return "bun.String";
       case "boolean":
@@ -379,6 +381,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "ByteString":
       case "USVString":
       case "UTF8String":
+      case "BunString":
         if (typeof value !== "string") {
           throw new Error(`Expected string, got ${inspect(value)}`);
         }
@@ -479,7 +482,14 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "DOMString":
       case "ByteString":
       case "USVString":
+        if (typeof value === "string") {
+          w.add("WTF::emptyString().impl()");
+        } else {
+          throw new Error(`TODO: non-empty string default`);
+        }
+        break;
       case "UTF8String":
+      case "BunString":
         if (typeof value === "string") {
           w.add("Bun::BunStringEmpty");
         } else {
@@ -506,7 +516,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
 
   isStringType() {
     return (
-      this.kind === "DOMString" || this.kind === "ByteString" || this.kind === "USVString" || this.kind === "UTF8String"
+      this.kind === "DOMString" ||
+      this.kind === "ByteString" ||
+      this.kind === "USVString" ||
+      this.kind === "UTF8String" ||
+      this.kind === "BunString"
     );
   }
 
@@ -896,6 +910,7 @@ export type CAbiType =
   | "JSValue.MaybeException"
   | "u0"
   | "bun.String"
+  | "*bun.wtf.String"
   | "bool"
   | "u8"
   | "u16"
@@ -933,6 +948,7 @@ export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] {
       return [8, 8];
     case "*anyopaque":
     case "*JSGlobalObject":
+    case "*bun.wtf.String":
     case "JSValue":
     case "JSValue.MaybeException":
       return [8, 8]; // pointer size
@@ -965,6 +981,7 @@ export function cAbiTypeName(type: CAbiType) {
       "f64": "double",
       "usize": "size_t",
       "bun.String": "BunString",
+      "*bun.wtf.String": "WTF::StringImpl*",
       u0: "void",
     } satisfies Record<Extract<CAbiType, string>, string>
   )[type];

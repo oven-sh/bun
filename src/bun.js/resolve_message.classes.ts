@@ -6,7 +6,7 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       message: {
@@ -68,7 +68,7 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
-    klass: {},
+    staticFields: {},
     JSType: "0b11101110",
     proto: {
       message: {

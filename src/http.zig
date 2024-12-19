@@ -1660,10 +1660,6 @@ pub fn onConnectError(
     client.fail(error.ConnectionRefused);
 }
 
-pub inline fn getAllocator() std.mem.Allocator {
-    return default_allocator;
-}
-
 pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }

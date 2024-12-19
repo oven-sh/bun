@@ -23,7 +23,7 @@ export const homedir = fn({
   args: {
     global: t.globalObject,
   },
-  ret: t.DOMString,
+  ret: t.BunString,
 });
 export const hostname = fn({
   args: {
@@ -69,7 +69,7 @@ export const userInfo = fn({
 });
 export const version = fn({
   args: {},
-  ret: t.DOMString,
+  ret: t.BunString,
 });
 const PRI_MIN = -20;
 const PRI_MAX = 19;

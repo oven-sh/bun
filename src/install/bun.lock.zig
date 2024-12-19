@@ -1537,6 +1537,22 @@ pub fn parseIntoBinaryLockfile(
                             continue :deps;
                         }
                         try log.addError(source, key.loc, "Unable to resolve dependencies for package");
+                        const behaviorStr = if (dep.behavior.isDev())
+                            " dev"
+                        else if (dep.behavior.isOptional())
+                            " optional"
+                        else if (dep.behavior.isPeer())
+                            " peer"
+                        else if (dep.behavior.isWorkspaceOnly())
+                            " workspace"
+                        else
+                            " prod";
+
+                        try log.addErrorFmt(source, key.loc, allocator, "Failed to resolve{s} dependency '{s}' for package '{s}'", .{
+                            behaviorStr,
+                            dep_name,
+                            pkg_path,
+                        });
                         return error.InvalidPackageInfo;
                     }
 

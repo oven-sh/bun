@@ -22,6 +22,7 @@ import {
   toHaveBins,
   runBunInstall,
   isWindows,
+  textLockfile,
 } from "harness";
 import { join, sep, resolve } from "path";
 import {
@@ -8457,4 +8458,48 @@ saveTextLockfile = true
   });
   expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
   expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
+});
+
+test("providing invalid url in lockfile does not crash", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "jquery": "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@3.7.1",
+            "invalid-url",
+            {},
+            "sha512-+LGRog6RAsCJrrrg/IO6LGmpphNe5DiK30dGjCoxxeGv49B10/3XYGxPsAwrDlMFcFEvdAUavDT8r9k/hSyQqQ==",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).toContain("error: invalid url 'invalid-url' for package 'jquery'");
+  expect(await exited).toBe(1);
 });

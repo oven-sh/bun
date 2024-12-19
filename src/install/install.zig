@@ -477,13 +477,17 @@ const NetworkTask = struct {
         this.http.schedule(this.allocator, batch);
     }
 
+    pub const ForTarballError = OOM || error{
+        InvalidURL,
+    };
+
     pub fn forTarball(
         this: *NetworkTask,
         allocator: std.mem.Allocator,
         tarball_: *const ExtractTarball,
         scope: *const Npm.Registry.Scope,
         authorization: NetworkTask.Authorization,
-    ) !void {
+    ) ForTarballError!void {
         this.callback = .{ .extract = tarball_.* };
         const tarball = &this.callback.extract;
         const tarball_url = tarball.url.slice();
@@ -504,11 +508,11 @@ const NetworkTask = struct {
                 .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
             };
 
-            this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+            try this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args);
             return error.InvalidURL;
         }
 
-        this.response_buffer = try MutableString.init(allocator, 0);
+        this.response_buffer = MutableString.initEmpty(allocator);
         this.allocator = allocator;
 
         var header_builder = HeaderBuilder{};
@@ -4245,8 +4249,6 @@ pub const PackageManager = struct {
             };
         } else if (behavior.isPeer() and !install_peer) {
             return null;
-        } else if (behavior.isOptional() and !this.options.remote_package_features.optional_dependencies) {
-            return null;
         }
 
         // appendPackage sets the PackageID on the package
@@ -4279,24 +4281,26 @@ pub const PackageManager = struct {
             // We don't need to download the tarball, but we should enqueue dependencies
             .done => .{ .package = package, .is_first_time = true },
             // Do we need to download the tarball?
-            .extract => .{
-                .package = package,
-                .is_first_time = true,
-                .task = .{
-                    .network_task = try this.generateNetworkTaskForTarball(
-                        Task.Id.forNPMPackage(
-                            this.lockfile.str(&name),
-                            package.resolution.value.npm.version,
-                        ),
-                        manifest.str(&find_result.package.tarball_url),
-                        dependency.behavior.isRequired(),
-                        dependency_id,
-                        package,
-                        name_and_version_hash,
-                        // its npm.
-                        .allow_authorization,
-                    ) orelse unreachable,
-                },
+            .extract => extract: {
+                const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
+                bun.debugAssert(this.network_dedupe_map.contains(task_id));
+
+                break :extract .{
+                    .package = package,
+                    .is_first_time = true,
+                    .task = .{
+                        .network_task = try this.generateNetworkTaskForTarball(
+                            task_id,
+                            manifest.str(&find_result.package.tarball_url),
+                            dependency.behavior.isRequired(),
+                            dependency_id,
+                            package,
+                            name_and_version_hash,
+                            // its npm.
+                            .allow_authorization,
+                        ) orelse unreachable,
+                    },
+                };
             },
             .calc_patch_hash => .{
                 .package = package,
@@ -4354,7 +4358,7 @@ pub const PackageManager = struct {
         package: Lockfile.Package,
         patch_name_and_version_hash: ?u64,
         authorization: NetworkTask.Authorization,
-    ) !?*NetworkTask {
+    ) NetworkTask.ForTarballError!?*NetworkTask {
         if (this.hasCreatedNetworkTask(task_id, is_required)) {
             return null;
         }
@@ -4380,21 +4384,21 @@ pub const PackageManager = struct {
             this.allocator,
             &.{
                 .package_manager = this,
-                .name = try strings.StringOrTinyString.initAppendIfNeeded(
+                .name = strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
-                ),
+                ) catch bun.outOfMemory(),
                 .resolution = package.resolution,
                 .cache_dir = this.getCacheDirectory(),
                 .temp_dir = this.getTemporaryDirectory(),
                 .dependency_id = dependency_id,
                 .integrity = package.meta.integrity,
-                .url = try strings.StringOrTinyString.initAppendIfNeeded(
+                .url = strings.StringOrTinyString.initAppendIfNeeded(
                     url,
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
-                ),
+                ) catch bun.outOfMemory(),
             },
             scope,
             authorization,
@@ -13084,7 +13088,14 @@ pub const PackageManager = struct {
                                 url,
                                 context,
                                 patch_name_and_version_hash,
-                            );
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => this.failWithInvalidUrl(
+                                    pkg_has_patch,
+                                    is_pending_package_install,
+                                    log_level,
+                                ),
+                            };
                         },
                         .local_tarball => {
                             this.manager.enqueueTarballForReading(
@@ -13101,7 +13112,14 @@ pub const PackageManager = struct {
                                 resolution.value.remote_tarball.slice(this.lockfile.buffers.string_bytes.items),
                                 context,
                                 patch_name_and_version_hash,
-                            );
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => this.failWithInvalidUrl(
+                                    pkg_has_patch,
+                                    is_pending_package_install,
+                                    log_level,
+                                ),
+                            };
                         },
                         .npm => {
                             if (comptime Environment.isDebug) {
@@ -13123,7 +13141,14 @@ pub const PackageManager = struct {
                                 resolution.value.npm.url.slice(this.lockfile.buffers.string_bytes.items),
                                 context,
                                 patch_name_and_version_hash,
-                            );
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => this.failWithInvalidUrl(
+                                    pkg_has_patch,
+                                    is_pending_package_install,
+                                    log_level,
+                                ),
+                            };
                         },
                         else => {
                             if (comptime Environment.allow_assert) {
@@ -13414,6 +13439,16 @@ pub const PackageManager = struct {
             }
         }
 
+        fn failWithInvalidUrl(
+            this: *PackageInstaller,
+            pkg_has_patch: bool,
+            comptime is_pending_package_install: bool,
+            comptime log_level: Options.LogLevel,
+        ) void {
+            this.summary.fail += 1;
+            if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+        }
+
         // returns true if scripts are enqueued
         fn enqueueLifecycleScripts(
             this: *PackageInstaller,
@@ -13487,15 +13522,6 @@ pub const PackageManager = struct {
             dependency_id: DependencyID,
             comptime log_level: Options.LogLevel,
         ) void {
-            this.installPackageImpl(dependency_id, log_level, true);
-        }
-
-        pub fn installPackageImpl(
-            this: *PackageInstaller,
-            dependency_id: DependencyID,
-            comptime log_level: Options.LogLevel,
-            comptime increment_tree_count: bool,
-        ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const meta = &this.metas[package_id];
             const is_pending_package_install = false;
@@ -13515,7 +13541,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (comptime increment_tree_count) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             }
 
@@ -13587,6 +13613,8 @@ pub const PackageManager = struct {
         }
     }
 
+    const EnqueuePackageForDownloadError = NetworkTask.ForTarballError;
+
     pub fn enqueuePackageForDownload(
         this: *PackageManager,
         name: []const u8,
@@ -13596,23 +13624,23 @@ pub const PackageManager = struct {
         url: []const u8,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: ?u64,
-    ) void {
+    ) EnqueuePackageForDownloadError!void {
         const task_id = Task.Id.forNPMPackage(name, version);
-        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id);
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
         }
 
-        task_queue.value_ptr.append(
+        try task_queue.value_ptr.append(
             this.allocator,
             task_context,
-        ) catch unreachable;
+        );
 
         if (task_queue.found_existing) return;
 
         const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 
-        if (this.generateNetworkTaskForTarball(
+        if (try this.generateNetworkTaskForTarball(
             task_id,
             url,
             is_required,
@@ -13620,13 +13648,15 @@ pub const PackageManager = struct {
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
             .allow_authorization,
-        ) catch unreachable) |task| {
+        )) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
                 _ = this.scheduleTasks();
             }
         }
     }
+
+    const EnqueueTarballForDownloadError = NetworkTask.ForTarballError;
 
     pub fn enqueueTarballForDownload(
         this: *PackageManager,
@@ -13635,21 +13665,21 @@ pub const PackageManager = struct {
         url: string,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: ?u64,
-    ) void {
+    ) EnqueueTarballForDownloadError!void {
         const task_id = Task.Id.forTarball(url);
-        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id);
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
         }
 
-        task_queue.value_ptr.append(
+        try task_queue.value_ptr.append(
             this.allocator,
             task_context,
-        ) catch unreachable;
+        );
 
         if (task_queue.found_existing) return;
 
-        if (this.generateNetworkTaskForTarball(
+        if (try this.generateNetworkTaskForTarball(
             task_id,
             url,
             this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired(),
@@ -13657,7 +13687,7 @@ pub const PackageManager = struct {
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
             .no_authorization,
-        ) catch unreachable) |task| {
+        )) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
                 _ = this.scheduleTasks();

@@ -68,9 +68,9 @@ async function build(args) {
   const cacheRead = isCacheReadEnabled();
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
-    const cachePath = getCachePath(undefined, toolchain);
+    const cachePath = getCachePath(undefined);
     if (cacheRead && !existsSync(cachePath)) {
-      const mainCachePath = getCachePath(getDefaultBranch(), toolchain);
+      const mainCachePath = getCachePath(getDefaultBranch());
       if (existsSync(mainCachePath)) {
         mkdirSync(cachePath, { recursive: true });
         try {
@@ -142,8 +142,7 @@ function getCachePath(branch, toolchain) {
     ? branchName.slice(18, branchName.indexOf("-pr-"))
     : branchName;
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
-  const toolchainKey = toolchain || `${process.platform}-${process.arch}`;
-  return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey, toolchainKey);
+  return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }
 
 function isCacheReadEnabled() {

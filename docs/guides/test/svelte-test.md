@@ -1,13 +1,10 @@
 ---
-name: "Test Svelte components with bun:test"
-description: "import & require .svelte files in your tests in bun's jest-compatible test api, bun:test"
+name: "import, require, and test Svelte components with bun:test"
 ---
 
 Bun's [Plugin API](/docs/runtime/plugins) lets you add custom loaders to your project and the `test.preload` option in `bunfig.toml` lets you ensure your loaders start before your tests run.
 
-To support tests that import or require `*.svelte` files
-
-Save the following plugin in your project:
+To get started, save this plugin in your project.
 
 ```ts#svelte-loader.js
 // TODO: make this an npm package instead of a file
@@ -35,16 +32,20 @@ plugin({
 
 ---
 
-Add it as a `test.preload` in `bunfig.toml`:
+Add this to `bunfig.toml` to tell Bun to preload the plugin, so it loads before your tests run.
 
-```toml
+```toml#bunfig.toml
 [test]
+# Tell Bun to load this plugin before your tests run
 preload = ["./svelte-loader.js"]
+
+# This also works:
+# test.preload = ["./svelte-loader.js"]
 ```
 
 ---
 
-Write a test that imports or requires a `*.svelte` file:
+Now you can `import` or `require` `*.svelte` files in your tests, and it will load the Svelte component as a JavaScript module.
 
 ```ts#hello-svelte.test.ts
 import { test, expect } from "bun:test";
@@ -57,7 +58,7 @@ test("svelte", () => {
 
 ---
 
-Run your tests:
+To run your tests:
 
 ```bash
 $ bun test

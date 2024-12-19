@@ -543,9 +543,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
-    cancel_on_build_failing: isMergeQueue(),
     retry: getRetry(),
-    soft_fail: isMainBranch() ? true : [{ exit_status: 2 }],
+    cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
     command:
       os === "windows"
@@ -590,6 +589,7 @@ function getBuildImageStep(platform, options) {
       DEBUG: "1",
     },
     retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
     command: command.filter(Boolean).join(" "),
     timeout_in_minutes: 3 * 60,
   };

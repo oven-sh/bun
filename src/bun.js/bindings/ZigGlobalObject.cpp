@@ -3078,11 +3078,6 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
 
-    m_cachedNodeVMGlobalObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
-        });
-
     m_cachedGlobalProxyStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3348,18 +3343,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_NodeVMScriptClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
-            auto* structure = NodeVMScript::createStructure(init.vm, init.global, prototype);
-            auto* constructorStructure = NodeVMScriptConstructor::createStructure(
-                init.vm, init.global, init.global->m_functionPrototype.get());
-            auto* constructor = NodeVMScriptConstructor::create(
-                init.vm, init.global, constructorStructure, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
+    configureNodeVM(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);

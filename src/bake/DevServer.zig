@@ -314,7 +314,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(&dev.log);
-        return global.throwValue(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
+        return global.throwValue(dev.log.toJSAggregateError(global, bun.String.static("Framework is missing required files!")));
     };
 
     errdefer dev.route_lookup.clearAndFree(allocator);

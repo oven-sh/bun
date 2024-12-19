@@ -10,7 +10,12 @@
 #include "BunReadableStreamDefaultReader.h"
 #include "DOMIsoSubspaces.h"
 #include "BunClientData.h"
+#include "BunStreamStructures.h"
+#include "DOMClientIsoSubspaces.h"
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/JSPromise.h>
 
+#include "BunStreamInlines.h"
 namespace Bun {
 
 using namespace JSC;
@@ -167,7 +172,7 @@ private:
     }
 };
 
-JSReadableStreamDefaultController* JSReadableStreamDefaultController::create(VM& vm, Structure* structure, JSReadableStream* stream)
+JSReadableStreamDefaultController* JSReadableStreamDefaultController::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSReadableStream* stream)
 {
     JSReadableStreamDefaultController* controller = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultController>(vm)) JSReadableStreamDefaultController(vm, structure);
     controller->finishCreation(vm, stream);
@@ -241,7 +246,7 @@ JSValue JSReadableStreamDefaultController::enqueue(JSGlobalObject* globalObject,
     }
 
     // Enqueue the chunk
-    JSArray* queue = m_queue.get(this);
+    JSArray* queue = m_queue.getInitializedOnMainThread(globalObject);
     scope.release();
     queue->push(globalObject, chunk);
 
@@ -369,7 +374,7 @@ void JSReadableStreamDefaultController::callPullIfNeeded(JSGlobalObject* globalO
 
     // Handle the promise returned by pull
     if (JSPromise* promise = jsDynamicCast<JSPromise*>(result)) {
-        Bun::performPromiseThen(globalObject, promise, jsReadableStreamDefaultControllerFullfillPull, jsReadableStreamDefaultControllerRejectPull, this);
+        Bun::then(globalObject, promise, jsReadableStreamDefaultControllerFullfillPull, jsReadableStreamDefaultControllerRejectPull, this);
     } else {
         // Not a promise, just mark pulling as done
         m_pulling = false;
@@ -403,6 +408,12 @@ bool JSReadableStreamDefaultController::shouldCallPull() const
         return false;
 
     return true;
+}
+
+void JSReadableStreamDefaultController::finishCreation(VM& vm, JSReadableStream* stream)
+{
+    Base::finishCreation(vm);
+    m_stream.set(vm, this, stream);
 }
 
 const ClassInfo JSReadableStreamDefaultControllerConstructor::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerConstructor) };

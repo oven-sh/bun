@@ -15,11 +15,16 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr bool needsDestruction = true;
 
-    static JSReadableStreamDefaultController* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*);
+    static JSReadableStreamDefaultController* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSReadableStream*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
+
+    static JSC::JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject*);
+
+    template<typename CellType, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
     DECLARE_INFO;
 
@@ -58,11 +63,11 @@ public:
 private:
     JSReadableStreamDefaultController(JSC::VM&, JSC::Structure*);
     ~JSReadableStreamDefaultController();
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSReadableStream*);
 
     // Internal slots
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    JSC::WriteBarrier<JSC::JSArray> m_queue;
+    JSC::LazyProperty<JSObject, JSC::JSArray> m_queue;
     JSC::WriteBarrier<JSC::JSObject> m_pullAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_cancelAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_strategySizeAlgorithm;

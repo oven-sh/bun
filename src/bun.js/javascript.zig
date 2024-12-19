@@ -1036,7 +1036,7 @@ pub const VirtualMachine = struct {
         printer: *js_printer.BufferPrinter,
 
         pub fn get(this: *SourceMapHandlerGetter) js_printer.SourceMapHandler {
-            if (this.vm.debugger == null) {
+            if (this.vm.debugger == null or this.vm.debugger.?.mode == .connect) {
                 return SavedSourceMap.SourceMapHandler.init(&this.vm.source_mappings);
             }
 
@@ -2122,7 +2122,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (this.debugger != null) {
+        if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;

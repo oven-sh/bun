@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include <JavaScriptCore/JSObject.h>
@@ -8,10 +7,11 @@
 
 namespace Bun {
 
-using namespace JSC;
-
-class JSReadableStreamDefaultReader;
+// Prefer forward declarations over including headers, to save compile time
 class JSReadableStream;
+class JSReadableStreamDefaultReader;
+
+using namespace JSC;
 
 class TeeState final : public JSC::JSCell {
 public:

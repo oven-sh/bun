@@ -1,43 +1,41 @@
-#include "root.h"
+#pragma once
 
-#include <JavaScriptCore/JSGlobalObject.h>
+#include "root.h"
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSValue.h>
-#include <JavaScriptCore/JSCell.h>
-#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/LazyProperty.h>
 
 namespace Bun {
 
-using namespace JSC;
-
 class JSReadableStream;
 
-class JSReadableStreamDefaultController final : public JSNonFinalObject {
+class JSReadableStreamDefaultController final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    using Base = JSC::JSDestructibleObject;
+    static constexpr bool needsDestruction = true;
 
-    template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-
-    static JSReadableStreamDefaultController* create(JSC::VM&, JSC::Structure*, JSReadableStream* stream);
-    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-    static JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject*);
-    static JSObject* createConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
+    static JSReadableStreamDefaultController* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
 
     DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
+
+    void attach(JSReadableStream* stream);
+    bool isByteController() const { return m_isByteController; }
+    JSC::JSObject* cancelAlgorithm() const { return m_cancelAlgorithm.get(); }
 
     // Internal slots from the spec
     JSC::JSArray* queue() { return m_queue.get(); }
-    double queueTotalSize() { return m_queueTotalSize; }
+    double queueTotalSize() const { return m_queueTotalSize; }
     bool started() const { return m_started; }
     bool closeRequested() const { return m_closeRequested; }
     bool pullAgain() const { return m_pullAgain; }
     bool pulling() const { return m_pulling; }
     double desiredSize();
-    JSValue desiredSizeValue();
+    JSC::JSValue desiredSizeValue();
 
     // API for C++ usage
     JSC::JSValue enqueue(JSC::JSGlobalObject*, JSC::JSValue chunk);
@@ -45,9 +43,8 @@ public:
     void close(JSC::JSGlobalObject*);
     bool canCloseOrEnqueue() const;
 
-    JSObject* cancelAlgorithm() { return m_cancelAlgorithm.get(); }
-    JSObject* pullAlgorithm() { return m_pullAlgorithm.get(); }
-    JSObject* strategySizeAlgorithm() { return m_strategySizeAlgorithm.get(); }
+    JSC::JSObject* pullAlgorithm() const { return m_pullAlgorithm.get(); }
+    JSC::JSObject* strategySizeAlgorithm() const { return m_strategySizeAlgorithm.get(); }
 
     void setPullAlgorithm(JSC::JSObject* callback) { m_pullAlgorithm.set(vm(), this, callback); }
     void setCancelAlgorithm(JSC::JSObject* callback) { m_cancelAlgorithm.set(vm(), this, callback); }
@@ -61,11 +58,11 @@ public:
 private:
     JSReadableStreamDefaultController(JSC::VM&, JSC::Structure*);
     ~JSReadableStreamDefaultController();
-    void finishCreation(JSC::VM&, JSC::JSObject* stream);
+    void finishCreation(JSC::VM&);
 
     // Internal slots
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    LazyProperty<JSObject, JSArray> m_queue;
+    JSC::WriteBarrier<JSC::JSArray> m_queue;
     JSC::WriteBarrier<JSC::JSObject> m_pullAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_cancelAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_strategySizeAlgorithm;
@@ -75,6 +72,7 @@ private:
     bool m_closeRequested { false };
     bool m_pullAgain { false };
     bool m_pulling { false };
+    bool m_isByteController { false };
 };
 
-}
+} // namespace Bun

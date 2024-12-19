@@ -53,6 +53,7 @@ class GlobalInternals;
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
+#include "BunStreamStructures.h"
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -227,6 +228,8 @@ public:
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* teeStateStructure() const { return m_teeStateStructure.getInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -339,9 +342,10 @@ public:
     };
     static constexpr size_t promiseFunctionsSize = 26;
 
-    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
+    using PromiseHandler = SYSV_ABI EncodedJSValue (*)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+    static PromiseFunctions promiseHandlerID(PromiseHandler handler);
 
-    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    JSFunction* thenable(PromiseHandler handler)
     {
         auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
         if (JSFunction* func = barrier.get()) {
@@ -478,6 +482,16 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
+
+    JSC::Structure* transformStreamStructure() const { return m_streamStructures.getTransformStreamStructure(this); }
+    JSC::Structure* transformStreamDefaultControllerStructure() const { return m_streamStructures.getTransformStreamDefaultControllerStructure(this); }
+    JSC::JSObject* transformStreamConstructor() const { return m_streamStructures.getTransformStreamConstructor(this); }
+
+    JSC::Structure* readableStreamStructure() const { return m_streamStructures.getReadableStreamStructure(this); }
+    JSC::Structure* readableStreamDefaultReaderStructure() const { return m_streamStructures.getReadableStreamDefaultReaderStructure(this); }
+    JSC::Structure* readableStreamBYOBReaderStructure() const { return m_streamStructures.getReadableStreamBYOBReaderStructure(this); }
+    JSC::Structure* writableStreamDefaultWriterStructure() const { return m_streamStructures.getWritableStreamDefaultWriterStructure(this); }
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -522,6 +536,7 @@ public:
     LazyClassStructure m_callSiteStructure;
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
+    LazyClassStructure m_teeStateStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -593,6 +608,8 @@ private:
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+
+    Bun::StreamStructures m_streamStructures;
 };
 
 class EvalGlobalObject : public GlobalObject {

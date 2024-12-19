@@ -4,10 +4,12 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/CallData.h>
 #include "ErrorCode.h"
 #include "BunTransformStream.h"
 #include "BunTransformStreamDefaultController.h"
 #include "ZigGlobalObject.h"
+#include "BunBuiltinNames.h"
 
 namespace Bun {
 
@@ -122,7 +124,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor,
     if (UNLIKELY(!prototype))
         return throwVMTypeError(globalObject, scope, "Cannot get constructor for TransformStream"_s);
 
-    return JSValue::encode(globalObject->transformStreamConstructor());
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobalObject))
+        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
+
+    return JSValue::encode(zigGlobalObject->transformStreamConstructor());
 }
 
 // All static properties for the prototype
@@ -150,12 +156,7 @@ const ClassInfo JSTransformStreamConstructor::s_info = {
     CREATE_METHOD_TABLE(JSTransformStreamConstructor)
 };
 
-JSTransformStreamConstructor::JSTransformStreamConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, call, construct)
-{
-}
-
-void JSTransformStreamConstructor::finishCreation(VM& vm, JSTransformStreamPrototype* prototype)
+void JSTransformStreamConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamPrototype* prototype)
 {
     Base::finishCreation(vm, 3, "TransformStream"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype,
@@ -168,9 +169,13 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobalObject))
+        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
+
     JSObject* newTarget = asObject(callFrame->newTarget());
     Structure* structure = JSC::InternalFunction::createSubclassStructure(
-        globalObject, newTarget, globalObject->transformStreamStructure());
+        globalObject, newTarget, zigGlobalObject->transformStreamStructure());
     RETURN_IF_EXCEPTION(scope, {});
 
     // Extract constructor arguments per spec:
@@ -187,13 +192,14 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
 
     // Set up readable and writable sides with provided strategies
     if (!writableStrategyArg.isUndefined()) {
-
         // Apply writable strategy
         JSValue highWaterMark = writableStrategyArg.get(globalObject, builtinNames.highWaterMarkPublicName());
         RETURN_IF_EXCEPTION(scope, {});
         JSValue size = writableStrategyArg.get(globalObject, vm.propertyNames->size);
         RETURN_IF_EXCEPTION(scope, {});
         // ... apply strategy to writable side
+        UNUSED_PARAM(highWaterMark);
+        UNUSED_PARAM(size);
     }
 
     if (!readableStrategyArg.isUndefined()) {
@@ -234,7 +240,14 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
             MarkedArgumentBuffer args;
             args.append(controller);
 
-            JSC::JSValue startResult = call(globalObject, startFn, callData, args);
+            auto callData = JSC::getCallData(startFn);
+            if (callData.type == JSC::CallData::Type::None) {
+                throwTypeError(globalObject, scope, "Start function is not callable"_s);
+                return {};
+            }
+            IGNORE_WARNINGS_BEGIN("unused-variable")
+            JSC::JSValue startResult = JSC::call(globalObject, startFn, callData, transformerArg, args);
+            IGNORE_WARNINGS_END
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -242,7 +255,7 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(transformStream));
 }
 
-JSC_DEFINE_HOST_FUNCTION(call, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::call, (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -286,11 +299,17 @@ void JSTransformStream::finishCreation(VM& vm, JSGlobalObject* globalObject)
     // Initialize readable/writable sides and controller
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobalObject)) {
+        throwTypeError(globalObject, scope, "Invalid global object"_s);
+        return;
+    }
+
     // Initialize with empty promises that will be fulfilled when ready
-    m_backpressureChangePromise.set(vm, JSPromise::create(vm, globalObject->promiseStructure()));
+    m_backpressureChangePromise.set(vm, this, JSPromise::create(vm, zigGlobalObject->promiseStructure()));
 
     // Set up the controller
-    m_controller.set(vm, JSTransformStreamDefaultController::create(vm, globalObject, globalObject->transformStreamDefaultControllerStructure()));
+    m_controller.set(vm, this, JSTransformStreamDefaultController::create(vm, globalObject, zigGlobalObject->transformStreamDefaultControllerStructure(), this));
 
     RETURN_IF_EXCEPTION(scope, void());
 }
@@ -300,7 +319,7 @@ void JSTransformStream::enqueue(VM& vm, JSGlobalObject* globalObject, JSValue ch
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (m_controller)
-        m_controller->enqueue(vm, globalObject, chunk);
+        m_controller->enqueue(globalObject, chunk);
 
     RETURN_IF_EXCEPTION(scope, void());
 }
@@ -308,13 +327,13 @@ void JSTransformStream::enqueue(VM& vm, JSGlobalObject* globalObject, JSValue ch
 void JSTransformStream::error(VM& vm, JSGlobalObject* globalObject, JSValue error)
 {
     if (m_controller)
-        m_controller->error(vm, globalObject, error);
+        m_controller->error(globalObject, error);
 }
 
 void JSTransformStream::terminate(VM& vm, JSGlobalObject* globalObject)
 {
     if (m_controller)
-        m_controller->terminate(vm, globalObject);
+        m_controller->terminate(globalObject);
 }
 
 JSTransformStream* JSTransformStream::create(
@@ -339,6 +358,10 @@ void JSTransformStreamPrototype::finishCreation(VM& vm, JSGlobalObject* globalOb
         JSTransformStreamPrototypeTableValues,
         *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSTransformStream::~JSTransformStream()
+{
 }
 
 } // namespace Bun

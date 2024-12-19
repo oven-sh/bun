@@ -12,10 +12,20 @@
 #include "JSAbortSignal.h"
 #include "BunReadableStreamDefaultController.h"
 #include <JavaScriptCore/Completion.h>
+#include "BunReadableStreamDefaultReader.h"
+#include "BunReadableStreamBYOBReader.h"
+#include "BunWritableStream.h"
+#include "BunWritableStreamDefaultWriter.h"
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/Completion.h>
 
 namespace Bun {
 
 using namespace JSC;
+
+class JSReadableStreamPrototype;
+class JSReadableStreamConstructor;
 
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamGetLocked);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamGetReader);
@@ -23,8 +33,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamCancel);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPipeTo);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPipeThrough);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamTee);
-
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamGetLocked);
 
 static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "locked"_s,
@@ -88,7 +96,7 @@ private:
     {
         Base::finishCreation(vm);
 
-        reifyAllStaticProperties(globalObject);
+        reifyStaticProperties(vm, info(), JSReadableStreamPrototypeTableValues, *this);
 
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
@@ -103,7 +111,7 @@ public:
     static JSReadableStreamConstructor* create(VM&, JSGlobalObject*, Structure*, JSObject*);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Base::createStructure(vm, globalObject, prototype);
+        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
     }
 
     DECLARE_INFO;
@@ -142,26 +150,27 @@ JSValue JSReadableStream::getReader(VM& vm, JSGlobalObject* globalObject, JSValu
         JSObject* optionsObject = options.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue mode = optionsObject->get(globalObject, vm.propertyNames->mode);
+        JSValue mode = optionsObject->get(globalObject, Identifier::fromString(vm, "mode"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
         if (mode.getString(globalObject) == "byob"_s) {
-            if (!m_controller || !m_controller->isByteController()) {
+            auto* controller = jsCast<JSReadableStreamDefaultController*>(m_controller.get());
+            if (!controller || !controller->isByteController()) {
                 throwTypeError(globalObject, scope, "Cannot get a BYOB reader for a non-byte stream"_s);
                 return {};
             }
 
-            Structure* readerStructure = globalObject->readableStreamBYOBReaderStructure();
-            auto* reader = JSReadableStreamBYOBReader::create(vm, globalObject, readerStructure);
-            reader->attach(this);
+            auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+            Structure* readerStructure = zigGlobalObject->readableStreamBYOBReaderStructure();
+            auto* reader = JSReadableStreamBYOBReader::create(vm, globalObject, readerStructure, this);
             m_reader.set(vm, this, reader);
             return reader;
         }
     }
 
-    Structure* readerStructure = globalObject->readableStreamDefaultReaderStructure();
-    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, readerStructure);
-    reader->attach(this);
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    Structure* readerStructure = zigGlobalObject->readableStreamDefaultReaderStructure();
+    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, readerStructure, this);
     m_reader.set(vm, this, reader);
     return reader;
 }
@@ -187,10 +196,19 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     if (!m_controller)
         return JSPromise::resolvedPromise(globalObject, jsUndefined());
 
-    JSObject* cancelAlgorithm = m_controller->cancelAlgorithm();
+    auto* controller = jsCast<JSReadableStreamDefaultController*>(m_controller.get());
+    JSObject* cancelAlgorithm = controller->cancelAlgorithm();
     m_controller.clear();
 
-    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, cancelAlgorithm, JSC::getCallData(cancelAlgorithm), jsUndefined(), reason);
+    JSC::JSObject* function = jsCast<JSC::JSObject*>(cancelAlgorithm);
+    JSC::CallData callData = JSC::getCallData(function);
+
+    if (callData.type == JSC::CallData::Type::None)
+        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    JSValue result = JSC::call(globalObject, function, callData, jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -199,6 +217,22 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
 
     return JSPromise::resolvedPromise(globalObject, result);
 }
+
+class PipeToOperation {
+public:
+    static PipeToOperation* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
+        JSReadableStreamDefaultReader* reader, JSWritableStreamDefaultWriter* writer,
+        bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal, JSC::JSPromise* promise)
+    {
+        // Implementation needed
+        return nullptr;
+    }
+
+    void perform()
+    {
+        // Implementation needed
+    }
+};
 
 JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObject* destination, JSValue options)
 {
@@ -210,8 +244,12 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
     }
 
     JSWritableStream* writableStream = jsDynamicCast<JSWritableStream*>(destination);
+    if (!writableStream) {
+        throwTypeError(globalObject, scope, "Destination must be a WritableStream"_s);
+        return nullptr;
+    }
 
-    if (locked() || writableStream->locked()) {
+    if (locked() || writableStream->isLocked()) {
         throwTypeError(globalObject, scope, "Cannot pipe to/from a locked stream"_s);
         return nullptr;
     }
@@ -219,7 +257,7 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
     bool preventClose = false;
     bool preventAbort = false;
     bool preventCancel = false;
-    WebCore::JSAbortSignal* signal = nullptr;
+    JSObject* signal = nullptr;
 
     if (!options.isUndefined()) {
         JSObject* optionsObject = options.toObject(globalObject);
@@ -234,6 +272,7 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
         RETURN_IF_EXCEPTION(scope, nullptr);
         preventAbort = preventAbortValue.toBoolean(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
+
         JSValue preventCancelValue = optionsObject->get(globalObject, Identifier::fromString(vm, "preventCancel"_s));
         RETURN_IF_EXCEPTION(scope, nullptr);
         preventCancel = preventCancelValue.toBoolean(globalObject);
@@ -242,10 +281,9 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
         JSValue signalValue = optionsObject->get(globalObject, Identifier::fromString(vm, "signal"_s));
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!signalValue.isUndefined()) {
-            if (auto* abortSignal = jsDynamicCast<WebCore::JSAbortSignal*>(signalValue)) {
-                signal = abortSignal;
-            } else {
-                throwTypeError(globalObject, scope, "Signal must be an instance of AbortSignal"_s);
+            signal = signalValue.toObject(globalObject);
+            if (!signal) {
+                throwTypeError(globalObject, scope, "Signal must be an object"_s);
                 return nullptr;
             }
         }
@@ -253,13 +291,13 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
 
     m_disturbed = true;
 
-    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, globalObject->readableStreamDefaultReaderStructure());
-    reader->attach(this);
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, zigGlobalObject->readableStreamDefaultReaderStructure(), this);
+    m_reader.set(vm, this, reader);
 
-    auto* writer = JSWritableStreamDefaultWriter::create(vm, globalObject, globalObject->writableStreamDefaultWriterStructure());
-    writer->attach(writableStream);
-
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    Structure* writerStructure = zigGlobalObject->writableStreamDefaultWriterStructure();
+    auto* writer = JSWritableStreamDefaultWriter::create(vm, writerStructure, writableStream);
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     auto* pipeToOperation = PipeToOperation::create(vm, globalObject, reader, writer, preventClose, preventAbort, preventCancel, signal, promise);
     pipeToOperation->perform();
@@ -303,7 +341,7 @@ JSValue JSReadableStream::pipeThrough(VM& vm, JSGlobalObject* globalObject, JSOb
     return readable;
 }
 
-void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSC::JSValue& firstStream, JSC::JSValue& secondStream)
+void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSValue& firstStream, JSValue& secondStream)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -314,10 +352,12 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSC::JSValue& f
 
     if (m_state == State::Errored) {
         auto* error = m_storedError.get();
-        auto* stream1 = JSReadableStream::create(vm, globalObject, globalObject->readableStreamStructure());
-        auto* stream2 = JSReadableStream::create(vm, globalObject, globalObject->readableStreamStructure());
-        stream1->error(vm, globalObject, error);
-        stream2->error(vm, globalObject, error);
+        auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+        Structure* streamStructure = zigGlobalObject->readableStreamStructure();
+        auto* stream1 = JSReadableStream::create(vm, globalObject, streamStructure);
+        auto* stream2 = JSReadableStream::create(vm, globalObject, streamStructure);
+        stream1->error(error);
+        stream2->error(error);
         firstStream = stream1;
         secondStream = stream2;
         return;
@@ -325,11 +365,13 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSC::JSValue& f
 
     m_disturbed = true;
 
-    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, globalObject->readableStreamDefaultReaderStructure());
-    reader->attach(this);
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, zigGlobalObject->readableStreamDefaultReaderStructure(), this);
+    m_reader.set(vm, this, reader);
 
-    auto* branch1 = JSReadableStream::create(vm, globalObject, globalObject->readableStreamStructure());
-    auto* branch2 = JSReadableStream::create(vm, globalObject, globalObject->readableStreamStructure());
+    Structure* streamStructure = zigGlobalObject->readableStreamStructure();
+    auto* branch1 = JSReadableStream::create(vm, globalObject, streamStructure);
+    auto* branch2 = JSReadableStream::create(vm, globalObject, streamStructure);
 
     firstStream = branch1;
     secondStream = branch2;

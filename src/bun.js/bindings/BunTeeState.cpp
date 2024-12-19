@@ -1,13 +1,30 @@
-#include "JSTextEncoderStream.h"
 #include "root.h"
 
 #include "BunTeeState.h"
+#include "JSTextEncoderStream.h"
+#include "BunStreamInlines.h"
+#include "JSReadableStream.h"
+#include "JSReadableStreamDefaultReader.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
 using namespace JSC;
 
-JSC::JSPromise* TeeState::cancel(VM& vm, JSGlobalObject* globalObject, JSReadableStream* canceledBranch, JSValue reason)
+const ClassInfo TeeState::s_info = { "TeeState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TeeState) };
+
+TeeState::TeeState(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+void TeeState::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSC::JSPromise* TeeState::cancel(VM& vm, JSGlobalObject* globalObject, Bun::JSReadableStream* canceledBranch, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -43,7 +60,7 @@ JSC::JSPromise* TeeState::cancel(VM& vm, JSGlobalObject* globalObject, JSReadabl
     m_cancelPromiseResolve.clear();
     m_cancelPromiseReject.clear();
 
-    Bun::performPromiseThen(globalObject, result, resolve, reject);
+    Bun::then(globalObject, result, resolve, reject);
 
     return m_cancelPromise.get();
 }
@@ -64,18 +81,17 @@ Structure* TeeState::structure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->teeStateStructure();
 }
 
-TeeState* TeeState::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSReadableStream* branch1, JSReadableStream* branch2)
+TeeState* TeeState::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Bun::JSReadableStreamDefaultReader* reader, Bun::JSReadableStream* branch1, Bun::JSReadableStream* branch2)
 {
     auto* structure = TeeState::structure(vm, globalObject);
     auto* teeState = new (NotNull, allocateCell<TeeState>(vm)) TeeState(vm, structure);
+    teeState->finishCreation(vm);
     teeState->finishCreation(vm, reader, branch1, branch2);
     return teeState;
 }
 
-void TeeState::finishCreation(JSC::VM& vm, JSReadableStreamDefaultReader* reader, JSReadableStream* branch1, JSReadableStream* branch2)
+void TeeState::finishCreation(JSC::VM& vm, Bun::JSReadableStreamDefaultReader* reader, Bun::JSReadableStream* branch1, Bun::JSReadableStream* branch2)
 {
-    Base::finishCreation(vm);
-
     m_reader.set(vm, this, reader);
     m_branch1.set(vm, this, branch1);
     m_branch2.set(vm, this, branch2);
@@ -83,7 +99,6 @@ void TeeState::finishCreation(JSC::VM& vm, JSReadableStreamDefaultReader* reader
 
 void TeeState::pullAlgorithmReject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue error)
 {
-
     m_closedOrErrored = true;
     if (!m_canceled1)
         m_branch1->controller()->error(vm, globalObject, error);
@@ -113,10 +128,11 @@ void TeeState::pullAlgorithmFulfill(JSC::VM& vm, JSC::JSGlobalObject* globalObje
         JSValue chunk2 = value;
 
         // If the chunks are not immutable, clone chunk2
-        if (!value.isString() && !value.isSymbol() && !value.isNumber() && !value.isBoolean()) {
-            chunk2 = JSC::structuredClone(vm, globalObject, value);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+        // TODO: Implement this
+        // if (auto *arrayBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
+        //     structured
+        //     RETURN_IF_EXCEPTION(scope, void());
+        // }
 
         if (!m_canceled1)
             m_branch1->controller()->enqueue(vm, globalObject, chunk1);
@@ -163,8 +179,8 @@ void TeeState::pullAlgorithm(VM& vm, JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, void());
 
     if (JSPromise* promise = jsDynamicCast<JSPromise*>(readResult)) {
-        Bun::performPromiseThen(globalObject, promise, jsTeeStatePullAlgorithmFulfill, jsTeeStatePullAlgorithmReject, this);
+        Bun::then(globalObject, promise, jsTeeStatePullAlgorithmFulfill, jsTeeStatePullAlgorithmReject, this);
     }
 }
 
-}
+} // namespace Bun

@@ -94,6 +94,7 @@ const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamD
 const ClassInfo JSTransformStreamDefaultControllerConstructor::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerConstructor) };
 
 const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
+
 JSTransformStreamDefaultController* JSTransformStreamDefaultController::create(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject,

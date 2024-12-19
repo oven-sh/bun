@@ -4,9 +4,9 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
 const netdb = if (bun.Environment.isWindows) .{
-    .AI_V4MAPPED = 2048,
-    .AI_ADDRCONFIG = 1024,
-    .AI_ALL = 256,
+    .AI_V4MAPPED = @as(c_int, 2048),
+    .AI_ADDRCONFIG = @as(c_int, 1024),
+    .AI_ALL = @as(c_int, 256),
 } else @cImport(@cInclude("netdb.h"));
 
 pub const GetAddrInfo = struct {

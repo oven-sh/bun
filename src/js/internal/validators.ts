@@ -65,6 +65,17 @@ function validateObject(value, name) {
 }
 hideFromStack(validateObject);
 
+function validateOneOf(value, name, oneOf) {
+  if (!Array.prototype.includes.$call(oneOf, value)) {
+    const allowed = Array.prototype.join.$call(
+      Array.prototype.map.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
+      ", ",
+    );
+    throw $ERR_INVALID_ARG_VALUE(`The argument '${name}' must be one of: ${allowed}.`);
+  }
+}
+hideFromStack(validateOneOf);
+
 export default {
   validateObject: validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
@@ -103,4 +114,5 @@ export default {
   validateUndefined: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUndefined", 0),
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
+  validateOneOf: validateOneOf,
 };

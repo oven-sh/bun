@@ -112,32 +112,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError,
     if (value.isCell()) {
         if (value.inherits<JSC::ErrorInstance>() || value.asCell()->type() == ErrorInstanceType)
             return JSValue::encode(jsBoolean(true));
-
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* object = value.toObject(globalObject);
-
-        // node util.isError relies on toString
-        // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getPropertySlot(globalObject,
-                vm.propertyNames->toStringTagSymbol, slot)) {
-            EXCEPTION_ASSERT(!scope.exception());
-            if (slot.isValue()) {
-                JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
-                if (value.isString()) {
-                    String tag = asString(value)->value(globalObject);
-                    if (UNLIKELY(scope.exception()))
-                        scope.clearException();
-                    if (tag == "Error"_s)
-                        return JSValue::encode(jsBoolean(true));
-                }
-            }
-        }
-
-        JSValue proto = object->getPrototype(vm, globalObject);
-        if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
-            return JSValue::encode(jsBoolean(true));
     }
 
     return JSValue::encode(jsBoolean(false));

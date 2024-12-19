@@ -400,7 +400,6 @@ function getBuildEnv(target, options) {
  * @returns {Step}
  */
 function getBuildVendorStep(platform, options) {
-  const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
@@ -408,7 +407,7 @@ function getBuildVendorStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `bun run build:ci --target dependencies --toolchain ${toolchain}`,
+    command: "bun run build:ci --target dependencies",
   };
 }
 
@@ -434,7 +433,10 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: `bun run build:ci --target bun --toolchain ${toolchain}`,
+    command:
+      toolchain === "darwin-x64"
+        ? "bun run build:ci --target bun"
+        : `bun run build:ci --target bun --toolchain ${toolchain}`,
   };
 }
 

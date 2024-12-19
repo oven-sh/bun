@@ -4084,7 +4084,7 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
         }
 
         const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", false);

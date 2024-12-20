@@ -327,6 +327,7 @@ pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void
 pub extern fn JSC__VM__shrinkFootprint(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__throwError(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__VM__whenIdle(arg0: *bindings.VM, ArgFn1: ?*const fn (...) callconv(.C) void) void;
+pub extern fn JSC__VM__performOpportunisticallyScheduledTasks(arg0: *bindings.VM, arg1: f64) void;
 pub extern fn JSC__ThrowScope__clearException(arg0: [*c]bindings.ThrowScope) void;
 pub extern fn JSC__ThrowScope__declare(arg0: *bindings.VM, arg1: [*c]u8, arg2: [*c]u8, arg3: usize) bJSC__ThrowScope;
 pub extern fn JSC__ThrowScope__exception(arg0: [*c]bindings.ThrowScope) [*c]bindings.Exception;

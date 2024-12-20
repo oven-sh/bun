@@ -6497,6 +6497,10 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
+    pub fn performOpportunisticallyScheduledTasks(vm: *VM, until: f64) void {
+        cppFn("performOpportunisticallyScheduledTasks", .{ vm, until });
+    }
+
     pub const Extern = [_][]const u8{
         "setControlFlowProfiler",
         "collectAsync",

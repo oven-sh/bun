@@ -7,6 +7,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
+const Glob = bun.glob;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -126,7 +127,7 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
     return false;
 }
 
-const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallAccessor, false);
+const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -4822,7 +4823,7 @@ pub const Package = extern struct {
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-            if (bun.glob.detectGlobSyntax(input_path)) {
+            if (Glob.Ascii.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             }

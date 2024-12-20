@@ -41,6 +41,7 @@ public:
     // JavaScript-facing methods
     JSC::JSValue error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
     JSC::JSValue close(JSC::JSGlobalObject* globalObject);
+    void write(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
 
     // C++-facing methods
     bool shouldCallWrite() const;

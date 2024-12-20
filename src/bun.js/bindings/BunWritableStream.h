@@ -33,6 +33,7 @@ public:
     JSValue error(JSGlobalObject*, JSValue error);
     JSValue abort(JSGlobalObject*, JSValue reason);
     JSValue close(JSGlobalObject*);
+    void write(JSGlobalObject*, JSValue chunk);
     void finishInFlightClose();
     void finishInFlightCloseWithError(JSValue error);
 

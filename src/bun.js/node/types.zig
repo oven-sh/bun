@@ -2133,24 +2133,28 @@ pub const Process = struct {
         vm.globalExit();
     }
 
+    // TODO: switch this to using *bun.wtf.String when it is added
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
-        const wtf = k.value.WTFStringImpl;
+        if (k.tag == .Empty) return;
+        const wtf1 = k.value.WTFStringImpl;
         var buf1: [32768]u16 = undefined;
         var buf2: [32768]u16 = undefined;
-        const len1: usize = switch (wtf.is8Bit()) {
-            true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf.latin1Slice()).written,
+        const len1: usize = switch (wtf1.is8Bit()) {
+            true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf1.latin1Slice()).written,
             false => b: {
-                @memcpy(buf1[0..wtf.length()], wtf.utf16Slice());
-                break :b wtf.length();
+                @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
+                break :b wtf1.length();
             },
         };
         buf1[len1] = 0;
         const str2: ?[*:0]const u16 = if (v.tag != .Dead) str: {
-            const len2: usize = switch (wtf.is8Bit()) {
-                true => bun.strings.copyLatin1IntoUTF16([]u16, &buf2, []const u8, wtf.latin1Slice()).written,
+            if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
+            const wtf2 = v.value.WTFStringImpl;
+            const len2: usize = switch (wtf2.is8Bit()) {
+                true => bun.strings.copyLatin1IntoUTF16([]u16, &buf2, []const u8, wtf2.latin1Slice()).written,
                 false => b: {
-                    @memcpy(buf2[0..wtf.length()], wtf.utf16Slice());
-                    break :b wtf.length();
+                    @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
+                    break :b wtf2.length();
                 },
             };
             buf2[len2] = 0;

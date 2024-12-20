@@ -1,5 +1,6 @@
-#include "root.h"
+#pragma once
 
+#include "root.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSValue.h>
@@ -20,9 +21,8 @@ public:
 
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+
     static JSReadableStream* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*);
-    static JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject*);
-    static JSObject* createConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     enum class State {

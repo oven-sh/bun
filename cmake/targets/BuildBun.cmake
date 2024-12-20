@@ -670,12 +670,7 @@ endif()
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 if(BUN_LINK_ONLY)
-  if (NOT WIN32)
-    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
-  else()
-    # .ico file
-    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${BUN_RESOURCES})
-  endif()
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)

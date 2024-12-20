@@ -28,6 +28,130 @@ Structure* JSWritableStreamConstructor::createStructure(VM& vm, JSGlobalObject* 
     return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
 }
 
+static void underlyingSinkFromJS(
+    JSC::VM& vm, JSGlobalObject* globalObject, JSValue underlyingSinkValue,
+    JSC::JSValue strategyValue,
+    JSC::JSValue& highWaterMarkValue,
+    JSC::JSValue& sizeAlgorithmValue,
+    JSC::JSValue& closeAlgorithmValue,
+    JSC::JSValue& abortAlgorithmValue,
+    JSC::JSValue& writeAlgorithmValue,
+    JSC::JSValue& startAlgorithmValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Default values
+    startAlgorithmValue = jsUndefined();
+    writeAlgorithmValue = jsUndefined();
+    closeAlgorithmValue = jsUndefined();
+    abortAlgorithmValue = jsUndefined();
+
+    auto& propertyNames = Bun::builtinNames(vm);
+
+    // Extract strategy parameters
+    if (!strategyValue.isUndefined()) {
+        JSObject* strategyObj = strategyValue.getObject();
+        if (!strategyObj) {
+            throwVMTypeError(globalObject, scope, "WritableStream strategy must be an object"_s);
+            return;
+        }
+
+        // Get highWaterMark
+        highWaterMarkValue = strategyObj->getIfPropertyExists(globalObject, propertyNames.highWaterMarkPublicName());
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!highWaterMarkValue) {
+            highWaterMarkValue = jsNumber(1);
+        }
+
+        // Get size algorithm
+        sizeAlgorithmValue = strategyObj->getIfPropertyExists(globalObject, vm.propertyNames->size);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (!sizeAlgorithmValue) {
+            sizeAlgorithmValue = jsUndefined();
+        }
+
+        if (!sizeAlgorithmValue.isUndefined() && !sizeAlgorithmValue.isCallable()) {
+            throwVMTypeError(globalObject, scope, "WritableStream strategy size must be callable"_s);
+            return;
+        }
+    } else {
+        highWaterMarkValue = jsNumber(1);
+        sizeAlgorithmValue = jsUndefined();
+    }
+
+    // If no underlying sink, use defaults and return
+    if (underlyingSinkValue.isUndefinedOrNull()) {
+        return;
+    }
+
+    JSObject* underlyingSink = underlyingSinkValue.getObject();
+    if (!underlyingSink) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink must be an object"_s);
+        return;
+    }
+
+    // Get start method
+    startAlgorithmValue = underlyingSink->getIfPropertyExists(globalObject, propertyNames.startPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!startAlgorithmValue) {
+        startAlgorithmValue = jsUndefined();
+    }
+
+    if (!startAlgorithmValue.isUndefined() && !startAlgorithmValue.isCallable()) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink start must be callable"_s);
+        return;
+    }
+
+    // Get write method
+    writeAlgorithmValue = underlyingSink->getIfPropertyExists(globalObject, propertyNames.writePublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!writeAlgorithmValue) {
+        writeAlgorithmValue = jsUndefined();
+    }
+
+    if (!writeAlgorithmValue.isUndefined() && !writeAlgorithmValue.isCallable()) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink write must be callable"_s);
+        return;
+    }
+
+    // Get close method
+    closeAlgorithmValue = underlyingSink->getIfPropertyExists(globalObject, propertyNames.closePublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!closeAlgorithmValue) {
+        closeAlgorithmValue = jsUndefined();
+    }
+
+    if (!closeAlgorithmValue.isUndefined() && !closeAlgorithmValue.isCallable()) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink close must be callable"_s);
+        return;
+    }
+
+    // Get abort method
+    abortAlgorithmValue = underlyingSink->getIfPropertyExists(globalObject, Identifier::fromString(vm, "abort"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!abortAlgorithmValue) {
+        abortAlgorithmValue = jsUndefined();
+    }
+
+    if (!abortAlgorithmValue.isUndefined() && !abortAlgorithmValue.isCallable()) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink abort must be callable"_s);
+        return;
+    }
+
+    // Check for type property which is currently reserved
+    JSValue typeValue = underlyingSink->getIfPropertyExists(globalObject, Identifier::fromString(vm, "type"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!typeValue) {
+        typeValue = jsUndefined();
+    }
+
+    if (!typeValue.isUndefined()) {
+        throwVMTypeError(globalObject, scope, "WritableStream underlying sink type property is reserved for future use"_s);
+        return;
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -49,20 +173,40 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalG
         } else {
             structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
         }
+
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
+    if (!underlyingSink) {
+        return JSValue::encode(JSWritableStream::create(vm, lexicalGlobalObject, structure));
+    }
+
+    // Initialize with underlying sink if provided
+
+    JSC::JSValue highWaterMarkValue;
+    JSC::JSValue sizeAlgorithmValue;
+    JSC::JSValue closeAlgorithmValue;
+    JSC::JSValue abortAlgorithmValue;
+    JSC::JSValue writeAlgorithmValue;
+    JSC::JSValue startAlgorithmValue;
+    underlyingSinkFromJS(vm, lexicalGlobalObject, underlyingSink, strategy, highWaterMarkValue, sizeAlgorithmValue, closeAlgorithmValue, abortAlgorithmValue, writeAlgorithmValue, startAlgorithmValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSWritableStream* stream = JSWritableStream::create(vm, lexicalGlobalObject, structure);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    // Initialize with underlying sink if provided
-    if (underlyingSink) {
-        // Set up controller with underlying sink...
-        auto controller = JSWritableStreamDefaultController::create(vm, globalObject, stream, underlyingSink);
-        RETURN_IF_EXCEPTION(scope, {});
-        stream->setController(controller);
-    }
+    Structure* controllerStructure = globalObject->streams().getWritableStreamDefaultControllerStructure(globalObject);
+
+    JSWritableStreamDefaultController* controller = JSWritableStreamDefaultController::create(
+        vm,
+        controllerStructure,
+        stream,
+        highWaterMarkValue.toNumber(globalObject),
+        abortAlgorithmValue.getObject(),
+        closeAlgorithmValue.getObject(),
+        writeAlgorithmValue.getObject(),
+        sizeAlgorithmValue.getObject());
+    RETURN_IF_EXCEPTION(scope, {});
+    stream->setController(controller);
 
     return JSValue::encode(stream);
 }

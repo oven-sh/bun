@@ -28,12 +28,6 @@ JSTransformStreamConstructor* JSTransformStreamConstructor::create(JSC::VM& vm, 
     return constructor;
 }
 
-template<typename CellType, JSC::SubspaceAccess mode>
-JSC::GCClient::IsoSubspace* JSTransformStreamConstructor::subspaceFor(JSC::VM& vm)
-{
-    return &vm.internalFunctionSpace();
-}
-
 JSTransformStreamConstructor::JSTransformStreamConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, call, construct)
 {

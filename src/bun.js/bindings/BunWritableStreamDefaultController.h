@@ -26,7 +26,10 @@ public:
         JSC::Structure* structure,
         JSWritableStream* stream,
         double highWaterMark,
-        JSC::JSObject* underlyingSinkObj);
+        JSC::JSObject* abortAlgorithm,
+        JSC::JSObject* closeAlgorithm,
+        JSC::JSObject* writeAlgorithm,
+        JSC::JSObject* sizeAlgorithm);
 
     DECLARE_INFO;
 

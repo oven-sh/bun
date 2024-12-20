@@ -17,11 +17,13 @@ public:
     using Base = JSC::JSNonFinalObject;
     static constexpr bool needsDestruction = true;
 
-    template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return &vm.plainObjectSpace();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     static JSReadableStreamBYOBReader* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSReadableStream*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -45,6 +47,10 @@ public:
     void setReadRequests(JSC::VM& vm, JSC::JSArray* requests) { m_readRequests.set(vm, this, requests); }
 
     void clearStream() { m_stream.clear(); }
+
+    JSC::JSValue read(JSC::VM&, JSC::JSGlobalObject*, JSC::JSArrayBufferView*, uint64_t minRequested = 1);
+    void releaseLock(JSC::VM&, JSC::JSGlobalObject*);
+    JSC::JSValue cancel(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue reason);
 
 protected:
     JSReadableStreamBYOBReader(JSC::VM&, JSC::Structure*);

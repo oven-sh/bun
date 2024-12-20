@@ -1,4 +1,8 @@
+#include "root.h"
+
+#include <JavaScriptCore/Lookup.h>
 #include "BunWritableStreamDefaultWriter.h"
+#include "BunWritableStreamDefaultController.h"
 #include "BunWritableStream.h"
 #include "JSDOMWrapper.h"
 
@@ -16,7 +20,6 @@ const ClassInfo JSWritableStreamDefaultWriter::s_info = {
 
 JSWritableStreamDefaultWriter::JSWritableStreamDefaultWriter(VM& vm, Structure* structure, JSWritableStream* stream)
     : Base(vm, structure)
-    , m_stream(vm, this, stream)
 {
 }
 

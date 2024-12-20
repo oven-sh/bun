@@ -130,7 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(readableStreamDefaultReaderCancel, (JSGlobalObject * gl
         return {};
     }
 
-    return JSValue::encode(reader->stream()->cancel(globalObject, reason));
+    return JSValue::encode(reader->stream()->cancel(vm, globalObject, reason));
 }
 
 } // namespace Bun

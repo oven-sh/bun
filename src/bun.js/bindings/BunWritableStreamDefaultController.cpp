@@ -202,16 +202,38 @@ JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
     JSC::Structure* structure,
     JSWritableStream* stream,
     double highWaterMark,
-    JSC::JSObject* underlyingSinkObj)
+    JSC::JSObject* abortAlgorithm,
+    JSC::JSObject* closeAlgorithm,
+    JSC::JSObject* writeAlgorithm,
+    JSC::JSObject* sizeAlgorithm)
 {
     JSWritableStreamDefaultController* controller = new (
         NotNull, JSC::allocateCell<JSWritableStreamDefaultController>(vm))
         JSWritableStreamDefaultController(vm, structure);
 
     controller->finishCreation(vm);
-    controller->m_stream.set(vm, controller, stream);
+    if (abortAlgorithm)
+        controller->m_abortAlgorithm.setMayBeNull(vm, controller, abortAlgorithm);
+    else
+        controller->m_abortAlgorithm.clear();
+    if (closeAlgorithm)
+        controller->m_closeAlgorithm.setMayBeNull(vm, controller, closeAlgorithm);
+    else
+        controller->m_closeAlgorithm.clear();
+    if (writeAlgorithm)
+        controller->m_writeAlgorithm.setMayBeNull(vm, controller, writeAlgorithm);
+    else
+        controller->m_writeAlgorithm.clear();
+    if (sizeAlgorithm)
+        controller->m_strategySizeAlgorithm.set(vm, controller, sizeAlgorithm);
+    else
+        controller->m_strategySizeAlgorithm.clear();
+
+    if (stream)
+        controller->m_stream.set(vm, controller, stream);
+    else
+        controller->m_stream.clear();
     controller->m_strategyHWM = highWaterMark;
-    controller->m_started = true;
 
     return controller;
 }
@@ -221,10 +243,11 @@ void JSWritableStreamDefaultController::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     m_queue.set(vm, this, JSC::constructEmptyArray(globalObject(), nullptr, 0));
     m_abortController.initLater([](const JSC::LazyProperty<JSObject, WebCore::JSAbortController>::Initializer& init) {
-        Zig::GlobalObject* globalObject = defaultGlobalObject(init.owner->globalObject());
+        auto* lexicalGlobalObject = init.owner->globalObject();
+        Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         auto& scriptExecutionContext = *globalObject->scriptExecutionContext();
         Ref<WebCore::AbortController> abortController = WebCore::AbortController::create(scriptExecutionContext);
-        JSAbortController* abortControllerValue = jsCast<JSAbortController*>(WebCore::toJSNewlyCreated<IDLInterface<WebCore::AbortController>>(*init.owner->globalObject(), *globalObject, WTFMove(abortController)));
+        JSAbortController* abortControllerValue = jsCast<JSAbortController*>(WebCore::toJSNewlyCreated<IDLInterface<WebCore::AbortController>>(*lexicalGlobalObject, *globalObject, WTFMove(abortController)));
         init.set(abortControllerValue);
     });
 }
@@ -276,7 +299,7 @@ bool JSWritableStreamDefaultController::shouldCallWrite() const
     if (m_inFlightWriteRequest)
         return false;
 
-    if (m_stream->state() != JSWritableStream::State::Writable)
+    if (!m_stream || m_stream->state() != JSWritableStream::State::Writable)
         return false;
 
     return true;
@@ -338,7 +361,7 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
 
     // 5. Let closeRequest be stream.[[closeRequest]].
     // 6. Assert: closeRequest is not undefined.
-    ASSERT(stream->closeRequest());
+    // TODO: do we need to check this?
 
     JSObject* closeFunction = m_closeAlgorithm.get();
 

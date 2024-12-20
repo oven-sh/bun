@@ -14,14 +14,16 @@ class JSReadableStreamConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
 
     static JSReadableStreamConstructor* create(VM&, JSGlobalObject*, Structure*, JSObject*);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
 
     DECLARE_INFO;
     template<typename CellType, SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(VM& vm);
+    static JSC::GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.internalFunctionSpace();
+    }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSGlobalObject*, CallFrame*);
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSGlobalObject*, CallFrame*);

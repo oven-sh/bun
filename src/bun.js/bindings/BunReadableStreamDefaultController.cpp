@@ -220,8 +220,13 @@ void JSReadableStreamDefaultController::callPullIfNeeded(JSGlobalObject* globalO
     MarkedArgumentBuffer args;
     args.append(this);
 
+    EnsureStillAliveScope ensureStillAliveScope(this);
     JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, pullAlgorithm, JSC::getCallData(pullAlgorithm), jsUndefined(), args);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (scope.exception()) {
+        m_pulling = false;
+        // TODO: is there more we should do here?
+        return;
+    }
 
     // Handle the promise returned by pull
     if (JSPromise* promise = jsDynamicCast<JSPromise*>(result)) {

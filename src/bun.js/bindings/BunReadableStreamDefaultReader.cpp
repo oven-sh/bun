@@ -1,4 +1,8 @@
+#include "root.h"
+
+#include <JavaScriptCore/LazyPropertyInlines.h>
 #include "BunReadableStreamDefaultReader.h"
+#include "BunClientData.h"
 #include "BunReadableStream.h"
 #include "BunReadableStreamDefaultController.h"
 #include "BunStreamInlines.h"
@@ -19,9 +23,24 @@ JSReadableStreamDefaultReader* JSReadableStreamDefaultReader::create(JSC::VM& vm
     JSReadableStreamDefaultReader* reader = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReader>(vm)) JSReadableStreamDefaultReader(vm, structure);
     reader->finishCreation(vm);
     reader->m_stream.set(vm, reader, stream);
-    reader->m_readRequests.set(vm, reader, JSC::constructEmptyArray(globalObject, nullptr));
-    reader->m_closedPromise.set(vm, reader, JSC::JSPromise::create(vm, globalObject->promiseStructure()));
-    reader->m_readyPromise.set(vm, reader, JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+    reader->m_readRequests.initLater(
+        [](const auto& init) {
+            auto& vm = init.vm();
+            auto& globalObject = init.owner()->globalObject();
+            init.set(JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0));
+        });
+    reader->m_closedPromise.initLater(
+        [](const auto& init) {
+            auto& vm = init.vm();
+            auto& globalObject = init.owner()->globalObject();
+            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+        });
+    reader->m_readyPromise.initLater(
+        [](const auto& init) {
+            auto& vm = init.vm();
+            auto& globalObject = init.owner()->globalObject();
+            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+        });
     return reader;
 }
 
@@ -32,9 +51,9 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
     ASSERT_GC_OBJECT_INHERITS(reader, JSReadableStreamDefaultReader::info());
     Base::visitChildren(reader, visitor);
     visitor.append(reader->m_stream);
-    visitor.append(reader->m_readyPromise);
-    visitor.append(reader->m_closedPromise);
-    visitor.append(reader->m_readRequests);
+    reader->m_readyPromise.visit(visitor);
+    reader->m_closedPromise.visit(visitor);
+    reader->m_readRequests.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);
@@ -49,8 +68,12 @@ void JSReadableStreamDefaultReader::detach()
 {
     ASSERT(isActive());
     m_stream.clear();
-    m_readyPromise.clear();
-    m_readRequests.clear();
+    if (m_readyPromise.isInitialized())
+        m_readyPromise.setMayBeNull(vm(), this, nullptr);
+    if (m_readRequests.isInitialized())
+        m_readRequests.setMayBeNull(vm(), this, nullptr);
+    if (m_closedPromise.isInitialized())
+        m_closedPromise.setMayBeNull(vm(), this, nullptr);
 }
 
 void JSReadableStreamDefaultReader::releaseLock()
@@ -74,7 +97,7 @@ JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* glob
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     // Add read request to the queue
-    JSArray* readRequests = m_readRequests.get();
+    JSArray* readRequests = m_readRequests.get(this);
     readRequests->push(globalObject, promise);
 
     // Attempt to fulfill read request immediately if possible
@@ -83,27 +106,15 @@ JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* glob
     return promise;
 }
 
-Structure* JSReadableStreamDefaultReader::structure(JSC::VM& vm, JSGlobalObject* globalObject)
+GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceForImpl(JSC::VM& vm)
 {
-    return globalObject->readableStreamDefaultReaderStructure();
-}
 
-JSObject* JSReadableStreamDefaultReader::prototype(JSC::VM& vm, JSGlobalObject* globalObject)
-{
-    return globalObject->readableStreamDefaultReaderPrototype();
-}
-
-JSObject* JSReadableStreamDefaultReader::constructor(JSC::VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return globalObject->readableStreamDefaultReaderConstructor();
-}
-
-template<typename CellType, SubspaceAccess mode>
-GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceFor(VM& vm)
-{
-    if constexpr (mode == SubspaceAccess::Concurrently)
-        return nullptr;
-    return &vm.plainObjectSpace();
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSReadableStreamDefaultReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSReadableStreamDefaultReader = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSReadableStreamDefaultReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSReadableStreamDefaultReader = std::forward<decltype(space)>(space); });
 }
 
 } // namespace Bun

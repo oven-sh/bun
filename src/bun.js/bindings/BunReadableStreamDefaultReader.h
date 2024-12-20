@@ -31,17 +31,18 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    template<typename CellType, JSC::SubspaceAccess mode>
+    template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return &vm.plainObjectSpace();
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     // Public API for C++ usage
-    JSC::JSPromise* readyPromise() { return m_readyPromise.get(); }
-    JSC::JSPromise* closedPromise() { return m_closedPromise.get(); }
+    JSC::JSPromise* readyPromise() { return m_readyPromise.get(this); }
+    JSC::JSPromise* closedPromise() { return m_closedPromise.get(this); }
     JSReadableStream* stream() { return m_stream.get(); }
 
     JSC::JSPromise* read(JSC::VM&, JSGlobalObject*);
@@ -49,7 +50,7 @@ public:
     bool isActive() const { return !!m_stream; }
     void detach();
 
-    unsigned length() const { return m_readRequests.get()->length(); }
+    unsigned length() const { return m_readRequests.isInitialized() ? m_readRequests.get(this)->length() : 0; }
 
     // Implements ReadableStreamDefaultReader
     void releaseLock();
@@ -64,9 +65,9 @@ private:
 
     // Internal slots defined by the spec
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    JSC::WriteBarrier<JSC::JSPromise> m_readyPromise;
-    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
-    JSC::WriteBarrier<JSC::JSArray> m_readRequests;
+    JSC::LazyProperty<JSObject, JSC::JSPromise> m_readyPromise;
+    JSC::LazyProperty<JSObject, JSC::JSPromise> m_closedPromise;
+    JSC::LazyProperty<JSObject, JSC::JSArray> m_readRequests;
 };
 
 } // namespace Bun

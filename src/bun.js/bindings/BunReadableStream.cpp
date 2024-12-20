@@ -24,6 +24,16 @@ namespace Bun {
 
 using namespace JSC;
 
+JSC::GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSReadableStream, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSReadableStream = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSReadableStream = std::forward<decltype(space)>(space); });
+}
+
 JSValue JSReadableStream::getReader(VM& vm, JSGlobalObject* globalObject, JSValue options)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -95,7 +105,7 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
 
     MarkedArgumentBuffer args;
     args.append(reason);
-    JSValue result = JSC::call(globalObject, function, callData, jsUndefined(), args);
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 

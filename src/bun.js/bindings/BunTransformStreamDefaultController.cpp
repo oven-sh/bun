@@ -9,92 +9,6 @@ namespace Bun {
 
 using namespace JSC;
 
-class JSTransformStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
-    using Base = JSC::JSNonFinalObject;
-
-public:
-    static JSTransformStreamDefaultControllerPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSTransformStreamDefaultControllerPrototype>(vm))
-            JSTransformStreamDefaultControllerPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSTransformStreamDefaultControllerPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSTransformStreamDefaultControllerConstructor final : public JSC::InternalFunction {
-    using Base = JSC::InternalFunction;
-
-public:
-    static JSTransformStreamDefaultControllerConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStreamDefaultControllerPrototype* prototype)
-    {
-        JSTransformStreamDefaultControllerConstructor* constructor = new (NotNull, JSC::allocateCell<JSTransformStreamDefaultControllerConstructor>(vm))
-            JSTransformStreamDefaultControllerConstructor(vm, structure);
-        constructor->finishCreation(vm, globalObject, prototype);
-        return constructor;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.internalFunctionSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-private:
-    JSTransformStreamDefaultControllerConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, call, construct)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSTransformStreamDefaultControllerPrototype*);
-
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-};
-
-static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValues[] = {
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic,
-        { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerEnqueue, 1 } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic,
-        { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerError, 1 } },
-    { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic,
-        { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerTerminate, 0 } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic,
-        { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerDesiredSize, 0 } },
-};
-
-const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
-const ClassInfo JSTransformStreamDefaultControllerConstructor::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerConstructor) };
-
-const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
-
 JSTransformStreamDefaultController* JSTransformStreamDefaultController::create(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject,
@@ -113,23 +27,6 @@ void JSTransformStreamDefaultController::finishCreation(JSC::VM& vm, JSC::JSGlob
     ASSERT(inherits(info()));
 
     m_stream.set(vm, this, transformStream);
-}
-
-void JSTransformStreamDefaultControllerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    reifyStaticProperties(vm, info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-}
-
-void JSTransformStreamDefaultControllerConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamDefaultControllerPrototype* prototype)
-{
-    Base::finishCreation(vm, 2, "TransformStreamDefaultController"_s, PropertyAdditionMode::WithoutStructureTransition);
-    ASSERT(inherits(info()));
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 }
 
 template<typename Visitor>

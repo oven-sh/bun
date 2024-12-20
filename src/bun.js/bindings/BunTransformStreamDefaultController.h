@@ -13,12 +13,18 @@ public:
     static JSTransformStreamDefaultController* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStream* transformStream);
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
+    DECLARE_VISIT_CHILDREN;
+    template<typename CellType, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultController, Base);
-        return &vm.plainObjectSpace();
+        if (mode == JSC::SubspaceAccess::Concurrently) {
+            return nullptr;
+        }
+
+        return subspaceForImpl(vm);
     }
+
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -28,8 +34,6 @@ public:
     bool enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
     void error(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
     void terminate(JSC::JSGlobalObject* globalObject);
-
-    template<typename Visitor> void visitChildrenImpl(JSCell*, Visitor&);
 
 private:
     JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure);

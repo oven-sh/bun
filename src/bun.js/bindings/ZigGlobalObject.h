@@ -493,6 +493,7 @@ public:
     JSC::Structure* writableStreamDefaultWriterStructure() const { return m_streamStructures.getWritableStreamDefaultWriterStructure(this); }
     JSC::Structure* writableStreamStructure() const { return m_streamStructures.getWritableStreamStructure(this); }
     JSC::JSObject* writableStreamConstructor() const { return m_streamStructures.getWritableStreamConstructor(this); }
+    Bun::StreamStructures& streams() { return m_streamStructures; }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

@@ -28,8 +28,10 @@ struct StreamStructures {
     LazyClassStructure m_transformStream;
     LazyClassStructure m_transformStreamDefaultController;
     LazyClassStructure m_writableStream;
+    LazyClassStructure m_writableStreamDefaultController;
 
 public:
+    JSObject* getReadableStreamConstructor(const JSGlobalObject* globalObject) const { return m_readableStream.constructorInitializedOnMainThread(globalObject); }
     Structure* getReadableStreamStructure(const JSGlobalObject* globalObject) const { return m_readableStream.getInitializedOnMainThread(globalObject); }
     Structure* getReadableStreamDefaultReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamDefaultReader.getInitializedOnMainThread(globalObject); }
     Structure* getReadableStreamBYOBReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReader.getInitializedOnMainThread(globalObject); }
@@ -39,6 +41,8 @@ public:
     JSObject* getTransformStreamConstructor(const JSGlobalObject* globalObject) const { return m_transformStream.constructorInitializedOnMainThread(globalObject); }
     Structure* getWritableStreamStructure(const JSGlobalObject* globalObject) const { return m_writableStream.getInitializedOnMainThread(globalObject); }
     JSObject* getWritableStreamConstructor(const JSGlobalObject* globalObject) const { return m_writableStream.constructorInitializedOnMainThread(globalObject); }
+    JSObject* getReadableStreamBYOBReaderConstructor(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReader.constructorInitializedOnMainThread(globalObject); }
+    Structure* getWritableStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_writableStreamDefaultController.getInitializedOnMainThread(globalObject); }
 };
 
 } // namespace Bun

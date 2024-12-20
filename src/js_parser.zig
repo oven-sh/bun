@@ -4218,8 +4218,19 @@ pub const Parser = struct {
 
         if (before.items.len > 0 or after.items.len > 0) {
             try parts.ensureUnusedCapacity(before.items.len + after.items.len);
-            try parts.insertSlice(0, before.items);
-            parts.appendSliceAssumeCapacity(after.items);
+            const parts_len = parts.items.len;
+            parts.items.len += before.items.len + after.items.len;
+
+            if (before.items.len > 0) {
+                if (parts_len > 0) {
+                    // first copy parts to the middle if before exists
+                    bun.copy(js_ast.Part, parts.items[before.items.len..][0..parts_len], parts.items[0..parts_len]);
+                }
+                bun.copy(js_ast.Part, parts.items[0..before.items.len], before.items);
+            }
+            if (after.items.len > 0) {
+                bun.copy(js_ast.Part, parts.items[parts_len + before.items.len ..][0..after.items.len], after.items);
+            }
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules

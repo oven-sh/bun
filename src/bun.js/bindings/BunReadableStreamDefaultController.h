@@ -21,8 +21,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSC::JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject*);
-
     template<typename CellType, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
@@ -39,7 +37,7 @@ public:
     bool closeRequested() const { return m_closeRequested; }
     bool pullAgain() const { return m_pullAgain; }
     bool pulling() const { return m_pulling; }
-    double desiredSize();
+    double desiredSize() const;
     JSC::JSValue desiredSizeValue();
 
     // API for C++ usage

@@ -58,6 +58,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__new);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
@@ -378,7 +379,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun__DNS__getCacheStats, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "newResolver"_s), 0, Bun__DNSResolver__new, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "newResolver"_s), 1, Bun__DNSResolver__new, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "ADDRCONFIG"_s), jsNumber(AI_ADDRCONFIG),
         JSC::PropertyAttribute::DontDelete | 0);

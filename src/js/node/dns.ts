@@ -274,7 +274,9 @@ var InternalResolver = class Resolver {
     this.#resolver = this._handle = dns.newResolver(options);
   }
 
-  cancel() {}
+  cancel() {
+    this.#resolver.cancel();
+  }
 
   static #getResolver(object) {
     return #resolver in object ? object.#resolver : dns;
@@ -751,7 +753,9 @@ const promises = {
       this.#resolver = this._handle = dns.newResolver(options);
     }
 
-    cancel() {}
+    cancel() {
+      this.#resolver.cancel();
+    }
 
     static #getResolver(object) {
       return #resolver in object ? object.#resolver : dns;

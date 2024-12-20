@@ -153,13 +153,6 @@ fn NewLexer_(
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
         jsx_pragma: JSXPragma = .{},
-        bun_pragma: enum {
-            none,
-            bun,
-            bun_cjs,
-            bytecode,
-            bytecode_cjs,
-        } = .none,
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
@@ -1992,7 +1985,6 @@ fn NewLexer_(
             if (comptime Environment.allow_assert)
                 bun.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
 
-            var has_seen_text = false;
             while (rest.len > 0) {
                 const c = rest[0];
                 rest = rest[1..];
@@ -2007,10 +1999,7 @@ fn NewLexer_(
                             }
                         }
 
-                        // @bun must be the first pragma. it may have spaces before it.
-                        if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                            if (!has_seen_text) lexer.bun_pragma = .bun;
-                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                        if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                 lexer.jsx_pragma._jsx = span;
                             }
@@ -2030,14 +2019,9 @@ fn NewLexer_(
                             if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                 lexer.source_mapping_url = span;
                             }
-                        } else if ((lexer.bun_pragma == .bun or lexer.bun_pragma == .bun_cjs) and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
-                            lexer.bun_pragma = if (lexer.bun_pragma == .bun) .bytecode else .bytecode_cjs;
-                        } else if ((lexer.bun_pragma == .bytecode or lexer.bun_pragma == .bun) and strings.hasPrefixWithWordBoundary(chunk, "bun-cjs")) {
-                            lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                         }
                     },
-                    ' ' | '\t' | '\n' | '\r' => {},
-                    else => has_seen_text = true,
+                    else => {},
                 }
             }
         }

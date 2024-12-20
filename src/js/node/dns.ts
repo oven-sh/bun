@@ -668,7 +668,11 @@ const promises = {
     if (arguments.length !== 2) {
       throw $ERR_MISSING_ARGS('The "address" and "port" arguments must be specified');
     }
-    return translateErrorCode(dns.lookupService(address, port));
+    try {
+      return translateErrorCode(dns.lookupService(address, port));
+    } catch (e) {
+      return translateErrorCode(Promise.reject(e));
+    }
   },
 
   resolve(hostname, rrtype) {

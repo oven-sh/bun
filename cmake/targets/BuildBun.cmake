@@ -601,6 +601,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
 
 if(WIN32)
   list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
 endif()
 
 register_repository(
@@ -660,6 +662,9 @@ endif()
 # --- Executable ---
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
+if(WIN32)
+  list(APPEND BUN_CPP_OUTPUT ${CODEGEN_PATH}/windows-app-info.rc)
+endif()
 
 if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})

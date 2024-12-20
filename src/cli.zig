@@ -290,7 +290,9 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--env <inline|prefix*|disable>    Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--windows-hide-console           When using --compile targetting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
+        clap.parseParam("--windows-icon <STR>             When using --compile targetting Windows, assign an executable icon") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
         clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -928,6 +930,31 @@ pub const Arguments = struct {
                 ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
+            if (args.flag("--windows-hide-console")) {
+                // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
+                // does, all of these customization options have been gated to windows-only
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-hide-console requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_hide_console = true;
+            }
+            if (args.option("--windows-icon")) |path| {
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-icon requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_icon = path;
+            }
+
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;
@@ -1456,9 +1483,6 @@ pub const Command = struct {
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
-            compile: bool = false,
-            compile_target: Cli.CompileTarget = .{},
-
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
@@ -1489,6 +1513,12 @@ pub const Command = struct {
 
             env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
+
+            // Compile options
+            compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
+            windows_hide_console: bool = false,
+            windows_icon: ?[]const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

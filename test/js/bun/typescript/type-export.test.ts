@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test" with { todo: "true" };
-import { bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 /*
 Potential solutions:
@@ -73,7 +73,7 @@ for (const b_file of b_files) {
 
         const runAndVerify = (filename: string) => {
           const result = Bun.spawnSync({
-            cmd: ["bun", "run", filename],
+            cmd: [bunExe(), "run", filename],
             cwd: dir,
             env: bunEnv,
             stdio: ["inherit", "pipe", "inherit"],
@@ -89,7 +89,7 @@ for (const b_file of b_files) {
 
         test("build", async () => {
           const result = Bun.spawnSync({
-            cmd: ["bun", "build", "--target=bun", "--outfile", "bundle.js", "c.ts"],
+            cmd: [bunExe(), "build", "--target=bun", "--outfile", "bundle.js", "c.ts"],
             cwd: dir,
             env: bunEnv,
             stdio: ["inherit", "inherit", "inherit"],

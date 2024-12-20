@@ -175,7 +175,7 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
     });
 }
 
-#define PROFILE_MODE false
+#define PROFILE_MODE true
 
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)

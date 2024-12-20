@@ -102,3 +102,29 @@ for (const b_file of b_files) {
     }
   });
 }
+
+test("import not found", () => {
+  const dir = tempDirWithFiles("type-export", {
+    "a.ts": `export const a = 25; export const c = "hello";`,
+    "b.ts": /*js*/ `
+      import { a, b, c } from "./a";
+      console.log(a, b, c);
+    `,
+  });
+
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "run", "b.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+
+  expect(result.stderr?.toString().trim()).toContain("SyntaxError: Export named 'b' not found in module");
+  expect({
+    exitCode: result.exitCode,
+    stdout: result.stdout?.toString().trim(),
+  }).toEqual({
+    exitCode: 1,
+    stdout: "",
+  });
+});

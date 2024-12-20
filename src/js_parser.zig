@@ -4272,17 +4272,14 @@ pub const Parser = struct {
         };
     }
 
-    const PragmaState = packed struct {
-        seen_cjs: bool = false,
-        seen_bytecode: bool = false
-    };
+    const PragmaState = packed struct { seen_cjs: bool = false, seen_bytecode: bool = false };
 
     fn hasBunPragma(self: *const Parser) ?js_ast.Result.AlreadyBundled {
         const BUN_PRAGMA = "// @bun";
         var cursor: usize = 0;
 
         const contents = self.lexer.source.contents;
-        if ( !bun.strings.startsWith(contents[cursor..], BUN_PRAGMA)) return null; 
+        if (!bun.strings.startsWith(contents[cursor..], BUN_PRAGMA)) return null;
         cursor += BUN_PRAGMA.len;
 
         var state: PragmaState = .{};
@@ -4298,8 +4295,7 @@ pub const Parser = struct {
                     if (bun.strings.startsWith(slice, "bun-cjs")) {
                         state.seen_cjs = true;
                         cursor += "bun-cjs".len;
-                    }
-                    else if ( bun.strings.startsWith(slice, "bytecode") ) {
+                    } else if (bun.strings.startsWith(slice, "bytecode")) {
                         state.seen_bytecode = true;
                         cursor += "bytecode".len;
                     }

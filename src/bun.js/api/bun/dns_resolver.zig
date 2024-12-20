@@ -897,7 +897,7 @@ pub const CAresReverse = struct {
         if (err_) |err| {
             var promise = this.promise;
             const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, err.toJS(globalThis));
+            promise.rejectTask(globalThis, err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", this.name));
             this.deinit();
             return;
         }
@@ -2381,6 +2381,12 @@ pub const DNSResolver = struct {
     }
 
     pub fn globalReverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.reverse(globalThis, callframe);
+    }
+
+    pub fn reverse(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("reverse", 2, arguments.len);
@@ -2400,18 +2406,15 @@ pub const DNSResolver = struct {
 
         const ip_slice = ip_str.toSliceClone(globalThis, bun.default_allocator);
         const ip = ip_slice.slice();
-        var vm = globalThis.bunVM();
-        var resolver = vm.rareData().globalDNSResolver(vm);
-        var channel: *c_ares.Channel = switch (resolver.getChannel()) {
+        const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                defer ip_slice.deinit();
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
             },
         };
 
         const key = GetHostByAddrInfoRequest.PendingCacheKey.init(ip);
-        var cache = resolver.getOrPutIntoResolvePendingCache(
+        var cache = this.getOrPutIntoResolvePendingCache(
             GetHostByAddrInfoRequest,
             key,
             "pending_addr_cache_cares",
@@ -2424,7 +2427,7 @@ pub const DNSResolver = struct {
 
         var request = GetHostByAddrInfoRequest.init(
             cache,
-            resolver,
+            this,
             ip,
             globalThis,
             "pending_addr_cache_cares",

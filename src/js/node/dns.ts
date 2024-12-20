@@ -554,14 +554,16 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
     }
 
-    dns.reverse(ip).then(
-      results => {
-        callback(null, results);
-      },
-      error => {
-        callback(withTranslatedError(error));
-      },
-    );
+    Resolver.#getResolver(this)
+      .reverse(ip)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   setServers(servers) {

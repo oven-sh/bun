@@ -10,6 +10,8 @@
 namespace Bun {
 class JSReadableStreamDefaultController;
 class JSReadableStreamDefaultReader;
+class JSReadableStreamPrototype;
+class JSReadableStreamConstructor;
 
 using namespace JSC;
 

@@ -664,7 +664,7 @@ if(WIN32)
     DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
     COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
   )
-  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---
@@ -672,7 +672,7 @@ endif()
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)
@@ -690,7 +690,7 @@ elseif(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 else()
-  add_executable(${bun} ${BUN_CPP_SOURCES})
+  add_executable(${bun} ${BUN_CPP_SOURCES} ${WINDOWS_RESOURCES})
   target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
 endif()
 

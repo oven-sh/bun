@@ -436,13 +436,15 @@ try {
 }
 
 const extractedSplitNewLines = value => {
-  const lines = typeof value === "string" ? StringPrototypeSplit(value, "\n") : RegExpPrototypeSymbolSplit(/\n/, value);
-  const last = ArrayPrototypePop(lines);
-  const nlLines = ArrayPrototypeMap(lines, line => line + "\n");
-  if (last !== "") {
-    nlLines.push(last);
+  const lines = StringPrototypeSplit(value, "\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (i !== lines.length - 1) {
+      lines[i] += "\n";
+      continue;
+    }
+    if (lines[i] === "") lines.pop();
   }
-  return nlLines;
+  return lines;
 };
 
 const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;

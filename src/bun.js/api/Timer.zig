@@ -926,23 +926,22 @@ pub const WTFTimer = struct {
     var auto_incrementing_integer_for_dedupe = std.atomic.Value(i64).init(0);
 
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
-        if (seconds == 0) {
-            const ASAP = bun.timespec{
+        const interval: bun.timespec = if (seconds == 0.0) blk: {
+            break :blk .{
                 .nsec = 1024 + auto_incrementing_integer_for_dedupe.fetchAdd(1, .monotonic),
                 .sec = 1024,
             };
-            this.vm.timer.update(&this.event_loop_timer, &ASAP);
-            return;
-        }
-
-        const modf = std.math.modf(seconds);
-        var interval = bun.timespec.now();
-        interval.sec += @intFromFloat(modf.ipart);
-        interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
-        if (interval.nsec >= std.time.ns_per_s) {
-            interval.sec += 1;
-            interval.nsec -= std.time.ns_per_s;
-        }
+        } else blk: {
+            const modf = std.math.modf(seconds);
+            var interval = bun.timespec.now();
+            interval.sec += @intFromFloat(modf.ipart);
+            interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
+            if (interval.nsec >= std.time.ns_per_s) {
+                interval.sec += 1;
+                interval.nsec -= std.time.ns_per_s;
+            }
+            break :blk interval;
+        };
 
         this.vm.timer.update(&this.event_loop_timer, &interval);
         this.repeat = repeat;

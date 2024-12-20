@@ -46,7 +46,7 @@ JSValue JSReadableStreamDefaultController::desiredSizeValue()
     return jsNumber(m_strategyHWM - m_queueTotalSize);
 }
 
-double JSReadableStreamDefaultController::desiredSize()
+double JSReadableStreamDefaultController::desiredSize() const
 {
     if (!canCloseOrEnqueue())
         return PNaN;

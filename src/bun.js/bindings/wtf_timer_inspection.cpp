@@ -19,7 +19,7 @@ extern "C" {
 void WTFTimer__inspect_update(const void* timer, double seconds, bool repeat, const bun_timespec* ts)
 {
     uint64_t tid;
-    pthread_threadid_np(nullptr, &tid);
+    pthread_tryjoin_np(nullptr, &tid);
     if (wtf_timer_main_tid != tid && ts->sec == 1024) {
         fprintf(stderr, "update %zd from off main, tid %" PRIu64 "\n", ts->nsec, tid);
     }

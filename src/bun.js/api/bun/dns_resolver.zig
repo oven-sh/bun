@@ -3043,6 +3043,13 @@ pub const DNSResolver = struct {
         return resolver.toJS(globalThis);
     }
 
+    pub fn cancel(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        _ = callframe;
+        const channel = try this.getChannelOrError(globalThis);
+        c_ares.ares_cancel(channel);
+        return .undefined;
+    }
+
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.

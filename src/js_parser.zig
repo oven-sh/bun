@@ -3165,16 +3165,6 @@ pub const Parser = struct {
         defer bun.crash_handler.current_action = prev_action;
         bun.crash_handler.current_action = .{ .parse = self.source.path.text };
 
-        // Detect a leading "// @bun" pragma
-        // must come before parser init b/c it lexes the first token.
-        if (self.options.features.dont_bundle_twice) {
-            if (self.hasBunPragma()) |pragma| {
-                return js_ast.Result{
-                    .already_bundled = pragma,
-                };
-            }
-        }
-
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -3225,6 +3215,16 @@ pub const Parser = struct {
         if (p.lexer.token == .t_hashbang) {
             hashbang = p.lexer.identifier;
             try p.lexer.next();
+        }
+
+        // Detect a leading "// @bun" pragma
+        // must come before parser init b/c it lexes the first token.
+        if (self.options.features.dont_bundle_twice) {
+            if (self.hasBunPragma()) |pragma| {
+                return js_ast.Result{
+                    .already_bundled = pragma,
+                };
+            }
         }
 
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
@@ -4278,11 +4278,13 @@ pub const Parser = struct {
     };
 
     fn hasBunPragma(self: *const Parser) ?js_ast.Result.AlreadyBundled {
-        const BUN_PRAGMA = "// @bun "; // trailing space intentional
-        const contents = self.lexer.source.contents;
-        if ( !bun.strings.startsWith(contents[self.lexer.start..], BUN_PRAGMA)) return null; 
+        const BUN_PRAGMA = "// @bun";
+        var cursor: usize = 0;
 
-        var cursor = BUN_PRAGMA.len;
+        const contents = self.lexer.source.contents;
+        if ( !bun.strings.startsWith(contents[cursor..], BUN_PRAGMA)) return null; 
+        cursor += BUN_PRAGMA.len;
+
         var state: PragmaState = .{};
 
         while (cursor < self.lexer.end) : (cursor += 1) {

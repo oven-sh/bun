@@ -536,7 +536,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
 

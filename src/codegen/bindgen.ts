@@ -392,7 +392,7 @@ function emitCppCallToVariant(className: string, name: string, variant: Variant,
           // already validated against
           assert(false);
         case "DOMString":
-          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDLDOMString>(*global, out.toWTFString()));`);
+          cpp.line(`return JSC::JSValue::encode(WebCore::toJS<WebCore::IDLDOMString>(*global, out));`);
           break;
         case "BunString":
           cpp.line(`JSC::JSValue js = JSC::jsString(vm, out.toWTFString());`);

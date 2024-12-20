@@ -34,14 +34,14 @@ export const returnBunString = Fn({
   args: {
     len: t.u32.enforceRange(),
   },
-  ret: t.DOMString,
+  ret: t.BunString,
 });
 
-export const HeadersInit = t.sequence(t.DOMString);
+// export const HeadersInit = t.sequence(t.DOMString);
 
-export const headersInit = fn({
-  args: {
-    a: HeadersInit,
-  },
-  ret: t.i32,
-});
+// export const headersInit = fn({
+//   args: {
+//     a: HeadersInit,
+//   },
+//   ret: t.i32,
+// });

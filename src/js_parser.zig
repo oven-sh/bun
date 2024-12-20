@@ -4659,26 +4659,7 @@ const Jest = struct {
 };
 
 // workaround for https://github.com/ziglang/zig/issues/10903
-fn NewParser(
-    comptime parser_features: ParserFeatures,
-) type {
-    return NewParser_(
-        parser_features.typescript,
-        parser_features.jsx,
-        parser_features.scan_only,
-    );
-}
-fn NewParser_(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
-    const js_parser_features: ParserFeatures = .{
-        .typescript = parser_feature__typescript,
-        .jsx = parser_feature__jsx,
-        .scan_only = parser_feature__scan_only,
-    };
-
+fn NewParser(comptime js_parser_features: ParserFeatures) type {
     // P is for Parser!
     return struct {
         const js_parser_jsx = js_parser_features.jsx;

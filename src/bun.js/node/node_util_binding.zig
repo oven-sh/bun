@@ -138,7 +138,6 @@ fn split(
     allocator: Allocator,
     str: *const bun.String,
 ) bun.JSError!JSC.JSValue {
-    std.debug.print("{any}\n", .{encoding});
     var fallback = std.heap.stackFallback(1024, allocator);
     const alloc = fallback.get();
     const Char = switch (encoding) {

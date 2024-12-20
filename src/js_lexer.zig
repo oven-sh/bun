@@ -1941,6 +1941,7 @@ fn NewLexer_(
                             );
                         }
 
+                        var has_seen_text = false;
                         for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
                             switch (c) {
                                 '@', '#' => {
@@ -1958,7 +1959,7 @@ fn NewLexer_(
                                     }
 
                                     if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                                        lexer.bun_pragma = .bun;
+                                        if (!has_seen_text) lexer.bun_pragma = .bun;
                                     } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                                         if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                             lexer.jsx_pragma._jsx = span;
@@ -1985,7 +1986,8 @@ fn NewLexer_(
                                         lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                                     }
                                 },
-                                else => {},
+                                ' ' | '\t' | '\n' | '\r' => {},
+                                else => has_seen_text = true,
                             }
                         }
                     }
@@ -1998,6 +2000,7 @@ fn NewLexer_(
             if (comptime Environment.allow_assert)
                 bun.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
 
+            var has_seen_text = false;
             while (rest.len > 0) {
                 const c = rest[0];
                 rest = rest[1..];
@@ -2012,8 +2015,9 @@ fn NewLexer_(
                             }
                         }
 
+                        // @bun must be the first pragma. it may have spaces before it.
                         if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                            lexer.bun_pragma = .bun;
+                            if (!has_seen_text) lexer.bun_pragma = .bun;
                         } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                 lexer.jsx_pragma._jsx = span;
@@ -2040,7 +2044,8 @@ fn NewLexer_(
                             lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                         }
                     },
-                    else => {},
+                    ' ' | '\t' | '\n' | '\r' => {},
+                    else => has_seen_text = true,
                 }
             }
         }

@@ -1,5 +1,5 @@
 // This file is from Electron's fork of rescle
-// https://github.com/electron/rcedit/blob/e36b688b42df0e236922019ce14e0ea165dc176d/src/rescle.CC
+// https://github.com/electron/rcedit/blob/e36b688b42df0e236922019ce14e0ea165dc176d/src/rescle.cc
 // 'bun build --compile' uses this on Windows to allow
 // patching the icon of the generated executable.
 //

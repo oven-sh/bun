@@ -23,21 +23,18 @@ const dnsPromises = dns.promises;
   assert.throws(() => dnsPromises.lookup(1, {}), err);
 }
 
-// Bun doesn't support process.on("warning") yet
-/*
 // This also verifies different expectWarning notations.
 common.expectWarning({
   // For 'internal/test/binding' module.
-  'internal/test/binding': [
-    'These APIs are for internal testing only. Do not use them.',
-  ],
+  // 'internal/test/binding': [
+  //   'These APIs are for internal testing only. Do not use them.',
+  // ],
   // For calling `dns.lookup` with falsy `hostname`.
   'DeprecationWarning': {
     DEP0118: 'The provided hostname "false" is not a valid ' +
       'hostname, and is supported in the dns module solely for compatibility.'
   }
 });
-*/
 
 assert.throws(() => {
   dns.lookup(false, 'cb');

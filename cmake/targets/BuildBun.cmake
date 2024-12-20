@@ -655,19 +655,28 @@ if(WIN32)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
+    @ONLY
   )
-  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+   # Add command to compile the .rc to .res
+  add_custom_command(
+    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
+    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
+    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc
+  )
+  list(APPEND BUN_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
-if(WIN32)
-  list(APPEND BUN_CPP_OUTPUT ${CODEGEN_PATH}/windows-app-info.rc)
-endif()
 
 if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  if (NOT WIN32)
+    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  else()
+    # .ico file
+    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${BUN_RESOURCES})
+  endif()
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)

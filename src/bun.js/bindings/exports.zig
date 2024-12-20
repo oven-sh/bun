@@ -222,11 +222,9 @@ pub const ResolvedSource = extern struct {
     /// - for esm: null means to use jsc's regular parsing step. more info: https://github.com/oven-sh/bun/pull/15758
     /// - for cjs: must be null
     module_info: ?*@import("../../analyze_transpiled_module.zig").ModuleInfoDeserialized,
-    __is_probably_real: u32 = 0xABEF,
 
     pub const unfilled = ResolvedSource{
         .module_info = null,
-        .__is_probably_real = 0xACDE,
     };
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;

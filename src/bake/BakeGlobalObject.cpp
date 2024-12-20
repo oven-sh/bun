@@ -115,7 +115,7 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                     origin,
                     WTFMove(moduleKey),
                     WTF::TextPosition(),
-                    JSC::SourceProviderSourceType::BunTranspiledModule));
+                    JSC::SourceProviderSourceType::Module));
                 return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
             }
             return rejectedInternalPromise(globalObject, createTypeError(globalObject, makeString("Bundle does not have \""_s, moduleKey, "\". This is a bug in Bun's bundler."_s)));

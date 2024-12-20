@@ -2695,7 +2695,7 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
 
     JSC::SourceCode sourceCode = JSC::makeSource(
         src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
-        WTF::TextPosition(), JSC::SourceProviderSourceType::BunTranspiledModule);
+        WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
 

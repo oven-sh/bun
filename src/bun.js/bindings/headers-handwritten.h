@@ -109,7 +109,6 @@ typedef struct ResolvedSource {
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
     bun_ModuleInfoDeserialized* module_info;
-    uint32_t __is_probably_real;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

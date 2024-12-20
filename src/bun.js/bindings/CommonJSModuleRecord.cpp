@@ -1098,7 +1098,7 @@ bool JSCommonJSModule::evaluate(
     bool isBuiltIn)
 {
     auto& vm = globalObject->vm();
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (this->hasEvaluated)
         return true;
@@ -1152,7 +1152,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, isBuiltIn);
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
             vm,

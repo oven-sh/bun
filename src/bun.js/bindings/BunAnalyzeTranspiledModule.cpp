@@ -192,9 +192,6 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     VariableEnvironment lexicalVariables = VariableEnvironment();
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
-    if (provider->m_resolvedSource.__is_probably_real != 0xABEF) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("resolvedSource !isProbablyReal")))));
-    }
 
     if (provider->m_resolvedSource.module_info == nullptr) {
         dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");

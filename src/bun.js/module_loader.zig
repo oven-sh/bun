@@ -560,6 +560,9 @@ pub const RuntimeTranspilerStore = struct {
 
                 var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
                 if (entry.esm_record.len > 0) {
+                    if (entry.metadata.module_type == .cjs) {
+                        @panic("TranspilerCache contained cjs module with module info");
+                    }
                     const module_info_data = bun.default_allocator.dupe(u8, entry.esm_record) catch bun.outOfMemory();
                     // TODO: defer bun.default_allocator.free(module_info_data);
                     const module_info_deserialized = bun.default_allocator.create(analyze_transpiled_module.ModuleInfoDeserialized) catch bun.outOfMemory();
@@ -659,7 +662,8 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
-            const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
             // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
@@ -711,9 +715,9 @@ pub const RuntimeTranspilerStore = struct {
                 .source_code = source_code,
                 .specifier = duped,
                 .source_url = duped.createIfDifferent(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
                 .hash = 0,
-                .module_info = module_info.asDeserialized(),
+                .module_info = if (module_info) |mi| mi.asDeserialized() else null,
             };
         }
     };
@@ -1432,7 +1436,8 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
-            const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
             // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
@@ -1469,7 +1474,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                resolved_source.is_commonjs_module = is_commonjs_module;
 
                 return resolved_source;
             }
@@ -1479,10 +1484,10 @@ pub const ModuleLoader = struct {
                 .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
 
                 .hash = 0,
-                .module_info = module_info.asDeserialized(),
+                .module_info = if (module_info) |mi| mi.asDeserialized() else null,
             };
         }
 
@@ -1836,6 +1841,9 @@ pub const ModuleLoader = struct {
 
                     var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
                     if (entry.esm_record.len > 0) {
+                        if (entry.metadata.module_type == .cjs) {
+                            @panic("TranspilerCache contained cjs module with module info");
+                        }
                         const module_info_data = bun.default_allocator.dupe(u8, entry.esm_record) catch bun.outOfMemory();
                         // TODO: defer bun.default_allocator.free(module_info_data);
                         const module_info_deserialized = bun.default_allocator.create(analyze_transpiled_module.ModuleInfoDeserialized) catch bun.outOfMemory();
@@ -1936,7 +1944,8 @@ pub const ModuleLoader = struct {
                 printer.ctx.reset();
                 defer source_code_printer.* = printer;
 
-                const module_info = ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+                const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
                 // defer module_info.destroy(); // TODO: do not leak module_info
 
                 _ = brk: {
@@ -2001,10 +2010,10 @@ pub const ModuleLoader = struct {
                     },
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                    .is_commonjs_module = is_commonjs_module,
                     .hash = 0,
                     .tag = tag,
-                    .module_info = module_info.asDeserialized(),
+                    .module_info = if (module_info) |mi| mi.asDeserialized() else null,
                 };
             },
             // provideFetch() should be called

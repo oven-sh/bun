@@ -110,7 +110,7 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
         sourceCodeBuilder.append(";\n"_s);
     }
     globalObject->putDirect(vm, ident, object, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
-    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::BunTranspiledModule);
+    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
 }
 
 }

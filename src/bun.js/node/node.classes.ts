@@ -61,6 +61,10 @@ export default [
         fn: "cancel",
         length: 0,
       },
+      reverse: {
+        fn: "reverse",
+        length: 1,
+      },
     },
   }),
   define({

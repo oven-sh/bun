@@ -18,6 +18,8 @@ const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
+const EventLoopTimer = JSC.BunTimer.EventLoopTimer;
+const timespec = bun.timespec;
 
 const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_start)(mach_port_t*,
@@ -132,6 +134,7 @@ const LibInfo = struct {
         bun.assert(rc == .result);
 
         poll.enableKeepingProcessAlive(this.vm.eventLoop());
+        this.requestSent(globalThis.bunVM());
 
         return promise_value;
     }
@@ -172,6 +175,7 @@ const LibC = struct {
         var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch unreachable;
 
         io.schedule();
+        this.requestSent(globalThis.bunVM());
 
         return promise_value;
     }
@@ -491,16 +495,12 @@ pub const CAresNameInfo = struct {
 
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?c_ares.struct_nameinfo) void {
         if (err_) |err| {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, err.toJS(globalThis));
+            err.toDeferred("getnameinfo", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
         if (result == null) {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
+            c_ares.Error.ENOTFOUND.toDeferred("getnameinfo", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
@@ -523,8 +523,9 @@ pub const CAresNameInfo = struct {
         // freed
         bun.default_allocator.free(this.name);
 
-        if (this.allocated)
+        if (this.allocated) {
             this.globalThis.allocator().destroy(this);
+        }
     }
 };
 
@@ -895,16 +896,12 @@ pub const CAresReverse = struct {
 
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) void {
         if (err_) |err| {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", this.name));
+            err.toDeferred("getHostByAddr", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
         if (result == null) {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
+            c_ares.Error.ENOTFOUND.toDeferred("getHostByAddr", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
@@ -926,8 +923,9 @@ pub const CAresReverse = struct {
         this.poll_ref.unref(this.globalThis.bunVM());
         bun.default_allocator.free(this.name);
 
-        if (this.allocated)
+        if (this.allocated) {
             this.globalThis.allocator().destroy(this);
+        }
     }
 };
 
@@ -962,16 +960,12 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             const syscall = comptime "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..];
 
             if (err_) |err| {
-                var promise = this.promise;
-                const globalThis = this.globalThis;
-                promise.rejectTask(globalThis, err.toJSWithSyscallAndHostname(globalThis, syscall, this.name));
+                err.toDeferred(syscall, this.name, &this.promise).rejectLater(this.globalThis);
                 this.deinit();
                 return;
             }
             if (result == null) {
-                var promise = this.promise;
-                const globalThis = this.globalThis;
-                promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJSWithSyscallAndHostname(globalThis, syscall, this.name));
+                c_ares.Error.ENOTFOUND.toDeferred(syscall, this.name, &this.promise).rejectLater(this.globalThis);
                 this.deinit();
                 return;
             }
@@ -994,8 +988,9 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             this.poll_ref.unref(this.globalThis.bunVM());
             bun.default_allocator.free(this.name);
 
-            if (this.allocated)
+            if (this.allocated) {
                 this.destroy();
+            }
         }
     };
 }
@@ -1034,19 +1029,8 @@ pub const DNSLookup = struct {
     pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
         log("processGetAddrInfoNative: status={d}", .{status});
         if (c_ares.Error.initEAI(status)) |err| {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-
-            const error_value = brk: {
-                if (err == .ESERVFAIL) {
-                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(@as(c_int, -1)), .getaddrinfo).toJSC(globalThis);
-                }
-
-                break :brk err.toJS(globalThis);
-            };
-
+            err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();
-            promise.rejectTask(globalThis, error_value);
             return;
         }
         onCompleteNative(this, .{ .addrinfo = result });
@@ -1055,19 +1039,13 @@ pub const DNSLookup = struct {
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         log("processGetAddrInfo", .{});
         if (err_) |err| {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-            promise.rejectTask(globalThis, err.toJS(globalThis));
+            err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
 
         if (result == null or result.?.node == null) {
-            var promise = this.promise;
-            const globalThis = this.globalThis;
-
-            const error_value = c_ares.Error.ENOTFOUND.toJS(globalThis);
-            promise.rejectTask(globalThis, error_value);
+            c_ares.Error.ENOTFOUND.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
@@ -1095,8 +1073,9 @@ pub const DNSLookup = struct {
         log("deinit", .{});
         this.poll_ref.unref(this.globalThis.bunVM());
 
-        if (this.allocated)
+        if (this.allocated) {
             this.globalThis.allocator().destroy(this);
+        }
     }
 };
 
@@ -1735,6 +1714,12 @@ pub const DNSResolver = struct {
     polls: PollsMap,
     options: c_ares.ChannelOptions = .{},
 
+    ref_count: u32 = 1,
+    event_loop_timer: EventLoopTimer = .{
+        .next = .{},
+        .tag = .DNSResolver,
+    },
+
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
     pending_srv_cache_cares: SrvPendingCache = SrvPendingCache.init(),
@@ -1752,7 +1737,7 @@ pub const DNSResolver = struct {
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
-    pub usingnamespace bun.New(@This());
+    pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
@@ -1784,6 +1769,10 @@ pub const DNSResolver = struct {
     }
 
     pub fn finalize(this: *DNSResolver) void {
+        this.deref();
+    }
+
+    pub fn deinit(this: *DNSResolver) void {
         if (this.channel) |channel| {
             channel.deinit();
         }
@@ -1805,6 +1794,46 @@ pub const DNSResolver = struct {
     const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttl, "aaaa").PendingCacheKey, 32);
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
+
+    pub fn checkTimeouts(this: *DNSResolver, now: *const timespec, vm: *JSC.VirtualMachine) EventLoopTimer.Arm {
+        const channel = this.getChannelOrError(vm.global) catch {
+            this.event_loop_timer.state = .PENDING;
+            return .disarm;
+        };
+
+        const any_remaining = blk: {
+            inline for (@typeInfo(DNSResolver).Struct.fields) |field| {
+                if (comptime std.mem.startsWith(u8, field.name, "pending_")) {
+                    const set = @field(this, field.name).available;
+                    if (set.count() < set.capacity()) {
+                        break :blk true;
+                    }
+                }
+            }
+            break :blk false;
+        };
+
+        if (any_remaining) {
+            c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
+            this.event_loop_timer.next = now.addMs(1000);
+            vm.timer.insert(&this.event_loop_timer);
+            return .{ .rearm = this.event_loop_timer.next };
+        }
+
+        this.event_loop_timer.state = .PENDING;
+        return .disarm;
+    }
+
+    fn requestSent(this: *DNSResolver, vm: *JSC.VirtualMachine) void {
+        const timer = &this.event_loop_timer;
+
+        if (timer.state == .ACTIVE) {
+            return;
+        }
+
+        timer.next = timespec.now();
+        vm.timer.insert(timer);
+    }
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
         var cache = &@field(this, cache_name);
@@ -2441,6 +2470,7 @@ pub const DNSResolver = struct {
             GetHostByAddrInfoRequest.onCaresComplete,
         );
 
+        this.requestSent(globalThis.bunVM());
         return promise;
     }
 
@@ -2451,16 +2481,6 @@ pub const DNSResolver = struct {
         }
 
         const name_value = arguments.ptr[0];
-
-        if (name_value.isFalsey()) {
-            // For Node.js compatibility.
-            const promise = JSC.JSPromise.create(globalThis);
-            const address_key = JSC.ZigString.init("address").withEncoding();
-            const family_key = JSC.ZigString.init("family").withEncoding();
-            const object = JSValue.createObject2(globalThis, &address_key, &family_key, .null, JSC.jsNumber(4));
-            promise.resolve(globalThis, JSC.JSArray.create(globalThis, &.{object}));
-            return promise.asValue(globalThis);
-        }
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
@@ -2825,6 +2845,7 @@ pub const DNSResolver = struct {
             ResolveInfoRequest(cares_type, type_name).onCaresComplete,
         );
 
+        this.requestSent(globalThis.bunVM());
         return promise;
     }
     pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
@@ -2873,6 +2894,7 @@ pub const DNSResolver = struct {
             GetAddrInfoRequest.onCaresComplete,
         );
 
+        this.requestSent(globalThis.bunVM());
         return promise;
     }
 
@@ -3145,6 +3167,7 @@ pub const DNSResolver = struct {
             GetNameInfoRequest.onCaresComplete,
         );
 
+        resolver.requestSent(globalThis.bunVM());
         return promise;
     }
 

@@ -46,8 +46,6 @@ public:
     void error(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue error);
     void terminate(JSC::VM&, JSC::JSGlobalObject*);
 
-    ~JSTransformStream();
-
 private:
     JSTransformStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);

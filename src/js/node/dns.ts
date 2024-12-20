@@ -144,6 +144,19 @@ function validateOrderOption(options) {
   }
 }
 
+function invalidHostname(hostname) {
+  if (invalidHostname.warned) {
+    return;
+  }
+
+  invalidHostname.warned = true;
+  process.emitWarning(
+    `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+    "DeprecationWarning",
+    "DEP0118",
+  );
+}
+
 function translateLookupOptions(options) {
   if (!options || typeof options !== "object") {
     options = { family: options };
@@ -195,11 +208,7 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
-    console.warn(
-      `DeprecationWarning: The provided hostname "${String(
-        hostname,
-      )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-    );
+    invalidHostname(hostname);
     callback(null, []);
     return;
   }
@@ -645,11 +654,7 @@ const promises = {
     validateLookupOptions(options);
 
     if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
-      console.warn(
-        `DeprecationWarning: The provided hostname "${String(
-          hostname,
-        )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-      );
+      invalidHostname(hostname);
       return Promise.resolve([]);
     }
 

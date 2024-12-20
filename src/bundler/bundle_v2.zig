@@ -1690,6 +1690,12 @@ pub const BundleV2 = struct {
             bundler.configureLinker();
             try bundler.configureDefines();
 
+            if (bun.FeatureFlags.breaking_changes_1_2) {
+                if (!bundler.options.production) {
+                    try bundler.options.conditions.appendSlice(&.{"development"});
+                }
+            }
+
             bundler.resolver.opts = bundler.options;
         }
 
@@ -1717,11 +1723,16 @@ pub const BundleV2 = struct {
 
             this.poll_ref.unref(globalThis.bunVM());
             const promise = this.promise.swap();
-            const root_obj = JSC.JSValue.createEmptyObject(globalThis, 2);
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => {
+                .err => brk: {
+                    if (this.config.throw_on_error) {
+                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
+                        break :brk;
+                    }
+
+                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
                     root_obj.put(
                         globalThis,
@@ -1733,8 +1744,10 @@ pub const BundleV2 = struct {
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
+                    promise.resolve(globalThis, root_obj);
                 },
                 .value => |*build| {
+                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
                     const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
                     if (output_files_js == .zero) {
@@ -1799,10 +1812,13 @@ pub const BundleV2 = struct {
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
+                    promise.resolve(globalThis, root_obj);
                 },
             }
 
-            promise.resolve(globalThis, root_obj);
+            if (Environment.isDebug) {
+                bun.assert(promise.status(globalThis.vm()) != .pending);
+            }
         }
     };
 

@@ -58,7 +58,7 @@ const myPlugin: BunPlugin = {
 This plugin can be passed into the `plugins` array when calling `Bun.build`.
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./out",
   plugins: [myPlugin],

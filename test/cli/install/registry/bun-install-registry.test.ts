@@ -1838,6 +1838,64 @@ describe("text lockfile", () => {
 
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
   });
+
+  for (const omit of ["dev", "peer", "optional"]) {
+    test(`resolvable lockfile with ${omit} dependencies disabled`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            peerDependencies: { "no-deps": "1.0.0" },
+            devDependencies: { "a-dep": "1.0.1" },
+            optionalDependencies: { "basic-1": "1.0.0" },
+          }),
+        ),
+      ]);
+
+      let { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile", `--omit=${omit}`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+
+      expect(await exited).toBe(0);
+
+      const depName = omit === "dev" ? "a-dep" : omit === "peer" ? "no-deps" : "basic-1";
+
+      expect(await exists(join(packageDir, "node_modules", depName))).toBeFalse();
+
+      const lockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+        /localhost:\d+/g,
+        "localhost:1234",
+      );
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", depName))).toBeTrue();
+
+      expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+        lockfile,
+      );
+    });
+  }
 });
 
 describe("optionalDependencies", () => {

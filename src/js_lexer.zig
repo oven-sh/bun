@@ -1941,7 +1941,6 @@ fn NewLexer_(
                             );
                         }
 
-                        var has_seen_text = false;
                         for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
                             switch (c) {
                                 '@', '#' => {
@@ -1958,9 +1957,7 @@ fn NewLexer_(
                                         // }
                                     }
 
-                                    if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                                        if (!has_seen_text) lexer.bun_pragma = .bun;
-                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                                    if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                                         if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                             lexer.jsx_pragma._jsx = span;
                                         }
@@ -1980,14 +1977,9 @@ fn NewLexer_(
                                         if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                             lexer.source_mapping_url = span;
                                         }
-                                    } else if ((lexer.bun_pragma == .bun or lexer.bun_pragma == .bun_cjs) and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
-                                        lexer.bun_pragma = if (lexer.bun_pragma == .bun) .bytecode else .bytecode_cjs;
-                                    } else if ((lexer.bun_pragma == .bytecode or lexer.bun_pragma == .bun) and strings.hasPrefixWithWordBoundary(chunk, "bun-cjs")) {
-                                        lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                                     }
                                 },
-                                ' ' | '\t' | '\n' | '\r' => {},
-                                else => has_seen_text = true,
+                                else => {},
                             }
                         }
                     }

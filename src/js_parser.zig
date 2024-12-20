@@ -3,6 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
+const bun = @import("root").bun;
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
@@ -15,7 +16,6 @@ pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
-const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -3165,6 +3165,16 @@ pub const Parser = struct {
         defer bun.crash_handler.current_action = prev_action;
         bun.crash_handler.current_action = .{ .parse = self.source.path.text };
 
+        // Detect a leading "// @bun" pragma
+        // must come before parser init b/c it lexes the first token.
+        if (self.options.features.dont_bundle_twice) {
+            if (self.hasBunPragma()) |pragma| {
+                return js_ast.Result{
+                    .already_bundled = pragma,
+                };
+            }
+        }
+
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -3215,19 +3225,6 @@ pub const Parser = struct {
         if (p.lexer.token == .t_hashbang) {
             hashbang = p.lexer.identifier;
             try p.lexer.next();
-        }
-
-        // Detect a leading "// @bun" pragma
-        if (p.lexer.bun_pragma != .none and p.options.features.dont_bundle_twice) {
-            return js_ast.Result{
-                .already_bundled = switch (p.lexer.bun_pragma) {
-                    .bun => .bun,
-                    .bytecode => .bytecode,
-                    .bytecode_cjs => .bytecode_cjs,
-                    .bun_cjs => .bun_cjs,
-                    else => unreachable,
-                },
-            };
         }
 
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
@@ -4273,6 +4270,47 @@ pub const Parser = struct {
             .source = source,
             .log = log,
         };
+    }
+
+    const PragmaState = packed struct {
+        seen_cjs: bool = false,
+        seen_bytecode: bool = false
+    };
+
+    fn hasBunPragma(self: *const Parser) ?js_ast.Result.AlreadyBundled {
+        const BUN_PRAGMA = "// @bun "; // trailing space intentional
+        const contents = self.lexer.source.contents;
+        if ( !bun.strings.startsWith(contents[self.lexer.start..], BUN_PRAGMA)) return null; 
+
+        var cursor = BUN_PRAGMA.len;
+        var state: PragmaState = .{};
+
+        while (cursor < self.lexer.end) : (cursor += 1) {
+            switch (contents[cursor]) {
+                '\n' => break,
+                '@' => {
+                    cursor += 1;
+                    if (cursor >= contents.len) break;
+                    if (contents[cursor] != 'b') continue;
+                    const slice = contents[cursor..];
+                    if (bun.strings.startsWith(slice, "bun-cjs")) {
+                        state.seen_cjs = true;
+                        cursor += "bun-cjs".len;
+                    }
+                    else if ( bun.strings.startsWith(slice, "bytecode") ) {
+                        state.seen_bytecode = true;
+                        cursor += "bytecode".len;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (state.seen_cjs) {
+            return if (state.seen_bytecode) .bytecode_cjs else .bun_cjs;
+        } else {
+            return if (state.seen_bytecode) .bytecode else .bun;
+        }
     }
 };
 

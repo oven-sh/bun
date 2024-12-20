@@ -3218,7 +3218,6 @@ pub const Parser = struct {
         }
 
         // Detect a leading "// @bun" pragma
-        // must come before parser init b/c it lexes the first token.
         if (self.options.features.dont_bundle_twice) {
             if (self.hasBunPragma()) |pragma| {
                 return js_ast.Result{

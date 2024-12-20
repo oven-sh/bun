@@ -275,7 +275,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -339,7 +339,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");

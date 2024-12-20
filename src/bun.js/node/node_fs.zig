@@ -6234,6 +6234,6 @@ pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) 
 }
 
 comptime {
-    if (!JSC.is_bindgen)
+    if (Environment.export_cpp_apis)
         _ = Bun__mkdirp;
 }

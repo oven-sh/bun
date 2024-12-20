@@ -489,7 +489,7 @@ pub const Task = TaggedPointerUnion(.{
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: if (JSC.is_bindgen) void else Task = undefined,
+    task: Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -687,7 +687,7 @@ export fn Bun__tickWhilePaused(paused: *bool) void {
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = Bun__tickWhilePaused;
     }
 }

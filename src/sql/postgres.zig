@@ -165,7 +165,7 @@ pub const PostgresSQLContext = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (bun.Environment.export_cpp_apis) {
             const js_init = JSC.toJSHostFunction(init);
             @export(js_init, .{ .name = "PostgresSQLContext__init" });
         }
@@ -584,7 +584,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (bun.Environment.export_cpp_apis) {
             const jscall = JSC.toJSHostFunction(call);
             @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
         }
@@ -1355,7 +1355,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (bun.Environment.export_cpp_apis) {
             const jscall = JSC.toJSHostFunction(call);
             @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
         }

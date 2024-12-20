@@ -1,4 +1,6 @@
+import { it, expect } from "bun:test";
 import { bindgen } from "bun:internal-for-testing";
+import { simpleMemoryLeakChecker } from "harness";
 
 it("bindgen add example", () => {
   // Simple cases
@@ -62,9 +64,33 @@ it("optional arguments / default arguments", () => {
 });
 
 it("custom enforceRange boundaries", () => {
+  expect(() => bindgen.requiredAndOptionalArg()).toThrow("Not enough arguments");
   expect(bindgen.requiredAndOptionalArg(false, 0, 5)).toBe(5);
   expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("Value -1 is outside the range [0, 100]");
   expect(() => bindgen.requiredAndOptionalArg(false, 0, 101)).toThrow("Value 101 is outside the range [0, 100]");
   expect(bindgen.requiredAndOptionalArg(false, 0, 100)).toBe(100);
   expect(bindgen.requiredAndOptionalArg(false, 0, 0)).toBe(0);
+});
+
+it("custom deserializers / zigEnum / StringOrBuffer / ArrayBuffer", () => {
+  expect(() => bindgen.customDeserializer()).toThrow("Not enough arguments");
+  const ab4 = new ArrayBuffer(4);
+  const ab2 = new ArrayBuffer(2);
+  expect(bindgen.customDeserializer(ab4, ab4, "hello")).toBe(74);
+  expect(bindgen.customDeserializer(ab2, ab4, "hello")).toBe(72);
+  expect(bindgen.customDeserializer(ab2, ab2, "hello")).toBe(70);
+  expect(bindgen.customDeserializer(ab2, ab2, "world")).toBe(71);
+  expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow();
+  expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'c' must be one of: 'hello', 'world'. Received undefined",
+  });
+  expect(() => bindgen.customDeserializer(null, ab4, undefined)).toThrow({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "a" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received null',
+  });
+  expect(() => bindgen.customDeserializer(ab4, ab4, "hello", ab4, "hi")).toThrow({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "e" argument must be an instance of Buffer, TypedArray, or DataView. Received "hi"',
+  });
 });

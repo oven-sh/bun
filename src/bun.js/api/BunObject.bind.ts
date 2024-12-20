@@ -1,11 +1,14 @@
-import { t, fn } from "bindgen";
+import { t, Fn } from "bindgen";
+
+const className = "Bun";
 
 export const BracesOptions = t.dictionary({
   tokenize: t.boolean.default(false),
   parse: t.boolean.default(false),
 });
 
-export const braces = fn({
+export const braces = Fn({
+  className: "Bun.$",
   args: {
     global: t.globalObject,
     input: t.DOMString,
@@ -14,7 +17,8 @@ export const braces = fn({
   ret: t.any,
 });
 
-export const gc = fn({
+export const gc = Fn({
+  className,
   args: {
     vm: t.zigVirtualMachine,
     force: t.boolean.default(false),
@@ -27,7 +31,8 @@ export const StringWidthOptions = t.dictionary({
   ambiguousIsNarrow: t.boolean.default(true),
 });
 
-export const stringWidth = fn({
+export const stringWidth = Fn({
+  className,
   args: {
     str: t.DOMString.default(""),
     opts: StringWidthOptions.default({}),

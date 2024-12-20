@@ -730,14 +730,14 @@ pub const Crypto = struct {
     pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             _ = CryptoObject__create;
         }
     }
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         const js_alert = JSC.toJSHostFunction(alert);
         @export(js_alert, .{ .name = "WebCore__alert" });
         const js_prompt = JSC.toJSHostFunction(Prompt.call);

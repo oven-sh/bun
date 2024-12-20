@@ -680,7 +680,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         });
 
         comptime {
-            if (!JSC.is_bindgen) {
+            if (Environment.export_cpp_apis) {
                 @export(connect, .{
                     .name = Export[0].symbol_name,
                 });
@@ -1959,7 +1959,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         });
 
         comptime {
-            if (!JSC.is_bindgen) {
+            if (Environment.export_cpp_apis) {
                 @export(writeBinaryData, .{ .name = Export[0].symbol_name });
                 @export(writeString, .{ .name = Export[1].symbol_name });
                 @export(close, .{ .name = Export[2].symbol_name });

@@ -151,7 +151,10 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 }
 
 pub fn build(b: *Build) !void {
-    std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
+    if (!(b.option(bool, "no-compiler-info", "") orelse false))
+        std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
+
+    ignore_missing_generated_paths = b.option(bool, "ignore-missing-generated-paths", "Do not verify required generated files exist. Used by some code generators") orelse false;
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
@@ -292,9 +295,9 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build check
+    var bun_check_obj = addBunObject(b, &build_options);
     {
         var step = b.step("check", "Check for semantic analysis errors");
-        var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
@@ -335,16 +338,37 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build enum-extractor
-    {
-        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
-        // const exe = b.addExecutable(.{
-        //     .name = "enum_extractor",
-        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
-        //     .target = b.graph.host,
-        //     .optimize = .Debug,
-        // });
-        // const run = b.addRunArtifact(exe);
-        // step.dependOn(&run.step);
+    if (exists(b.pathFromRoot("src/generated_enum_extractor.zig"))) {
+        // the source file to this step is generated and executed by `bindgen.ts`,
+        // in order to extract exact enum definitions. the step is not exposed if
+        // the file does not exist.
+        const step = b.step("enum-extractor", "Extract enum definitions (invoked by 'bindgen.ts')");
+        const exe = b.addExecutable(.{
+            .name = "enum_extractor",
+            .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        // This executable intentionally does not add all of Bun's proper
+        // modules, as they are theoretically not needed, and any compile error
+        // referencing an external module is something that should be gated
+        // behind `bun.Environment.export_cpp_apis`. If these modules were
+        // required, then that indicates that random code is being analyzed
+        // when it should not be, and is a mistake.
+        exe.root_module.addImport("build_options", build_options.buildOptionsModule(b));
+        const noop = b.createModule(.{
+            .root_source_file = b.path("src/noop.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        var it = bun_check_obj.root_module.import_table.iterator();
+        while (it.next()) |entry| {
+            if (!std.mem.eql(u8, entry.key_ptr.*, "build_options"))
+                exe.root_module.addImport(entry.key_ptr.*, noop);
+        }
+
+        const run = b.addRunArtifact(exe);
+        step.dependOn(&run.step);
     }
 }
 
@@ -573,8 +597,10 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     }
 }
 
+var ignore_missing_generated_paths = false;
+
 fn validateGeneratedPath(path: []const u8) void {
-    if (!exists(path)) {
+    if (!ignore_missing_generated_paths and !exists(path)) {
         std.debug.panic(
             \\Generated file '{s}' is missing!
             \\

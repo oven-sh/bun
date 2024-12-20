@@ -526,7 +526,7 @@ pub const WebWorker = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (bun.Environment.export_cpp_apis) {
             @export(create, .{ .name = "WebWorker__create" });
             @export(requestTerminate, .{ .name = "WebWorker__requestTerminate" });
             @export(setRef, .{ .name = "WebWorker__setRef" });

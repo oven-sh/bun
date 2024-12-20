@@ -29,6 +29,7 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "ErrorCode.h"
 #include "headers.h"
 
 #include "JavaScriptCore/Synchronousness.h"

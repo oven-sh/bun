@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
@@ -11,6 +10,8 @@ fn isNullableType(comptime Type: type) bool {
 }
 
 const log = @import("../../output.zig").scoped(.CPP, true);
+
+/// Do not use this abstraction in new code.
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
     return struct {
         pub const namespace = _namespace;
@@ -184,6 +185,20 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             }
         }
 
+        /// A Zig -> C++ call. See where this `Shimmer` is defined, and find its
+        /// symbol name like `{namespace}{name}__{typeName}`
+        ///
+        /// For example `Shimmer("Zig", "Exception", ...).cppFn("fromException", ...)`
+        /// maps to `ZigException__fromException` in some C++ file.
+        ///
+        /// Do not add more calls to this in Bun's codebase. Please just use
+        /// `extern fn SymbolName(...) ...;`. It makes the code much more
+        /// reasonable.
+        ///
+        /// A better alternative to both of these systems would be to convert
+        /// `.hpp/.cpp` files into `.h` files, containing only c-compatible
+        /// declarations. Then `translate-c` that file, guaranteeing that the
+        /// definitions match.
         pub inline fn cppFn(comptime typeName: []const u8, args: anytype) (ret: {
             @setEvalBranchQuota(99999);
             if (!@hasDecl(Parent, typeName)) {
@@ -193,23 +208,19 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }) {
             log(comptime name ++ "__" ++ typeName, .{});
             @setEvalBranchQuota(99999);
-            if (comptime is_bindgen) {
-                unreachable;
-            } else {
-                const Fn = comptime @field(headers, symbolName(typeName));
-                if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
-                    return matchNullable(
-                        comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
-                        comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                        @call(.auto, Fn, args),
-                    );
-
+            const Fn = comptime @field(headers, symbolName(typeName));
+            if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    Fn(),
+                    @call(.auto, Fn, args),
                 );
-            }
+
+            return matchNullable(
+                comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
+                comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
+                Fn(),
+            );
         }
     };
 }

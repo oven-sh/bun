@@ -1427,3 +1427,38 @@ export function rmScope(path: string) {
     },
   };
 }
+
+/**
+ * Given `run`, which allocates and frees memory, run it many times and observe
+ * if memory increases.
+ *
+ * Done by sampling the memory usage increase of a couple of warmup runs, and
+ * then runs the sampling runs, with a GC call in between.
+ */
+export function simpleMemoryLeakChecker(options: { samples: number; preSamples?: number; run: () => void }) {
+  Bun.gc(true);
+  const memory = process.memoryUsage().rss;
+  Bun.gc(true);
+
+  const { samples } = options;
+  const { preSamples = samples * 2 } = options;
+  let threshold = 0;
+  for (let i = 0; i < preSamples; i++) {
+    options.run();
+    Bun.gc(true);
+    const firstRun = process.memoryUsage().rss;
+    threshold = Math.max(threshold, firstRun);
+  }
+  threshold += 4 * 1024 * 1024; // 4mb
+  Bun.gc(true);
+
+  for (let i = 0; i < options.samples; i++) {
+    Bun.gc(true);
+    options.run();
+    Bun.gc(true);
+  }
+  Bun.gc(true);
+
+  const memoryEnd = process.memoryUsage().rss;
+  expect(memoryEnd, `Memory leak of ${((memoryEnd - memory) / 1024 / 1024).toFixed(2)}mb`).toBeLessThan(threshold);
+}

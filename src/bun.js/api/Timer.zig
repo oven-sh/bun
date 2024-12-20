@@ -235,7 +235,7 @@ pub const All = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
         }
     }
@@ -347,7 +347,7 @@ pub const All = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
+        if (Environment.export_cpp_apis) {
             @export(setTimeout, .{ .name = Export[0].symbol_name });
             @export(setInterval, .{ .name = Export[1].symbol_name });
             @export(clearTimeout, .{ .name = Export[2].symbol_name });

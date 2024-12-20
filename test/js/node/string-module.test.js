@@ -14,6 +14,12 @@ test("should import and execute ES module from string (base64)", async () => {
   expect(result).toEqual(2);
 });
 
+test("can import module with '.' in source code", async () => {
+  const code = `export default 1.1;`;
+  const mod = await import("data:text/javascript," + code).then(mode => mode.default);
+  expect(mod).toBe(1.1);
+});
+
 test("should throw when importing malformed string (base64)", async () => {
   expect(() => import("data:text/javascript;base64,asdasdasd")).toThrowError("Base64DecodeError");
 });

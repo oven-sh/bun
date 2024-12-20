@@ -3070,8 +3070,8 @@ pub const Parser = struct {
             .symbol_uses = p.symbol_uses,
         };
         p.symbol_uses = .{};
-        var parts = try p.allocator.alloc(js_ast.Part, 2);
-        parts[0..2].* = .{ ns_export_part, part };
+        var parts = try ListManaged(js_ast.Part).initCapacity(p.allocator, 2);
+        parts.appendSliceAssumeCapacity(&.{ ns_export_part, part });
 
         const exports_kind: js_ast.ExportsKind = brk: {
             if (expr.data == .e_undefined) {
@@ -3080,7 +3080,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, .none, "") };
+        return .{ .ast = try p.toAST(&parts, exports_kind, .none, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -4216,41 +4216,10 @@ pub const Parser = struct {
             );
         }
 
-        var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
-
         if (before.items.len > 0 or after.items.len > 0) {
-            const before_len = before.items.len;
-            const after_len = after.items.len;
-            const parts_len = parts.items.len;
-
-            const _parts = try p.allocator.alloc(
-                js_ast.Part,
-                before_len +
-                    after_len +
-                    parts_len,
-            );
-
-            var remaining_parts = _parts;
-            if (before_len > 0) {
-                const parts_to_copy = before.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-                remaining_parts = remaining_parts[parts_to_copy.len..];
-            }
-
-            if (parts_len > 0) {
-                const parts_to_copy = parts.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-                remaining_parts = remaining_parts[parts_to_copy.len..];
-            }
-
-            if (after_len > 0) {
-                const parts_to_copy = after.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-            }
-
-            parts_slice = _parts;
-        } else {
-            parts_slice = parts.items;
+            try parts.ensureUnusedCapacity(before.items.len + after.items.len);
+            try parts.insertSlice(0, before.items);
+            parts.appendSliceAssumeCapacity(after.items);
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
@@ -4269,7 +4238,7 @@ pub const Parser = struct {
             }
         }
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrap_mode, hashbang) };
+        return js_ast.Result{ .ast = try p.toAST(&parts, exports_kind, wrap_mode, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -23282,13 +23251,12 @@ fn NewParser_(
 
         pub fn toAST(
             p: *P,
-            input_parts: []js_ast.Part,
+            parts: *ListManaged(js_ast.Part),
             exports_kind: js_ast.ExportsKind,
             wrap_mode: WrapMode,
             hashbang: []const u8,
         ) !js_ast.Ast {
             const allocator = p.allocator;
-            var parts = input_parts;
 
             // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
             //     p.treeShake(&parts, false);
@@ -23306,20 +23274,20 @@ fn NewParser_(
                 bun.assert(!p.options.tree_shaking);
                 bun.assert(p.options.features.hot_module_reloading);
 
-                var hmr_transform_ctx = ConvertESMExportsForHmr{ .last_part = &parts[parts.len - 1] };
+                var hmr_transform_ctx = ConvertESMExportsForHmr{ .last_part = &parts.items[parts.items.len - 1] };
                 try hmr_transform_ctx.stmts.ensureTotalCapacity(p.allocator, prealloc_count: {
                     // get a estimate on how many statements there are going to be
                     var count: usize = 0;
-                    for (parts) |part| count += part.stmts.len;
+                    for (parts.items) |part| count += part.stmts.len;
                     break :prealloc_count count + 2;
                 });
 
-                for (parts) |part| {
+                for (parts.items) |part| {
                     // Bake does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
                 }
 
-                parts = try hmr_transform_ctx.finalize(p, parts);
+                try hmr_transform_ctx.finalize(p, parts.items);
             } else {
                 // Handle import paths after the whole file has been visited because we need
                 // symbol usage counts to be able to remove unused type-only imports in
@@ -23331,7 +23299,7 @@ fn NewParser_(
                     const begin = parts_end;
                     // Potentially remove some statements, then filter out parts to remove any
                     // with no statements
-                    for (parts[begin..]) |part_| {
+                    for (parts.items[begin..]) |part_| {
                         var part = part_;
                         p.import_records_for_current_part.clearRetainingCapacity();
                         p.declared_symbols.clearRetainingCapacity();
@@ -23362,7 +23330,7 @@ fn NewParser_(
                                 part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
                             }
 
-                            parts[parts_end] = part;
+                            parts.items[parts_end] = part;
                             parts_end += 1;
                         }
                     }
@@ -23375,11 +23343,11 @@ fn NewParser_(
                 }
 
                 // leave the first part in there for namespace export when bundling
-                parts = parts[0..parts_end];
+                parts.items.len = parts_end;
 
                 // Do a second pass for exported items now that imported items are filled out.
                 // This isn't done for HMR because it already deletes all `.s_export_clause`s
-                for (parts) |part| {
+                for (parts.items) |part| {
                     for (part.stmts) |stmt| {
                         switch (stmt.data) {
                             .s_export_clause => |clause| {
@@ -23417,14 +23385,14 @@ fn NewParser_(
                 }
 
                 var total_stmts_count: usize = 0;
-                for (parts) |part| {
+                for (parts.items) |part| {
                     total_stmts_count += part.stmts.len;
                 }
 
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
-                    !(parts.len > 0 and
-                    parts[0].stmts.len > 0 and
-                    parts[0].stmts[0].data == .s_directive);
+                    !(parts.items.len > 0 and
+                    parts.items[0].stmts.len > 0 and
+                    parts.items[0].stmts[0].data == .s_directive);
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
@@ -23441,7 +23409,7 @@ fn NewParser_(
                         remaining_stmts = remaining_stmts[1..];
                     }
 
-                    for (parts) |part| {
+                    for (parts.items) |part| {
                         for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
                             dest.* = src;
                         }
@@ -23463,14 +23431,16 @@ fn NewParser_(
                 );
 
                 var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
-                parts[0].stmts = top_level_stmts;
                 top_level_stmts[0] = p.s(
                     S.SExpr{
                         .value = wrapper,
                     },
                     logger.Loc.Empty,
                 );
-                parts.len = 1;
+
+                try parts.ensureUnusedCapacity(1);
+                parts.items.len = 1;
+                parts.items[0].stmts = top_level_stmts;
             }
 
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
@@ -23503,7 +23473,7 @@ fn NewParser_(
                 };
 
                 // Each part tracks the other parts it depends on within this file
-                for (parts, 0..) |*part, part_index| {
+                for (parts.items, 0..) |*part, part_index| {
                     const decls = &part.declared_symbols;
                     const ctx = Ctx{
                         .allocator = p.allocator,
@@ -23529,7 +23499,7 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle and p.needsWrapperRef(parts)) {
+                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
@@ -23543,8 +23513,7 @@ fn NewParser_(
                 break :brk Ref.None;
             };
 
-            var parts_list = bun.BabyList(js_ast.Part).init(parts);
-            parts_list.cap = @intCast(input_parts.len);
+            const parts_list = bun.BabyList(js_ast.Part).fromList(parts);
 
             return .{
                 .runtime_imports = p.runtime_imports,
@@ -24105,7 +24074,7 @@ pub const ConvertESMExportsForHmr = struct {
         }
     }
 
-    pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) ![]js_ast.Part {
+    pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) !void {
         if (ctx.export_props.items.len > 0) {
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.assign(
@@ -24152,8 +24121,6 @@ pub const ConvertESMExportsForHmr = struct {
 
         ctx.last_part.stmts = ctx.stmts.items;
         ctx.last_part.tag = .none;
-
-        return all_parts;
     }
 };
 

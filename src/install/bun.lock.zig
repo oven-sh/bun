@@ -1587,7 +1587,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log) catch |err| {
+        lockfile.hoist(log, .resolvable, {}) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {

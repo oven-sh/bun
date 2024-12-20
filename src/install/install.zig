@@ -13747,16 +13747,7 @@ pub const PackageManager = struct {
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-        const filtered = try this.lockfile.filter(this.log, this);
-
-        this.lockfile.buffers.trees = .{
-            .items = filtered.trees,
-            .capacity = filtered.trees.len,
-        };
-        this.lockfile.buffers.hoisted_dependencies = .{
-            .items = filtered.dep_ids,
-            .capacity = filtered.dep_ids.len,
-        };
+        try this.lockfile.hoist(this.log, .filter, this);
 
         defer {
             this.lockfile.buffers.trees = original_trees;

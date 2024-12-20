@@ -1,1 +1,15 @@
 vendor
+src/bun.js/bindings/webcore/JSReadableStream.h
+src/bun.js/bindings/webcore/JSReadableStreamDefaultReader.h
+src/bun.js/bindings/webcore/JSReadableStreamDefaultReader.cpp
+src/bun.js/bindings/webcore/JSReadableStreamDefaultController.h
+src/bun.js/bindings/webcore/JSReadableStreamDefaultController.cpp
+src/bun.js/bindings/webcore/JSReadableStream.h
+src/bun.js/bindings/webcore/JSWritableStreamDefaultWriter.h
+src/bun.js/bindings/webcore/JSWritableStreamDefaultWriter.cpp
+src/bun.js/bindings/webcore/JSWritableStreamDefaultController.h
+src/bun.js/bindings/webcore/JSWritableStreamDefaultController.cpp
+src/bun.js/bindings/webcore/JSTransformStreamDefaultController.h
+src/bun.js/bindings/webcore/JSTransformStreamDefaultController.cpp
+src/bun.js/bindings/webcore/JSTransformStream.h
+src/bun.js/bindings/webcore/JSTransformStream.cpp

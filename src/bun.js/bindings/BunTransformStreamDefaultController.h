@@ -1,62 +1,44 @@
+#pragma once
+
 #include "root.h"
 
 namespace Bun {
 
-using namespace JSC;
-
-// JSTransformStreamDefaultController.h
 class JSTransformStream;
 
-class JSTransformStreamDefaultController final : public JSC::JSDestructibleObject {
-    using Base = JSC::JSDestructibleObject;
+class JSTransformStreamDefaultController final : public JSC::JSNonFinalObject {
+    using Base = JSC::JSNonFinalObject;
 
 public:
-    static constexpr bool needsDestruction = true;
-
-    template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-
-    static JSTransformStreamDefaultController* create(
-        JSC::VM& vm,
-        JSC::JSGlobalObject* globalObject,
-        JSC::Structure* structure,
-        JSTransformStream* transformStream);
+    static JSTransformStreamDefaultController* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStream* transformStream);
 
     DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultController, Base);
+        return &vm.plainObjectSpace();
+    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    // C++ methods for direct manipulation
-    bool enqueue(JSC::JSGlobalObject*, JSC::JSValue chunk);
-    void error(JSC::JSGlobalObject*, JSC::JSValue error);
-    void terminate(JSC::JSGlobalObject*);
-    JSC::JSValue desiredSize(JSC::JSGlobalObject*);
+    bool enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
+    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
+    void terminate(JSC::JSGlobalObject* globalObject);
 
-    // For garbage collection
-    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitChildrenImpl(JSCell*, Visitor&);
 
 private:
-    JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
+    JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSTransformStream* transformStream);
 
-    // Member variables
     JSC::WriteBarrier<JSTransformStream> m_stream;
-    JSC::WriteBarrier<JSC::JSPromise> m_flushPromise;
+    JSC::WriteBarrier<JSC::JSObject> m_flushPromise;
     JSC::WriteBarrier<JSC::JSObject> m_transformAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_flushAlgorithm;
 };
-
-// Function declarations for JavaScript bindings
-JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerDesiredSize);
-JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerEnqueue);
-JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerError);
-JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerTerminate);
 
 } // namespace Bun

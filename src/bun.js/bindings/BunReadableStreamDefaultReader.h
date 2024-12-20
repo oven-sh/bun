@@ -1,12 +1,11 @@
-#include "root.h"
+#pragma once
 
+#include "root.h"
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
-#include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/WriteBarrier.h>
-#include <JavaScriptCore/Completion.h>
 
 namespace Bun {
 
@@ -33,7 +32,12 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     template<typename CellType, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return &vm.plainObjectSpace();
+    }
 
     // Public API for C++ usage
     JSC::JSPromise* readyPromise() { return m_readyPromise.get(); }
@@ -65,4 +69,4 @@ private:
     JSC::WriteBarrier<JSC::JSArray> m_readRequests;
 };
 
-}
+} // namespace Bun

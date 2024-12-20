@@ -33,9 +33,4 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeClose);
-JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeEnqueue);
-JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeError);
-JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultControllerPrototypeDesiredSizeGetter);
-
 } // namespace Bun

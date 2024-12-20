@@ -762,10 +762,14 @@ pub const Tree = struct {
                 const deps_buf = sorter.lockfile.buffers.dependencies.items;
                 const string_buf = sorter.lockfile.buffers.string_bytes.items;
 
-                const l_dep_name = deps_buf[l].name.slice(string_buf);
-                const r_dep_name = deps_buf[r].name.slice(string_buf);
+                const l_dep = deps_buf[l];
+                const r_dep = deps_buf[r];
 
-                return strings.order(l_dep_name, r_dep_name) == .lt;
+                return switch (l_dep.behavior.cmp(r_dep.behavior)) {
+                    .lt => true,
+                    .gt => false,
+                    .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
+                };
             }
         };
 

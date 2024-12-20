@@ -657,13 +657,12 @@ if(WIN32)
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-   # Add command to compile the .rc to .res
   add_custom_command(
     OUTPUT ${CODEGEN_PATH}/windows-app-info.res
-    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
+    COMMAND rc.exe /I "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_INCLUDE}" /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
     DEPENDS ${CODEGEN_PATH}/windows-app-info.rc
   )
-  list(APPEND BUN_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---

@@ -1146,6 +1146,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return createError(globalObject, str);
     })();
 
+    if (callFrame->argumentCount() > 1) {
+        auto clientData = WebCore::clientData(vm);
+        JSValue arg1 = callFrame->uncheckedArgument(1);
+        if (arg1.isString()) {
+            errorInstance->putDirect(vm, vm.propertyNames->name, arg1, JSC::PropertyAttribute::DontEnum | 0);
+            if (callFrame->argumentCount() > 2) {
+                if (JSValue arg2 = callFrame->uncheckedArgument(2); arg2.isString()) {
+                    errorInstance->putDirect(vm, clientData->builtinNames().codePublicName(), arg2, JSC::PropertyAttribute::DontEnum | 0);
+                }
+            }
+        }
+        // TODO: handle `options` and `ctor` parameters
+    }
+
     if (!errorInstance->hasProperty(lexicalGlobalObject, vm.propertyNames->name)) {
         errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
     }

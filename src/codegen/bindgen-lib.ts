@@ -165,35 +165,35 @@ export namespace t {
   /**
    * The DOMString type corresponds to strings.
    *
-   * **Note**: A DOMString value might include unmatched surrogate code points.
+   * @note A DOMString value might include unmatched surrogate code points.
    * Use USVString if this is not desirable.
    *
-   * https://webidl.spec.whatwg.org/#idl-DOMString
+   * @see https://webidl.spec.whatwg.org/#idl-DOMString
    */
   export const DOMString = builtinType<string>()("DOMString");
-  /*
-   * The USVString type corresponds to scalar value strings. Depending on the
+  /**
+   * The {@link USVString} type corresponds to scalar value strings. Depending on the
    * context, these can be treated as sequences of code units or scalar values.
    *
    * Specifications should only use USVString for APIs that perform text
    * processing and need a string of scalar values to operate on. Most APIs that
-   * use strings should instead be using DOMString, which does not make any
+   * use strings should instead be using {@link DOMString}, which does not make any
    * interpretations of the code units in the string. When in doubt, use
-   * DOMString
+   * {@link DOMString}
    *
-   * https://webidl.spec.whatwg.org/#idl-USVString
+   * @see https://webidl.spec.whatwg.org/#idl-USVString
    */
   export const USVString = builtinType<string>()("USVString");
   /**
    * The ByteString type corresponds to byte sequences.
    *
-   * WARNING: Specifications should only use ByteString for interfacing with protocols
-   * that use bytes and strings interchangeably, such as HTTP. In general,
-   * strings should be represented with DOMString values, even if it is expected
-   * that values of the string will always be in ASCII or some 8-bit character
-   * encoding. Sequences or frozen arrays with octet or byte elements,
-   * Uint8Array, or Int8Array should be used for holding 8-bit data rather than
-   * ByteString.
+   * WARNING: Specifications should only use ByteString for interfacing with
+   * protocols that use bytes and strings interchangeably, such as HTTP. In
+   * general, strings should be represented with {@link DOMString} values, even
+   * if it is expected that values of the string will always be in ASCII or some
+   * 8-bit character encoding. Sequences or frozen arrays with octet or byte
+   * elements, {@link Uint8Array}, or {@link Int8Array} should be used for
+   * holding 8-bit data rather than `ByteString`.
    *
    * https://webidl.spec.whatwg.org/#idl-ByteString
    */
@@ -201,7 +201,6 @@ export namespace t {
   /**
    * DOMString but encoded as `[]const u8`
    *
-   * @example
    * ```ts
    * // foo.bind.ts
    * import { fn, t } from "bindgen";
@@ -238,7 +237,7 @@ export namespace t {
 
   /**
    * Reference a type by string name instead of by object reference.  This is
-   * required in some siutations like `Request` which can take an existing
+   * required in some siutations like {@link Request} which can take an existing
    * request object in as itself.
    */
   export function ref<T>(name: string): Type<T> {

@@ -4,7 +4,6 @@
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
 import type { FuncOptions, Type, t } from "./bindgen-lib";
-import fs from "node:fs";
 import * as path from "node:path";
 import assert from "node:assert";
 
@@ -807,12 +806,6 @@ export function registerFunction(opts: FuncOptions) {
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
   const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".zig"));
-  if (!fs.existsSync(zigFile)) {
-    const bindName = path.basename(filename);
-    throw new Error(
-      `$[bindName] is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
-    );
-  }
   let file = files.get(zigFile);
   if (!file) {
     file = { functions: [], typedefs: [] };

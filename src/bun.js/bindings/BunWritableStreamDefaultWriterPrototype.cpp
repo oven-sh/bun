@@ -116,11 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterWrite, (JSGlobalObject * g
 
     JSValue chunk = callFrame->argument(0);
 
-    JSValue error;
-    if (!writer->write(globalObject, chunk, &error)) {
-        scope.throwException(globalObject, error);
-        return {};
-    }
+    writer->write(globalObject, chunk);
 
     return JSValue::encode(jsUndefined());
 }
@@ -137,11 +133,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterClose, (JSGlobalObject * g
         return {};
     }
 
-    JSValue error;
-    if (!writer->close(globalObject, &error)) {
-        scope.throwException(globalObject, error);
-        return {};
-    }
+    writer->close(globalObject);
 
     return JSValue::encode(jsUndefined());
 }
@@ -160,11 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterAbort, (JSGlobalObject * g
 
     JSValue reason = callFrame->argument(0);
 
-    JSValue error;
-    if (!writer->abort(globalObject, reason, &error)) {
-        scope.throwException(globalObject, error);
-        return {};
-    }
+    writer->abort(globalObject, reason);
 
     return JSValue::encode(jsUndefined());
 }

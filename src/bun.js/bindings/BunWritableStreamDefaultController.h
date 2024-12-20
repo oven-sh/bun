@@ -34,7 +34,17 @@ public:
     DECLARE_INFO;
 
     template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if (mode == JSC::SubspaceAccess::Concurrently) {
+            return nullptr;
+        }
+
+        return subspaceForImpl(vm);
+    }
+
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype,

@@ -5,6 +5,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/LazyProperty.h>
 
 namespace Bun {
 
@@ -36,8 +37,8 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     // JavaScript-visible properties
-    JSC::JSPromise* closed() { return m_closedPromise.get(); }
-    JSC::JSPromise* ready() { return m_readyPromise.get(); }
+    JSC::JSPromise* closed() { return m_closedPromise.get(this); }
+    JSC::JSPromise* ready() { return m_readyPromise.get(this); }
     double desiredSize();
 
     void resolveClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -49,9 +50,9 @@ public:
     // Internal APIs for C++ use
     JSWritableStream* stream() { return m_stream.get(); }
     void release(); // For releaseLock()
-    bool write(JSC::JSGlobalObject*, JSC::JSValue chunk, JSC::JSValue* error = nullptr);
-    bool abort(JSC::JSGlobalObject*, JSC::JSValue reason = JSC::JSValue(), JSC::JSValue* error = nullptr);
-    bool close(JSC::JSGlobalObject*, JSC::JSValue* error = nullptr);
+    void write(JSC::JSGlobalObject*, JSC::JSValue chunk);
+    void abort(JSC::JSGlobalObject*, JSC::JSValue reason = JSC::jsUndefined());
+    void close(JSC::JSGlobalObject*);
 
 protected:
     JSWritableStreamDefaultWriter(JSC::VM&, JSC::Structure*, JSWritableStream*);
@@ -59,9 +60,9 @@ protected:
 
 private:
     JSC::WriteBarrier<JSWritableStream> m_stream;
-    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
-    JSC::WriteBarrier<JSC::JSPromise> m_readyPromise;
-    JSC::WriteBarrier<JSC::JSArray> m_writeRequests;
+    JSC::LazyProperty<JSC::JSObject, JSC::JSPromise> m_closedPromise;
+    JSC::LazyProperty<JSC::JSObject, JSC::JSPromise> m_readyPromise;
+    JSC::LazyProperty<JSC::JSObject, JSC::JSArray> m_writeRequests;
 };
 
 } // namespace Bun

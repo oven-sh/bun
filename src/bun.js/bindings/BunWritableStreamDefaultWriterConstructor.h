@@ -17,15 +17,7 @@ public:
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-
-        return WebCore::subspaceForImpl<JSWritableStreamDefaultWriterConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForBunClassConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunClassConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForBunClassConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBunClassConstructor = std::forward<decltype(space)>(space); });
+        return &vm.internalFunctionSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

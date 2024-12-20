@@ -2,6 +2,8 @@
 #include "BunWritableStreamDefaultWriterPrototype.h"
 #include "BunWritableStreamDefaultWriter.h"
 #include "BunWritableStream.h"
+#include "JavaScriptCore/InternalFunction.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -58,7 +60,18 @@ EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDefaultWriterConstructor
         return encodedJSValue();
     }
 
-    Structure* structure = globalObject->WritableStreamDefaultWriterStructure();
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Structure* structure = globalObject->streams().getWritableStreamStructure(globalObject);
+    JSValue newTarget = callFrame->newTarget();
+
+    if (UNLIKELY(globalObject->streams().getWritableStreamConstructor(globalObject) != newTarget)) {
+        auto* functionGlobalObject = getFunctionRealm(lexicalGlobalObject, newTarget.getObject());
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            lexicalGlobalObject, newTarget.getObject(), globalObject->streams().getWritableStreamStructure(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     JSWritableStreamDefaultWriter* writer = JSWritableStreamDefaultWriter::create(vm, structure, stream);
     return JSValue::encode(writer);
 }

@@ -96,7 +96,6 @@ namespace Operations {
 void WritableStreamStartErroring(JSWritableStream* stream, JSValue reason)
 {
     VM& vm = stream->vm();
-    JSGlobalObject* globalObject = stream->globalObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Assert: stream.[[storedError]] is undefined.
@@ -207,12 +206,11 @@ void WritableStreamDefaultWriterEnsureReadyPromiseRejected(JSWritableStreamDefau
 
     // 1. If writer.[[readyPromise]] is pending, reject it with reason.
     JSPromise* readyPromise = writer->ready();
-    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending)
-        readyPromise->reject(globalObject, reason);
+    if (readyPromise && readyPromise->status(vm) == JSPromise::Status::Pending)
+        readyPromise->rejectAsHandled(globalObject, reason);
 
     // 2. Set writer.[[readyPromise]] to a promise rejected with reason.
-    JSPromise* newPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    newPromise->reject(globalObject, reason);
+    JSPromise* newPromise = JSPromise::rejectedPromise(globalObject, reason);
     writer->setReady(vm, newPromise);
 }
 
@@ -316,7 +314,6 @@ JSValue JSWritableStream::close(JSGlobalObject* globalObject)
 
 void JSWritableStream::finishInFlightClose()
 {
-    VM& vm = m_controller->vm();
     JSGlobalObject* globalObject = m_controller->globalObject();
 
     // 1. Assert: this.[[inFlightCloseRequest]] is not undefined.

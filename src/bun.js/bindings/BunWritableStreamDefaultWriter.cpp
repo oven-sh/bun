@@ -5,6 +5,8 @@
 #include "BunWritableStreamDefaultController.h"
 #include "BunWritableStream.h"
 #include "JSDOMWrapper.h"
+#include "ErrorCode.h"
+#include <JavaScriptCore/LazyPropertyInlines.h>
 
 namespace Bun {
 
@@ -37,6 +39,20 @@ void JSWritableStreamDefaultWriter::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    m_closedPromise.initLater([](const auto& init) {
+        auto* globalObject = init.owner.globalObject();
+        init.set(init.vm, init.owner, JSPromise::create(init.vm, globalObject->promiseStructure()));
+    });
+
+    m_readyPromise.initLater([](const auto& init) {
+        auto* globalObject = init.owner.globalObject();
+        init.set(init.vm, init.owner, JSPromise::create(init.vm, globalObject->promiseStructure()));
+    });
+
+    m_writeRequests.initLater([](const auto& init) {
+        init.set(init.vm, init.owner, JSC::constructEmptyArray(init.owner->globalObject(), static_cast<ArrayAllocationProfile*>(nullptr), 0));
+    });
 }
 
 template<typename Visitor>
@@ -55,71 +71,67 @@ template<typename Visitor>
 void JSWritableStreamDefaultWriter::visitAdditionalChildren(Visitor& visitor)
 {
     visitor.append(m_stream);
-    visitor.append(m_closedPromise);
-    visitor.append(m_readyPromise);
-    visitor.append(m_writeRequests);
+    this->m_closedPromise.visit(visitor);
+    this->m_readyPromise.visit(visitor);
+    this->m_writeRequests.visit(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSWritableStreamDefaultWriter);
 
 // Non-JS Methods for C++ Use
 
-bool JSWritableStreamDefaultWriter::write(JSGlobalObject* globalObject, JSValue chunk, JSValue* error)
-{
-    VM& vm = globalObject->vm();
-
-    if (!m_stream) {
-        if (error)
-            *error = createTypeError(globalObject, "Writer has no associated stream"_s);
-        return false;
+#define CHECK_STREAM()                                                                                                                     \
+    if (!m_stream) {                                                                                                                       \
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "WritableStreamDefaultWriter has no associated stream"_s); \
+        return;                                                                                                                            \
     }
 
-    return m_stream->controller()->write(globalObject, chunk, error);
+void JSWritableStreamDefaultWriter::write(JSGlobalObject* globalObject, JSValue chunk)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    CHECK_STREAM();
+
+    m_stream->controller()->write(globalObject, chunk);
 }
 
-bool JSWritableStreamDefaultWriter::close(JSGlobalObject* globalObject, JSValue* error)
+void JSWritableStreamDefaultWriter::close(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (!m_stream) {
-        if (error)
-            *error = createTypeError(globalObject, "Writer has no associated stream"_s);
-        return false;
-    }
+    CHECK_STREAM();
 
-    return m_stream->close(globalObject, error);
+    m_stream->close(globalObject);
 }
 
-bool JSWritableStreamDefaultWriter::abort(JSGlobalObject* globalObject, JSValue reason, JSValue* error)
+void JSWritableStreamDefaultWriter::abort(JSGlobalObject* globalObject, JSValue reason)
 {
-    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (!m_stream) {
-        if (error)
-            *error = createTypeError(globalObject, "Writer has no associated stream"_s);
-        return false;
-    }
+    CHECK_STREAM();
 
-    return m_stream->abort(globalObject, reason, error);
+    m_stream->abort(globalObject, reason);
 }
 
 void JSWritableStreamDefaultWriter::release()
 {
     m_stream.clear();
-    m_closedPromise->reject(vm(), jsUndefined());
-    m_readyPromise->reject(vm(), jsUndefined());
+    if (m_closedPromise.isInitialized())
+        m_closedPromise.get(this)->rejectAsHandled(globalObject(), jsUndefined());
+    if (m_readyPromise.isInitialized())
+        m_readyPromise.get(this)->rejectAsHandled(globalObject(), jsUndefined());
 }
 
 void JSWritableStreamDefaultWriter::resolveClosedPromise(JSGlobalObject* globalObject, JSValue value)
 {
-    if (m_closedPromise)
-        m_closedPromise->resolve(globalObject, value);
+    if (m_closedPromise.isInitialized())
+        m_closedPromise.get(this)->resolve(globalObject, value);
 }
 
 void JSWritableStreamDefaultWriter::rejectClosedPromise(JSGlobalObject* globalObject, JSValue error)
 {
-    if (m_closedPromise)
-        m_closedPromise->reject(globalObject, error);
+    if (m_closedPromise.isInitialized())
+        m_closedPromise.get(this)->rejectAsHandled(globalObject, error);
 }
 
 } // namespace Bun

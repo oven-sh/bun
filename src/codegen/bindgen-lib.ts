@@ -295,13 +295,46 @@ export namespace t {
   }
 }
 
-export type FuncOptions = FuncMetadata &
-  (
-    | {
-        variants: FuncVariant[];
-      }
-    | FuncVariant
-  );
+interface FuncOptionsWithVariant extends FuncMetadata {
+  /**
+   * Declare a function with multiple overloads. Each overload gets its own
+   * native function named "name`n`" where `n` is the 1-based index of the
+   * overload.
+   *
+   * ## Example
+   * ```ts
+   * // foo.bind.ts
+   * import { fn } from "bindgen";
+   *
+   * export const foo = fn({
+   *   variants: [
+   *     {
+   *       args: { a: t.i32 },
+   *       ret: t.i32,
+   *     },
+   *     {
+   *       args: { a: t.i32, b: t.i32 },
+   *       ret: t.boolean,
+   *     }
+   *  ]
+   * });
+   * ```
+   *
+   * ```zig
+   * // foo.zig
+   * pub fn foo1(a: i32) i32 {
+   *    return a;
+   * }
+   *
+   * pub fn foo2(a: i32, b: i32) bool {
+   *     return a == b;
+   * }
+   * ```
+   */
+  variants: FuncVariant[];
+}
+type FuncWithoutOverloads = FuncMetadata & FuncVariant;
+type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
 
 export interface FuncMetadata {
   /**

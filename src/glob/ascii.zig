@@ -481,7 +481,6 @@ inline fn skipGlobstars(glob: []const u8, glob_index: *usize) usize {
     return glob_index.*;
 }
 
-
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes
 /// TODO: this doesn't play nicely with Windows directory separator and

@@ -1,5 +1,9 @@
-// This is the public API for `bind.ts` files
-// It is aliased as `import {} from 'bindgen'`
+/**
+ * This is the public API for `bind.ts` files
+ * It is aliased as `import {} from 'bindgen'`
+ * @see https://bun.sh/docs/project/bindgen
+ */
+
 import {
   isType,
   dictionaryImpl,
@@ -196,6 +200,23 @@ export namespace t {
   export const ByteString = builtinType<string>()("ByteString");
   /**
    * DOMString but encoded as `[]const u8`
+   *
+   * @example
+   * ```ts
+   * // foo.bind.ts
+   * import { fn, t } from "bindgen";
+   *
+   * export const foo = fn({
+   *   args: { bar: t.UTF8String },
+   * })
+   * ```
+   *
+   * ```zig
+   * // foo.zig
+   * pub fn foo(bar: []const u8) void {
+   *   // ...
+   * }
+   * ```
    */
   export const UTF8String = builtinType<string>()("UTF8String");
 

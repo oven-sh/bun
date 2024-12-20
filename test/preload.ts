@@ -1,5 +1,4 @@
 import * as harness from "./harness";
-console.log(harness.bunEnv);
 
 // We make Bun.env read-only
 // so process.env = {} causes them to be out of sync and we assume Bun.env is

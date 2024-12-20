@@ -1,3 +1,6 @@
+#include "root.h"
+
+#include "BunReadableStreamDefaultReaderPrototype.h"
 #include "BunReadableStreamDefaultReaderConstructor.h"
 #include "BunReadableStreamDefaultReader.h"
 #include "BunReadableStream.h"

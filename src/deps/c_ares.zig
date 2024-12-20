@@ -1439,6 +1439,110 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
     ENOSERVER = ARES_ENOSERVER,
 
+    const Deferred = struct {
+        errno: Error,
+        syscall: ?[]const u8,
+        hostname: ?bun.String,
+        promise: JSC.JSPromise.Strong,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn init(errno: Error, syscall: ?[]const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
+            return Deferred.new(.{
+                .errno = errno,
+                .syscall = syscall,
+                .hostname = hostname,
+                .promise = promise,
+            });
+        }
+
+        pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
+            const error_value = globalThis.createErrorInstance("{s}", .{this.errno.label()});
+
+            error_value.put(
+                globalThis,
+                JSC.ZigString.static("name"),
+                bun.String.static("DNSException").toJS(globalThis),
+            );
+            error_value.put(
+                globalThis,
+                JSC.ZigString.static("code"),
+                JSC.ZigString.init(this.errno.code()).toJS(globalThis),
+            );
+            error_value.put(
+                globalThis,
+                JSC.ZigString.static("errno"),
+                JSC.jsNumber(@intFromEnum(this.errno)),
+            );
+
+            if (this.syscall) |syscall| {
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("syscall"),
+                    JSC.ZigString.init(syscall).toJS(globalThis),
+                );
+            }
+
+            if (this.hostname) |hostname| {
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("hostname"),
+                    hostname.toJS(globalThis),
+                );
+            }
+
+            if (this.syscall != null and this.hostname != null) {
+                const utf8_hostname = this.hostname.?.toUTF8(bun.default_allocator);
+                defer utf8_hostname.deinit();
+
+                const message = std.mem.concat(bun.default_allocator, u8, &[_][]const u8{ this.syscall.?, " ", @tagName(this.errno), " ", utf8_hostname.slice() }) catch bun.outOfMemory();
+                defer bun.default_allocator.free(message);
+
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("message"),
+                    JSC.ZigString.init(message).toJS(globalThis),
+                );
+            }
+
+            this.promise.reject(globalThis, error_value);
+            this.deinit();
+        }
+
+        pub fn rejectLater(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
+            const Context = struct {
+                deferred: *Deferred,
+                globalThis: *JSC.JSGlobalObject,
+                pub fn callback(context: *@This()) void {
+                    context.deferred.reject(context.globalThis);
+                }
+            };
+
+            const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+            context.deferred = this;
+            context.globalThis = globalThis;
+            // TODO(@heimskr): new custom Task type
+            globalThis.bunVM().enqueueTask(JSC.ManagedTask.New(Context, Context.callback).init(context));
+        }
+
+        pub fn deinit(this: *@This()) void {
+            if (this.hostname) |hostname| {
+                hostname.deref();
+            }
+            this.promise.deinit();
+            this.destroy();
+        }
+    };
+
+    pub fn toDeferred(this: Error, syscall: ?[]const u8, hostname: ?[]const u8, promise: *JSC.JSPromise.Strong) *Deferred {
+        const host_string: ?bun.String = if (hostname) |host|
+            bun.String.createUTF8(host)
+        else
+            null;
+        defer promise.* = .{};
+        return Deferred.init(this, syscall, host_string, promise.*);
+    }
+
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
         error_value.put(

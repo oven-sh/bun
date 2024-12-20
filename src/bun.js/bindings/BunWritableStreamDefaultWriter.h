@@ -10,10 +10,9 @@ namespace Bun {
 
 class JSWritableStream;
 
-class JSWritableStreamDefaultWriter final : public JSC::JSDestructibleObject {
+class JSWritableStreamDefaultWriter final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
-    static constexpr bool needsDestruction = true;
+    using Base = JSC::JSNonFinalObject;
 
     static JSWritableStreamDefaultWriter* create(JSC::VM&, JSC::Structure*, JSWritableStream*);
     static JSWritableStreamDefaultWriter* createForSubclass(JSC::VM&, JSC::Structure*, JSWritableStream*);
@@ -27,6 +26,10 @@ public:
     }
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     // JavaScript-visible properties
     JSC::JSPromise* closed() { return m_closedPromise.get(); }
@@ -46,12 +49,9 @@ public:
     bool abort(JSC::JSGlobalObject*, JSC::JSValue reason = JSC::JSValue(), JSC::JSValue* error = nullptr);
     bool close(JSC::JSGlobalObject*, JSC::JSValue* error = nullptr);
 
-    void visitAdditionalChildren(JSC::SlotVisitor&);
-
 protected:
     JSWritableStreamDefaultWriter(JSC::VM&, JSC::Structure*, JSWritableStream*);
     void finishCreation(JSC::VM&);
-    static void destroy(JSC::JSCell*);
 
 private:
     JSC::WriteBarrier<JSWritableStream> m_stream;

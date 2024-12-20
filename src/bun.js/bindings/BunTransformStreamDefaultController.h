@@ -49,8 +49,8 @@ private:
     // Member variables
     JSC::WriteBarrier<JSTransformStream> m_stream;
     JSC::WriteBarrier<JSC::JSPromise> m_flushPromise;
-    JSC::WriteBarrier<JSC::Unknown> m_transformAlgorithm;
-    JSC::WriteBarrier<JSC::Unknown> m_flushAlgorithm;
+    JSC::WriteBarrier<JSC::JSObject> m_transformAlgorithm;
+    JSC::WriteBarrier<JSC::JSObject> m_flushAlgorithm;
 };
 
 // Function declarations for JavaScript bindings

@@ -34,55 +34,42 @@
 namespace WebCore {
 using namespace JSC;
 
-enum class CloneMode {
-    Full,
-    Partial,
-};
-
-static JSC::EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
+JSC::JSValue cloneArrayBuffer(JSGlobalObject* lexicalGlobalObject, const JSC::ArgList& args, CloneMode mode)
 {
     VM& vm = lexicalGlobalObject->vm();
 
     ASSERT(lexicalGlobalObject);
-    ASSERT(callFrame->argumentCount());
-    ASSERT(callFrame->lexicalGlobalObject(vm) == lexicalGlobalObject);
+    ASSERT(args.size());
 
-    auto* buffer = toUnsharedArrayBuffer(vm, callFrame->uncheckedArgument(0));
+    auto* buffer = toUnsharedArrayBuffer(vm, args.at(0));
     if (!buffer) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwDataCloneError(*lexicalGlobalObject, scope);
         return {};
     }
     if (mode == CloneMode::Partial) {
-        ASSERT(callFrame->argumentCount() == 3);
-        int srcByteOffset = static_cast<int>(callFrame->uncheckedArgument(1).toNumber(lexicalGlobalObject));
-        int srcLength = static_cast<int>(callFrame->uncheckedArgument(2).toNumber(lexicalGlobalObject));
-        return JSValue::encode(JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(srcByteOffset, srcByteOffset + srcLength)));
+        ASSERT(args.size() == 3);
+        int srcByteOffset = static_cast<int>(args.at(1).toNumber(lexicalGlobalObject));
+        int srcLength = static_cast<int>(args.at(2).toNumber(lexicalGlobalObject));
+        return JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(srcByteOffset, srcByteOffset + srcLength));
     }
-    return JSValue::encode(JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(0)));
+    return JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(0));
 }
 
-JSC_DEFINE_HOST_FUNCTION(cloneArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC::JSValue structuredCloneForStream(JSGlobalObject* globalObject, const JSC::ArgList& args)
 {
-    return cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Partial);
-}
-
-JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount());
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue value = callFrame->uncheckedArgument(0);
+    JSValue value = args.at(0);
 
     if (value.isPrimitive()) {
-        return JSValue::encode(value);
+        return value;
     }
 
     if (value.inherits<JSArrayBuffer>())
-        RELEASE_AND_RETURN(scope, cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Full));
+        return cloneArrayBuffer(globalObject, args, CloneMode::Full);
 
     if (value.inherits<JSArrayBufferView>()) {
         auto* bufferView = jsCast<JSArrayBufferView*>(value);
@@ -96,10 +83,10 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
         auto bufferClone = buffer->slice(0);
         Structure* structure = bufferView->structure();
 
-#define CLONE_TYPED_ARRAY(name)                                                                                                                                                 \
-    do {                                                                                                                                                                        \
-        if (bufferView->inherits<JS##name##Array>())                                                                                                                            \
-            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
+#define CLONE_TYPED_ARRAY(name)                                                                                                            \
+    do {                                                                                                                                   \
+        if (bufferView->inherits<JS##name##Array>())                                                                                       \
+            return JS##name##Array::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length()); \
     } while (0);
 
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
@@ -107,11 +94,22 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 #undef CLONE_TYPED_ARRAY
 
         if (value.inherits<JSDataView>())
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length())));
+            return JSDataView::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length());
     }
 
     throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);
     return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCloneArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(cloneArrayBuffer(globalObject, ArgList(callFrame), CloneMode::Partial));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneForStream, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+
+    return JSValue::encode(structuredCloneForStream(globalObject, ArgList(callFrame)));
 }
 
 } // namespace WebCore

@@ -60,7 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalO
     if (!zigGlobalObject)
         return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
 
-    Structure* writerStructure = zigGlobalObject->streamStructures().getWritableStreamDefaultWriterStructure(zigGlobalObject);
+    Structure* writerStructure = zigGlobalObject->writableStreamDefaultWriterStructure();
     auto* writer = JSWritableStreamDefaultWriter::create(vm, writerStructure, stream);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -201,8 +201,9 @@ Structure* JSWritableStreamConstructor::createStructure(VM& vm, JSGlobalObject* 
     return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -212,12 +213,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * globalOb
 
     JSObject* underlyingSink = callFrame->argument(0).getObject();
     JSValue strategy = callFrame->argument(1);
+    auto* constructor = globalObject->writableStreamConstructor();
+    auto* structure = globalObject->writableStreamStructure();
 
-    JSObject* constructor = asObject(newTarget);
-    Structure* structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget, globalObject->writableStreamStructure());
+    if (!(!newTarget || newTarget != constructor)) {
+        if (newTarget) {
+            structure = JSC::InternalFunction::createSubclassStructure(getFunctionRealm(globalObject, newTarget.getObject()), newTarget.getObject(), structure);
+        } else {
+            structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSWritableStream* stream = JSWritableStream::create(vm, globalObject, structure);
+    JSWritableStream* stream = JSWritableStream::create(vm, lexicalGlobalObject, structure);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Initialize with underlying sink if provided
@@ -237,7 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrivateConstructor, (JSGlobalObject * g
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Structure* structure = globalObject->writableStreamStructure();
+    Structure* structure = defaultGlobalObject(globalObject)->writableStreamStructure();
     JSWritableStream* stream = JSWritableStream::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -264,7 +273,7 @@ JSWritableStream* JSWritableStream::create(VM& vm, JSGlobalObject* globalObject,
     if (!zigGlobalObject)
         return nullptr;
 
-    Structure* streamStructure = zigGlobalObject->streamStructures().getWritableStreamStructure(zigGlobalObject);
+    Structure* streamStructure = zigGlobalObject->writableStreamStructure();
     JSWritableStream* stream = new (NotNull, allocateCell<JSWritableStream>(vm))
         JSWritableStream(vm, streamStructure ? streamStructure : structure);
     stream->finishCreation(vm);
@@ -426,7 +435,7 @@ void WritableStreamFinishErroring(JSWritableStream* stream)
             abortPromise);
     } else {
         // If not a promise, treat as fulfilled
-        abortPromise->resolve(globalObject, jsUndefined());
+        abortPromise->fulfillWithNonPromise(globalObject, jsUndefined());
     }
 }
 

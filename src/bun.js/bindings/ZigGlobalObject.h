@@ -491,6 +491,8 @@ public:
     JSC::Structure* readableStreamDefaultReaderStructure() const { return m_streamStructures.getReadableStreamDefaultReaderStructure(this); }
     JSC::Structure* readableStreamBYOBReaderStructure() const { return m_streamStructures.getReadableStreamBYOBReaderStructure(this); }
     JSC::Structure* writableStreamDefaultWriterStructure() const { return m_streamStructures.getWritableStreamDefaultWriterStructure(this); }
+    JSC::Structure* writableStreamStructure() const { return m_streamStructures.getWritableStreamStructure(this); }
+    JSC::JSObject* writableStreamConstructor() const { return m_streamStructures.getWritableStreamConstructor(this); }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

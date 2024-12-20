@@ -174,8 +174,18 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
         return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
 
     JSObject* newTarget = asObject(callFrame->newTarget());
-    Structure* structure = JSC::InternalFunction::createSubclassStructure(
-        globalObject, newTarget, zigGlobalObject->transformStreamStructure());
+    Structure* structure = zigGlobalObject->transformStreamStructure();
+
+    auto* constructor = zigGlobalObject->transformStreamConstructor();
+
+    if (!(!newTarget || newTarget != constructor)) {
+        if (newTarget) {
+            structure = JSC::InternalFunction::createSubclassStructure(getFunctionRealm(globalObject, newTarget), newTarget, structure);
+        } else {
+            structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 
     // Extract constructor arguments per spec:

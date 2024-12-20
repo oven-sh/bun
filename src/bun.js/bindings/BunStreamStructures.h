@@ -1,6 +1,8 @@
 #pragma once
 
 #include "root.h"
+
+#include "JavaScriptCore/LazyClassStructure.h"
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "JavaScriptCore/JSCast.h"
@@ -19,24 +21,24 @@ class JSWritableStreamDefaultWriter;
 
 // Stream-related structures for the global object
 struct StreamStructures {
-    LazyProperty<JSGlobalObject, Structure> m_readableStreamStructure;
-    LazyProperty<JSGlobalObject, Structure> m_readableStreamDefaultReaderStructure;
-    LazyProperty<JSGlobalObject, Structure> m_readableStreamBYOBReaderStructure;
-    LazyProperty<JSGlobalObject, Structure> m_writableStreamDefaultWriterStructure;
-    LazyProperty<JSGlobalObject, Structure> m_transformStreamStructure;
-    LazyProperty<JSGlobalObject, Structure> m_transformStreamDefaultControllerStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_transformStreamConstructor;
-    LazyProperty<JSGlobalObject, Structure> m_writableStreamStructure;
+    LazyClassStructure m_readableStream;
+    LazyClassStructure m_readableStreamDefaultReader;
+    LazyClassStructure m_readableStreamBYOBReader;
+    LazyClassStructure m_writableStreamDefaultWriter;
+    LazyClassStructure m_transformStream;
+    LazyClassStructure m_transformStreamDefaultController;
+    LazyClassStructure m_writableStream;
 
 public:
-    Structure* getReadableStreamStructure(const JSGlobalObject* globalObject) const { return m_readableStreamStructure.getInitializedOnMainThread(globalObject); }
-    Structure* getReadableStreamDefaultReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamDefaultReaderStructure.getInitializedOnMainThread(globalObject); }
-    Structure* getReadableStreamBYOBReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReaderStructure.getInitializedOnMainThread(globalObject); }
-    Structure* getWritableStreamDefaultWriterStructure(const JSGlobalObject* globalObject) const { return m_writableStreamDefaultWriterStructure.getInitializedOnMainThread(globalObject); }
-    Structure* getTransformStreamStructure(const JSGlobalObject* globalObject) const { return m_transformStreamStructure.getInitializedOnMainThread(globalObject); }
-    Structure* getTransformStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_transformStreamDefaultControllerStructure.getInitializedOnMainThread(globalObject); }
-    JSObject* getTransformStreamConstructor(const JSGlobalObject* globalObject) const { return m_transformStreamConstructor.getInitializedOnMainThread(globalObject); }
-    Structure* getWritableStreamStructure(const JSGlobalObject* globalObject) const { return m_writableStreamStructure.getInitializedOnMainThread(globalObject); }
+    Structure* getReadableStreamStructure(const JSGlobalObject* globalObject) const { return m_readableStream.getInitializedOnMainThread(globalObject); }
+    Structure* getReadableStreamDefaultReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamDefaultReader.getInitializedOnMainThread(globalObject); }
+    Structure* getReadableStreamBYOBReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReader.getInitializedOnMainThread(globalObject); }
+    Structure* getWritableStreamDefaultWriterStructure(const JSGlobalObject* globalObject) const { return m_writableStreamDefaultWriter.getInitializedOnMainThread(globalObject); }
+    Structure* getTransformStreamStructure(const JSGlobalObject* globalObject) const { return m_transformStream.getInitializedOnMainThread(globalObject); }
+    Structure* getTransformStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_transformStreamDefaultController.getInitializedOnMainThread(globalObject); }
+    JSObject* getTransformStreamConstructor(const JSGlobalObject* globalObject) const { return m_transformStream.constructorInitializedOnMainThread(globalObject); }
+    Structure* getWritableStreamStructure(const JSGlobalObject* globalObject) const { return m_writableStream.getInitializedOnMainThread(globalObject); }
+    JSObject* getWritableStreamConstructor(const JSGlobalObject* globalObject) const { return m_writableStream.constructorInitializedOnMainThread(globalObject); }
 };
 
 } // namespace Bun

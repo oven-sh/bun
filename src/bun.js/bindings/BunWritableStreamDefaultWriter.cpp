@@ -230,7 +230,7 @@ EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDefaultWriterConstructor
     }
 
     // Check if stream is locked
-    if (stream->locked()) {
+    if (stream->isLocked()) {
         throwTypeError(lexicalGlobalObject, scope, "Cannot construct a WritableStreamDefaultWriter for a locked WritableStream"_s);
         return encodedJSValue();
     }
@@ -278,11 +278,6 @@ void JSWritableStreamDefaultWriter::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-}
-
-void JSWritableStreamDefaultWriter::destroy(JSCell* cell)
-{
-    static_cast<JSWritableStreamDefaultWriter*>(cell)->JSWritableStreamDefaultWriter::~JSWritableStreamDefaultWriter();
 }
 
 template<typename Visitor>

@@ -264,7 +264,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     await Bun.$`echo ${files.map(([fp]) => fp).join("\n")} >> index.ts`;
     await Bun.$`echo ${files.map(([, varname]) => `console.log(JSON.stringify(${varname}))`).join("\n")} >> index.ts`;
 
-    const resultPromise = Bun.build({
+    const result = await Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
@@ -290,12 +290,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
           },
         },
       ],
+      throw: true,
     });
 
-    const result = await resultPromise;
-
-    if (!result.success) console.log(result);
-    expect(result.success).toBeTrue();
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).text();
     const outputJsons = output
       .trim()

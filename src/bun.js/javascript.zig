@@ -972,10 +972,15 @@ pub const VirtualMachine = struct {
     pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
-        pub var main_thread_vm: *VirtualMachine = undefined;
+        pub var main_thread_vm: ?*VirtualMachine = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
             if (vm) |vm_instance| {
                 vm_instance.global = global;
+
+                // Ensure this is always set when it should be.
+                if (vm_instance.is_main_thread) {
+                    VMHolder.main_thread_vm = vm_instance;
+                }
             }
 
             cached_global_object = global;
@@ -995,7 +1000,7 @@ pub const VirtualMachine = struct {
         return VMHolder.vm.?;
     }
 
-    pub fn getMainThreadVM() *VirtualMachine {
+    pub fn getMainThreadVM() ?*VirtualMachine {
         return VMHolder.main_thread_vm;
     }
 
@@ -1031,7 +1036,7 @@ pub const VirtualMachine = struct {
         printer: *js_printer.BufferPrinter,
 
         pub fn get(this: *SourceMapHandlerGetter) js_printer.SourceMapHandler {
-            if (this.vm.debugger == null) {
+            if (this.vm.debugger == null or this.vm.debugger.?.mode == .connect) {
                 return SavedSourceMap.SourceMapHandler.init(&this.vm.source_mappings);
             }
 
@@ -1931,7 +1936,9 @@ pub const VirtualMachine = struct {
         vm.bundler.configureLinkerWithAutoJSX(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
+        if (opts.is_main_thread) {
+            VMHolder.main_thread_vm = vm;
+        }
         vm.global = ZigGlobalObject.create(
             vm.console,
             -1,
@@ -1947,6 +1954,10 @@ pub const VirtualMachine = struct {
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
+    }
+
+    export fn Bun__isMainThreadVM() callconv(.C) bool {
+        return get().is_main_thread;
     }
 
     pub const Options = struct {
@@ -2111,7 +2122,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (this.debugger != null) {
+        if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;

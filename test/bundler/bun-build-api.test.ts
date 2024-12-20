@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
+import assert from "assert";
 
 describe("Bun.build", () => {
   test("experimentalCss = true works", async () => {
@@ -173,6 +174,26 @@ describe("Bun.build", () => {
     expect(build.logs[0].position).toEqual(null);
     expect(build.logs[0].level).toEqual("error");
     Bun.gc(true);
+  });
+
+  test("`throw: true` works", async () => {
+    Bun.gc(true);
+    try {
+      await Bun.build({
+        entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+        throw: true,
+      });
+      expect.unreachable();
+    } catch (e) {
+      assert(e instanceof AggregateError);
+      expect(e.errors).toHaveLength(1);
+      expect(e.errors[0]).toBeInstanceOf(BuildMessage);
+      expect(e.errors[0].message).toMatch(/ModuleNotFound/);
+      expect(e.errors[0].name).toBe("BuildMessage");
+      expect(e.errors[0].position).toEqual(null);
+      expect(e.errors[0].level).toEqual("error");
+      Bun.gc(true);
+    }
   });
 
   test("returns output files", async () => {

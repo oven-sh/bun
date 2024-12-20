@@ -1,9 +1,10 @@
 #pragma once
 
 #include "root.h"
-#include "BunStreamStructures.h"
 
 namespace Bun {
+
+class JSWritableStreamPrototype;
 
 using namespace JSC;
 
@@ -16,17 +17,11 @@ public:
     DECLARE_INFO;
 
     template<typename CellType, SubspaceAccess mode>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    static JSC::GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
         if constexpr (mode == SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSWritableStreamConstructor,
-            WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForConstructor = std::forward<decltype(space)>(space); });
+        return &vm.internalFunctionSpace();
     }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);

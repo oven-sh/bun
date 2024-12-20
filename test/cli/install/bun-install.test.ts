@@ -8452,3 +8452,87 @@ test("providing invalid url in lockfile does not crash", async () => {
   );
   expect(await exited).toBe(1);
 });
+
+test("optional dependencies do not need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        optionalDependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "optionalDependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(0);
+});
+
+test("non-optional dependencies need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        workspaces: {
+          "": {
+            dependencies: {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        packages: {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    // --production to fail early
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).toContain("error: Failed to resolve root prod dependency 'jquery'");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(1);
+});

@@ -4375,6 +4375,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveRequestStream;
     } else if (handler == Bun__S3UploadStream__onRejectRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectRequestStream;
+    } else if (handler == Bun__FileStreamWrapper__onResolveRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onResolveRequestStream;
+    } else if (handler == Bun__FileStreamWrapper__onRejectRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onRejectRequestStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

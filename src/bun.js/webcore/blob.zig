@@ -999,7 +999,16 @@ pub const Blob = struct {
             file_copier.schedule();
             return file_copier.promise.value();
         } else if (destination_type == .file and source_type == .s3) {
-            // TODO: S3 create a sink file and pipe s3 readable stream
+            const s3 = &source_blob.store.?.data.s3;
+            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
+                ctx,
+                source_blob,
+                @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
+            ), ctx)) |stream| {
+                return destination_blob.pipeReadableStreamToBlob(ctx, stream);
+            } else {
+                return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
+            }
         } else if (destination_type == .bytes and source_type == .bytes) {
             // If this is bytes <> bytes, we can just duplicate it
             // this is an edgecase
@@ -3858,6 +3867,249 @@ pub const Blob = struct {
             return S3BlobStatTask.init(globalThis, this, this_value);
         }
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
+    }
+
+    pub const FileStreamWrapper = struct {
+        promise: JSC.JSPromise.Strong,
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        sink: *JSC.WebCore.FileSink,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn deinit(this: *@This()) void {
+            this.promise.deinit();
+            this.readable_stream_ref.deinit();
+            this.sink.deref();
+            this.destroy();
+        }
+    };
+
+    pub const shim = JSC.Shimmer("Bun", "FileStreamWrapper", @This());
+    pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        var args = callframe.arguments_old(2);
+        var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+        defer this.deinit();
+        if (this.readable_stream_ref.get()) |stream| {
+            stream.done(globalThis);
+        }
+        this.readable_stream_ref.deinit();
+        this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
+        return .undefined;
+    }
+
+    pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(2);
+        var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+        defer this.sink.deinit();
+        const err = args.ptr[0];
+
+        this.promise.rejectOnNextTick(globalThis, err);
+
+        if (this.readable_stream_ref.get()) |stream| {
+            stream.cancel(globalThis);
+            this.readable_stream_ref.deinit();
+        }
+        return .undefined;
+    }
+    pub const Export = shim.exportFunctions(.{
+        .onResolveRequestStream = onFileStreamResolveRequestStream,
+        .onRejectRequestStream = onFileStreamRejectRequestStream,
+    });
+    comptime {
+        const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
+        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
+        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    }
+    pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream) JSC.JSValue {
+        var store = this.store orelse {
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
+        };
+
+        if (this.isS3()) {
+            const s3 = &this.store.?.data.s3;
+            const credentials = s3.getCredentials();
+            const path = s3.path();
+            const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy_url = if (proxy) |p| p.href else null;
+
+            return credentials.s3UploadStream(path, readable_stream, globalThis, s3.options, proxy_url, null, undefined);
+        }
+
+        if (store.data != .file) {
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is read-only", .{}));
+        }
+
+        const file_sink = brk_sink: {
+            if (Environment.isWindows) {
+                const pathlike = store.data.file.pathlike;
+                const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+                    var file_path: bun.PathBuffer = undefined;
+                    const path = pathlike.path.sliceZ(&file_path);
+                    switch (bun.sys.open(
+                        path,
+                        bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                        write_permissions,
+                    )) {
+                        .result => |result| {
+                            break :brk result;
+                        },
+                        .err => |err| {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.withPath(path).toJSC(globalThis));
+                        },
+                    }
+                    unreachable;
+                };
+
+                const is_stdout_or_stderr = brk: {
+                    if (pathlike != .fd) {
+                        break :brk false;
+                    }
+
+                    if (globalThis.bunVM().rare_data) |rare| {
+                        if (store == rare.stdout_store) {
+                            break :brk true;
+                        }
+
+                        if (store == rare.stderr_store) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk switch (bun.FDTag.get(fd)) {
+                        .stdout, .stderr => true,
+                        else => false,
+                    };
+                };
+                var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
+                sink.writer.owns_fd = pathlike != .fd;
+
+                if (is_stdout_or_stderr) {
+                    switch (sink.writer.startSync(fd, false)) {
+                        .err => |err| {
+                            sink.deref();
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        },
+                        else => {},
+                    }
+                } else {
+                    switch (sink.writer.start(fd, true)) {
+                        .err => |err| {
+                            sink.deref();
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        },
+                        else => {},
+                    }
+                }
+
+                break :brk_sink sink;
+            }
+
+            var sink = JSC.WebCore.FileSink.init(bun.invalid_fd, this.globalThis.bunVM().eventLoop());
+
+            const input_path: JSC.WebCore.PathOrFileDescriptor = brk: {
+                if (store.data.file.pathlike == .fd) {
+                    break :brk .{ .fd = store.data.file.pathlike.fd };
+                } else {
+                    break :brk .{
+                        .path = ZigString.Slice.fromUTF8NeverFree(
+                            store.data.file.pathlike.path.slice(),
+                        ).clone(
+                            bun.default_allocator,
+                        ) catch bun.outOfMemory(),
+                    };
+                }
+            };
+            defer input_path.deinit();
+
+            const stream_start: JSC.WebCore.StreamStart = .{
+                .FileSink = .{
+                    .input_path = input_path,
+                },
+            };
+
+            switch (sink.start(stream_start)) {
+                .err => |err| {
+                    sink.deref();
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                },
+                else => {},
+            }
+            break :brk_sink sink;
+        };
+        var signal = &file_sink.signal;
+
+        signal.* = JSC.WebCore.FileSink.JSSink.SinkSignal.init(.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        bun.assert(signal.isDead());
+
+        const assignment_result: JSC.JSValue = JSC.WebCore.FileSink.JSSink.assignToStream(
+            globalThis,
+            readable_stream.value,
+            file_sink,
+            @as(**anyopaque, @ptrCast(&signal.ptr)),
+        );
+
+        assignment_result.ensureStillAlive();
+
+        // assert that it was updated
+        bun.assert(!signal.isDead());
+
+        if (assignment_result.toError()) |err| {
+            file_sink.deref();
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+        }
+
+        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+            globalThis.bunVM().drainMicrotasks();
+
+            assignment_result.ensureStillAlive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if (assignment_result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .pending => {
+                        const wrapper = FileStreamWrapper.new(.{
+                            .promise = JSC.JSPromise.Strong.init(globalThis),
+                            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
+                            .sink = file_sink,
+                        });
+                        const promise_value = wrapper.promise.value();
+
+                        assignment_result.then(
+                            globalThis,
+                            wrapper,
+                            onFileStreamResolveRequestStream,
+                            onFileStreamRejectRequestStream,
+                        );
+                        return promise_value;
+                    },
+                    .fulfilled => {
+                        file_sink.deref();
+                        readable_stream.done(globalThis);
+                        return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(0));
+                    },
+                    .rejected => {
+                        file_sink.deref();
+
+                        readable_stream.cancel(globalThis);
+
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, promise.result(globalThis.vm()));
+                    },
+                }
+            } else {
+                file_sink.deref();
+
+                readable_stream.cancel(globalThis);
+
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, assignment_result);
+            }
+        }
+        file_sink.deref();
+
+        return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(0));
     }
 
     pub fn getWriter(

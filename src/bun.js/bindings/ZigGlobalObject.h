@@ -338,9 +338,10 @@ public:
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__S3UploadStream__onRejectRequestStream,
         Bun__S3UploadStream__onResolveRequestStream,
-
+        Bun__FileStreamWrapper__onRejectRequestStream,
+        Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 28;
+    static constexpr size_t promiseFunctionsSize = 30;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 

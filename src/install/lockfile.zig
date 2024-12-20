@@ -1670,6 +1670,7 @@ pub const Printer = struct {
             const dependencies = lockfile.buffers.dependencies.items;
             const workspace_res = packages_slice.items(.resolution)[workspace_package_id];
             const names = packages_slice.items(.name);
+            const pkg_metas = packages_slice.items(.meta);
             bun.assert(workspace_res.tag == .workspace or workspace_res.tag == .root);
             const resolutions_list = packages_slice.items(.resolutions);
             var printed_section_header = false;
@@ -1677,7 +1678,7 @@ pub const Printer = struct {
 
             // find the updated packages
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
                     .yes, .no, .@"return" => {},
                     .update => |update_info| {
                         printed_new_install.* = true;
@@ -1699,7 +1700,7 @@ pub const Printer = struct {
             }
 
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
                     .@"return" => return,
                     .yes => {},
                     .no, .update => continue,
@@ -1748,6 +1749,7 @@ pub const Printer = struct {
             dep_id: DependencyID,
             installed: *const Bitset,
             id_map: ?[]DependencyID,
+            pkg_metas: []const Package.Meta,
         ) ShouldPrintPackageInstallResult {
             const dependencies = this.lockfile.buffers.dependencies.items;
             const resolutions = this.lockfile.buffers.resolutions.items;
@@ -1770,6 +1772,17 @@ pub const Printer = struct {
             }
 
             if (!installed.isSet(package_id)) return .no;
+
+            // It's possible this package was installed but the dependency is disabled.
+            // Have "zod@1.0.0" in dependencies and `zod2@npm:zod@1.0.0` in devDependencies
+            // and install with --omit=dev.
+            if (this.lockfile.isPackageDisabled(
+                dep_id,
+                this.options.local_package_features,
+                &pkg_metas[package_id],
+            )) {
+                return .no;
+            }
 
             const resolution = this.lockfile.packages.items(.resolution)[package_id];
             if (resolution.tag == .npm) {
@@ -1890,6 +1903,7 @@ pub const Printer = struct {
             if (resolved.len == 0) return;
             const string_buf = this.lockfile.buffers.string_bytes.items;
             const resolutions_list = slice.items(.resolutions);
+            const pkg_metas = slice.items(.meta);
             const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
             if (dependencies_buffer.len == 0) return;
@@ -1916,7 +1930,7 @@ pub const Printer = struct {
                     for (workspaces_to_print.items) |workspace_dep_id| {
                         const workspace_package_id = resolutions_buffer[workspace_dep_id];
                         for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                            switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
+                            switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
                                 .yes => found_workspace_to_print = true,
                                 else => {},
                             }

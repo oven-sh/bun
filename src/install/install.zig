@@ -9438,7 +9438,7 @@ pub const PackageManager = struct {
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
         clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
         clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
-        clap.parseParam("--omit <STR>...                       Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
+        clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 

@@ -709,14 +709,12 @@ pub const Tree = struct {
 
             /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
             pub fn clean(this: *@This()) OOM!DependencyIDList {
-                const end = @as(Id, @truncate(this.list.len));
-                var i: Id = 0;
                 var total: u32 = 0;
                 const trees = this.list.items(.tree);
                 const dependencies = this.list.items(.dependencies);
 
-                while (i < end) : (i += 1) {
-                    total += trees[i].dependencies.len;
+                for (trees) |*tree| {
+                    total += tree.dependencies.len;
                 }
 
                 var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
@@ -822,7 +820,7 @@ pub const Tree = struct {
                     &pkg_metas[pkg_id],
                 )) {
                     if (log_level.isVerbose()) {
-                        const meta = pkg_metas[pkg_id];
+                        const meta = &pkg_metas[pkg_id];
                         const name = builder.lockfile.str(&pkg_names[pkg_id]);
                         if (!meta.os.isMatch() and !meta.arch.isMatch()) {
                             Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});

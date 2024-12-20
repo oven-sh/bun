@@ -745,7 +745,9 @@ static JSValue fetchESMSourceCode(
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::BunTranspiledModule, true);
+            JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
+            if (res->result.value.module_info == nullptr) sourceType = JSC::SourceProviderSourceType::Module;
+            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, sourceType, true);
             return rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
 

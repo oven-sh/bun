@@ -44,6 +44,25 @@ pub const ModuleInfoDeserialized = struct {
     buffer: []align(1) const StringID,
     record_kinds: []align(1) const RecordKind,
     contains_import_meta: bool,
+    // owner: union(enum) {
+    //     module_info,
+    //     allocated_slice: struct {
+    //         slice: []const u8,
+    //         allocator: std.mem.Allocator,
+    //     },
+    // },
+
+    // pub fn deinit(self: *ModuleInfoDeserialized) void {
+    //     switch (self.owner) {
+    //         .module_info => {
+    //             const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
+    //             mi.deinit();
+    //         },
+    //         .allocated_slice => |as| {
+    //             as.allocator.free(as.slice);
+    //         },
+    //     }
+    // }
 
     fn eat(rem: *[]const u8, len: usize) ![]const u8 {
         if (rem.*.len < len) return error.BadModuleInfo;

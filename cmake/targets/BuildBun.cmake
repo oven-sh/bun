@@ -652,12 +652,19 @@ if(WIN32)
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
   set(BUN_ICO_PATH ${CWD}/src/bun.ico)
+  configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  add_custom_command(
+    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
+    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
+    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
+    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
+  )
+  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---

@@ -3227,7 +3227,7 @@ pub const Parser = struct {
 
         // Detect a leading "// @bun" pragma
         if (self.options.features.dont_bundle_twice) {
-            if (self.hasBunPragma()) |pragma| {
+            if (self.hasBunPragma(hashbang.len > 0)) |pragma| {
                 return js_ast.Result{
                     .already_bundled = pragma,
                 };
@@ -4281,11 +4281,30 @@ pub const Parser = struct {
 
     const PragmaState = packed struct { seen_cjs: bool = false, seen_bytecode: bool = false };
 
-    fn hasBunPragma(self: *const Parser) ?js_ast.Result.AlreadyBundled {
+    fn hasBunPragma(self: *const Parser, has_hashbang: bool) ?js_ast.Result.AlreadyBundled {
         const BUN_PRAGMA = "// @bun";
-        var cursor: usize = 0;
-
         const contents = self.lexer.source.contents;
+        const end = contents.len;
+
+        // pragmas may appear after a hashbang comment
+        //
+        //   ```js
+        //   #!/usr/bin/env bun
+        //   // @bun
+        //   const myCode = 1;
+        //   ```
+        var cursor: usize = 0;
+        if (has_hashbang) {
+            while (contents[cursor] != '\n') {
+                cursor += 1;
+                if (cursor >= end) return null;
+            }
+
+            // eat the last newline
+            // NOTE: in windows, \n comes after \r so no extra work needs to be done
+            cursor += 1;
+        }
+
         if (!bun.strings.startsWith(contents[cursor..], BUN_PRAGMA)) return null;
         cursor += BUN_PRAGMA.len;
 

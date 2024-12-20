@@ -373,9 +373,13 @@ pub const ReadableStream = struct {
 
                 return reader.toReadableStream(globalThis);
             },
-            .s3 => {
-                // TODO: S3 readableStream
-                return .undefined;
+            .s3 => |*s3| {
+                const credentials = s3.getCredentials();
+                const path = s3.path();
+                const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+                const proxy_url = if (proxy) |p| p.href else null;
+
+                return credentials.s3ReadableStream(path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
             },
         }
     }

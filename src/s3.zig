@@ -382,6 +382,7 @@ pub const AWSCredentials = struct {
         result: bun.http.HTTPClientResult = .{},
         concurrent_task: JSC.ConcurrentTask = .{},
         range: ?[]const u8,
+        poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
         usingnamespace bun.New(@This());
         pub const Callback = union(enum) {
@@ -413,7 +414,7 @@ pub const AWSCredentials = struct {
             if (this.result.certificate_info) |*certificate| {
                 certificate.deinit(bun.default_allocator);
             }
-
+            this.poll_ref.unref(this.vm);
             this.response_buffer.deinit();
             this.headers.deinit();
             this.sign_result.deinit();
@@ -592,6 +593,205 @@ pub const AWSCredentials = struct {
         }
     };
 
+    pub const S3HttpDownloadStreamingTask = struct {
+        http: bun.http.AsyncHTTP,
+        vm: *JSC.VirtualMachine,
+        sign_result: SignResult,
+        headers: JSC.WebCore.Headers,
+        callback_context: *anyopaque,
+        // this transfers ownership from the chunk
+        callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void,
+        has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        signal_store: bun.http.Signals.Store = .{},
+        signals: bun.http.Signals = .{},
+        poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
+
+        response_buffer: bun.MutableString = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        },
+        reported_response_lock: bun.Lock = .{},
+        reported_response_buffer: bun.MutableString = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        },
+        state: State.AtomicType = State.AtomicType.init(0),
+
+        concurrent_task: JSC.ConcurrentTask = .{},
+        range: ?[]const u8,
+        proxy_url: []const u8,
+
+        usingnamespace bun.New(@This());
+        pub const State = packed struct(u64) {
+            pub const AtomicType = std.atomic.Value(u64);
+            status_code: u32 = 0,
+            request_error: u16 = 0,
+            has_more: bool = false,
+            _reserved: u15 = 0,
+        };
+
+        pub fn getState(this: @This()) State {
+            const state: State = @bitCast(this.state.load(.acquire));
+            return state;
+        }
+
+        pub fn setState(this: *@This(), state: State) void {
+            this.state.store(@bitCast(state), .monotonic);
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.poll_ref.unref(this.vm);
+            this.response_buffer.deinit();
+            this.reported_response_buffer.deinit();
+            this.headers.deinit();
+            this.sign_result.deinit();
+            this.http.clearData();
+            if (this.range) |range| {
+                bun.default_allocator.free(range);
+            }
+            if (this.proxy_url.len > 0) {
+                bun.default_allocator.free(this.proxy_url);
+            }
+
+            this.destroy();
+        }
+
+        fn reportProgress(this: *@This()) bool {
+            var has_more = true;
+            var err: ?S3Error = null;
+            var failed = false;
+            this.reported_response_lock.lock();
+            defer this.reported_response_lock.unlock();
+            const chunk = brk: {
+                const state = this.getState();
+                has_more = state.has_more;
+                if ((state.status_code != 200 and state.status_code != 206) or state.request_error != 0) {
+                    failed = true;
+                    if (!has_more) {
+                        var has_body_code = false;
+                        var has_body_message = false;
+
+                        var code: []const u8 = "UnknownError";
+                        var message: []const u8 = "an unexpected error has occurred";
+                        if (state.request_error != 0) {
+                            const req_err = @errorFromInt(state.request_error);
+                            code = @errorName(req_err);
+                            has_body_code = true;
+                        } else {
+                            const bytes = this.reported_response_buffer.list.items;
+                            if (bytes.len > 0) {
+                                message = bytes[0..];
+
+                                if (strings.indexOf(bytes, "<Code>")) |start| {
+                                    if (strings.indexOf(bytes, "</Code>")) |end| {
+                                        code = bytes[start + "<Code>".len .. end];
+                                        has_body_code = true;
+                                    }
+                                }
+                                if (strings.indexOf(bytes, "<Message>")) |start| {
+                                    if (strings.indexOf(bytes, "</Message>")) |end| {
+                                        message = bytes[start + "<Message>".len .. end];
+                                        has_body_message = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (state.status_code == 404) {
+                            if (!has_body_code) {
+                                code = "FileNotFound";
+                            }
+                            if (!has_body_message) {
+                                message = "File not found";
+                            }
+                        }
+                        err = .{
+                            .code = code,
+                            .message = message,
+                        };
+                    }
+                    break :brk bun.MutableString{ .allocator = bun.default_allocator, .list = .{} };
+                } else {
+                    const buffer = this.reported_response_buffer;
+                    break :brk buffer;
+                }
+            };
+
+            if (failed) {
+                if (!has_more) {
+                    this.callback(chunk, false, err, this.callback_context);
+                }
+            } else {
+                this.callback(chunk, has_more, null, this.callback_context);
+                this.reported_response_buffer.reset();
+            }
+
+            return has_more;
+        }
+
+        pub fn onResponse(this: *@This()) void {
+            this.has_schedule_callback.store(false, .monotonic);
+            const has_more = this.reportProgress();
+            if (!has_more) this.deinit();
+        }
+
+        pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
+            const is_done = !result.has_more;
+            var state = this.getState();
+
+            var wait_until_done = false;
+            {
+                state.has_more = !is_done;
+
+                state.request_error = if (result.fail) |err| @intFromError(err) else 0;
+                if (state.request_error != 0) {
+                    wait_until_done = true;
+                }
+                if (state.status_code == 0) {
+                    if (result.certificate_info) |*certificate| {
+                        certificate.deinit(bun.default_allocator);
+                    }
+                    if (result.metadata) |m| {
+                        var metadata = m;
+                        state.status_code = metadata.response.status_code;
+                        metadata.deinit(bun.default_allocator);
+                    }
+                }
+                if (state.status_code != 200 and state.status_code != 206) {
+                    wait_until_done = true;
+                }
+                this.setState(state);
+                this.http = async_http.*;
+                if (!wait_until_done) {
+                    if (result.body) |body| {
+                        this.reported_response_lock.lock();
+                        defer this.reported_response_lock.unlock();
+                        this.response_buffer = body.*;
+
+                        _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
+                        this.response_buffer.reset();
+                    }
+                }
+            }
+            // if we got a error or fail wait until we are done buffering the response body to report
+            const should_enqueue = !wait_until_done or is_done;
+            log("state err: {} status_code: {} has_more: {} should_enqueue: {}", .{ state.request_error, state.status_code, state.has_more, should_enqueue });
+            if (should_enqueue) {
+                if (this.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
+                    if (has_schedule_callback) {
+                        return;
+                    }
+                }
+                this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+            }
+        }
+    };
+
     pub fn executeSimpleS3Request(this: *const @This(), path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8, searchParams: ?[]const u8) void {
         var result = this.signRequest(path, method, null, searchParams, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
@@ -627,9 +827,10 @@ pub const AWSCredentials = struct {
             .headers = headers,
             .vm = JSC.VirtualMachine.get(),
         });
+        task.poll_ref.ref(task.vm);
 
         const url = bun.URL.parse(result.url);
-
+        const proxy = proxy_url orelse "";
         task.http = bun.http.AsyncHTTP.init(
             bun.default_allocator,
             method,
@@ -644,8 +845,9 @@ pub const AWSCredentials = struct {
             ).init(task),
             .follow,
             .{
-                .http_proxy = if (proxy_url) |proxy| bun.URL.parse(proxy) else null,
-                .verbose = .headers,
+                .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+                .verbose = .none,
+                .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
             },
         );
         // queue http request
@@ -681,22 +883,168 @@ pub const AWSCredentials = struct {
         this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range, null);
     }
 
-    // pub fn s3DownloadStream(this: *@This(), path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque) void {
-    //     const range = brk: {
-    //         if (size) |size_| {
-    //             if (offset == 0) return null;
+    pub fn s3StreamDownload(this: *@This(), path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void, callback_context: *anyopaque) void {
+        const range = brk: {
+            if (size) |size_| {
+                if (offset == 0) break :brk null;
 
-    //             var end = (offset + size_);
-    //             if (size_ > 0) {
-    //                 end -= 1;
-    //             }
-    //             break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
-    //         }
-    //         if (offset == 0) return null;
-    //         break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
-    //     };
+                var end = (offset + size_);
+                if (size_ > 0) {
+                    end -= 1;
+                }
+                break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            }
+            if (offset == 0) break :brk null;
+            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        };
 
-    // }
+        var result = this.signRequest(path, .GET, null, null, null) catch |sign_err| {
+            if (range) |range_| bun.default_allocator.free(range_);
+
+            return switch (sign_err) {
+                error.MissingCredentials => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "MissingCredentials", .message = "missing s3 credentials" }, callback_context),
+                error.InvalidMethod => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "MissingCredentials", .message = "method must be GET, PUT, DELETE or HEAD when using s3 protocol" }, callback_context),
+                error.InvalidPath => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "InvalidPath", .message = "invalid s3 bucket, key combination" }, callback_context),
+                else => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "SignError", .message = "failed to retrieve s3 content check your credentials" }, callback_context),
+            };
+        };
+
+        const headers = brk: {
+            if (range) |range_| {
+                var headersWithRange: [5]picohttp.Header = .{
+                    result.headers[0],
+                    result.headers[1],
+                    result.headers[2],
+                    result.headers[3],
+                    .{ .name = "range", .value = range_ },
+                };
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+            } else {
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+            }
+        };
+        const proxy = proxy_url orelse "";
+        const owned_proxy = if (proxy.len > 0) bun.default_allocator.dupe(u8, proxy) catch bun.outOfMemory() else "";
+        const task = S3HttpDownloadStreamingTask.new(.{
+            .http = undefined,
+            .sign_result = result,
+            .proxy_url = owned_proxy,
+            .callback_context = callback_context,
+            .callback = callback,
+            .range = range,
+            .headers = headers,
+            .vm = JSC.VirtualMachine.get(),
+        });
+        task.poll_ref.ref(task.vm);
+
+        const url = bun.URL.parse(result.url);
+
+        task.signals = task.signal_store.to();
+
+        task.http = bun.http.AsyncHTTP.init(
+            bun.default_allocator,
+            .GET,
+            url,
+            task.headers.entries,
+            task.headers.buf.items,
+            &task.response_buffer,
+            "",
+            bun.http.HTTPClientResult.Callback.New(
+                *S3HttpDownloadStreamingTask,
+                S3HttpDownloadStreamingTask.http_callback,
+            ).init(task),
+            .follow,
+            .{
+                .http_proxy = if (owned_proxy.len > 0) bun.URL.parse(owned_proxy) else null,
+                .verbose = .none,
+                .signals = task.signals,
+                .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
+            },
+        );
+        // enable streaming
+        task.http.enableBodyStreaming();
+        // queue http request
+        bun.http.HTTPThread.init(&.{});
+        var batch = bun.ThreadPool.Batch{};
+        task.http.schedule(bun.default_allocator, &batch);
+        bun.http.http_thread.schedule(batch);
+    }
+
+    pub fn s3ReadableStream(this: *@This(), path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var reader = JSC.WebCore.ByteStream.Source.new(.{
+            .context = undefined,
+            .globalThis = globalThis,
+        });
+
+        reader.context.setup();
+        const readable_value = reader.toReadableStream(globalThis);
+
+        this.s3StreamDownload(path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
+            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
+                .ptr = .{ .Bytes = &reader.context },
+                .value = readable_value,
+            }, globalThis),
+        }));
+        return readable_value;
+    }
+
+    const S3DownloadStreamWrapper = struct {
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        pub usingnamespace bun.New(@This());
+
+        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?S3Error, this: *@This()) void {
+            defer if (!has_more) this.deinit();
+            if (this.readable_stream_ref.get()) |readable| {
+                if (readable.ptr == .Bytes) {
+                    const globalThis = this.readable_stream_ref.globalThis().?;
+                    if (request_err) |err| {
+                        const js_err = globalThis.createErrorInstance("{s}", .{err.message});
+                        js_err.put(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalThis));
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .JSValue = js_err },
+                            },
+                            bun.default_allocator,
+                        );
+                    } else if (has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.initConst(chunk.list.items),
+                            },
+                            bun.default_allocator,
+                        );
+                    } else {
+                        if (chunk.list.items.len == 0) {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .done = {},
+                                },
+                                bun.default_allocator,
+                            );
+                        } else {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
+                                },
+                                bun.default_allocator,
+                            );
+                        }
+                    }
+                } else {
+                    var buffer = chunk;
+                    buffer.deinit();
+                }
+            } else {
+                var buffer = chunk;
+                buffer.deinit();
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.readable_stream_ref.deinit();
+            this.destroy();
+        }
+    };
 
     pub fn s3Delete(this: *const @This(), path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
         this.executeSimpleS3Request(path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null, null);

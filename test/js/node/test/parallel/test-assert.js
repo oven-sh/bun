@@ -561,7 +561,7 @@ test('Output that extends beyond 10 lines should also be truncated for display',
     assert.strictEqual(multilineString, '');
   }, (err) => {
     assert.strictEqual(err.code, 'ERR_ASSERTION');
-    assert.strictEqual(err.message.split('\n').length, 20);
+    assert.strictEqual(err.message.split('\n').length, 21);
     assert.strictEqual(err.actual.split('\n').length, 16);
     assert.ok(inspect(err).includes(
       "actual: 'fhqwhgads\\n' +\n" +

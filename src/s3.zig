@@ -459,6 +459,12 @@ pub const AWSCredentials = struct {
     pub const S3Error = struct {
         code: []const u8,
         message: []const u8,
+
+        pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
+            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
+            return js_err;
+        }
     };
     pub const S3StatResult = union(enum) {
         success: struct {
@@ -1147,11 +1153,9 @@ pub const AWSCredentials = struct {
                 if (readable.ptr == .Bytes) {
                     const globalThis = this.readable_stream_ref.globalThis().?;
                     if (request_err) |err| {
-                        const js_err = globalThis.createErrorInstance("{s}", .{err.message});
-                        js_err.put(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalThis));
                         readable.ptr.Bytes.onData(
                             .{
-                                .err = .{ .JSValue = js_err },
+                                .err = .{ .JSValue = err.toJS(globalThis) },
                             },
                             bun.default_allocator,
                         );
@@ -1221,9 +1225,7 @@ pub const AWSCredentials = struct {
                             sink.abort();
                             return;
                         }
-                        const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                        js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-                        sink.endPromise.rejectOnNextTick(globalObject, js_err);
+                        sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                     },
                 }
             }
@@ -1406,9 +1408,7 @@ pub const AWSCredentials = struct {
                                 sink.abort();
                                 return;
                             }
-                            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-                            sink.endPromise.rejectOnNextTick(globalObject, js_err);
+                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                         },
                     }
                 }

@@ -910,9 +910,7 @@ pub const Blob = struct {
                             switch (result) {
                                 .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
                                 .failure => |err| {
-                                    const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                                    js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-                                    this.promise.rejectOnNextTick(globalObject, js_err);
+                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                                 },
                             }
                         }
@@ -1061,9 +1059,7 @@ pub const Blob = struct {
                                     switch (result) {
                                         .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
                                         .failure => |err| {
-                                            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                                            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-                                            this.promise.rejectOnNextTick(globalObject, js_err);
+                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                                         },
                                     }
                                 }
@@ -3676,9 +3672,7 @@ pub const Blob = struct {
                             self.promise.reject(globalObject, js_err);
                         },
                         .failure => |err| {
-                            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-                            js_err.put(globalObject, ZigString.static("code"), ZigString.init(err.code).toJS(globalObject));
-                            self.promise.rejectOnNextTick(globalObject, js_err);
+                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                         },
                     }
                 }
@@ -4018,9 +4012,7 @@ pub const Blob = struct {
                     this.promise.reject(this.globalThis, js_err);
                 },
                 .failure => |err| {
-                    const js_err = this.globalThis.createErrorInstance("{s}", .{err.message});
-                    js_err.put(this.globalThis, ZigString.static("code"), ZigString.init(err.code).toJS(this.globalThis));
-                    this.promise.rejectOnNextTick(this.globalThis, js_err);
+                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis));
                 },
             }
         }
@@ -4082,9 +4074,7 @@ pub const Blob = struct {
                     this.promise.resolve(globalThis, .true);
                 },
                 .failure => |err| {
-                    const js_err = globalThis.createErrorInstance("{s}", .{err.message});
-                    js_err.put(globalThis, ZigString.static("code"), ZigString.init(err.code).toJS(globalThis));
-                    this.promise.rejectOnNextTick(globalThis, js_err);
+                    this.promise.rejectOnNextTick(globalThis, err.toJS(globalThis));
                 },
             }
         }
@@ -4103,9 +4093,7 @@ pub const Blob = struct {
                     this.promise.resolve(globalThis, JSValue.jsNumber(stat.size));
                 },
                 .failure => |err| {
-                    const js_err = globalThis.createErrorInstance("{s}", .{err.message});
-                    js_err.put(globalThis, ZigString.static("code"), ZigString.init(err.code).toJS(globalThis));
-                    this.promise.rejectOnNextTick(globalThis, js_err);
+                    this.promise.rejectOnNextTick(globalThis, err.toJS(globalThis));
                 },
             }
         }

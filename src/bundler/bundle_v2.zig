@@ -8,7 +8,7 @@
 // Manually freeing memory is error-prone and tedious, but garbage collection
 // is slow and reference counting incurs a performance penalty.
 //
-// Bun's transpiler relies on mimalloc's threadlocal heaps as arena allocators.
+// Bun's bundler relies on mimalloc's threadlocal heaps as arena allocators.
 //
 // When a new thread is spawned for a bundling job, it is given a threadlocal
 // heap and all allocations are done on that heap. When the job is done, the
@@ -4172,7 +4172,7 @@ pub const ParseTask = struct {
                 if (wrapper.result.user_context == null and wrapper.result.free_user_context != null) {
                     var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
                         u8,
-                        "Native plugin set the `free_user_context` field without setting the `user_context` field.",
+                        "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
                     ) catch bun.outOfMemory() } };
                     msg.kind = .err;
                     args.context.log.errors += 1;
@@ -13733,7 +13733,7 @@ pub const LinkerContext = struct {
                                     next_source.path.pretty,
                                     named_import.alias.?,
                                 },
-                                "Bun's transpiler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
+                                "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
                                 .{},
                                 r,
                             ) catch unreachable;
@@ -13759,7 +13759,7 @@ pub const LinkerContext = struct {
                                 next_source.path.pretty,
                                 named_import.alias.?,
                             },
-                            "Bun's transpiler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
+                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
                             .{},
                             r,
                         ) catch unreachable;

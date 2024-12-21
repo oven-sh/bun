@@ -105,7 +105,7 @@ pub const ClientEntryPoint = struct {
         return outbuffer[0 .. generated_path.len + original_ext.len];
     }
 
-    pub fn generate(entry: *ClientEntryPoint, comptime TranspilerrType: type, transpiler: *TranspilerrType, original_path: Fs.PathName, client: string) !void {
+    pub fn generate(entry: *ClientEntryPoint, comptime TranspilerType: type, transpiler: *TranspilerType, original_path: Fs.PathName, client: string) !void {
 
         // This is *extremely* naive.
         // The basic idea here is this:

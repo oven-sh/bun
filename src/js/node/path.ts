@@ -54,31 +54,37 @@ function loadGlob(): LazyGlob {
 // loop with the same pattern
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
-function matchesGlob(path, pattern) {
-  let glob: Glob;
+const createMatchesGlob = isWindows =>
+  function matchesGlob(path, pattern) {
+    let glob: Glob;
 
-  validateString(path, "path");
+    validateString(path, "path");
 
-  if (prevGlob) {
-    $assert(prevPattern !== undefined);
-    if (prevPattern === pattern) {
-      glob = prevGlob;
+    if (isWindows) {
+      pattern = pattern.replaceAll("/", "\\");
+    }
+
+    if (prevGlob) {
+      $assert(prevPattern !== undefined);
+      if (prevPattern === pattern) {
+        glob = prevGlob;
+      } else {
+        if (LazyGlob === undefined) loadGlob();
+        validateString(pattern, "pattern");
+        glob = prevGlob = new LazyGlob(pattern);
+        prevPattern = pattern;
+      }
     } else {
-      if (LazyGlob === undefined) loadGlob();
+      loadGlob(); // no prevGlob implies LazyGlob isn't loaded
       validateString(pattern, "pattern");
       glob = prevGlob = new LazyGlob(pattern);
       prevPattern = pattern;
     }
-  } else {
-    loadGlob(); // no prevGlob implies LazyGlob isn't loaded
-    validateString(pattern, "pattern");
-    glob = prevGlob = new LazyGlob(pattern);
-    prevPattern = pattern;
-  }
 
-  return glob.match(path);
-}
+    return glob.match(path);
+  };
 
-win32.matchesGlob = posix.matchesGlob = matchesGlob;
+win32.matchesGlob = createMatchesGlob(true);
+posix.matchesGlob = createMatchesGlob(false);
 
 export default process.platform === "win32" ? win32 : posix;

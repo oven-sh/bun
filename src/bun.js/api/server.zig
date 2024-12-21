@@ -3467,17 +3467,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob.from(byte_stream.buffer);
+                                    this.blob.from(byte_stream.drain().listManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
                                 }
-
+                                this.ref();
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
                                 this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
+                                this.response_buf_owned = byte_stream.drain().list();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -3517,10 +3517,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onPipe(this: *RequestContext, stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
-
+            const is_done = stream.isDone();
             defer {
+                if (is_done) this.deref();
                 if (stream_needs_deinit) {
-                    if (stream.isDone()) {
+                    if (is_done) {
                         stream.owned_and_done.listManaged(allocator).deinit();
                     } else {
                         stream.owned.listManaged(allocator).deinit();
@@ -3538,13 +3539,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we can't do buffering ourselves here or it won't work
             // uSockets will append and manage the buffer
             // so any write will buffer if the write fails
-            if (chunk.len > 0 and resp.write(chunk)) {
-                if (stream.isDone()) {
+            if (resp.write(chunk)) {
+                if (is_done) {
                     this.endStream(this.shouldCloseConnection());
                 }
             } else {
                 // when it's the last one, we just want to know if it's done
-                if (stream.isDone()) {
+                if (is_done) {
                     this.flags.has_marked_pending = true;
                     resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
                 }

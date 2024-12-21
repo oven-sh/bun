@@ -19,14 +19,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const ParseResult = bun.bundler.ParseResult;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = bun.Bundler;
-const PluginRunner = bun.bundler.PluginRunner;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const PluginRunner = bun.transpiler.PluginRunner;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -262,7 +262,7 @@ pub const RuntimeTranspilerStore = struct {
             .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.bundler.options.loader(owned_path.name.ext),
+            .loader = vm.transpiler.options.loader(owned_path.name.ext),
             .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
@@ -347,7 +347,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (resolved_source.is_commonjs_module) {
                     const actual_package_json: *PackageJSON = brk2: {
                         // this should already be cached virtually always so it's fine to do this
-                        const dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
+                        const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
                             break :brk .javascript;
 
                         break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -413,13 +413,13 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             var vm = this.vm;
-            var bundler: bun.Bundler = undefined;
-            bundler = vm.bundler;
-            bundler.setAllocator(allocator);
-            bundler.setLog(&this.log);
-            bundler.resolver.opts = bundler.options;
-            bundler.macro_context = null;
-            bundler.linker.resolver = &bundler.resolver;
+            var transpiler: bun.Transpiler = undefined;
+            transpiler = vm.transpiler;
+            transpiler.setAllocator(allocator);
+            transpiler.setLog(&this.log);
+            transpiler.resolver.opts = transpiler.options;
+            transpiler.macro_context = null;
+            transpiler.linker.resolver = &transpiler.resolver;
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
@@ -442,7 +442,7 @@ pub const RuntimeTranspilerStore = struct {
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
             else
-                bundler.options.macro_remap;
+                transpiler.options.macro_remap;
 
             var fallback_source: logger.Source = undefined;
 
@@ -459,7 +459,7 @@ pub const RuntimeTranspilerStore = struct {
                 vm.main_hash == hash and
                 strings.eqlLong(vm.main, path.text, false);
 
-            var parse_options = Bundler.ParseOptions{
+            var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
@@ -468,12 +468,12 @@ pub const RuntimeTranspilerStore = struct {
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
-                .jsx = bundler.options.jsx,
-                .emit_decorator_metadata = bundler.options.emit_decorator_metadata,
+                .jsx = transpiler.options.jsx,
+                .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and is_main,
+                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests and is_main,
                 .set_breakpoint_on_first_line = vm.debugger != null and
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
@@ -498,7 +498,7 @@ pub const RuntimeTranspilerStore = struct {
                 }
             }
 
-            var parse_result: bun.bundler.ParseResult = bundler.parseMaybeReturnFileOnlyAllowSharedBuffer(
+            var parse_result: bun.transpiler.ParseResult = transpiler.parseMaybeReturnFileOnlyAllowSharedBuffer(
                 parse_options,
                 null,
                 false,
@@ -596,14 +596,14 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, transpiler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
-                if (bundler.options.rewrite_jest_for_tests) {
+                if (transpiler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
                         "@jest/globals",
@@ -643,7 +643,7 @@ pub const RuntimeTranspilerStore = struct {
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
-                _ = bundler.printWithSourceMap(
+                _ = transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -1381,20 +1381,20 @@ pub const ModuleLoader = struct {
             const specifier = this.specifier;
             const old_log = jsc_vm.log;
 
-            jsc_vm.bundler.linker.log = log;
-            jsc_vm.bundler.log = log;
-            jsc_vm.bundler.resolver.log = log;
+            jsc_vm.transpiler.linker.log = log;
+            jsc_vm.transpiler.log = log;
+            jsc_vm.transpiler.resolver.log = log;
             jsc_vm.packageManager().log = log;
             defer {
-                jsc_vm.bundler.linker.log = old_log;
-                jsc_vm.bundler.log = old_log;
-                jsc_vm.bundler.resolver.log = old_log;
+                jsc_vm.transpiler.linker.log = old_log;
+                jsc_vm.transpiler.log = old_log;
+                jsc_vm.transpiler.resolver.log = old_log;
                 jsc_vm.packageManager().log = old_log;
             }
 
             // We _must_ link because:
             // - node_modules bundle won't be properly
-            try jsc_vm.bundler.linker.link(
+            try jsc_vm.transpiler.linker.link(
                 path,
                 &parse_result,
                 jsc_vm.origin,
@@ -1410,7 +1410,7 @@ pub const ModuleLoader = struct {
             {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
-                _ = try jsc_vm.bundler.printWithSourceMap(
+                _ = try jsc_vm.transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -1480,7 +1480,7 @@ pub const ModuleLoader = struct {
         var jsc_vm = global.bunVM();
         const filename = str.toUTF8(jsc_vm.allocator);
         defer filename.deinit();
-        const loader = jsc_vm.bundler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
+        const loader = jsc_vm.transpiler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
         if (loader == .file) {
             return Api.Loader.js;
         }
@@ -1508,7 +1508,7 @@ pub const ModuleLoader = struct {
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
-                jsc_vm.bundler.resetStore();
+                jsc_vm.transpiler.resetStore();
                 const hash = JSC.GenericWatcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
@@ -1570,19 +1570,19 @@ pub const ModuleLoader = struct {
                     .sourcemap_allocator = bun.default_allocator,
                 };
 
-                const old = jsc_vm.bundler.log;
-                jsc_vm.bundler.log = log;
-                jsc_vm.bundler.linker.log = log;
-                jsc_vm.bundler.resolver.log = log;
-                if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                const old = jsc_vm.transpiler.log;
+                jsc_vm.transpiler.log = log;
+                jsc_vm.transpiler.linker.log = log;
+                jsc_vm.transpiler.resolver.log = log;
+                if (jsc_vm.transpiler.resolver.package_manager) |pm| {
                     pm.log = log;
                 }
 
                 defer {
-                    jsc_vm.bundler.log = old;
-                    jsc_vm.bundler.linker.log = old;
-                    jsc_vm.bundler.resolver.log = old;
-                    if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                    jsc_vm.transpiler.log = old;
+                    jsc_vm.transpiler.linker.log = old;
+                    jsc_vm.transpiler.resolver.log = old;
+                    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
                         pm.log = old;
                     }
                 }
@@ -1593,7 +1593,7 @@ pub const ModuleLoader = struct {
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
                 else
-                    jsc_vm.bundler.options.macro_remap;
+                    jsc_vm.transpiler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
 
@@ -1605,7 +1605,7 @@ pub const ModuleLoader = struct {
                 var should_close_input_file_fd = fd == null;
 
                 var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
-                var parse_options = Bundler.ParseOptions{
+                var parse_options = Transpiler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
@@ -1614,12 +1614,12 @@ pub const ModuleLoader = struct {
                     .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
-                    .jsx = jsc_vm.bundler.options.jsx,
-                    .emit_decorator_metadata = jsc_vm.bundler.options.emit_decorator_metadata,
+                    .jsx = jsc_vm.transpiler.options.jsx,
+                    .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
@@ -1653,7 +1653,7 @@ pub const ModuleLoader = struct {
                             JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
                         defer heap_access.acquire();
 
-                        break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
+                        break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,
                             return_file_only,
@@ -1720,7 +1720,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                if (jsc_vm.bundler.log.errors > 0) {
+                if (jsc_vm.transpiler.log.errors > 0) {
                     give_back_arena = false;
                     return error.ParseError;
                 }
@@ -1817,7 +1817,7 @@ pub const ModuleLoader = struct {
                             if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
                                 const actual_package_json: *PackageJSON = package_json orelse brk2: {
                                     // this should already be cached virtually always so it's fine to do this
-                                    const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                    const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
                                         break :brk .javascript;
 
                                     break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1833,11 +1833,11 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                const start_count = jsc_vm.bundler.linker.import_counter;
+                const start_count = jsc_vm.transpiler.linker.import_counter;
 
                 // We _must_ link because:
                 // - node_modules bundle won't be properly
-                try jsc_vm.bundler.linker.link(
+                try jsc_vm.transpiler.linker.link(
                     path,
                     &parse_result,
                     jsc_vm.origin,
@@ -1853,8 +1853,8 @@ pub const ModuleLoader = struct {
 
                     if (parse_result.source.contents_is_recycled) {
                         // this shared buffer is about to become owned by the AsyncModule struct
-                        jsc_vm.bundler.resolver.caches.fs.resetSharedBuffer(
-                            jsc_vm.bundler.resolver.caches.fs.sharedBuffer(),
+                        jsc_vm.transpiler.resolver.caches.fs.resetSharedBuffer(
+                            jsc_vm.transpiler.resolver.caches.fs.sharedBuffer(),
                         );
                     }
 
@@ -1878,8 +1878,8 @@ pub const ModuleLoader = struct {
                 }
 
                 if (!jsc_vm.macro_mode)
-                    jsc_vm.resolved_count += jsc_vm.bundler.linker.import_counter - start_count;
-                jsc_vm.bundler.linker.import_counter = 0;
+                    jsc_vm.resolved_count += jsc_vm.transpiler.linker.import_counter - start_count;
+                jsc_vm.transpiler.linker.import_counter = 0;
 
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
@@ -1887,7 +1887,7 @@ pub const ModuleLoader = struct {
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
 
-                    break :brk try jsc_vm.bundler.printWithSourceMap(
+                    break :brk try jsc_vm.transpiler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
                         &printer,
@@ -1917,7 +1917,7 @@ pub const ModuleLoader = struct {
                     if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
                         const actual_package_json: *PackageJSON = package_json orelse brk2: {
                             // this should already be cached virtually always so it's fine to do this
-                            const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
+                            const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
                                 break :brk .javascript;
 
                             break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1966,7 +1966,7 @@ pub const ModuleLoader = struct {
             //         }
             //     }
 
-            //     var parse_options = Bundler.ParseOptions{
+            //     var parse_options = Transpiler.ParseOptions{
             //         .allocator = allocator,
             //         .path = path,
             //         .loader = loader,
@@ -1974,10 +1974,10 @@ pub const ModuleLoader = struct {
             //         .file_descriptor = fd,
             //         .file_hash = hash,
             //         .macro_remappings = MacroRemap{},
-            //         .jsx = jsc_vm.bundler.options.jsx,
+            //         .jsx = jsc_vm.transpiler.options.jsx,
             //     };
 
-            //     var parse_result = jsc_vm.bundler.parse(
+            //     var parse_result = jsc_vm.transpiler.parse(
             //         parse_options,
             //         null,
             //     ) orelse {
@@ -2193,7 +2193,7 @@ pub const ModuleLoader = struct {
         ret: *ErrorableResolvedSource,
     ) bool {
         JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
         defer log.deinit();
 
         if (ModuleLoader.fetchBuiltinModule(
@@ -2224,7 +2224,7 @@ pub const ModuleLoader = struct {
         allow_promise: bool,
     ) ?*anyopaque {
         JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
         defer log.deinit();
 
         var _specifier = specifier_ptr.toUTF8(jsc_vm.allocator);
@@ -2250,7 +2250,7 @@ pub const ModuleLoader = struct {
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
-        var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+        var loader: ?options.Loader = jsc_vm.transpiler.options.loaders.get(path.name.ext);
 
         if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
@@ -2277,7 +2277,7 @@ pub const ModuleLoader = struct {
                         path = current_path;
                     }
 
-                    loader = jsc_vm.bundler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                    loader = jsc_vm.transpiler.options.loaders.get(current_path.name.ext) orelse .tsx;
                 } else {
                     loader = .tsx;
                 }
@@ -2617,7 +2617,7 @@ pub const ModuleLoader = struct {
         const loader = if (loader_ != ._none)
             options.Loader.fromAPI(loader_)
         else
-            jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+            jsc_vm.transpiler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                     break :brk options.Loader.js;
                 }

@@ -11,7 +11,7 @@ const SemverString = @import("../install/semver.zig").String;
 const CLI = bun.CLI;
 const Command = CLI.Command;
 
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const FilterArg = @import("filter_arg.zig");
 
@@ -459,8 +459,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var root_buf: bun.PathBuffer = undefined;
     const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, fsinstance.top_level_dir, &root_buf);
 
-    var this_bundler: bundler.Bundler = undefined;
-    _ = try RunCommand.configureEnvForRun(ctx, &this_bundler, null, true, false);
+    var this_transpiler: transpiler.Transpiler = undefined;
+    _ = try RunCommand.configureEnvForRun(ctx, &this_transpiler, null, true, false);
 
     var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
     defer package_json_iter.deinit();
@@ -472,7 +472,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const pkgjson = bun.PackageJSON.parse(&this_bundler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
+        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
         };
@@ -482,7 +482,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         if (!filter_instance.matches(path, pkgjson.name))
             continue;
 
-        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
+        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
             const original_content = pkgscripts.get(name) orelse continue;
@@ -522,9 +522,9 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
-    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_bundler.env);
+    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
-        RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
+        RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
         bun.selfExePath() catch return error.MissingShell;
 
@@ -533,7 +533,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .event_loop = event_loop,
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
-        .env = this_bundler.env,
+        .env = this_transpiler.env,
     };
 
     // initialize the handles

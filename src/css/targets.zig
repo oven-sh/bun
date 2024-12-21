@@ -31,7 +31,7 @@ pub const Targets = struct {
         };
     }
 
-    pub fn forBundlerTarget(target: bun.bundler.options.Target) Targets {
+    pub fn forBundlerTarget(target: bun.transpiler.options.Target) Targets {
         return switch (target) {
             .node, .bun => runtimeDefault(),
             .browser, .bun_macro, .bake_server_components_ssr => browserDefault(),

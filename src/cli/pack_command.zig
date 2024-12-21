@@ -1140,7 +1140,7 @@ pub const PackCommand = struct {
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
-        var this_bundler: bun.bundler.Bundler = undefined;
+        var this_bundler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
             ctx.command_ctx,

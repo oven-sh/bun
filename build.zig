@@ -346,6 +346,20 @@ pub fn build(b: *Build) !void {
         // const run = b.addRunArtifact(exe);
         // step.dependOn(&run.step);
     }
+
+    // zig build test
+    {
+        const unit_tests = b.addTest(.{
+            .name = "zig-unit-tests",
+            .root_source_file = b.path("src/unit_test.zig"),
+            .optimize = build_options.optimize,
+            .target = build_options.target,
+            .use_llvm = if (build_options.no_llvm) false else null,
+            .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
+        });
+        const test_step = b.step("test", "Run Zig-only unit tests");
+        test_step.dependOn(&unit_tests.step);
+    }
 }
 
 pub fn addMultiCheck(

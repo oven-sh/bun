@@ -325,6 +325,7 @@ function getZigAgent(platform, options) {
   const { arch } = platform;
   return {
     queue: "build-zig",
+    "distro-version": "15.*",
   };
 }
 
@@ -422,22 +423,14 @@ function getBuildCppStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    // On macOS, we cross-compile C++ on aarch64 since it's faster.
-    // However, this doesn't work for linking yet.
-    agents:
-      toolchain === "darwin-x64"
-        ? getCppAgent({ ...platform, arch: "aarch64" }, options)
-        : getCppAgent(platform, options),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command:
-      toolchain === "darwin-x64"
-        ? `bun run build:ci --target bun --toolchain ${toolchain}`
-        : "bun run build:ci --target bun",
+    command: "bun run build:ci --target bun",
   };
 }
 

@@ -14,6 +14,7 @@ pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_
 pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 const libuv = bun.windows.libuv;
+const DNSResolver = @import("../bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 pub const AF = std.posix.AF;
 
@@ -1443,15 +1444,17 @@ pub const Error = enum(i32) {
         errno: Error,
         syscall: ?[]const u8,
         hostname: ?bun.String,
+        resolver: ?*DNSResolver,
         promise: JSC.JSPromise.Strong,
 
         pub usingnamespace bun.New(@This());
 
-        pub fn init(errno: Error, syscall: ?[]const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
+        pub fn init(errno: Error, syscall: ?[]const u8, hostname: ?bun.String, resolver: ?*DNSResolver, promise: JSC.JSPromise.Strong) *Deferred {
             return Deferred.new(.{
                 .errno = errno,
                 .syscall = syscall,
                 .hostname = hostname,
+                .resolver = resolver,
                 .promise = promise,
             });
         }
@@ -1529,18 +1532,21 @@ pub const Error = enum(i32) {
             if (this.hostname) |hostname| {
                 hostname.deref();
             }
+            if (this.resolver) |resolver| {
+                resolver.deref();
+            }
             this.promise.deinit();
             this.destroy();
         }
     };
 
-    pub fn toDeferred(this: Error, syscall: ?[]const u8, hostname: ?[]const u8, promise: *JSC.JSPromise.Strong) *Deferred {
+    pub fn toDeferred(this: Error, syscall: ?[]const u8, hostname: ?[]const u8, resolver: ?*DNSResolver, promise: *JSC.JSPromise.Strong) *Deferred {
         const host_string: ?bun.String = if (hostname) |host|
             bun.String.createUTF8(host)
         else
             null;
         defer promise.* = .{};
-        return Deferred.init(this, syscall, host_string, promise.*);
+        return Deferred.init(this, syscall, host_string, resolver, promise.*);
     }
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

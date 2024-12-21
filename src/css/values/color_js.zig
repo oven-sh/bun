@@ -426,7 +426,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 allocator,
                 std.ArrayList(u8).init(allocator),
                 writer,
-                .{},
+                css.PrinterOptions.default(),
                 null,
             );
 

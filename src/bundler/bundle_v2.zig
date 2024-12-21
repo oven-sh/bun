@@ -1690,6 +1690,12 @@ pub const BundleV2 = struct {
             bundler.configureLinker();
             try bundler.configureDefines();
 
+            if (bun.FeatureFlags.breaking_changes_1_2) {
+                if (!bundler.options.production) {
+                    try bundler.options.conditions.appendSlice(&.{"development"});
+                }
+            }
+
             bundler.resolver.opts = bundler.options;
         }
 
@@ -1717,11 +1723,16 @@ pub const BundleV2 = struct {
 
             this.poll_ref.unref(globalThis.bunVM());
             const promise = this.promise.swap();
-            const root_obj = JSC.JSValue.createEmptyObject(globalThis, 2);
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => {
+                .err => brk: {
+                    if (this.config.throw_on_error) {
+                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
+                        break :brk;
+                    }
+
+                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
                     root_obj.put(
                         globalThis,
@@ -1733,8 +1744,10 @@ pub const BundleV2 = struct {
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
+                    promise.resolve(globalThis, root_obj);
                 },
                 .value => |*build| {
+                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
                     const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
                     if (output_files_js == .zero) {
@@ -1799,10 +1812,13 @@ pub const BundleV2 = struct {
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
+                    promise.resolve(globalThis, root_obj);
                 },
             }
 
-            promise.resolve(globalThis, root_obj);
+            if (Environment.isDebug) {
+                bun.assert(promise.status(globalThis.vm()) != .pending);
+            }
         }
     };
 
@@ -3744,7 +3760,7 @@ pub const ParseTask = struct {
                         },
                     };
                     if (css_ast.minify(allocator, bun.css.MinifyOptions{
-                        .targets = .{},
+                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
                         .unused_symbols = .{},
                     }).asErr()) |e| {
                         try e.addToLogger(log, &source);
@@ -3909,7 +3925,7 @@ pub const ParseTask = struct {
 
         result: ?*OnBeforeParseResult = null,
 
-        const headers = @import("bun-native-bundler-plugin-api");
+        const headers = bun.C.translated;
 
         comptime {
             bun.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));
@@ -9106,13 +9122,15 @@ pub const LinkerContext = struct {
                 };
                 var import_records = BabyList(ImportRecord).init(&import_records_);
                 const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+                const printer_options = bun.css.PrinterOptions{
+                    // TODO: make this more configurable
+                    .minify = c.options.minify_whitespace,
+                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                };
                 _ = css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
-                    bun.css.PrinterOptions{
-                        // TODO: make this more configurable
-                        .minify = c.options.minify_whitespace,
-                    },
+                    printer_options,
                     &import_records,
                 ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
@@ -9126,13 +9144,15 @@ pub const LinkerContext = struct {
             },
             .source_index => |idx| {
                 const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+                const printer_options = bun.css.PrinterOptions{
+                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                    // TODO: make this more configurable
+                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                };
                 _ = css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
-                    bun.css.PrinterOptions{
-                        // TODO: make this more configurable
-                        .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
-                    },
+                    printer_options,
                     &c.graph.ast.items(.import_records)[idx.get()],
                 ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
@@ -15538,7 +15558,8 @@ pub const AstBuilder = struct {
 
             _ = try js_parser.ImportScanner.scan(AstBuilder, p, p.stmts.items, false, true, &hmr_transform_ctx);
 
-            const new_parts = try hmr_transform_ctx.finalize(p, parts.slice());
+            try hmr_transform_ctx.finalize(p, parts.slice());
+            const new_parts = parts.slice();
             // preserve original capacity
             parts.len = @intCast(new_parts.len);
             bun.assert(new_parts.ptr == parts.ptr);

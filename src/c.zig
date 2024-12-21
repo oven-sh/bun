@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");
 
+pub const translated = @import("translated-c-headers");
+
 const PlatformSpecific = switch (Environment.os) {
     .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
@@ -44,7 +46,7 @@ pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet, conside using bun.sys.lstat()");
+        @compileError("Not implemented yet, consider using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
@@ -341,8 +343,8 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///                      Same as MADV_DONTNEED but used with posix_madvise() sys-tem system
 ///                      tem call.
 ///
-///     MADV_FREE        Indicates that the application will not need the infor-mation information
-///                      mation contained in this address range, so the pages may
+///     MADV_FREE        Indicates that the application will not need the information
+///                      contained in this address range, so the pages may
 ///                      be reused right away.  The address range will remain
 ///                      valid.  This is used with madvise() system call.
 ///
@@ -350,16 +352,8 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///     with POSIX_ prefix for the advice system call argument.
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
 
-pub fn getProcessPriority(pid_: i32) i32 {
-    const pid = @as(c_uint, @intCast(pid_));
-    return get_process_priority(pid);
-}
-
-pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
-    if (pid_ < 0) return .SRCH;
-
-    const pid = @as(c_uint, @intCast(pid_));
-    const priority = @as(c_int, @intCast(priority_));
+pub fn setProcessPriority(pid: i32, priority: i32) std.c.E {
+    if (pid < 0) return .SRCH;
 
     const code: i32 = set_process_priority(pid, priority);
 
@@ -468,9 +462,18 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
     return dlsymWithHandle(Type, name, handle_getter);
 }
 
+/// Error condition is encoded as null
+/// The only error in this function is ESRCH (no process found)
+pub fn getProcessPriority(pid: i32) ?i32 {
+    return switch (get_process_priority(pid)) {
+        std.math.maxInt(i32) => null,
+        else => |prio| prio,
+    };
+}
+
 // set in c-bindings.cpp
-pub extern fn get_process_priority(pid: c_uint) i32;
-pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
+extern fn get_process_priority(pid: i32) i32;
+pub extern fn set_process_priority(pid: i32, priority: i32) i32;
 
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
 pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
@@ -493,3 +496,7 @@ pub extern "C" fn bun_restore_stdio() void;
 pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
 
 pub extern fn strlen(ptr: [*c]const u8) usize;
+
+pub const passwd = translated.passwd;
+pub const geteuid = translated.geteuid;
+pub const getpwuid_r = translated.getpwuid_r;

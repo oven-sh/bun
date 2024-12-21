@@ -41,6 +41,7 @@ body {
 
   itBundled("css/CSSNesting", {
     experimentalCss: true,
+    target: "bun",
     files: {
       "/entry.css": /* css */ `
 body {

@@ -1544,7 +1544,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1638,6 +1638,15 @@ declare module "bun" {
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     *
+     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+     * as most usage of `Bun.build` forgets to check for errors.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -2151,6 +2160,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**

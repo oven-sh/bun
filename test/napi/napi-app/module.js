@@ -490,4 +490,8 @@ nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
   await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
 };
 
+nativeTests.test_create_bigint_words = () => {
+  console.log(nativeTests.create_weird_bigints());
+};
+
 module.exports = nativeTests;

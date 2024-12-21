@@ -626,6 +626,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
         }
 
+        pub fn memoryCost(this: *HTTPClient) callconv(.C) usize {
+            var cost: usize = @sizeOf(HTTPClient);
+            cost += this.body.capacity;
+            cost += this.to_send.len;
+            return cost;
+        }
+
         pub fn handleWritable(
             this: *HTTPClient,
             socket: Socket,
@@ -669,6 +676,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             .connect = connect,
             .cancel = cancel,
             .register = register,
+            .memoryCost = memoryCost,
         });
 
         comptime {
@@ -681,6 +689,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 });
                 @export(register, .{
                     .name = Export[2].symbol_name,
+                });
+                @export(memoryCost, .{
+                    .name = Export[3].symbol_name,
                 });
             }
         }
@@ -1928,6 +1939,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
         }
 
+        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
+            var cost: usize = @sizeOf(WebSocket);
+            cost += this.send_buffer.buf.len;
+            cost += this.receive_buffer.buf.len;
+            // This is under-estimated a little, as we don't include usockets context.
+            return cost;
+        }
+
         pub const Export = shim.exportFunctions(.{
             .writeBinaryData = writeBinaryData,
             .writeString = writeString,
@@ -1936,6 +1955,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             .register = register,
             .init = init,
             .finalize = finalize,
+            .memoryCost = memoryCost,
         });
 
         comptime {
@@ -1947,6 +1967,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(register, .{ .name = Export[4].symbol_name });
                 @export(init, .{ .name = Export[5].symbol_name });
                 @export(finalize, .{ .name = Export[6].symbol_name });
+                @export(memoryCost, .{ .name = Export[7].symbol_name });
             }
         }
     };

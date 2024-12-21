@@ -325,7 +325,7 @@ function getZigAgent(platform, options) {
   const { arch } = platform;
   return {
     queue: "build-zig",
-    "distro-version": "15.*",
+    "distro-version": "15.1",
   };
 }
 

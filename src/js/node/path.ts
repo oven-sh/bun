@@ -54,13 +54,11 @@ function loadGlob(): LazyGlob {
 // loop with the same pattern
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
-function matchesGlob(path, pattern) {
+function matchesGlob(isWindows, path, pattern) {
   let glob: Glob;
 
   validateString(path, "path");
-  console.log("before:", pattern);
-  pattern = pattern.replaceAll("\\", "/");
-  console.log("after:", pattern);
+  if (isWindows) path = path.replaceAll("\\", "/");
 
   if (prevGlob) {
     $assert(prevPattern !== undefined);
@@ -69,12 +67,14 @@ function matchesGlob(path, pattern) {
     } else {
       if (LazyGlob === undefined) loadGlob();
       validateString(pattern, "pattern");
+      if (isWindows) pattern = pattern.replaceAll("\\", "/");
       glob = prevGlob = new LazyGlob(pattern);
       prevPattern = pattern;
     }
   } else {
     loadGlob(); // no prevGlob implies LazyGlob isn't loaded
     validateString(pattern, "pattern");
+    if (isWindows) pattern = pattern.replaceAll("\\", "/");
     glob = prevGlob = new LazyGlob(pattern);
     prevPattern = pattern;
   }
@@ -82,6 +82,8 @@ function matchesGlob(path, pattern) {
   return glob.match(path);
 }
 
-posix.matchesGlob = win32.matchesGlob = matchesGlob;
+// posix.matchesGlob = win32.matchesGlob = matchesGlob;
+posix.matchesGlob = matchesGlob.bind(null, false);
+win32.matchesGlob = matchesGlob.bind(null, true);
 
 export default process.platform === "win32" ? win32 : posix;

@@ -2092,7 +2092,7 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                const fs = JSC.VirtualMachine.get().bundler.fs;
+                const fs = JSC.VirtualMachine.get().transpiler.fs;
                 const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
                     .err => |err| {

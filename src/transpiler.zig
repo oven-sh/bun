@@ -340,13 +340,13 @@ pub const PluginRunner = struct {
     }
 };
 
-/// This structure was the JavaScript bundler before bundle_v2 was written. It now
+/// This structure was the JavaScript transpiler before bundle_v2 was written. It now
 /// acts mostly as a configuration object, but it also contains stateful logic around
 /// logging errors (.log) and module resolution (.resolve_queue)
 ///
 /// This object is not exclusive to bundle_v2/Bun.build, one of these is stored
 /// on every VM so that the options can be used for transpilation.
-pub const Bundler = struct {
+pub const Transpiler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -369,7 +369,7 @@ pub const Bundler = struct {
 
     pub const isCacheEnabled = cache_files;
 
-    pub fn clone(this: *Bundler, allocator: std.mem.Allocator, to: *Bundler) !void {
+    pub fn clone(this: *Transpiler, allocator: std.mem.Allocator, to: *Transpiler) !void {
         to.* = this.*;
         to.setAllocator(allocator);
         to.log = try allocator.create(logger.Log);
@@ -379,33 +379,33 @@ pub const Bundler = struct {
         to.linker.resolver = &to.resolver;
     }
 
-    pub inline fn getPackageManager(this: *Bundler) *PackageManager {
+    pub inline fn getPackageManager(this: *Transpiler) *PackageManager {
         return this.resolver.getPackageManager();
     }
 
-    pub fn setLog(this: *Bundler, log: *logger.Log) void {
+    pub fn setLog(this: *Transpiler, log: *logger.Log) void {
         this.log = log;
         this.linker.log = log;
         this.resolver.log = log;
     }
 
-    pub fn setAllocator(this: *Bundler, allocator: std.mem.Allocator) void {
+    pub fn setAllocator(this: *Transpiler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;
         this.resolver.allocator = allocator;
     }
 
-    fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+    fn _resolveEntryPoint(transpiler: *Transpiler, entry_point: string) !_resolver.Result {
+        return transpiler.resolver.resolveWithFramework(transpiler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
                 !(strings.hasPrefix(entry_point, "./") or strings.hasPrefix(entry_point, ".\\")))
             {
                 brk: {
-                    return bundler.resolver.resolve(
-                        bundler.fs.top_level_dir,
-                        try strings.append(bundler.allocator, "./", entry_point),
+                    return transpiler.resolver.resolve(
+                        transpiler.fs.top_level_dir,
+                        try strings.append(transpiler.allocator, "./", entry_point),
                         .entry_point,
                     ) catch {
                         // return the original error
@@ -417,8 +417,8 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return _resolveEntryPoint(bundler, entry_point) catch |err| {
+    pub fn resolveEntryPoint(transpiler: *Transpiler, entry_point: string) !_resolver.Result {
+        return _resolveEntryPoint(transpiler, entry_point) catch |err| {
             var cache_bust_buf: bun.PathBuffer = undefined;
 
             // Bust directory cache and try again
@@ -436,7 +436,7 @@ pub const Bundler = struct {
                 };
 
                 break :name bun.path.joinAbsStringBufZ(
-                    bundler.fs.top_level_dir,
+                    transpiler.fs.top_level_dir,
                     &cache_bust_buf,
                     &parts,
                     .auto,
@@ -444,15 +444,15 @@ pub const Bundler = struct {
             };
 
             // Only re-query if we previously had something cached.
-            if (bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
-                if (_resolveEntryPoint(bundler, entry_point)) |result|
+            if (transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
+                if (_resolveEntryPoint(transpiler, entry_point)) |result|
                     return result
                 else |_| {
                     // ignore this error, we will print the original error
                 }
             }
 
-            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
+            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
             return err;
         };
     }
@@ -462,7 +462,7 @@ pub const Bundler = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
         env_loader_: ?*DotEnv.Loader,
-    ) !Bundler {
+    ) !Transpiler {
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
 
@@ -496,7 +496,7 @@ pub const Bundler = struct {
         // });
         const resolve_results = try allocator.create(ResolveResults);
         resolve_results.* = ResolveResults.init(allocator);
-        return Bundler{
+        return Transpiler{
             .options = bundle_options,
             .fs = fs,
             .allocator = allocator,
@@ -513,36 +513,36 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn configureLinkerWithAutoJSX(bundler: *Bundler, auto_jsx: bool) void {
-        bundler.linker = Linker.init(
-            bundler.allocator,
-            bundler.log,
-            &bundler.resolve_queue,
-            &bundler.options,
-            &bundler.resolver,
-            bundler.resolve_results,
-            bundler.fs,
+    pub fn configureLinkerWithAutoJSX(transpiler: *Transpiler, auto_jsx: bool) void {
+        transpiler.linker = Linker.init(
+            transpiler.allocator,
+            transpiler.log,
+            &transpiler.resolve_queue,
+            &transpiler.options,
+            &transpiler.resolver,
+            transpiler.resolve_results,
+            transpiler.fs,
         );
 
         if (auto_jsx) {
             // Most of the time, this will already be cached
-            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+            if (transpiler.resolver.readDirInfo(transpiler.fs.top_level_dir) catch null) |root_dir| {
                 if (root_dir.tsconfig_json) |tsconfig| {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if (bundler.options.transform_options.jsx == null) {
-                        bundler.options.jsx = tsconfig.jsx;
+                    if (transpiler.options.transform_options.jsx == null) {
+                        transpiler.options.jsx = tsconfig.jsx;
                     }
-                    bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                    transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                 }
             }
         }
     }
 
-    pub fn configureLinker(bundler: *Bundler) void {
-        bundler.configureLinkerWithAutoJSX(true);
+    pub fn configureLinker(transpiler: *Transpiler) void {
+        transpiler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *Bundler, skip_default_env: bool) !void {
+    pub fn runEnvLoader(this: *Transpiler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
@@ -585,7 +585,7 @@ pub const Bundler = struct {
     }
 
     // This must be run after a framework is configured, if a framework is enabled
-    pub fn configureDefines(this: *Bundler) !void {
+    pub fn configureDefines(this: *Transpiler) !void {
         if (this.options.defines_loaded) {
             return;
         }
@@ -614,18 +614,18 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn resetStore(_: *const Bundler) void {
+    pub fn resetStore(_: *const Transpiler) void {
         js_ast.Expr.Data.Store.reset();
         js_ast.Stmt.Data.Store.reset();
     }
 
-    pub noinline fn dumpEnvironmentVariables(bundler: *const Bundler) void {
+    pub noinline fn dumpEnvironmentVariables(transpiler: *const Transpiler) void {
         @setCold(true);
         const opts = std.json.StringifyOptions{
             .whitespace = .indent_2,
         };
         Output.flush();
-        std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;
+        std.json.stringify(transpiler.env.map.*, opts, Output.writer()) catch unreachable;
         Output.flush();
     }
 
@@ -636,7 +636,7 @@ pub const Bundler = struct {
     };
 
     pub fn buildWithResolveResult(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         resolve_result: _resolver.Result,
         allocator: std.mem.Allocator,
         loader: options.Loader,
@@ -659,7 +659,7 @@ pub const Bundler = struct {
             };
         }
 
-        errdefer bundler.resetStore();
+        errdefer transpiler.resetStore();
 
         var file_path = (resolve_result.pathConst() orelse {
             return BuildResolveResultPair{
@@ -668,68 +668,68 @@ pub const Bundler = struct {
             };
         }).*;
 
-        if (strings.indexOf(file_path.text, bundler.fs.top_level_dir)) |i| {
-            file_path.pretty = file_path.text[i + bundler.fs.top_level_dir.len ..];
+        if (strings.indexOf(file_path.text, transpiler.fs.top_level_dir)) |i| {
+            file_path.pretty = file_path.text[i + transpiler.fs.top_level_dir.len ..];
         } else if (!file_path.is_symlink) {
-            file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
+            file_path.pretty = allocator.dupe(u8, transpiler.fs.relativeTo(file_path.text)) catch unreachable;
         }
 
-        const old_bundler_allocator = bundler.allocator;
-        bundler.allocator = allocator;
-        defer bundler.allocator = old_bundler_allocator;
-        const old_linker_allocator = bundler.linker.allocator;
-        defer bundler.linker.allocator = old_linker_allocator;
-        bundler.linker.allocator = allocator;
+        const old_bundler_allocator = transpiler.allocator;
+        transpiler.allocator = allocator;
+        defer transpiler.allocator = old_bundler_allocator;
+        const old_linker_allocator = transpiler.linker.allocator;
+        defer transpiler.linker.allocator = old_linker_allocator;
+        transpiler.linker.allocator = allocator;
 
         switch (loader) {
             .css => {
                 const CSSBundlerHMR = Css.NewBundler(
                     Writer,
-                    @TypeOf(&bundler.linker),
-                    @TypeOf(&bundler.resolver.caches.fs),
+                    @TypeOf(&transpiler.linker),
+                    @TypeOf(&transpiler.resolver.caches.fs),
                     WatcherType,
-                    @TypeOf(bundler.fs),
+                    @TypeOf(transpiler.fs),
                     true,
                     import_path_format,
                 );
 
                 const CSSBundler = Css.NewBundler(
                     Writer,
-                    @TypeOf(&bundler.linker),
-                    @TypeOf(&bundler.resolver.caches.fs),
+                    @TypeOf(&transpiler.linker),
+                    @TypeOf(&transpiler.resolver.caches.fs),
                     WatcherType,
-                    @TypeOf(bundler.fs),
+                    @TypeOf(transpiler.fs),
                     false,
                     import_path_format,
                 );
 
                 const written = brk: {
-                    if (bundler.options.hot_module_reloading) {
+                    if (transpiler.options.hot_module_reloading) {
                         break :brk (try CSSBundlerHMR.bundle(
                             file_path.text,
-                            bundler.fs,
+                            transpiler.fs,
                             writer,
                             watcher,
-                            &bundler.resolver.caches.fs,
+                            &transpiler.resolver.caches.fs,
                             filepath_hash,
                             file_descriptor,
                             allocator,
-                            bundler.log,
-                            &bundler.linker,
+                            transpiler.log,
+                            &transpiler.linker,
                             origin,
                         )).written;
                     } else {
                         break :brk (try CSSBundler.bundle(
                             file_path.text,
-                            bundler.fs,
+                            transpiler.fs,
                             writer,
                             watcher,
-                            &bundler.resolver.caches.fs,
+                            &transpiler.resolver.caches.fs,
                             filepath_hash,
                             file_descriptor,
                             allocator,
-                            bundler.log,
-                            &bundler.linker,
+                            transpiler.log,
+                            &transpiler.linker,
                             origin,
                         )).written;
                     }
@@ -741,7 +741,7 @@ pub const Bundler = struct {
                 };
             },
             else => {
-                var result = bundler.parse(
+                var result = transpiler.parse(
                     ParseOptions{
                         .allocator = allocator,
                         .path = file_path,
@@ -749,13 +749,13 @@ pub const Bundler = struct {
                         .dirname_fd = resolve_result.dirname_fd,
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
-                        .macro_remappings = bundler.options.macro_remap,
+                        .macro_remappings = transpiler.options.macro_remap,
                         .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
                 ) orelse {
-                    bundler.resetStore();
+                    transpiler.resetStore();
                     return BuildResolveResultPair{
                         .written = 0,
                         .input_fd = null,
@@ -766,14 +766,14 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                 }
 
-                if (bundler.options.target.isBun()) {
-                    if (!bundler.options.transform_only) {
-                        try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
+                if (transpiler.options.target.isBun()) {
+                    if (!transpiler.options.transform_only) {
+                        try transpiler.linker.link(file_path, &result, origin, import_path_format, false, true);
                     }
 
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
-                            .esm => try bundler.printWithSourceMapMaybe(
+                            .esm => try transpiler.printWithSourceMapMaybe(
                                 result.ast,
                                 &result.source,
                                 Writer,
@@ -783,7 +783,7 @@ pub const Bundler = struct {
                                 source_map_handler,
                                 null,
                             ),
-                            .cjs => try bundler.printWithSourceMapMaybe(
+                            .cjs => try transpiler.printWithSourceMapMaybe(
                                 result.ast,
                                 &result.source,
                                 Writer,
@@ -799,13 +799,13 @@ pub const Bundler = struct {
                     };
                 }
 
-                if (!bundler.options.transform_only) {
-                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
+                if (!transpiler.options.transform_only) {
+                    try transpiler.linker.link(file_path, &result, origin, import_path_format, false, false);
                 }
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
-                        .none, .esm => try bundler.printWithSourceMapMaybe(
+                        .none, .esm => try transpiler.printWithSourceMapMaybe(
                             result.ast,
                             &result.source,
                             Writer,
@@ -815,7 +815,7 @@ pub const Bundler = struct {
                             source_map_handler,
                             null,
                         ),
-                        .cjs => try bundler.printWithSourceMapMaybe(
+                        .cjs => try transpiler.printWithSourceMapMaybe(
                             result.ast,
                             &result.source,
                             Writer,
@@ -834,7 +834,7 @@ pub const Bundler = struct {
     }
 
     pub fn buildWithResolveResultEager(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         resolve_result: _resolver.Result,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
         comptime Outstream: type,
@@ -848,13 +848,13 @@ pub const Bundler = struct {
         var file_path = (resolve_result.pathConst() orelse return null).*;
 
         // Step 1. Parse & scan
-        const loader = bundler.options.loader(file_path.name.ext);
+        const loader = transpiler.options.loader(file_path.name.ext);
 
         if (client_entry_point_) |client_entry_point| {
             file_path = client_entry_point.source.path;
         }
 
-        file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
+        file_path.pretty = Linker.relative_paths_list.append(string, transpiler.fs.relativeTo(file_path.text)) catch unreachable;
 
         var output_file = options.OutputFile{
             .src_path = file_path,
@@ -867,15 +867,15 @@ pub const Bundler = struct {
 
         switch (loader) {
             .jsx, .tsx, .js, .ts, .json, .toml, .text => {
-                var result = bundler.parse(
+                var result = transpiler.parse(
                     ParseOptions{
-                        .allocator = bundler.allocator,
+                        .allocator = transpiler.allocator,
                         .path = file_path,
                         .loader = loader,
                         .dirname_fd = resolve_result.dirname_fd,
                         .file_descriptor = null,
                         .file_hash = null,
-                        .macro_remappings = bundler.options.macro_remap,
+                        .macro_remappings = transpiler.options.macro_remap,
                         .jsx = resolve_result.jsx,
                         .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                     },
@@ -883,38 +883,38 @@ pub const Bundler = struct {
                 ) orelse {
                     return null;
                 };
-                if (!bundler.options.transform_only) {
-                    if (!bundler.options.target.isBun())
-                        try bundler.linker.link(
+                if (!transpiler.options.transform_only) {
+                    if (!transpiler.options.target.isBun())
+                        try transpiler.linker.link(
                             file_path,
                             &result,
-                            bundler.options.origin,
+                            transpiler.options.origin,
                             import_path_format,
                             false,
                             false,
                         )
                     else
-                        try bundler.linker.link(
+                        try transpiler.linker.link(
                             file_path,
                             &result,
-                            bundler.options.origin,
+                            transpiler.options.origin,
                             import_path_format,
                             false,
                             true,
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
+                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
-                output_file.size = switch (bundler.options.target) {
-                    .browser, .node => try bundler.print(
+                output_file.size = switch (transpiler.options.target) {
+                    .browser, .node => try transpiler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro, .bake_server_components_ssr => try bundler.print(
+                    .bun, .bun_macro, .bake_server_components_ssr => try transpiler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -923,7 +923,7 @@ pub const Bundler = struct {
                 };
                 output_file.value = .{
                     .buffer = .{
-                        .allocator = bundler.allocator,
+                        .allocator = transpiler.allocator,
                         .bytes = writer.ctx.written,
                     },
                 };
@@ -932,34 +932,34 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (bundler.options.experimental_css) {
-                    const alloc = bundler.allocator;
+                if (transpiler.options.experimental_css) {
+                    const alloc = transpiler.allocator;
 
-                    const entry = bundler.resolver.caches.fs.readFileWithAllocator(
-                        bundler.allocator,
-                        bundler.fs,
+                    const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
+                        transpiler.allocator,
+                        transpiler.fs,
                         file_path.text,
                         resolve_result.dirname_fd,
                         false,
                         null,
                     ) catch |err| {
-                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                         return null;
                     };
-                    var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
+                    var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
                         .result => |v| v,
                         .err => |e| {
-                            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} parsing", .{e}) catch unreachable;
+                            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                             return null;
                         },
                     };
                     if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
-                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
+                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                         return null;
                     }
                     const result = sheet.toCss(alloc, bun.css.PrinterOptions{
-                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
-                        .minify = bundler.options.minify_whitespace,
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                        .minify = transpiler.options.minify_whitespace,
                     }, null) catch |e| {
                         bun.handleErrorReturnTrace(e, @errorReturnTrace());
                         return null;
@@ -982,12 +982,12 @@ pub const Bundler = struct {
                     const CSSBuildContext = struct {
                         origin: URL,
                     };
-                    const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+                    const build_ctx = CSSBuildContext{ .origin = transpiler.options.origin };
 
                     const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
                     const CSSWriter = Css.NewWriter(
                         BufferedWriter.Writer,
-                        @TypeOf(&bundler.linker),
+                        @TypeOf(&transpiler.linker),
                         import_path_format,
                         CSSBuildContext,
                     );
@@ -995,8 +995,8 @@ pub const Bundler = struct {
                         .child_stream = .{ .unbuffered_writer = file.writer() },
                         .bytes_written = 0,
                     };
-                    const entry = bundler.resolver.caches.fs.readFile(
-                        bundler.fs,
+                    const entry = transpiler.resolver.caches.fs.readFile(
+                        transpiler.fs,
                         file_path.text,
                         resolve_result.dirname_fd,
                         !cache_files,
@@ -1004,19 +1004,19 @@ pub const Bundler = struct {
                     ) catch return null;
 
                     const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
-                    var source = try logger.Source.initFile(_file, bundler.allocator);
+                    var source = try logger.Source.initFile(_file, transpiler.allocator);
                     source.contents_is_recycled = !cache_files;
 
                     var css_writer = CSSWriter.init(
                         &source,
                         buffered_writer.writer(),
-                        &bundler.linker,
-                        bundler.log,
+                        &transpiler.linker,
+                        transpiler.log,
                     );
 
                     css_writer.buildCtx = build_ctx;
 
-                    try css_writer.run(bundler.log, bundler.allocator);
+                    try css_writer.run(transpiler.log, transpiler.allocator);
                     try css_writer.ctx.context.child_stream.flush();
                     output_file.size = css_writer.ctx.context.bytes_written;
                     var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                     if (Outstream == std.fs.Dir) {
                         file_op.dir = bun.toFD(outstream.fd);
 
-                        if (bundler.fs.fs.needToCloseFiles()) {
+                        if (transpiler.fs.fs.needToCloseFiles()) {
                             file.close();
                             file_op.fd = .zero;
                         }
@@ -1039,11 +1039,11 @@ pub const Bundler = struct {
             },
 
             .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
-                const hashed_name = try bundler.linker.getHashedFilename(file_path, null);
-                var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
+                const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
+                var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
+                const dir = if (transpiler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1059,7 +1059,7 @@ pub const Bundler = struct {
     }
 
     pub fn printWithSourceMapMaybe(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         ast: js_ast.Ast,
         source: *const logger.Source,
         comptime Writer: type,
@@ -1085,14 +1085,14 @@ pub const Bundler = struct {
                 .{
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
-                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .css_import_behavior = transpiler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .minify_whitespace = bundler.options.minify_whitespace,
-                    .minify_syntax = bundler.options.minify_syntax,
-                    .minify_identifiers = bundler.options.minify_identifiers,
-                    .transform_only = bundler.options.transform_only,
+                    .minify_whitespace = transpiler.options.minify_whitespace,
+                    .minify_syntax = transpiler.options.minify_syntax,
+                    .minify_identifiers = transpiler.options.minify_identifiers,
+                    .transform_only = transpiler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
-                    .print_dce_annotations = bundler.options.emit_dce_annotations,
+                    .print_dce_annotations = transpiler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1108,18 +1108,18 @@ pub const Bundler = struct {
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
-                    .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .minify_whitespace = bundler.options.minify_whitespace,
-                    .minify_syntax = bundler.options.minify_syntax,
-                    .minify_identifiers = bundler.options.minify_identifiers,
-                    .transform_only = bundler.options.transform_only,
+                    .css_import_behavior = transpiler.options.cssImportBehavior(),
+                    .minify_whitespace = transpiler.options.minify_whitespace,
+                    .minify_syntax = transpiler.options.minify_syntax,
+                    .minify_identifiers = transpiler.options.minify_identifiers,
+                    .transform_only = transpiler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
-                    .print_dce_annotations = bundler.options.emit_dce_annotations,
+                    .print_dce_annotations = transpiler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
-            .esm_ascii => switch (bundler.options.target.isBun()) {
+            .esm_ascii => switch (transpiler.options.target.isBun()) {
                 inline else => |is_bun| try js_printer.printAst(
                     Writer,
                     writer,
@@ -1130,16 +1130,16 @@ pub const Bundler = struct {
                     .{
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
+                        .css_import_behavior = transpiler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                        .minify_syntax = bundler.options.minify_syntax,
-                        .minify_identifiers = bundler.options.minify_identifiers,
-                        .transform_only = bundler.options.transform_only,
-                        .module_type = if (is_bun and bundler.options.transform_only)
+                        .minify_whitespace = transpiler.options.minify_whitespace,
+                        .minify_syntax = transpiler.options.minify_syntax,
+                        .minify_identifiers = transpiler.options.minify_identifiers,
+                        .transform_only = transpiler.options.transform_only,
+                        .module_type = if (is_bun and transpiler.options.transform_only)
                             // this is for when using `bun build --no-bundle`
                             // it should copy what was passed for the cli
-                            bundler.options.output_format
+                            transpiler.options.output_format
                         else if (ast.exports_kind == .cjs)
                             .cjs
                         else
@@ -1147,8 +1147,8 @@ pub const Bundler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
-                        .target = bundler.options.target,
-                        .print_dce_annotations = bundler.options.emit_dce_annotations,
+                        .target = transpiler.options.target,
+                        .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     },
                     enable_source_map,
                 ),
@@ -1158,13 +1158,13 @@ pub const Bundler = struct {
     }
 
     pub fn print(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         result: ParseResult,
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
     ) !usize {
-        return bundler.printWithSourceMapMaybe(
+        return transpiler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
             Writer,
@@ -1177,7 +1177,7 @@ pub const Bundler = struct {
     }
 
     pub fn printWithSourceMap(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         result: ParseResult,
         comptime Writer: type,
         writer: Writer,
@@ -1185,7 +1185,7 @@ pub const Bundler = struct {
         handler: js_printer.SourceMapHandler,
     ) !usize {
         if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
-            return bundler.printWithSourceMapMaybe(
+            return transpiler.printWithSourceMapMaybe(
                 result.ast,
                 &result.source,
                 Writer,
@@ -1196,7 +1196,7 @@ pub const Bundler = struct {
                 result.runtime_transpiler_cache,
             );
         }
-        return bundler.printWithSourceMapMaybe(
+        return transpiler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
             Writer,
@@ -1239,21 +1239,21 @@ pub const Bundler = struct {
     };
 
     pub fn parse(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         this_parse: ParseOptions,
         client_entry_point_: anytype,
     ) ?ParseResult {
-        return parseMaybeReturnFileOnly(bundler, this_parse, client_entry_point_, false);
+        return parseMaybeReturnFileOnly(transpiler, this_parse, client_entry_point_, false);
     }
 
     pub fn parseMaybeReturnFileOnly(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         this_parse: ParseOptions,
         client_entry_point_: anytype,
         comptime return_file_only: bool,
     ) ?ParseResult {
         return parseMaybeReturnFileOnlyAllowSharedBuffer(
-            bundler,
+            transpiler,
             this_parse,
             client_entry_point_,
             return_file_only,
@@ -1262,7 +1262,7 @@ pub const Bundler = struct {
     }
 
     pub fn parseMaybeReturnFileOnlyAllowSharedBuffer(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         this_parse: ParseOptions,
         client_entry_point_: anytype,
         comptime return_file_only: bool,
@@ -1298,32 +1298,32 @@ pub const Bundler = struct {
 
             if (strings.startsWith(path.text, "data:")) {
                 const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
-                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };
                 const body = data_url.decodeData(this_parse.allocator) catch |err| {
-                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };
                 break :brk logger.Source.initPathString(path.text, body);
             }
 
-            const entry = bundler.resolver.caches.fs.readFileWithAllocator(
+            const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
                 if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
-                bundler.fs,
+                transpiler.fs,
                 path.text,
                 dirname_fd,
                 use_shared_buffer,
                 file_descriptor,
             ) catch |err| {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
                 return null;
             };
             input_fd = entry.fd;
             if (this_parse.file_fd_ptr) |file_fd_ptr| {
                 file_fd_ptr.* = entry.fd;
             }
-            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, transpiler.allocator) catch return null;
         };
 
         if (comptime return_file_only) {
@@ -1351,7 +1351,7 @@ pub const Bundler = struct {
                     };
                 }
 
-                const target = bundler.options.target;
+                const target = transpiler.options.target;
 
                 var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
@@ -1359,43 +1359,43 @@ pub const Bundler = struct {
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
-                opts.features.allow_runtime = bundler.options.allow_runtime;
+                opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
-                opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
+                opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.use_import_meta_require = target.isBun();
-                opts.features.no_macros = bundler.options.no_macros;
+                opts.features.no_macros = transpiler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
-                opts.transform_only = bundler.options.transform_only;
+                opts.transform_only = transpiler.options.transform_only;
 
-                opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
+                opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
-                opts.tree_shaking = bundler.options.tree_shaking;
-                opts.features.inlining = bundler.options.inlining;
+                opts.tree_shaking = transpiler.options.tree_shaking;
+                opts.features.inlining = transpiler.options.inlining;
 
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
-                opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
+                opts.features.auto_import_jsx = transpiler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
-                opts.features.minify_syntax = bundler.options.minify_syntax;
-                opts.features.minify_identifiers = bundler.options.minify_identifiers;
-                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
+                opts.features.minify_syntax = transpiler.options.minify_syntax;
+                opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+                opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
 
-                if (bundler.macro_context == null) {
-                    bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
+                if (transpiler.macro_context == null) {
+                    transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
                 }
 
                 // we'll just always enable top-level await
                 // this is incorrect for Node.js files which are CommonJS modules
                 opts.features.top_level_await = true;
 
-                opts.macro_context = &bundler.macro_context.?;
+                opts.macro_context = &transpiler.macro_context.?;
                 if (comptime !JSC.is_bindgen) {
                     if (target != .bun_macro) {
                         opts.macro_context.javascript_object = this_parse.macro_js_ctx;
@@ -1405,11 +1405,11 @@ pub const Bundler = struct {
                 opts.features.is_macro_runtime = target == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
-                return switch ((bundler.resolver.caches.js.parse(
+                return switch ((transpiler.resolver.caches.js.parse(
                     allocator,
                     opts,
-                    bundler.options.define,
-                    bundler.log,
+                    transpiler.options.define,
+                    transpiler.log,
                     &source,
                 ) catch null) orelse return null) {
                     .ast => |value| ParseResult{
@@ -1458,11 +1458,11 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        JSON.parseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
                     else
-                        JSON.parse(&source, bundler.log, allocator, false) catch return null
+                        JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, bundler.log, allocator, false) catch return null
+                    TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1612,12 +1612,12 @@ pub const Bundler = struct {
                 };
             },
             .wasm => {
-                if (bundler.options.target.isBun()) {
+                if (transpiler.options.target.isBun()) {
                     if (!source.isWebAssembly()) {
-                        bundler.log.addErrorFmt(
+                        transpiler.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,
-                            bundler.allocator,
+                            transpiler.allocator,
                             "Invalid wasm file \"{s}\" (missing magic header)",
                             .{path.text},
                         ) catch {};
@@ -1644,18 +1644,16 @@ pub const Bundler = struct {
     threadlocal var tmp_buildfile_buf2: bun.PathBuffer = undefined;
     threadlocal var tmp_buildfile_buf3: bun.PathBuffer = undefined;
 
-    // We try to be mostly stateless when serving
-    // This means we need a slightly different resolver setup
     pub fn buildFile(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         log: *logger.Log,
         path_to_use_: string,
         comptime client_entry_point_enabled: bool,
     ) !ServeResult {
-        const old_log = bundler.log;
+        const old_log = transpiler.log;
 
-        bundler.setLog(log);
-        defer bundler.setLog(old_log);
+        transpiler.setLog(log);
+        defer transpiler.setLog(old_log);
 
         var path_to_use = path_to_use_;
 
@@ -1664,11 +1662,6 @@ pub const Bundler = struct {
             js_ast.Stmt.Data.Store.reset();
         }
 
-        // If the extension is .js, omit it.
-        // if (absolute_path.len > ".js".len and strings.eqlComptime(absolute_path[absolute_path.len - ".js".len ..], ".js")) {
-        //     absolute_path = absolute_path[0 .. absolute_path.len - ".js".len];
-        // }
-
         // All non-absolute paths are ./paths
         if (path_to_use[0] != '/' and path_to_use[0] != '.') {
             tmp_buildfile_buf3[0..2].* = "./".*;
@@ -1676,10 +1669,10 @@ pub const Bundler = struct {
             path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
         }
 
-        const resolved = if (comptime !client_entry_point_enabled) (try bundler.resolver.resolve(bundler.fs.top_level_dir, path_to_use, .stmt)) else brk: {
+        const resolved = if (comptime !client_entry_point_enabled) (try transpiler.resolver.resolve(transpiler.fs.top_level_dir, path_to_use, .stmt)) else brk: {
             const absolute_pathname = Fs.PathName.init(path_to_use);
 
-            const loader_for_ext = bundler.options.loader(absolute_pathname.ext);
+            const loader_for_ext = transpiler.options.loader(absolute_pathname.ext);
 
             // The expected pathname looks like:
             // /pages/index.entry.tsx
@@ -1702,17 +1695,17 @@ pub const Bundler = struct {
                     if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
-                    break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);
+                    break :brk try transpiler.resolver.resolve(transpiler.fs.top_level_dir, decoded_entry_point_path, .entry_point);
                 }
             }
 
-            break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, path_to_use, .stmt));
+            break :brk (try transpiler.resolver.resolve(transpiler.fs.top_level_dir, path_to_use, .stmt));
         };
 
         const path = (resolved.pathConst() orelse return error.ModuleNotFound);
 
-        const loader = bundler.options.loader(path.name.ext);
-        const mime_type_ext = bundler.options.out_extensions.get(path.name.ext) orelse path.name.ext;
+        const loader = transpiler.options.loader(path.name.ext);
+        const mime_type_ext = transpiler.options.out_extensions.get(path.name.ext) orelse path.name.ext;
 
         switch (loader) {
             .js, .jsx, .ts, .tsx, .css => {
@@ -1745,14 +1738,14 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn normalizeEntryPointPath(bundler: *Bundler, _entry: string) string {
+    pub fn normalizeEntryPointPath(transpiler: *Transpiler, _entry: string) string {
         var paths = [_]string{_entry};
-        var entry = bundler.fs.abs(&paths);
+        var entry = transpiler.fs.abs(&paths);
 
         std.fs.accessAbsolute(entry, .{}) catch
             return _entry;
 
-        entry = bundler.fs.relativeTo(entry);
+        entry = transpiler.fs.relativeTo(entry);
 
         if (!strings.startsWith(entry, "./")) {
             // Entry point paths without a leading "./" are interpreted as package
@@ -1767,7 +1760,7 @@ pub const Bundler = struct {
             // a leading "./" because the path may not be a file system path. For
             // example, it may be a URL. So only insert a leading "./" when the path
             // is an exact match for an existing file.
-            var __entry = bundler.allocator.alloc(u8, "./".len + entry.len) catch unreachable;
+            var __entry = transpiler.allocator.alloc(u8, "./".len + entry.len) catch unreachable;
             __entry[0] = '.';
             __entry[1] = '/';
             bun.copy(u8, __entry[2..__entry.len], entry);
@@ -1777,18 +1770,18 @@ pub const Bundler = struct {
         return entry;
     }
 
-    fn enqueueEntryPoints(bundler: *Bundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
+    fn enqueueEntryPoints(transpiler: *Transpiler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
         var entry_point_i: usize = 0;
 
-        for (bundler.options.entry_points) |_entry| {
-            const entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
+        for (transpiler.options.entry_points) |_entry| {
+            const entry: string = if (comptime normalize_entry_point) transpiler.normalizeEntryPointPath(_entry) else _entry;
 
             defer {
                 js_ast.Expr.Data.Store.reset();
                 js_ast.Stmt.Data.Store.reset();
             }
 
-            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
+            const result = transpiler.resolver.resolve(transpiler.fs.top_level_dir, entry, .entry_point) catch |err| {
                 Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };
@@ -1800,7 +1793,7 @@ pub const Bundler = struct {
                 continue;
             }
 
-            if (bundler.linker.enqueueResolveResult(&result) catch unreachable) {
+            if (transpiler.linker.enqueueResolveResult(&result) catch unreachable) {
                 entry_points[entry_point_i] = result;
                 entry_point_i += 1;
             }
@@ -1810,44 +1803,44 @@ pub const Bundler = struct {
     }
 
     pub fn transform(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
         _ = opts;
-        var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-        entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
+        var entry_points = try allocator.alloc(_resolver.Result, transpiler.options.entry_points.len);
+        entry_points = entry_points[0..transpiler.enqueueEntryPoints(entry_points, true)];
 
         if (log.level.atLeast(.debug)) {
-            bundler.resolver.debug_logs = try DebugLogs.init(allocator);
+            transpiler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
-        bundler.options.transform_only = true;
+        transpiler.options.transform_only = true;
         const did_start = false;
 
-        if (bundler.options.output_dir_handle == null) {
+        if (transpiler.options.output_dir_handle == null) {
             const outstream = bun.sys.File.from(std.io.getStdOut());
 
             if (!did_start) {
-                try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, false, @TypeOf(outstream), outstream),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, @TypeOf(outstream), outstream),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, @TypeOf(outstream), outstream),
-                    .package_path => bundler.processResolveQueue(.package_path, false, @TypeOf(outstream), outstream),
+                try switch (transpiler.options.import_path_format) {
+                    .relative => transpiler.processResolveQueue(.relative, false, @TypeOf(outstream), outstream),
+                    .absolute_url => transpiler.processResolveQueue(.absolute_url, false, @TypeOf(outstream), outstream),
+                    .absolute_path => transpiler.processResolveQueue(.absolute_path, false, @TypeOf(outstream), outstream),
+                    .package_path => transpiler.processResolveQueue(.package_path, false, @TypeOf(outstream), outstream),
                 };
             }
         } else {
-            const output_dir = bundler.options.output_dir_handle orelse {
+            const output_dir = transpiler.options.output_dir_handle orelse {
                 Output.printError("Invalid or missing output directory.", .{});
                 Global.crash();
             };
 
             if (!did_start) {
-                try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
-                    .package_path => bundler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),
+                try switch (transpiler.options.import_path_format) {
+                    .relative => transpiler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
+                    .absolute_url => transpiler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
+                    .absolute_path => transpiler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
+                    .package_path => transpiler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),
                 };
             }
         }
@@ -1858,8 +1851,8 @@ pub const Bundler = struct {
         //     }
         // }
 
-        if (bundler.linker.any_needs_runtime) {
-            // try bundler.output_files.append(
+        if (transpiler.linker.any_needs_runtime) {
+            // try transpiler.output_files.append(
             //     options.OutputFile.initBuf(
             //         runtime.Runtime.source_code,
             //         bun.default_allocator,
@@ -1871,32 +1864,32 @@ pub const Bundler = struct {
             // );
         }
 
-        if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {
+        if (FeatureFlags.tracing and transpiler.options.log.level.atLeast(.info)) {
             Output.prettyErrorln(
                 "<r><d>\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n<r>",
                 .{
-                    bundler.resolver.elapsed,
-                    bundler.elapsed,
+                    transpiler.resolver.elapsed,
+                    transpiler.elapsed,
                 },
             );
         }
 
-        var final_result = try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), try bundler.output_files.toOwnedSlice(), log, allocator);
-        final_result.root_dir = bundler.options.output_dir_handle;
+        var final_result = try options.TransformResult.init(try allocator.dupe(u8, transpiler.result.outbase), try transpiler.output_files.toOwnedSlice(), log, allocator);
+        final_result.root_dir = transpiler.options.output_dir_handle;
         return final_result;
     }
 
-    // pub fn processResolveQueueWithThreadPool(bundler)
+    // pub fn processResolveQueueWithThreadPool(transpiler)
 
     pub fn processResolveQueue(
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
         comptime wrap_entry_point: bool,
         comptime Outstream: type,
         outstream: Outstream,
     ) !void {
         // var count: u8 = 0;
-        while (bundler.resolve_queue.readItem()) |item| {
+        while (transpiler.resolve_queue.readItem()) |item| {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
 
@@ -1904,21 +1897,21 @@ pub const Bundler = struct {
 
             if (comptime wrap_entry_point) {
                 const path = item.pathConst() orelse unreachable;
-                const loader = bundler.options.loader(path.name.ext);
+                const loader = transpiler.options.loader(path.name.ext);
 
                 if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
-                    var client_entry_point = try bundler.allocator.create(EntryPoints.ClientEntryPoint);
+                    var client_entry_point = try transpiler.allocator.create(EntryPoints.ClientEntryPoint);
                     client_entry_point.* = EntryPoints.ClientEntryPoint{};
-                    try client_entry_point.generate(Bundler, bundler, path.name, bundler.options.framework.?.client.path);
+                    try client_entry_point.generate(Transpiler, transpiler, path.name, transpiler.options.framework.?.client.path);
 
-                    const entry_point_output_file = bundler.buildWithResolveResultEager(
+                    const entry_point_output_file = transpiler.buildWithResolveResultEager(
                         item,
                         import_path_format,
                         Outstream,
                         outstream,
                         client_entry_point,
                     ) catch continue orelse continue;
-                    bundler.output_files.append(entry_point_output_file) catch unreachable;
+                    transpiler.output_files.append(entry_point_output_file) catch unreachable;
 
                     js_ast.Expr.Data.Store.reset();
                     js_ast.Stmt.Data.Store.reset();
@@ -1927,29 +1920,29 @@ pub const Bundler = struct {
                     // So we just immediately build it.
                     var item_not_entrypointed = item;
                     item_not_entrypointed.import_kind = .stmt;
-                    const original_output_file = bundler.buildWithResolveResultEager(
+                    const original_output_file = transpiler.buildWithResolveResultEager(
                         item_not_entrypointed,
                         import_path_format,
                         Outstream,
                         outstream,
                         null,
                     ) catch continue orelse continue;
-                    bundler.output_files.append(original_output_file) catch unreachable;
+                    transpiler.output_files.append(original_output_file) catch unreachable;
 
                     continue;
                 }
             }
 
-            const output_file = bundler.buildWithResolveResultEager(
+            const output_file = transpiler.buildWithResolveResultEager(
                 item,
                 import_path_format,
                 Outstream,
                 outstream,
                 null,
             ) catch continue orelse continue;
-            bundler.output_files.append(output_file) catch unreachable;
+            transpiler.output_files.append(output_file) catch unreachable;
 
-            // if (count >= 3) return try bundler.processResolveQueueWithThreadPool(import_path_format, wrap_entry_point, Outstream, outstream);
+            // if (count >= 3) return try transpiler.processResolveQueueWithThreadPool(import_path_format, wrap_entry_point, Outstream, outstream);
         }
     }
 };

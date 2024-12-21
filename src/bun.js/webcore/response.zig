@@ -1889,10 +1889,10 @@ pub const Fetch = struct {
             var proxy: ?ZigURL = null;
             if (fetch_options.proxy) |proxy_opt| {
                 if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                    proxy = fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                    proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxy(fetch_options.url);
                 }
             } else {
-                proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                proxy = jsc_vm.transpiler.env.getHttpProxy(fetch_options.url);
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -3008,7 +3008,7 @@ pub const Fetch = struct {
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         return globalThis.throwError(err, "Failed to resolve file url");
-                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                    }) else globalThis.bunVM().transpiler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
                         cwd,

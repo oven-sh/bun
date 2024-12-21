@@ -227,7 +227,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
-        return this.globalThis.bunVM().bundler.env.map.createNullDelimitedEnvMap(alloc);
+        return this.globalThis.bunVM().transpiler.env.map.createNullDelimitedEnvMap(alloc);
     }
 
     pub inline fn getAllocator(this: @This()) Allocator {
@@ -239,11 +239,11 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn topLevelDir(this: @This()) []const u8 {
-        return this.globalThis.bunVM().bundler.fs.top_level_dir;
+        return this.globalThis.bunVM().transpiler.fs.top_level_dir;
     }
 
     pub inline fn env(this: @This()) *bun.DotEnv.Loader {
-        return this.globalThis.bunVM().bundler.env;
+        return this.globalThis.bunVM().transpiler.env;
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {

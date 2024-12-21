@@ -5,8 +5,8 @@
 import { parseArgs } from "node:util";
 import { join, relative } from "node:path";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { getEnv, getPublicIp, getUser, getUsername, mkdir, parseOs, rm, spawnSync, startGroup } from "./utils.mjs";
-import { writeFile, mkdtemp, which, spawn, spawnSafe, spawnSsh, spawnSshSafe, spawnScp } from "./utils.mjs";
+import { getEnv, getUser, getUsername, parseOs, readFile, startGroup } from "./utils.mjs";
+import { rm, mkdir, writeFile, mkdtemp, which, spawn, spawnSafe, spawnSsh, spawnSshSafe, spawnScp } from "./utils.mjs";
 import { isPosix, isLinux, isMacOS, isWindows, getCloud, getCloudMetadataTag } from "./utils.mjs";
 import { getOs, getArch, getKernel, getAbi, getAbiVersion, getDistro, getDistroVersion } from "./utils.mjs";
 
@@ -19,10 +19,6 @@ function getAgentName() {
     name += `-${getDistro()}-${getDistroVersion()}`;
   } else {
     name += `-${getDistroVersion()}`;
-  }
-  const publicIp = getPublicIp();
-  if (publicIp) {
-    name += `-${publicIp}`;
   }
   return name;
 }
@@ -106,11 +102,16 @@ ${lines.join("\n")}
 async function getAgentCommand(location) {
   const { agentPath, homePath, configPath, cachePath, logsPath } = location;
   const cloud = getCloud();
-  const command = [agentPath, "start", "--name", getAgentName()];
+  const command = [agentPath, "start"];
 
+  let name = getAgentName();
   if (existsSync(configPath)) {
     command.push("--config", configPath);
+    if (readFile(configPath).includes("spawn=")) {
+      name += "-%spawn";
+    }
   }
+  command.push("--name", name);
 
   // If the agent token is set, use it.
   // If this is not set, the agent will fail to start.

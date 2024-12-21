@@ -641,7 +641,7 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
     defer referrer.deinit();
 
     if (bun.resolver.isPackagePath(specifier.slice())) {
-        return global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's transpiler", .{
+        return global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler", .{
             bun.fmt.quote(specifier.slice()),
             bun.fmt.quote(referrer.slice()),
         }) catch bun.String.dead;

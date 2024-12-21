@@ -539,6 +539,7 @@ pub const Response = struct {
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
+                    response.redirected = true;
                     var headers_ref = response.init.headers.?;
                     headers_ref.put(.Location, result.url, globalThis);
                     return bun.new(Response, response);

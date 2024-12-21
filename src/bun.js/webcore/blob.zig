@@ -1100,6 +1100,7 @@ pub const Blob = struct {
 
     const WriteFileOptions = struct {
         mkdirp_if_not_exists: ?bool = null,
+        extra_options: ?JSValue = null,
     };
     pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: PathOrBlob, data: JSC.JSValue, options: WriteFileOptions) bun.JSError!JSC.JSValue {
         if (data.isEmptyOrUndefinedOrNull()) {
@@ -1373,7 +1374,8 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         };
         var mkdirp_if_not_exists: ?bool = null;
-        if (args.nextEat()) |options_object| {
+        const options = args.nextEat();
+        if (options) |options_object| {
             if (options_object.isObject()) {
                 if (try options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
@@ -1387,6 +1389,7 @@ pub const Blob = struct {
         }
         return writeFileInternal(globalThis, path_or_blob, data, .{
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .extra_options = options,
         });
     }
 
@@ -1566,12 +1569,179 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
+    pub fn JSS3File_upload_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments_old(3).slice();
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        defer args.deinit();
+
+        // accept a path or a blob
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
+
+        if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
+            return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a S3 or path to upload", .{});
+        }
+
+        const data = args.nextEat() orelse {
+            return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a Blob-y thing to upload", .{});
+        };
+
+        switch (path_or_blob) {
+            .path => |path| {
+                const options = args.nextEat();
+                if (path == .fd) {
+                    return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a S3 or path to upload", .{});
+                }
+                var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+                defer blob.deinit();
+
+                return try writeFileInternal(globalThis, .{ .blob = blob }, data, .{
+                    .mkdirp_if_not_exists = false,
+                    .extra_options = options,
+                });
+            },
+            .blob => return try writeFileInternal(globalThis, path_or_blob, data, .{
+                .mkdirp_if_not_exists = false,
+                .extra_options = args.nextEat(),
+            }),
+        }
+    }
+    pub export fn JSS3File__upload(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        return JSS3File_upload_(globalThis, callframe) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory() catch {};
+                return .zero;
+            },
+        };
+    }
+    pub fn JSS3File_presign_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments_old(3).slice();
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        defer args.deinit();
+
+        // accept a path or a blob
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
+
+        if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
+            return globalThis.throwInvalidArguments("S3.presign(pathOrS3, options) expects a S3 or path to presign", .{});
+        }
+
+        switch (path_or_blob) {
+            .path => |path| {
+                if (path == .fd) {
+                    return globalThis.throwInvalidArguments("S3.presign(pathOrS3, options) expects a S3 or path to presign", .{});
+                }
+                const options = args.nextEat();
+                var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+                defer blob.deinit();
+                return try getPresignUrlFrom(&blob, globalThis, options);
+            },
+            .blob => return try getPresignUrlFrom(&path_or_blob.blob, globalThis, args.nextEat()),
+        }
+    }
+
+    pub export fn JSS3File__presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        return JSS3File_presign_(globalThis, callframe) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory() catch {};
+                return .zero;
+            },
+        };
+    }
+    pub fn JSS3File_unlink_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments_old(3).slice();
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        defer args.deinit();
+
+        // accept a path or a blob
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
+
+        if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
+            return globalThis.throwInvalidArguments("S3.unlink(pathOrS3) expects a S3 or path to delete", .{});
+        }
+
+        switch (path_or_blob) {
+            .path => |path| {
+                if (path == .fd) {
+                    return globalThis.throwInvalidArguments("S3.unlink(pathOrS3) expects a S3 or path to delete", .{});
+                }
+                var blob = try constructS3FileInternalStore(globalThis, path.path, args.nextEat());
+                defer blob.deinit();
+                return try doUnlink(&blob, globalThis, callframe);
+            },
+            .blob => return try doUnlink(&path_or_blob.blob, globalThis, callframe),
+        }
+    }
+
+    pub export fn JSS3File__unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        return JSS3File_unlink_(globalThis, callframe) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory() catch {};
+                return .zero;
+            },
+        };
+    }
+    pub export fn JSS3File__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
+        JSC.markBinding(@src());
+        const blob = value.as(Blob) orelse return false;
+        return blob.isS3();
+    }
+
     pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
         JSC.markBinding(@src());
         const blob = value.as(Blob) orelse return false;
         return blob.is_jsdom_file;
     }
+    extern fn BUN__createJSS3FileConstructor(*JSC.JSGlobalObject) JSValue;
 
+    pub fn getJSS3FileConstructor(
+        globalObject: *JSC.JSGlobalObject,
+        _: *JSC.JSObject,
+    ) callconv(JSC.conv) JSValue {
+        return BUN__createJSS3FileConstructor(globalObject);
+    }
+    export fn JSS3File__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*Blob {
+        const vm = globalThis.bunVM();
+        const arguments = callframe.arguments_old(2).slice();
+        var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
+        defer args.deinit();
+
+        const path = (JSC.Node.PathLike.fromJS(globalThis, &args)) catch |err| switch (err) {
+            error.JSError => null,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory() catch {};
+                return null;
+            },
+        };
+        if (path == null) {
+            globalThis.throwInvalidArguments("Expected file path string", .{}) catch return null;
+            return null;
+        }
+        return constructS3FileInternal(globalThis, path.?, args.nextEat()) catch |err| switch (err) {
+            error.JSError => null,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory() catch {};
+                return null;
+            },
+        };
+    }
     export fn JSDOMFile__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*Blob {
         return JSDOMFile__construct_(globalThis, callframe) catch |err| switch (err) {
             error.JSError => null,
@@ -1606,8 +1776,6 @@ pub const Blob = struct {
                     return globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                 },
             };
-            //TODO: S3 add more options here for credentials
-
             if (blob.store) |store_| {
                 switch (store_.data) {
                     .bytes => |*bytes| {
@@ -1708,12 +1876,11 @@ pub const Blob = struct {
             _ = JSDOMFile__hasInstance;
         }
     }
-
-    fn constructS3FileInternal(
+    fn constructS3FileInternalStore(
         globalObject: *JSC.JSGlobalObject,
         path: JSC.Node.PathLike,
         options: ?JSC.JSValue,
-    ) bun.JSError!JSC.JSValue {
+    ) bun.JSError!Blob {
         var multipart_options: S3MultiPartUpload.MultiPartUploadOptions = .{};
 
         // get ENV config
@@ -1834,10 +2001,23 @@ pub const Blob = struct {
         }
         const store = Blob.Store.initS3(path, null, credentials, bun.default_allocator) catch bun.outOfMemory();
         store.data.s3.options = multipart_options;
-        const blob = Blob.initWithStore(store, globalObject);
-
-        var ptr = Blob.new(blob);
+        return Blob.initWithStore(store, globalObject);
+    }
+    fn constructS3FileInternal(
+        globalObject: *JSC.JSGlobalObject,
+        path: JSC.Node.PathLike,
+        options: ?JSC.JSValue,
+    ) bun.JSError!*Blob {
+        var ptr = Blob.new(try constructS3FileInternalStore(globalObject, path, options));
         ptr.allocator = bun.default_allocator;
+        return ptr;
+    }
+    fn constructS3FileInternalJS(
+        globalObject: *JSC.JSGlobalObject,
+        path: JSC.Node.PathLike,
+        options: ?JSC.JSValue,
+    ) bun.JSError!JSC.JSValue {
+        var ptr = try constructS3FileInternal(globalObject, path, options);
         return ptr.toJS(globalObject);
     }
 
@@ -1857,7 +2037,7 @@ pub const Blob = struct {
         const options = if (arguments.len >= 2) arguments[1] else null;
         if (path == .path) {
             if (strings.startsWith(path.path.slice(), "s3://")) {
-                return constructS3FileInternal(globalObject, path.path, options);
+                return constructS3FileInternalJS(globalObject, path.path, options);
             }
         }
         var blob = Blob.findOrCreateFileFromPath(&path, globalObject);
@@ -1908,7 +2088,7 @@ pub const Blob = struct {
         const path = (try JSC.Node.PathLike.fromJS(globalObject, &args)) orelse {
             return globalObject.throwInvalidArguments("Expected file path string", .{});
         };
-        return constructS3FileInternal(globalObject, path, args.nextEat());
+        return constructS3FileInternalJS(globalObject, path, args.nextEat());
     }
 
     pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
@@ -4073,7 +4253,8 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         }
         var mkdirp_if_not_exists: ?bool = null;
-        if (args.nextEat()) |options_object| {
+        const options = args.nextEat();
+        if (options) |options_object| {
             if (options_object.isObject()) {
                 if (try options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
@@ -4085,7 +4266,7 @@ pub const Blob = struct {
                 return globalThis.throwInvalidArgumentType("write", "options", "object");
             }
         }
-        return writeFileInternal(globalThis, .{ .blob = this.* }, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists });
+        return writeFileInternal(globalThis, .{ .blob = this.* }, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
     }
 
     pub fn doUnlink(this: *Blob, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -4111,13 +4292,11 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
-    pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
         if (this.isS3()) {
-            const args = callframe.arguments_old(1);
             var method: bun.http.Method = .GET;
             var expires: usize = 86400; // 1 day default
-            if (args.len > 0) {
-                const options = args.ptr[0];
+            if (extra_options) |options| {
                 if (options.isObject()) {
                     if (try options.getTruthyComptime(globalThis, "method")) |method_| {
                         method = Method.fromJS(globalThis, method_) orelse {
@@ -4145,7 +4324,13 @@ pub const Blob = struct {
             var str = bun.String.fromUTF8(result.url);
             return str.transferToJS(this.globalThis);
         }
+
         return globalThis.throwError(error.NotSupported, "is only possible to presign s3:// files");
+    }
+
+    pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.arguments_old(1);
+        return getPresignUrlFrom(this, globalThis, if (args.len > 0) args.ptr[0] else null);
     }
 
     pub const FileStreamWrapper = struct {

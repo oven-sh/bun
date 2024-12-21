@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -83,6 +84,7 @@
 #include "JSDOMConvertUnion.h"
 #include "JSDOMException.h"
 #include "JSDOMFile.h"
+#include "JSS3File.h"
 #include "JSDOMFormData.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
@@ -2808,6 +2810,25 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     return true;
 }
 
+extern "C" JSC::EncodedJSValue JSS3File__upload(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__presign(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__unlink(JSGlobalObject*, JSC::CallFrame*);
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Upload, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__upload(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Presign, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__presign(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Unlink, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__unlink(lexicalGlobalObject, callFrame);
+}
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -2827,6 +2848,16 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
             init.set(fileConstructor);
+        });
+
+    m_JSS3FileConstructor.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSObject* s3Constructor = Bun::createJSS3FileConstructor(init.vm, init.owner);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "upload"_s), 3, jsS3Upload, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "unlink"_s), 3, jsS3Unlink, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "presign"_s), 3, jsS3Presign, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+
+            init.set(s3Constructor);
         });
 
     m_cryptoObject.initLater(
@@ -3819,6 +3850,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
+    thisObject->m_JSS3FileConstructor.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);

@@ -429,11 +429,21 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
-  test("elides output by default when using --filter", () => {
+  function runElideLinesTest({
+    elideLines,
+    target_pattern,
+    antipattern,
+    win32ExpectedError,
+  }: {
+    elideLines: number;
+    target_pattern: RegExp[];
+    antipattern?: RegExp[];
+    win32ExpectedError: RegExp;
+  }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
         dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
           "package.json": JSON.stringify({
             name: "dep0",
             scripts: {
@@ -448,84 +458,52 @@ describe("bun", () => {
       }),
     });
 
+    if (process.platform === "win32") {
+      const { exitCode, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stderr.toString()).toMatch(win32ExpectedError);
+      expect(exitCode).not.toBe(0);
+      return;
+    }
+
     runInCwdSuccess({
       cwd: dir,
       pattern: "./packages/dep0",
-      env: {
-        FORCE_COLOR: "1",
-        NO_COLOR: "0",
-      },
-      target_pattern: [
-        /\[10 lines elided\]/,
-        /(?:log_line[\s\S]*?){20}/,
-      ],
+      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
+      target_pattern,
+      antipattern,
       command: ["script"],
-      elideCount: 10,
+      elideCount: elideLines,
+    });
+  }
+
+  test("elides output by default when using --filter", () => {
+    runElideLinesTest({
+      elideLines: 10,
+      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
   test("respects --elide-lines argument", () => {
-    const dir = tempDirWithFiles("testworkspace", {
-      packages: {
-        dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              script: `${bunExe()} run index.js`,
-            },
-          }),
-        },
-      },
-      "package.json": JSON.stringify({
-        name: "ws",
-        workspaces: ["packages/*"],
-      }),
-    });
-
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: {
-        FORCE_COLOR: "1",
-        NO_COLOR: "0",
-      },
-      target_pattern: [
-        /\[5 lines elided\]/,
-        /(?:log_line[\s\S]*?){20}/,
-      ],
-      command: ["script"],
-      elideCount: 15,
+    runElideLinesTest({
+      elideLines: 15,
+      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
   test("--elide-lines=0 shows all output", () => {
-    const dir = tempDirWithFiles("testworkspace", {
-      packages: {
-        dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join('\n'),
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              script: `${bunExe()} run index.js`,
-            },
-          }),
-        },
-      },
-      "package.json": JSON.stringify({
-        name: "ws",
-        workspaces: ["packages/*"],
-      }),
-    });
-
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1" },
+    runElideLinesTest({
+      elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
-      command: ["script"],
-      elideCount: 0,
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 });

@@ -322,10 +322,8 @@ function getCppAgent(platform, options) {
  * @returns {Agent}
  */
 function getZigAgent(platform, options) {
-  const { arch } = platform;
   return {
     queue: "build-zig",
-    "distro-version": "15.1",
   };
 }
 
@@ -419,7 +417,6 @@ function getBuildVendorStep(platform, options) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -482,7 +479,7 @@ function getLinkBunStep(platform, options) {
       `${getTargetKey(platform)}-build-cpp`,
       `${getTargetKey(platform)}-build-zig`,
     ],
-    agents: getCppAgent(platform, options, true),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {

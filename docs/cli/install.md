@@ -130,6 +130,20 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
 
+## Omitting dependencies
+
+To omit dev, peer, or optional dependencies use the `--omit` flag.
+
+```bash
+# Exclude "devDependencies" from the installation. This will apply to the
+# root package and workspaces if they exist. Transitive dependencies will
+# not have "devDependencies".
+$ bun install --omit dev
+
+# Install only dependencies from "dependencies"
+$ bun install --omit=dev --omit=peer --omit=optional
+```
+
 ## Dry run
 
 To perform a dry run (i.e. don't actually install anything):

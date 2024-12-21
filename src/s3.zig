@@ -20,6 +20,136 @@ pub const AWSCredentials = struct {
         return @sizeOf(AWSCredentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
     }
 
+    pub const AWSCredentialsWithOptions = struct {
+        credentials: AWSCredentials,
+        options: MultiPartUpload.MultiPartUploadOptions = .{},
+
+        _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
+        _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
+        _regionSlice: ?JSC.ZigString.Slice = null,
+        _endpointSlice: ?JSC.ZigString.Slice = null,
+        _bucketSlice: ?JSC.ZigString.Slice = null,
+
+        pub fn deinit(this: *@This()) void {
+            if (this._accessKeyIdSlice) |slice| slice.deinit();
+            if (this._secretAccessKeySlice) |slice| slice.deinit();
+            if (this._regionSlice) |slice| slice.deinit();
+            if (this._endpointSlice) |slice| slice.deinit();
+            if (this._bucketSlice) |slice| slice.deinit();
+        }
+    };
+    pub fn getCredentialsWithOptions(this: AWSCredentials, options: ?JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+        // get ENV config
+        var new_credentials = AWSCredentialsWithOptions{
+            .credentials = this,
+            .options = .{},
+        };
+        errdefer {
+            new_credentials.deinit();
+        }
+
+        if (options) |opts| {
+            if (opts.isObject()) {
+                if (try opts.getTruthyComptime(globalObject, "accessKeyId")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._accessKeyIdSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.accessKeyId = new_credentials._accessKeyIdSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("accessKeyId", "string", js_value);
+                        }
+                    }
+                }
+                if (try opts.getTruthyComptime(globalObject, "secretAccessKey")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._secretAccessKeySlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.secretAccessKey = new_credentials._secretAccessKeySlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("secretAccessKey", "string", js_value);
+                        }
+                    }
+                }
+                if (try opts.getTruthyComptime(globalObject, "region")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._regionSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.region = new_credentials._regionSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("region", "string", js_value);
+                        }
+                    }
+                }
+                if (try opts.getTruthyComptime(globalObject, "endpoint")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
+                                const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).hostname;
+                                if (normalized_endpoint.len > 0) {
+                                    new_credentials.credentials.endpoint = normalized_endpoint;
+                                }
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("endpoint", "string", js_value);
+                        }
+                    }
+                }
+                if (try opts.getTruthyComptime(globalObject, "bucket")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._bucketSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.bucket = new_credentials._bucketSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getOptional(globalObject, "pageSize", i32)) |pageSize| {
+                    if (pageSize < MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB and pageSize > MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB) {
+                        return globalObject.throwRangeError(pageSize, .{
+                            .min = @intCast(MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB),
+                            .max = @intCast(MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB),
+                            .field_name = "pageSize",
+                        });
+                    } else {
+                        new_credentials.options.partSize = @intCast(pageSize);
+                    }
+                }
+
+                if (try opts.getOptional(globalObject, "queueSize", i32)) |queueSize| {
+                    if (queueSize < 1) {
+                        return globalObject.throwRangeError(queueSize, .{
+                            .min = 1,
+                            .field_name = "queueSize",
+                        });
+                    } else {
+                        new_credentials.options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
+                    }
+                }
+            }
+        }
+        return new_credentials;
+    }
     pub fn dupe(this: *const @This()) *AWSCredentials {
         return AWSCredentials.new(.{
             .accessKeyId = if (this.accessKeyId.len > 0)

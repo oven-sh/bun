@@ -3197,103 +3197,19 @@ pub const Fetch = struct {
 
         if (url.isS3()) {
             // get ENV config
-            var credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
-            // get s3 settings from options configuration
-            var accessKeyIdSlice: ?ZigString.Slice = null;
-            var secretAccessKeySlice: ?ZigString.Slice = null;
-            var regionSlice: ?ZigString.Slice = null;
-            var endpointSlice: ?ZigString.Slice = null;
-            var bucketSlice: ?ZigString.Slice = null;
-
-            var multipart_options: s3.MultiPartUpload.MultiPartUploadOptions = .{};
-
+            var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().bundler.env.getAWSCredentials(),
+                .options = .{},
+            };
             defer {
-                // cleanup s3 options
-                if (accessKeyIdSlice) |slice| slice.deinit();
-                if (secretAccessKeySlice) |slice| slice.deinit();
-                if (regionSlice) |slice| slice.deinit();
-                if (endpointSlice) |slice| slice.deinit();
-                if (bucketSlice) |slice| slice.deinit();
+                credentialsWithOptions.deinit();
             }
 
             if (options_object) |options| {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-
-                        if (try s3_options.getTruthyComptime(globalThis, "accessKeyId")) |js_value| {
-                            if (js_value.isString()) {
-                                const str = bun.String.fromJS(js_value, globalThis);
-                                defer str.deref();
-                                if (str.tag != .Empty and str.tag != .Dead) {
-                                    accessKeyIdSlice = str.toUTF8(bun.default_allocator);
-                                    credentials.accessKeyId = accessKeyIdSlice.?.slice();
-                                }
-                            }
-                        }
-                        if (try s3_options.getTruthyComptime(globalThis, "secretAccessKey")) |js_value| {
-                            if (js_value.isString()) {
-                                const str = bun.String.fromJS(js_value, globalThis);
-                                defer str.deref();
-                                if (str.tag != .Empty and str.tag != .Dead) {
-                                    secretAccessKeySlice = str.toUTF8(bun.default_allocator);
-                                    credentials.secretAccessKey = secretAccessKeySlice.?.slice();
-                                }
-                            }
-                        }
-                        if (try s3_options.getTruthyComptime(globalThis, "region")) |js_value| {
-                            if (js_value.isString()) {
-                                const str = bun.String.fromJS(js_value, globalThis);
-                                defer str.deref();
-                                if (str.tag != .Empty and str.tag != .Dead) {
-                                    regionSlice = str.toUTF8(bun.default_allocator);
-                                    credentials.region = regionSlice.?.slice();
-                                }
-                            }
-                        }
-                        if (try s3_options.getTruthyComptime(globalThis, "endpoint")) |js_value| {
-                            if (js_value.isString()) {
-                                const str = bun.String.fromJS(js_value, globalThis);
-                                defer str.deref();
-                                if (str.tag != .Empty and str.tag != .Dead) {
-                                    endpointSlice = str.toUTF8(bun.default_allocator);
-                                    const normalized_endpoint = bun.URL.parse(endpointSlice.?.slice()).hostname;
-                                    if (normalized_endpoint.len > 0) {
-                                        credentials.endpoint = normalized_endpoint;
-                                    }
-                                }
-                            }
-                        }
-                        if (try s3_options.getTruthyComptime(globalThis, "bucket")) |js_value| {
-                            if (js_value.isString()) {
-                                const str = bun.String.fromJS(js_value, globalThis);
-                                defer str.deref();
-                                if (str.tag != .Empty and str.tag != .Dead) {
-                                    bucketSlice = str.toUTF8(bun.default_allocator);
-                                    credentials.bucket = bucketSlice.?.slice();
-                                }
-                            }
-                        }
-                        if (try s3_options.getOptional(globalThis, "pageSize", i32)) |pageSize| {
-                            if (pageSize < s3.MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB and pageSize > s3.MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB) {
-                                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createRangeErrorInstance("pageSize must be between than {} MiB and {} MiB", .{ s3.MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB, s3.MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB }));
-                                body.detach();
-
-                                return rejected_value;
-                            } else {
-                                multipart_options.partSize = @intCast(pageSize);
-                            }
-                        }
-
-                        if (try s3_options.getOptional(globalThis, "queueSize", i32)) |queueSize| {
-                            if (queueSize < 1) {
-                                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createRangeErrorInstance("queueSize must be greather than 0", .{}));
-                                body.detach();
-                                return rejected_value;
-                            } else {
-                                multipart_options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
-                            }
-                        }
+                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, s3_options, globalThis);
                     }
                 }
             }
@@ -3362,7 +3278,7 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, multipart_options, proxy_url, @ptrCast(&Wrapper.resolve), s3_stream);
+                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, credentialsWithOptions.options, proxy_url, @ptrCast(&Wrapper.resolve), s3_stream);
                 url = .{};
                 url_proxy_buffer = "";
                 return promise_value;
@@ -3372,7 +3288,7 @@ pub const Fetch = struct {
             }
 
             // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
-            var result = credentials.signRequest(url.s3Path(), method, null, null, null) catch |sign_err| {
+            var result = credentialsWithOptions.credentials.signRequest(url.s3Path(), method, null, null, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
                         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);

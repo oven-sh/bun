@@ -211,12 +211,13 @@ pub const PatchTask = struct {
                 },
                 .extract => {
                     debug("pkg: {s} extract", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+
+                    const task_id = Task.Id.forNPMPackage(manager.lockfile.str(&pkg.name), pkg.resolution.value.npm.version);
+                    bun.debugAssert(!manager.network_dedupe_map.contains(task_id));
+
                     const network_task = try manager.generateNetworkTaskForTarball(
                         // TODO: not just npm package
-                        Task.Id.forNPMPackage(
-                            manager.lockfile.str(&pkg.name),
-                            pkg.resolution.value.npm.version,
-                        ),
+                        task_id,
                         url,
                         manager.lockfile.buffers.dependencies.items[dep_id].behavior.isRequired(),
                         dep_id,

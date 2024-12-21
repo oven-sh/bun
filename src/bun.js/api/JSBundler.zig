@@ -79,6 +79,7 @@ pub const JSBundler = struct {
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
+        throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
 
         env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -504,6 +505,10 @@ pub const JSBundler = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
+            }
+
+            if (try config.getBooleanLoose(globalThis, "throw")) |flag| {
+                this.throw_on_error = flag;
             }
 
             return this;

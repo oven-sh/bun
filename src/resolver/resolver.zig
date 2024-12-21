@@ -1939,7 +1939,7 @@ pub const Resolver = struct {
                                             .root_request_id = 0,
                                         },
                                         null,
-                                    );
+                                    ) catch |enqueue_download_err| return .{ .failure = enqueue_download_err };
 
                                 return .{
                                     .pending = .{

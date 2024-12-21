@@ -437,6 +437,14 @@ try {
 
 const extractedSplitNewLines = value => {
   const lines = StringPrototypeSplit(value, "\n");
+  let i = 0;
+  for (let j = 0, length = lines.length; j < length; j++) {
+      const line = lines[j];
+     if (line !== "")
+          lines[i++] = line + "\n";
+  }
+  lines.length = i;
+  return lines;
   for (let i = 0; i < lines.length; i++) {
     if (i !== lines.length - 1) {
       lines[i] += "\n";

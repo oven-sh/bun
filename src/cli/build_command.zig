@@ -25,7 +25,7 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = bun.transpiler;
+const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
 
@@ -74,7 +74,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        var this_transpiler = try bundler.Transpiler.init(allocator, log, ctx.args, null);
+        var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
 
         this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
@@ -238,9 +238,9 @@ pub const BuildCommand = struct {
             .unspecified => {},
         }
 
-        var client_bundler: bundler.Transpiler = undefined;
+        var client_bundler: transpiler.Transpiler = undefined;
         if (this_transpiler.options.server_components) {
-            client_bundler = try bundler.Transpiler.init(allocator, log, ctx.args, null);
+            client_bundler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
             client_bundler.options = this_transpiler.options;
             client_bundler.options.target = .browser;
             client_bundler.options.server_components = true;

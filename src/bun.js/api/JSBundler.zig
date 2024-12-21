@@ -75,7 +75,7 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental_css: bool = false,
+        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
@@ -104,7 +104,7 @@ pub const JSBundler = struct {
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
             if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental_css = if (enable_css.isBoolean())
+                this.experimental.css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
                 else if (enable_css.isObject()) true: {
                     if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
@@ -113,6 +113,10 @@ pub const JSBundler = struct {
 
                     break :true true;
                 } else false;
+            }
+
+            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
+                this.experimental.html = enable_html;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue

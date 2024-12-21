@@ -168,7 +168,7 @@ assert.deepStrictEqual(dns.getServers(), []);
   const errorReg = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^The "hostname" argument must be of type string\. Received .*|^Expected hostname to be a string/
+    message: /^The "hostname" argument must be of type string\. Received:? .*|^Expected hostname to be a string/
   };
 
   assert.throws(() => dns.lookup({}, common.mustNotCall()), errorReg);
@@ -216,7 +216,7 @@ assert.deepStrictEqual(dns.getServers(), []);
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The (argument 'hints'|"flags" argument) is invalid\. Received \d+/
+    message: /The (argument 'hints'|"hints" option) is invalid\. Received:? \d+/
   };
 
   assert.throws(() => {
@@ -311,7 +311,7 @@ dns.lookup('', {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The (argument 'address'|"address" argument) is invalid. Received/
+    message: /The (argument 'address'|"address" argument) is invalid\. Received/
   };
 
   assert.throws(() => {

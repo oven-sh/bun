@@ -903,9 +903,6 @@ pub const AWSCredentials = struct {
                 state.has_more = !is_done;
 
                 state.request_error = if (result.fail) |err| @intFromError(err) else 0;
-                if (state.request_error != 0) {
-                    wait_until_done = true;
-                }
                 if (state.status_code == 0) {
                     if (result.certificate_info) |*certificate| {
                         certificate.deinit(bun.default_allocator);
@@ -917,26 +914,24 @@ pub const AWSCredentials = struct {
                     }
                 }
                 switch (state.status_code) {
-                    200, 204, 206 => wait_until_done = true,
-                    else => {},
+                    200, 204, 206 => wait_until_done = state.request_error != 0,
+                    else => wait_until_done = true,
                 }
                 this.setState(state);
                 this.http = async_http.*;
-                if (!wait_until_done) {
-                    if (result.body) |body| {
-                        this.reported_response_lock.lock();
-                        defer this.reported_response_lock.unlock();
-                        this.response_buffer = body.*;
-
-                        _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
-                        this.response_buffer.reset();
-                    }
-                }
             }
             // if we got a error or fail wait until we are done buffering the response body to report
             const should_enqueue = !wait_until_done or is_done;
             log("state err: {} status_code: {} has_more: {} should_enqueue: {}", .{ state.request_error, state.status_code, state.has_more, should_enqueue });
             if (should_enqueue) {
+                if (result.body) |body| {
+                    this.reported_response_lock.lock();
+                    defer this.reported_response_lock.unlock();
+                    this.response_buffer = body.*;
+
+                    _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
+                    this.response_buffer.reset();
+                }
                 if (this.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                     if (has_schedule_callback) {
                         return;
@@ -1152,6 +1147,9 @@ pub const AWSCredentials = struct {
             if (this.readable_stream_ref.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     const globalThis = this.readable_stream_ref.globalThis().?;
+                    const event_loop = globalThis.bunVM().eventLoop();
+                    event_loop.enter();
+                    defer event_loop.exit();
                     if (request_err) |err| {
                         readable.ptr.Bytes.onData(
                             .{
@@ -1217,7 +1215,11 @@ pub const AWSCredentials = struct {
         pub fn resolve(result: S3UploadResult, self: *@This()) void {
             const sink = self.sink;
             defer self.deref();
+
             if (sink.endPromise.globalObject()) |globalObject| {
+                const event_loop = globalObject.bunVM().eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
                 switch (result) {
                     .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
                     .failure => |err| {
@@ -1401,6 +1403,9 @@ pub const AWSCredentials = struct {
         const Wrapper = struct {
             pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
                 if (sink.endPromise.globalObject()) |globalObject| {
+                    const event_loop = globalObject.bunVM().eventLoop();
+                    event_loop.enter();
+                    defer event_loop.exit();
                     switch (result) {
                         .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
                         .failure => |err| {

@@ -4861,6 +4861,12 @@ pub const ByteStream = struct {
                 if (stream == .owned) allocator.free(stream.owned.slice());
                 if (stream == .owned_and_done) allocator.free(stream.owned_and_done.slice());
             }
+            this.has_received_last_chunk = stream.isDone();
+
+            if (this.pipe.ctx) |ctx| {
+                this.pipe.onPipe.?(ctx, stream, allocator);
+                return;
+            }
 
             return;
         }
@@ -4893,6 +4899,11 @@ pub const ByteStream = struct {
                     this.buffer_action = null;
                 }
 
+                if (this.buffer.capacity == 0 and stream == .done) {
+                    var blob = this.toAnyBlob().?;
+                    action.fulfill(&blob);
+                    return;
+                }
                 if (this.buffer.capacity == 0 and stream == .owned_and_done) {
                     this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                     var blob = this.toAnyBlob().?;
@@ -4961,7 +4972,7 @@ pub const ByteStream = struct {
             }
 
             const remaining = chunk[to_copy.len..];
-            if (remaining.len > 0)
+            if (remaining.len > 0 and chunk.len > 0)
                 this.append(stream, to_copy.len, chunk, allocator) catch @panic("Out of memory while copying request body");
 
             this.pending.run();
@@ -4997,6 +5008,7 @@ pub const ByteStream = struct {
                 .err => {
                     this.pending.result = .{ .err = stream.err };
                 },
+                .done => {},
                 else => unreachable,
             }
             return;
@@ -5017,6 +5029,7 @@ pub const ByteStream = struct {
 
                 this.pending.result = .{ .err = stream.err };
             },
+            .done => {},
             // We don't support the rest of these yet
             else => unreachable,
         }

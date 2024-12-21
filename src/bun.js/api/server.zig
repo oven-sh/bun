@@ -3538,7 +3538,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we can't do buffering ourselves here or it won't work
             // uSockets will append and manage the buffer
             // so any write will buffer if the write fails
-            if (resp.write(chunk)) {
+            if (chunk.len > 0 and resp.write(chunk)) {
                 if (stream.isDone()) {
                     this.endStream(this.shouldCloseConnection());
                 }

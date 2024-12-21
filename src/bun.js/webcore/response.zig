@@ -516,7 +516,7 @@ pub const Response = struct {
         if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
             if (arguments[0].as(Blob)) |blob| {
                 if (blob.isS3()) {
-                    if (arguments.len > 1) {
+                    if (!arguments[1].isEmptyOrUndefinedOrNull()) {
                         return globalThis.throwInvalidArguments("new Response(s3File) do not support ResponseInit options", .{});
                     }
                     var response: Response = .{

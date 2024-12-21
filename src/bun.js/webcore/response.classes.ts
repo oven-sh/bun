@@ -141,9 +141,7 @@ export default [
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData" },
-      exists: { fn: "getExists", length: 0, passThis: true },
-      // Non-standard, s3 support (migrate to a new place if needed)
-      presign: { fn: "getPresignUrl", length: 1 },
+      exists: { fn: "getExists", length: 0 },
 
       // Non-standard, but consistent!
       bytes: { fn: "getBytes" },
@@ -166,6 +164,16 @@ export default [
       lastModified: {
         getter: "getLastModified",
       },
+
+      // Non-standard, s3 + BunFile support
+      unlink: { fn: "doUnlink", length: 0 },
+      write: { fn: "doWrite", length: 2 },
+      // Non-standard, s3 support
+      bucket: {
+        cache: true,
+        getter: "getBucket",
+      },
+      presign: { fn: "getPresignUrl", length: 1 },
 
       size: {
         getter: "getSize",

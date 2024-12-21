@@ -158,7 +158,7 @@ pub const AWSCredentials = struct {
         return "us-east-1";
     }
 
-    pub fn signRequest(this: *const @This(), full_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, searchParams: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
+    pub fn signRequest(this: *const @This(), request_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, searchParams: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
         const expires = if (signQueryOption) |options| options.expires else 0;
@@ -172,6 +172,10 @@ pub const AWSCredentials = struct {
         };
 
         const region = if (this.region.len > 0) this.region else guessRegion(this.endpoint);
+        var full_path = request_path;
+        if (strings.startsWith(full_path, "/")) {
+            full_path = full_path[1..];
+        }
         var path: []const u8 = full_path;
         var bucket: []const u8 = this.bucket;
 
@@ -186,12 +190,19 @@ pub const AWSCredentials = struct {
                 return error.InvalidPath;
             }
         }
+        if (strings.endsWith(path, "/")) {
+            path = path[0..path.len];
+        }
+        if (strings.startsWith(path, "/")) {
+            path = path[1..];
+        }
+
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (path.len == 0) return error.InvalidPath;
 
         var path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
 
-        const normalizedPath = std.fmt.bufPrint(&path_buffer, "/{s}{s}", .{ bucket, if (strings.endsWith(path, "/")) path[0 .. path.len - 1] else path }) catch return error.InvalidPath;
+        const normalizedPath = std.fmt.bufPrint(&path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -519,7 +530,7 @@ pub const AWSCredentials = struct {
                         404 => {
                             callback(.{ .not_found = {} }, this.callback_context);
                         },
-                        200 => {
+                        200, 204 => {
                             callback(.{ .success = {} }, this.callback_context);
                         },
                         else => {
@@ -542,7 +553,7 @@ pub const AWSCredentials = struct {
                         404 => {
                             callback(.{ .not_found = {} }, this.callback_context);
                         },
-                        200, 206 => {
+                        200, 204, 206 => {
                             const body = this.response_buffer;
                             this.response_buffer = .{
                                 .allocator = bun.default_allocator,
@@ -671,8 +682,15 @@ pub const AWSCredentials = struct {
             const chunk = brk: {
                 const state = this.getState();
                 has_more = state.has_more;
-                if ((state.status_code != 200 and state.status_code != 206) or state.request_error != 0) {
-                    failed = true;
+                switch (state.status_code) {
+                    200, 204, 206 => {
+                        failed = state.request_error != 0;
+                    },
+                    else => {
+                        failed = true;
+                    },
+                }
+                if (failed) {
                     if (!has_more) {
                         var has_body_code = false;
                         var has_body_message = false;
@@ -762,8 +780,9 @@ pub const AWSCredentials = struct {
                         metadata.deinit(bun.default_allocator);
                     }
                 }
-                if (state.status_code != 200 and state.status_code != 206) {
-                    wait_until_done = true;
+                switch (state.status_code) {
+                    200, 204, 206 => wait_until_done = true,
+                    else => {},
                 }
                 this.setState(state);
                 this.http = async_http.*;
@@ -1352,7 +1371,7 @@ pub const MultiPartUpload = struct {
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
     pub const MultiPartUploadOptions = struct {
-        queueSize: u8 = 5, // more than 64 dont make sense so limit to 64
+        queueSize: u8 = 5, // more than 255 dont make sense http thread cannot handle more than that
         // in s3 client sdk they set it in bytes but the min is still 5 MiB
         // var params = {Bucket: 'bucket', Key: 'key', Body: stream};
         // var options = {partSize: 10 * 1024 * 1024, queueSize: 1};

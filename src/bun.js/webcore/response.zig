@@ -3291,7 +3291,7 @@ pub const Fetch = struct {
                                 body.detach();
                                 return rejected_value;
                             } else {
-                                multipart_options.queueSize = @intCast(@max(queueSize, 64));
+                                multipart_options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
                             }
                         }
                     }

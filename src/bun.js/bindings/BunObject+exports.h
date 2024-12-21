@@ -57,6 +57,7 @@
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
+    macro(s3) \
     macro(serve) \
     macro(sha) \
     macro(shrink) \

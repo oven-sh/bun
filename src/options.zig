@@ -909,9 +909,9 @@ pub const defaultLoaders = bun.ComptimeStringMap(Loader, default_loaders);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
-    default: ConditionsMap = undefined,
-    import: ConditionsMap = undefined,
-    require: ConditionsMap = undefined,
+    default: ConditionsMap,
+    import: ConditionsMap,
+    require: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
@@ -936,10 +936,25 @@ pub const ESMConditions = struct {
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
 
-        return ESMConditions{
+        return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+        };
+    }
+
+    pub fn clone(self: *const ESMConditions) !ESMConditions {
+        var default = try self.default.clone();
+        errdefer default.deinit();
+        var import = try self.import.clone();
+        errdefer import.deinit();
+        var require = try self.require.clone();
+        errdefer require.deinit();
+
+        return .{
+            .default = default,
+            .import = import,
+            .require = require,
         };
     }
 
@@ -949,9 +964,9 @@ pub const ESMConditions = struct {
         try self.require.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
-            self.default.putAssumeCapacityNoClobber(condition, {});
-            self.import.putAssumeCapacityNoClobber(condition, {});
-            self.require.putAssumeCapacityNoClobber(condition, {});
+            self.default.putAssumeCapacity(condition, {});
+            self.import.putAssumeCapacity(condition, {});
+            self.require.putAssumeCapacity(condition, {});
         }
     }
 };
@@ -1713,11 +1728,6 @@ pub const BundleOptions = struct {
         }
 
         opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
-
-        if (bun.FeatureFlags.breaking_changes_1_2) {
-            // This is currently done in DevServer by default, but not in Bun.build
-            @compileError("if (!production) { add \"development\" condition }");
-        }
 
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();

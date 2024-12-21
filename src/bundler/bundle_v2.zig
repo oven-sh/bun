@@ -15558,7 +15558,8 @@ pub const AstBuilder = struct {
 
             _ = try js_parser.ImportScanner.scan(AstBuilder, p, p.stmts.items, false, true, &hmr_transform_ctx);
 
-            const new_parts = try hmr_transform_ctx.finalize(p, parts.slice());
+            try hmr_transform_ctx.finalize(p, parts.slice());
+            const new_parts = parts.slice();
             // preserve original capacity
             parts.len = @intCast(new_parts.len);
             bun.assert(new_parts.ptr == parts.ptr);

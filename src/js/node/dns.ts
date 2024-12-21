@@ -157,7 +157,7 @@ function invalidHostname(hostname) {
   );
 }
 
-function translateLookupOptions(options) {
+function translateLookupOptions(options, defaultOrder) {
   if (!options || typeof options !== "object") {
     options = { family: options };
   }
@@ -207,9 +207,9 @@ function lookup(hostname, options, callback) {
   options = translateLookupOptions(options);
   validateLookupOptions(options);
 
-  if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
+  if (!hostname) {
     invalidHostname(hostname);
-    callback(null, []);
+    callback(null, null, 4);
     return;
   }
 
@@ -234,6 +234,8 @@ function lookupService(address, port, callback) {
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
   }
+
+  validateString(address);
 
   dns.lookupService(address, port).then(
     results => {
@@ -595,8 +597,6 @@ var {
   resolveTxt,
 } = InternalResolver.prototype;
 
-function setDefaultResultOrder() {}
-
 const mapLookupAll = res => {
   const { address, family } = res;
   return { address, family };
@@ -657,9 +657,12 @@ const promises = {
     options = translateLookupOptions(options);
     validateLookupOptions(options);
 
-    if (hostname !== hostname || (typeof hostname !== "number" && !hostname)) {
+    if (!hostname) {
       invalidHostname(hostname);
-      return Promise.resolve([]);
+      return Promise.resolve({
+        address: null,
+        family: 4,
+      });
     }
 
     if (options.all) {
@@ -672,11 +675,8 @@ const promises = {
     if (arguments.length !== 2) {
       throw $ERR_MISSING_ARGS('The "address" and "port" arguments must be specified');
     }
-    try {
-      return translateErrorCode(dns.lookupService(address, port));
-    } catch (e) {
-      return translateErrorCode(Promise.reject(e));
-    }
+
+    return translateErrorCode(dns.lookupService(address, port));
   },
 
   resolve(hostname, rrtype) {
@@ -896,7 +896,6 @@ export default {
   lookupService,
   Resolver,
   setServers,
-  setDefaultResultOrder,
   resolve,
   reverse,
   resolve4,

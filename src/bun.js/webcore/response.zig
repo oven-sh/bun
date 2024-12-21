@@ -513,6 +513,38 @@ pub const Response = struct {
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
         const arguments = callframe.argumentsAsArray(2);
 
+        if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
+            if (arguments[0].as(Blob)) |blob| {
+                if (blob.isS3()) {
+                    if (arguments.len > 1) {
+                        return globalThis.throwInvalidArguments("new Response(s3File) do not support ResponseInit options", .{});
+                    }
+                    var response: Response = .{
+                        .init = Response.Init{
+                            .status_code = 302,
+                        },
+                        .body = Body{
+                            .value = .{ .Empty = {} },
+                        },
+                        .url = bun.String.empty,
+                    };
+
+                    const result = blob.store.?.data.s3.getCredentials().signRequest(blob.store.?.data.s3.path(), .GET, null, null, .{ .expires = 15 * 60 }) catch |sign_err| {
+                        return switch (sign_err) {
+                            error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
+                            error.InvalidMethod => unreachable,
+                            error.InvalidPath => globalThis.throwError(sign_err, "invalid s3 bucket, key combination"),
+                            else => globalThis.throwError(error.SignError, "failed to retrieve s3 content check your credentials"),
+                        };
+                    };
+                    defer result.deinit();
+                    response.init.headers = response.getOrCreateHeaders(globalThis);
+                    var headers_ref = response.init.headers.?;
+                    headers_ref.put(.Location, result.url, globalThis);
+                    return bun.new(Response, response);
+                }
+            }
+        }
         var init: Init = (brk: {
             if (arguments[1].isUndefinedOrNull()) {
                 break :brk Init{

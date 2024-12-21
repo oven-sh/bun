@@ -4206,7 +4206,7 @@ pub const Blob = struct {
         return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
-    fn isS3(this: *const Blob) bool {
+    pub fn isS3(this: *const Blob) bool {
         if (this.store) |store| {
             return store.data == .s3;
         }
@@ -4527,7 +4527,9 @@ pub const Blob = struct {
 
         if (this.isS3()) {
             const s3 = &this.store.?.data.s3;
-            var aws_options = s3.getCredentialsWithOptions(extra_options, globalThis);
+            var aws_options = s3.getCredentialsWithOptions(extra_options, globalThis) catch |err| {
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.takeException(err));
+            };
             defer aws_options.deinit();
 
             const path = s3.path();

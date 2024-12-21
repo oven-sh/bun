@@ -1111,9 +1111,9 @@ pub const Body = struct {
         var body = Body{ .value = Value{ .Null = {} } };
 
         body.value = try Value.fromJS(globalThis, value);
-        if (body.value == .Blob)
+        if (body.value == .Blob) {
             assert(body.value.Blob.allocator == null); // owned by Body
-
+        }
         return body;
     }
 };

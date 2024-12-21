@@ -1140,11 +1140,11 @@ pub const PackCommand = struct {
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
-        var this_bundler: bun.transpiler.Transpiler = undefined;
+        var this_transpiler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
             ctx.command_ctx,
-            &this_bundler,
+            &this_transpiler,
             manager.env,
             manager.options.log_level != .silent,
             false,
@@ -1177,7 +1177,7 @@ pub const PackCommand = struct {
                             prepublish_only,
                             "prepublishOnly",
                             abs_workspace_path,
-                            this_bundler.env,
+                            this_transpiler.env,
                             &.{},
                             manager.options.log_level == .silent,
                             ctx.command_ctx.debug.use_system_shell,
@@ -1202,7 +1202,7 @@ pub const PackCommand = struct {
                         prepack_script_str,
                         "prepack",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1226,7 +1226,7 @@ pub const PackCommand = struct {
                         prepare_script_str,
                         "prepare",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1393,7 +1393,7 @@ pub const PackCommand = struct {
                     .uses_workspaces = false,
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
-                    .script_env = this_bundler.env,
+                    .script_env = this_transpiler.env,
                     .normalized_pkg_info = "",
                 };
             }
@@ -1719,7 +1719,7 @@ pub const PackCommand = struct {
                 .uses_workspaces = false,
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
-                .script_env = this_bundler.env,
+                .script_env = this_transpiler.env,
                 .normalized_pkg_info = normalized_pkg_info,
             };
         }

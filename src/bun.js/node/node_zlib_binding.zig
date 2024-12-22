@@ -239,7 +239,6 @@ pub fn CompressionStream(comptime T: type) type {
                 this.pending_close = true;
                 return;
             }
-            this.poll_ref.unref(JSC.VirtualMachine.get());
             this.pending_close = false;
             this.closed = true;
             this.this_value.deinit();

@@ -9556,16 +9556,17 @@ pub const LinkerContext = struct {
             pub fn onHEADTag(this: *@This(), element: *lol.Element) void {
                 var html_appender = std.heap.stackFallback(256, bun.default_allocator);
                 const allocator = html_appender.get();
-                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                    const script = std.fmt.allocPrint(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
-                    defer allocator.free(script);
-                    element.append(script, true) catch bun.outOfMemory();
-                }
 
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                     const link_tag = std.fmt.allocPrint(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(link_tag);
                     element.append(link_tag, true) catch bun.outOfMemory();
+                }
+
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    const script = std.fmt.allocPrint(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                    defer allocator.free(script);
+                    element.append(script, true) catch bun.outOfMemory();
                 }
             }
 

@@ -87,13 +87,6 @@ pub const HTMLScanner = struct {
                     .url_attribute = "src",
                     .kind = .stmt,
                 },
-                // // Style tags
-                // .{
-                //     .selector = "style",
-                //     .has_content = true,
-                //     .url_attribute = "",
-                //     .kind = .at,
-                // },
                 // CSS Stylesheets
                 .{
                     .selector = "link[rel='stylesheet'][href]",

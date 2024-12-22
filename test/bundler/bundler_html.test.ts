@@ -201,7 +201,8 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
       api.expectFile("out/index.html").not.toContain("main.js");
 
       // Check that the bundle contains all the imported code
-      const jsBundle = api.readFile(api.expectFile("index.html").toMatch(/src="(.*\.js)"/).groups[1]);
+      const jsMatch = api.expectFile("index.html").toMatch(/src="(.*\.js)"/);
+      const jsBundle = api.readFile(jsMatch[1]);
       expect(jsBundle).toContain("Hello");
       expect(jsBundle).toContain("padZero");
       expect(jsBundle).toContain("formatDate");
@@ -436,14 +437,29 @@ export const largeModule = {
       }
 
       // Verify that shared code exists in both bundles
-      const page1Js = api.readFile(api.expectFile("out/pages/page1.html").toMatch(/src="(.*\.js)"/).groups[1]);
-      const page2Js = api.readFile(api.expectFile("out/pages/page2.html").toMatch(/src="(.*\.js)"/).groups[1]);
+      const page1Html = api.readFile("out/pages/page1.html");
+      const page2Html = api.readFile("out/pages/page2.html");
+
+      const page1JsPath = page1Html.match(/src="(.*\.js)"/)?.[1];
+      const page2JsPath = page2Html.match(/src="(.*\.js)"/)?.[1];
+
+      expect(page1JsPath).toBeDefined();
+      expect(page2JsPath).toBeDefined();
+
+      const page1Js = api.readFile(page1JsPath!);
+      const page2Js = api.readFile(page2JsPath!);
       expect(page1Js).toContain("Shared utility");
       expect(page2Js).toContain("Shared utility");
 
       // Check CSS bundles
-      const page1Css = api.readFile(api.expectFile("out/pages/page1.html").toMatch(/href="(.*\.css)"/).groups[1]);
-      const page2Css = api.readFile(api.expectFile("out/pages/page2.html").toMatch(/href="(.*\.css)"/).groups[1]);
+      const page1CssPath = page1Html.match(/href="(.*\.css)"/)?.[1];
+      const page2CssPath = page2Html.match(/href="(.*\.css)"/)?.[1];
+
+      expect(page1CssPath).toBeDefined();
+      expect(page2CssPath).toBeDefined();
+
+      const page1Css = api.readFile(page1CssPath!);
+      const page2Css = api.readFile(page2CssPath!);
       expect(page1Css).toContain("box-sizing: border-box");
       expect(page2Css).toContain("box-sizing: border-box");
       expect(page1Css).toContain(".shared");

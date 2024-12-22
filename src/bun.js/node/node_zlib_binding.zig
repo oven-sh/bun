@@ -239,6 +239,7 @@ pub fn CompressionStream(comptime T: type) type {
                 this.pending_close = true;
                 return;
             }
+            this.poll_ref.unref(JSC.VirtualMachine.get());
             this.pending_close = false;
             this.closed = true;
             this.this_value.deinit();
@@ -351,11 +352,10 @@ pub const SNativeZlib = struct {
     }
 
     //// adding this didnt help much but leaving it here to compare the number with later
-    // pub fn estimatedSize(this: *const SNativeZlib) usize {
-    //     _ = this;
-    //     const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
-    //     return @sizeOf(SNativeZlib) + internal_state_size;
-    // }
+    pub fn estimatedSize(_: *const SNativeZlib) usize {
+        const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
+        return @sizeOf(SNativeZlib) + internal_state_size;
+    }
 
     pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(7).slice();

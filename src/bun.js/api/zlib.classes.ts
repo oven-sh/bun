@@ -5,13 +5,12 @@ export default [
     name: "NativeZlib",
     construct: true,
     noConstructor: false,
-    wantsThis: true,
     finalize: true,
     configurable: false,
     // estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["callback"],
+    values: ["writeCallback", "errorCallback"],
 
     proto: {
       init: { fn: "init" },
@@ -20,7 +19,7 @@ export default [
       params: { fn: "params" },
       reset: { fn: "reset" },
       close: { fn: "close" },
-      onerror: { setter: "setOnError", getter: "getOnError" },
+      onerror: { setter: "setOnError", this: true, getter: "getOnError" },
     },
   }),
 
@@ -28,13 +27,12 @@ export default [
     name: "NativeBrotli",
     construct: true,
     noConstructor: false,
-    wantsThis: true,
     finalize: true,
     configurable: false,
     estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["callback"],
+    values: ["writeCallback", "errorCallback"],
 
     proto: {
       init: { fn: "init" },
@@ -43,7 +41,7 @@ export default [
       params: { fn: "params" },
       reset: { fn: "reset" },
       close: { fn: "close" },
-      onerror: { setter: "setOnError", getter: "getOnError" },
+      onerror: { setter: "setOnError", this: true, getter: "getOnError" },
     },
   }),
 ];

@@ -5875,7 +5875,7 @@ pub const LinkerContext = struct {
         const experimental_css = this.options.experimental.css;
         const experimental_html = this.options.experimental.html;
         const css_chunking = this.options.css_chunking;
-        var html_chunks = std.ArrayList(Chunk).init(temp_allocator);
+        var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
         const loaders = this.parse_graph.input_files.items(.loader);
 
         // Create chunks for entry points
@@ -5884,6 +5884,30 @@ pub const LinkerContext = struct {
 
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
+
+            var has_html_chunk = false;
+
+            // Put this early on in this loop so that CSS-only entry points work.
+            if (experimental_html) {
+                if (loaders[source_index] == .html) {
+                    const html_chunk_entry = try html_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    has_html_chunk = true;
+                    if (!html_chunk_entry.found_existing) {
+                        html_chunk_entry.value_ptr.* = .{
+                            .entry_point = .{
+                                .entry_point_id = entry_bit,
+                                .source_index = source_index,
+                                .is_entry_point = true,
+                            },
+                            .entry_bits = entry_bits.*,
+                            .content = .{
+                                .html = .{},
+                            },
+                            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        };
+                    }
+                }
+            }
 
             if (experimental_css and css_asts[source_index] != null) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
@@ -5914,29 +5938,11 @@ pub const LinkerContext = struct {
                             },
                         },
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        .has_html_chunk = has_html_chunk,
                     };
                 }
 
                 continue;
-            }
-
-            var has_html_chunk = false;
-
-            if (experimental_html) {
-                if (loaders[source_index] == .html) {
-                    has_html_chunk = true;
-                    try html_chunks.append(.{
-                        .entry_point = .{
-                            .source_index = source_index,
-                            .is_entry_point = true,
-                        },
-                        .entry_bits = entry_bits.*,
-                        .content = .{
-                            .html = .{},
-                        },
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                    });
-                }
             }
 
             // Create a chunk for the entry point here to ensure that the chunk is
@@ -6068,7 +6074,7 @@ pub const LinkerContext = struct {
         // Sort the chunks for determinism. This matters because we use chunk indices
         // as sorting keys in a few places.
         const chunks: []Chunk = sort_chunks: {
-            var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count() + html_chunks.items.len);
+            var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count() + html_chunks.count());
 
             var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
@@ -6107,7 +6113,7 @@ pub const LinkerContext = struct {
             }
 
             if (experimental_html) {
-                for (html_chunks.items) |*chunk| {
+                for (html_chunks.values()) |*chunk| {
                     sorted_chunks.appendAssumeCapacity(chunk.*);
                 }
             }
@@ -9513,7 +9519,7 @@ pub const LinkerContext = struct {
             current_import_record_index: u32 = 0,
             chunk: *Chunk,
             chunks: []Chunk,
-
+            minify_whitespace: bool,
             output: std.ArrayList(u8),
 
             pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
@@ -9557,15 +9563,19 @@ pub const LinkerContext = struct {
                 var html_appender = std.heap.stackFallback(256, bun.default_allocator);
                 const allocator = html_appender.get();
 
+                if (this.minify_whitespace)
+                    // Clear whitespace and anything else in the head
+                    element.setInnerContent("", false) catch bun.outOfMemory();
+
                 // Put CSS before JS to reduce changes of flash of unstyled content
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                    const link_tag = std.fmt.allocPrint(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                    const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(link_tag);
                     element.append(link_tag, true) catch bun.outOfMemory();
                 }
 
                 if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                    const script = std.fmt.allocPrint(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                    const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(script);
                     element.append(script, true) catch bun.outOfMemory();
                 }
@@ -9584,6 +9594,7 @@ pub const LinkerContext = struct {
             .import_records = import_records[chunk.entry_point.source_index].slice(),
             .log = c.log,
             .allocator = worker.allocator,
+            .minify_whitespace = c.options.minify_whitespace,
             .chunk = chunk,
             .chunks = chunks,
             .output = std.ArrayList(u8).init(worker.allocator),
@@ -12629,6 +12640,7 @@ pub const LinkerContext = struct {
                         },
                         .html => {
                             has_html_chunk = true;
+                            // HTML gets only one chunk.
                             chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                             total_count += 1;
                             chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, 1) catch bun.outOfMemory();
@@ -12697,6 +12709,7 @@ pub const LinkerContext = struct {
                             };
 
                             batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                            remaining_part_ranges = remaining_part_ranges[1..];
                         },
                     }
                 }

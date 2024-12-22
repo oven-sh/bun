@@ -169,7 +169,7 @@ describe("bundler", () => {
   itBundled("html/js-imports", {
     outdir: "out/",
     files: {
-      "/index.html": `
+      "/in/index.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -179,30 +179,31 @@ describe("bundler", () => {
     <h1>JS Imports</h1>
   </body>
 </html>`,
-      "/main.js": `
+      "/in/main.js": `
 import { greeting } from './utils/strings.js';
 import { formatDate } from './utils/date.js';
 console.log(greeting('World'));
 console.log(formatDate(new Date()));`,
-      "/utils/strings.js": `
+      "/in/utils/strings.js": `
 export const greeting = (name) => \`Hello, \${name}!\`;`,
-      "/utils/date.js": `
+      "/in/utils/date.js": `
 import { padZero } from './numbers.js';
 export const formatDate = (date) => \`\${date.getFullYear()}-\${padZero(date.getMonth() + 1)}-\${padZero(date.getDate())}\`;`,
-      "/utils/numbers.js": `
+      "/in/utils/numbers.js": `
 export const padZero = (num) => String(num).padStart(2, '0');`,
     },
     experimentalHtml: true,
     experimentalCss: true,
-    entryPoints: ["/index.html"],
+    entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All JS should be bundled into one file
       api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
       api.expectFile("out/index.html").not.toContain("main.js");
 
+      const htmlContent = api.readFile("out/index.html");
       // Check that the bundle contains all the imported code
-      const jsMatch = api.expectFile("index.html").toMatch(/src="(.*\.js)"/);
-      const jsBundle = api.readFile(jsMatch[1]);
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      const jsBundle = api.readFile("out/" + jsMatch![1]);
       expect(jsBundle).toContain("Hello");
       expect(jsBundle).toContain("padZero");
       expect(jsBundle).toContain("formatDate");
@@ -210,10 +211,10 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
   });
 
   // Test CSS imports
-  itBundled.only("html/css-imports", {
+  itBundled("html/css-imports", {
     outdir: "out/",
     files: {
-      "/index.html": `
+      "/in/index.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -223,25 +224,25 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     <h1>CSS Imports</h1>
   </body>
 </html>`,
-      "/styles/main.css": `
+      "/in/styles/main.css": `
 @import './variables.css';
 @import './typography.css';
 body {
   background-color: var(--background-color);
 }`,
-      "/styles/variables.css": `
+      "/in/styles/variables.css": `
 :root {
   --background-color: #f0f0f0;
   --text-color: #333;
   --heading-color: #000;
 }`,
-      "/styles/typography.css": `
+      "/in/styles/typography.css": `
 @import './fonts.css';
 h1 {
   color: var(--heading-color);
   font-family: var(--heading-font);
 }`,
-      "/styles/fonts.css": `
+      "/in/styles/fonts.css": `
 :root {
   --heading-font: 'Arial', sans-serif;
   --body-font: 'Helvetica', sans-serif;
@@ -249,18 +250,17 @@ h1 {
     },
     experimentalHtml: true,
     experimentalCss: true,
-    entryPoints: ["/index.html"],
+    entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All CSS should be bundled into one file
       api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
       api.expectFile("out/index.html").not.toContain("main.css");
 
       // Check that the bundle contains all the imported CSS
-      const htmlContent = api.readFile("index.html");
-      console.log(htmlContent);
+      const htmlContent = api.readFile("out/index.html");
       const cssMatch = htmlContent.match(/href="(.*?\.css)"/);
       if (!cssMatch) throw new Error("Could not find CSS file reference in HTML");
-      const cssBundle = api.readFile(cssMatch[1]);
+      const cssBundle = api.readFile("out/" + cssMatch[1]);
       expect(cssBundle).toContain("--background-color");
       expect(cssBundle).toContain("--heading-font");
       expect(cssBundle).toContain("font-family");
@@ -271,7 +271,7 @@ h1 {
   itBundled("html/multiple-entries", {
     outdir: "out/",
     files: {
-      "/pages/index.html": `
+      "/in/pages/index.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -283,7 +283,7 @@ h1 {
     <a href="./about.html">About</a>
   </body>
 </html>`,
-      "/pages/about.html": `
+      "/in/pages/about.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -295,26 +295,26 @@ h1 {
     <a href="index.html">Home</a>
   </body>
 </html>`,
-      "/styles/home.css": `
+      "/in/styles/home.css": `
 @import './common.css';
 .home { color: blue; }`,
-      "/styles/about.css": `
+      "/in/styles/about.css": `
 @import './common.css';
 .about { color: green; }`,
-      "/styles/common.css": `
+      "/in/styles/common.css": `
 body { margin: 0; padding: 20px; }`,
-      "/scripts/home.js": `
+      "/in/scripts/home.js": `
 import { initNav } from './common.js';
 console.log('Home page');
 initNav();`,
-      "/scripts/about.js": `
+      "/in/scripts/about.js": `
 import { initNav } from './common.js';
 console.log('About page');
 initNav();`,
-      "/scripts/common.js": `
+      "/in/scripts/common.js": `
 export const initNav = () => console.log('Navigation initialized');`,
     },
-    entryPoints: ["/pages/index.html", "/pages/about.html"],
+    entryPoints: ["/in/pages/index.html", "/in/pages/about.html"],
     experimentalHtml: true,
     experimentalCss: true,
     onAfterBundle(api) {
@@ -368,10 +368,10 @@ export const initNav = () => console.log('Navigation initialized');`,
   });
 
   // Test multiple HTML entries with shared chunks
-  itBundled("html/shared-chunks", {
+  itBundled.only("html/shared-chunks", {
     outdir: "out/",
     files: {
-      "/pages/page1.html": `
+      "/in/pages/page1.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -382,7 +382,7 @@ export const initNav = () => console.log('Navigation initialized');`,
     <h1>Page 1</h1>
   </body>
 </html>`,
-      "/pages/page2.html": `
+      "/in/pages/page2.html": `
 <!DOCTYPE html>
 <html>
   <head>
@@ -393,52 +393,52 @@ export const initNav = () => console.log('Navigation initialized');`,
     <h1>Page 2</h1>
   </body>
 </html>`,
-      "/styles/page1.css": `
+      "/in/styles/page1.css": `
 @import './shared.css';
 .page1 { font-size: 20px; }`,
-      "/styles/page2.css": `
+      "/in/styles/page2.css": `
 @import './shared.css';
 .page2 { font-size: 18px; }`,
-      "/styles/shared.css": `
+      "/in/styles/shared.css": `
 @import './reset.css';
 .shared { color: blue; }`,
-      "/styles/reset.css": `
+      "/in/styles/reset.css": `
 * { box-sizing: border-box; }`,
-      "/scripts/page1.js": `
+      "/in/scripts/page1.js": `
 import { sharedUtil } from './shared.js';
 import { largeModule } from './large-module.js';
 console.log('Page 1');
 sharedUtil();`,
-      "/scripts/page2.js": `
+      "/in/scripts/page2.js": `
 import { sharedUtil } from './shared.js';
 import { largeModule } from './large-module.js';
 console.log('Page 2');
 sharedUtil();`,
-      "/scripts/shared.js": `
+      "/in/scripts/shared.js": `
 export const sharedUtil = () => console.log('Shared utility');`,
-      "/scripts/large-module.js": `
+      "/in/scripts/large-module.js": `
 export const largeModule = {
   // Simulate a large shared module
   bigData: new Array(1000).fill('data'),
   methods: { /* ... */ }
 };`,
     },
-    entryPoints: ["/pages/page1.html", "/pages/page2.html"],
+    entryPoints: ["/in/pages/page1.html", "/in/pages/page2.html"],
     experimentalHtml: true,
     experimentalCss: true,
     splitting: true,
     onAfterBundle(api) {
       // Check both pages
-      for (const page of ["out/page1", "out/page2"]) {
-        api.expectFile(`pages/${page}.html`).toMatch(/href=".*\.css"/);
-        api.expectFile(`pages/${page}.html`).toMatch(/src=".*\.js"/);
-        api.expectFile(`pages/${page}.html`).not.toContain(`${page}.css`);
-        api.expectFile(`pages/${page}.html`).not.toContain(`${page}.js`);
+      for (const page of ["page1", "page2"]) {
+        api.expectFile(`out/${page}.html`).toMatch(/href=".*\.css"/);
+        api.expectFile(`out/${page}.html`).toMatch(/src=".*\.js"/);
+        api.expectFile(`out/${page}.html`).not.toContain(`${page}.css`);
+        api.expectFile(`out/${page}.html`).not.toContain(`${page}.js`);
       }
 
       // Verify that shared code exists in both bundles
-      const page1Html = api.readFile("out/pages/page1.html");
-      const page2Html = api.readFile("out/pages/page2.html");
+      const page1Html = api.readFile("out/page1.html");
+      const page2Html = api.readFile("out/page2.html");
 
       const page1JsPath = page1Html.match(/src="(.*\.js)"/)?.[1];
       const page2JsPath = page2Html.match(/src="(.*\.js)"/)?.[1];
@@ -446,8 +446,8 @@ export const largeModule = {
       expect(page1JsPath).toBeDefined();
       expect(page2JsPath).toBeDefined();
 
-      const page1Js = api.readFile(page1JsPath!);
-      const page2Js = api.readFile(page2JsPath!);
+      const page1Js = api.readFile("out/" + page1JsPath!);
+      const page2Js = api.readFile("out/" + page2JsPath!);
       expect(page1Js).toContain("Shared utility");
       expect(page2Js).toContain("Shared utility");
 

@@ -319,34 +319,32 @@ export const initNav = () => console.log('Navigation initialized');`,
     experimentalCss: true,
     onAfterBundle(api) {
       // Check index.html
-      api.expectFile("out/pages/index.html").toMatch(/href=".*\.css"/);
-      api.expectFile("out/pages/index.html").toMatch(/src=".*\.js"/);
-      api.expectFile("out/pages/index.html").not.toContain("home.css");
-      api.expectFile("out/pages/index.html").not.toContain("home.js");
+      api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
+      api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
+      api.expectFile("out/index.html").not.toContain("home.css");
+      api.expectFile("out/index.html").not.toContain("home.js");
 
       // Check about.html
-      api.expectFile("out/pages/about.html").toMatch(/href=".*\.css"/);
-      api.expectFile("out/pages/about.html").toMatch(/src=".*\.js"/);
-      api.expectFile("out/pages/about.html").not.toContain("about.css");
-      api.expectFile("out/pages/about.html").not.toContain("about.js");
+      api.expectFile("out/about.html").toMatch(/href=".*\.css"/);
+      api.expectFile("out/about.html").toMatch(/src=".*\.js"/);
+      api.expectFile("out/about.html").not.toContain("about.css");
+      api.expectFile("out/about.html").not.toContain("about.js");
 
-      // Verify that links between pages are updated with hashed filenames
-      const indexHtml = api.readFile("out/pages/index.html");
-      const aboutHtml = api.readFile("out/pages/about.html");
-      expect(indexHtml).not.toContain('href="about.html"');
-      expect(aboutHtml).not.toContain('href="index.html"');
-      expect(indexHtml).toMatch(/href="about-[a-zA-Z0-9]+\.html"/);
-      expect(aboutHtml).toMatch(/href="index-[a-zA-Z0-9]+\.html"/);
+      // Verify we don't update the filenames for these
+      const indexHtml = api.readFile("out/index.html");
+      const aboutHtml = api.readFile("out/about.html");
+      expect(indexHtml).toContain('href="./about.html"');
+      expect(aboutHtml).toContain('href="index.html"');
 
       // Check that each page has its own bundle
-      const indexHtmlContent = api.readFile("out/pages/index.html");
-      const aboutHtmlContent = api.readFile("out/pages/about.html");
+      const indexHtmlContent = api.readFile("out/index.html");
+      const aboutHtmlContent = api.readFile("out/about.html");
 
       const indexJsMatch = indexHtmlContent.match(/src="(.*\.js)"/);
       const aboutJsMatch = aboutHtmlContent.match(/src="(.*\.js)"/);
 
-      const indexJs = api.readFile(indexJsMatch![1]);
-      const aboutJs = api.readFile(aboutJsMatch![1]);
+      const indexJs = api.readFile("out/" + indexJsMatch![1]);
+      const aboutJs = api.readFile("out/" + aboutJsMatch![1]);
 
       expect(indexJs).toContain("Home page");
       expect(aboutJs).toContain("About page");
@@ -357,8 +355,8 @@ export const initNav = () => console.log('Navigation initialized');`,
       const indexCssMatch = indexHtmlContent.match(/href="(.*\.css)"/);
       const aboutCssMatch = aboutHtmlContent.match(/href="(.*\.css)"/);
 
-      const indexCss = api.readFile(indexCssMatch![1]);
-      const aboutCss = api.readFile(aboutCssMatch![1]);
+      const indexCss = api.readFile("out/" + indexCssMatch![1]);
+      const aboutCss = api.readFile("out/" + aboutCssMatch![1]);
 
       expect(indexCss).toContain(".home");
       expect(aboutCss).toContain(".about");
@@ -368,8 +366,11 @@ export const initNav = () => console.log('Navigation initialized');`,
   });
 
   // Test multiple HTML entries with shared chunks
-  itBundled.only("html/shared-chunks", {
+  itBundled("html/shared-chunks", {
     outdir: "out/",
+    // Makes this test easier to write
+    minifyWhitespace: true,
+
     files: {
       "/in/pages/page1.html": `
 <!DOCTYPE html>
@@ -448,8 +449,10 @@ export const largeModule = {
 
       const page1Js = api.readFile("out/" + page1JsPath!);
       const page2Js = api.readFile("out/" + page2JsPath!);
-      expect(page1Js).toContain("Shared utility");
-      expect(page2Js).toContain("Shared utility");
+
+      // Check we imported the shared module
+      expect(page2Js).toContain("import{sharedUtil}");
+      expect(page1Js).toContain("import{sharedUtil}");
 
       // Check CSS bundles
       const page1CssPath = page1Html.match(/href="(.*\.css)"/)?.[1];
@@ -458,10 +461,10 @@ export const largeModule = {
       expect(page1CssPath).toBeDefined();
       expect(page2CssPath).toBeDefined();
 
-      const page1Css = api.readFile(page1CssPath!);
-      const page2Css = api.readFile(page2CssPath!);
-      expect(page1Css).toContain("box-sizing: border-box");
-      expect(page2Css).toContain("box-sizing: border-box");
+      const page1Css = api.readFile("out/" + page1CssPath!);
+      const page2Css = api.readFile("out/" + page2CssPath!);
+      expect(page1Css).toContain("box-sizing:border-box");
+      expect(page2Css).toContain("box-sizing:border-box");
       expect(page1Css).toContain(".shared");
       expect(page2Css).toContain(".shared");
     },

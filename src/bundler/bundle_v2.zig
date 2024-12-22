@@ -3778,6 +3778,7 @@ pub const ParseTask = struct {
                         .stmts = &.{},
                         .can_be_removed_if_unused = false,
                         .import_record_indices = import_record_indices,
+                        .is_live = true,
                     }});
                     return ast;
                 }

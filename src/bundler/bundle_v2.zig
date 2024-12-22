@@ -9557,6 +9557,7 @@ pub const LinkerContext = struct {
                 var html_appender = std.heap.stackFallback(256, bun.default_allocator);
                 const allocator = html_appender.get();
 
+                // Put CSS before JS to reduce changes of flash of unstyled content
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                     const link_tag = std.fmt.allocPrint(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(link_tag);

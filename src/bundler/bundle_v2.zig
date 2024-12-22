@@ -5919,6 +5919,26 @@ pub const LinkerContext = struct {
 
                 continue;
             }
+
+            var has_html_chunk = false;
+
+            if (experimental_html) {
+                if (loaders[source_index] == .html) {
+                    has_html_chunk = true;
+                    try html_chunks.append(.{
+                        .entry_point = .{
+                            .source_index = source_index,
+                            .is_entry_point = true,
+                        },
+                        .entry_bits = entry_bits.*,
+                        .content = .{
+                            .html = .{},
+                        },
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    });
+                }
+            }
+
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
@@ -5932,6 +5952,7 @@ pub const LinkerContext = struct {
                 .content = .{
                     .javascript = .{},
                 },
+                .has_html_chunk = has_html_chunk,
                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
 
@@ -5984,23 +6005,9 @@ pub const LinkerContext = struct {
                             },
                             .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
                             .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                            .has_html_chunk = has_html_chunk,
                         };
                     }
-                }
-            }
-
-            if (experimental_html) {
-                if (loaders[source_index] == .html) {
-                    try html_chunks.append(.{
-                        .entry_point = .{
-                            .source_index = source_index,
-                        },
-                        .entry_bits = entry_bits.*,
-                        .content = .{
-                            .html = .{},
-                        },
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                    });
                 }
             }
         }
@@ -6141,7 +6148,7 @@ pub const LinkerContext = struct {
                 this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{}", .{bun.fmt.hexIntLower(unique_key)})];
 
             if (chunk.entry_point.is_entry_point and
-                kinds[chunk.entry_point.source_index] == .user_specified)
+                (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
             {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
@@ -14866,6 +14873,7 @@ pub const Chunk = struct {
     entry_point: Chunk.EntryPoint = .{},
 
     is_executable: bool = false,
+    has_html_chunk: bool = false,
 
     output_source_map: sourcemap.SourceMapPieces,
 

@@ -9,7 +9,7 @@
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-
+const Chunk = @import("../bundler//bundle_v2.zig").Chunk;
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
@@ -1585,7 +1585,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     }
 }
 
-fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !Chunk.EntryPoint.ID {
     const path_hash = bun.hash(abs_path);
     const gop = try dev.css_files.getOrPut(dev.allocator, path_hash);
     if (gop.found_existing) {

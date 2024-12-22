@@ -129,7 +129,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
-
+const lol = bun.LOLHTML;
 const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -5876,7 +5876,7 @@ pub const LinkerContext = struct {
         const experimental_html = this.options.experimental.html;
         const css_chunking = this.options.css_chunking;
         var html_chunks = std.ArrayList(Chunk).init(temp_allocator);
-        const loaders = this.graph.input_files.items(.loader);
+        const loaders = this.parse_graph.input_files.items(.loader);
 
         // Create chunks for entry points
         for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -5999,6 +5999,7 @@ pub const LinkerContext = struct {
                         .content = .{
                             .html = .{},
                         },
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                     });
                 }
             }
@@ -8862,6 +8863,7 @@ pub const LinkerContext = struct {
             .javascript => postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
             .css => postProcessCSSChunk(ctx, worker, chunk) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
             .html => postProcessHTMLChunk(ctx, worker, chunk) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
+        }
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -9156,6 +9158,16 @@ pub const LinkerContext = struct {
         } };
 
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForCssChunkImpl(worker, ctx.c, ctx.chunk, part_range.i);
+    }
+
+    fn generateCompileResultForHtmlChunk(task: *ThreadPoolLib.Task) void {
+        const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
+        const ctx = part_range.ctx;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
+        defer worker.unget();
+
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForHTMLChunkImpl(worker, ctx.c, ctx.chunk, ctx.chunks);
     }
 
     fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, imports_in_chunk_index: u32) CompileResult {
@@ -9456,6 +9468,156 @@ pub const LinkerContext = struct {
 
             // TODO: @media wrappers
         }
+    }
+
+    fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, chunks: []Chunk) CompileResult {
+        const parse_graph = c.parse_graph;
+        const input_files = parse_graph.input_files.slice();
+        const sources = input_files.items(.source);
+        const import_records = c.graph.ast.items(.import_records);
+
+        // We want to rewrite the HTML with the following transforms:
+        // 1. Remove all <script> and <link> tags which were not marked as
+        //    external. This is defined by the source_index on the ImportRecord,
+        //    when it's not Index.invalid then we update it accordingly. This will
+        //    need to be a reference to the chunk or asset.
+        // 2. For all other non-external URLs, update the "src" or "href"
+        //    attribute to point to the asset's unique key. Later, when joining
+        //    chunks, we will rewrite these to their final URL or pathname,
+        //    including the public_path.
+        // 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
+        //    the JavaScript for the entry point which uses the "src" attribute
+        //    to point to the JavaScript chunk's unique key.
+        // 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
+        //    the CSS for the entry point which uses the "href" attribute to point to the
+        //    CSS chunk's unique key.
+        // 5. For each imported module or chunk within the JavaScript code, add
+        //    a <link rel="modulepreload" href="..." crossorigin> tag that
+        //    points to the module or chunk's unique key so that we tell the
+        //    browser to preload the user's code.
+        // We might also want to force <!DOCTYPE html> at the top of the file, but I'm not sure about that yet.
+
+        const HTMLLoader = struct {
+            linker: *LinkerContext,
+            source_index: Index.Int,
+            import_records: []const ImportRecord,
+            log: *Logger.Log,
+            allocator: std.mem.Allocator,
+            current_import_record_index: u32 = 0,
+            chunk: *Chunk,
+            chunks: []Chunk,
+
+            output: std.ArrayList(u8),
+
+            pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
+                this.output.appendSlice(bytes) catch bun.outOfMemory();
+            }
+
+            pub fn onHTMLParseError(this: *@This(), message: []const u8) void {
+                this.log.addError(
+                    &this.linker.parse_graph.input_files.items(.source)[this.source_index],
+                    Logger.Loc.Empty,
+                    message,
+                ) catch bun.outOfMemory();
+            }
+
+            pub fn onTag(this: *@This(), element: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
+                _ = kind; // autofix
+                _ = path; // autofix
+                if (this.current_import_record_index >= this.import_records.len) {
+                    Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
+                }
+
+                const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
+                this.current_import_record_index += 1;
+                if (import_record.is_external_without_side_effects or import_record.source_index.isInvalid()) {
+                    debug("Leaving external import {s}", .{import_record.path.text});
+                    return;
+                }
+
+                const loader: Loader = this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()];
+                const unique_key_for_additional_files = this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()];
+                if (loader.isJavaScriptLike() or loader == .css) {
+                    // Remove the original non-external tags
+                    element.remove();
+                } else if (unique_key_for_additional_files.len > 0) {
+                    // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
+                    element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                }
+            }
+
+            pub fn onHEADTag(this: *@This(), element: *lol.Element) void {
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    const script = std.fmt.allocPrint(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                    defer allocator.free(script);
+                    element.append(script, true) catch bun.outOfMemory();
+                }
+
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const link_tag = std.fmt.allocPrint(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                    defer allocator.free(link_tag);
+                    element.append(link_tag, true) catch bun.outOfMemory();
+                }
+            }
+
+            const processor = HTMLScanner.HTMLProcessor(@This(), true);
+
+            pub fn run(this: *@This(), input: []const u8) !void {
+                processor.run(this, input) catch bun.outOfMemory();
+            }
+        };
+
+        var html_loader = HTMLLoader{
+            .linker = c,
+            .source_index = chunk.entry_point.source_index,
+            .import_records = import_records[chunk.entry_point.source_index].slice(),
+            .log = c.log,
+            .allocator = worker.allocator,
+            .chunk = chunk,
+            .chunks = chunks,
+            .output = std.ArrayList(u8).init(worker.allocator),
+            .current_import_record_index = 0,
+        };
+
+        html_loader.run(sources[chunk.entry_point.source_index].contents) catch bun.outOfMemory();
+
+        return .{
+            .html = .{
+                .code = html_loader.output.items,
+                .source_index = chunk.entry_point.source_index,
+            },
+        };
+    }
+
+    fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
+
+        // This is where we split output into pieces
+
+        const c = ctx.c;
+        var j = StringJoiner{
+            .allocator = worker.allocator,
+            .watcher = .{
+                .input = chunk.unique_key,
+            },
+        };
+
+        const compile_results = chunk.compile_results_for_chunk;
+
+        for (compile_results) |compile_result| {
+            j.push(compile_result.code(), bun.default_allocator);
+        }
+
+        j.ensureNewlineAtEnd();
+
+        chunk.intermediate_output = c.breakOutputIntoPieces(
+            worker.allocator,
+            &j,
+            @as(u32, @truncate(ctx.chunks.len)),
+        ) catch bun.outOfMemory();
+
+        chunk.isolated_hash = c.generateIsolatedHash(chunk);
     }
 
     // This runs after we've already populated the compile results
@@ -12459,7 +12621,7 @@ pub const LinkerContext = struct {
                         .html => {
                             has_html_chunk = true;
                             chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
-                            total_count += chunk.content.html.parts_in_chunk_in_order.len;
+                            total_count += 1;
                             chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, 1) catch bun.outOfMemory();
                         },
                     }
@@ -12501,7 +12663,7 @@ pub const LinkerContext = struct {
                             }
                         },
                         .css => {
-                            for (chunk.content.css.imports_in_chunk_in_order.slice(), 0..) |css_import, i| {
+                            for (0..chunk.content.css.imports_in_chunk_in_order.len) |i| {
                                 remaining_part_ranges[0] = .{
                                     .part_range = .{},
                                     .i = @as(u32, @truncate(i)),
@@ -12524,6 +12686,8 @@ pub const LinkerContext = struct {
                                 },
                                 .ctx = chunk_ctx,
                             };
+
+                            batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
                         },
                     }
                 }
@@ -12877,6 +13041,7 @@ pub const LinkerContext = struct {
                     .referenced_css_files = switch (chunk.content) {
                         .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                         .css => &.{},
+                        .html => &.{},
                     },
                 }));
                 if (sourcemap_output_file) |sourcemap_file| {
@@ -13288,6 +13453,7 @@ pub const LinkerContext = struct {
                 .referenced_css_files = switch (chunk.content) {
                     .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                     .css => &.{},
+                    .html => &.{},
                 },
             }));
 
@@ -14714,6 +14880,30 @@ pub const Chunk = struct {
         return this.entry_point.is_entry_point;
     }
 
+    pub fn getJSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        const entry_point_id = this.entry_point.entry_point_id;
+        for (chunks) |*other| {
+            if (other.content == .javascript) {
+                if (other.entry_point.entry_point_id == entry_point_id) {
+                    return other;
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn getCSSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        const entry_point_id = this.entry_point.entry_point_id;
+        for (chunks) |*other| {
+            if (other.content == .css) {
+                if (other.entry_point.entry_point_id == entry_point_id) {
+                    return other;
+                }
+            }
+        }
+        return null;
+    }
+
     pub inline fn entryBits(this: *const Chunk) *const AutoBitSet {
         return &this.entry_bits;
     }
@@ -15164,11 +15354,10 @@ pub const Chunk = struct {
     pub const ContentKind = enum {
         javascript,
         css,
+        html,
     };
 
-    pub const HtmlChunk = struct {
-        original_source_index: Index.Int,
-    };
+    pub const HtmlChunk = struct {};
 
     pub const Content = union(ContentKind) {
         javascript: JavaScriptChunk,
@@ -15178,6 +15367,7 @@ pub const Chunk = struct {
             return switch (this.*) {
                 .javascript => .js,
                 .css => .css,
+                .html => .html,
             };
         }
 
@@ -15185,6 +15375,7 @@ pub const Chunk = struct {
             return switch (this.*) {
                 .javascript => "js",
                 .css => "css",
+                .html => "html",
             };
         }
     };
@@ -15303,7 +15494,7 @@ pub const CompileResult = union(enum) {
 
     pub fn sourceIndex(this: *const CompileResult) Index.Int {
         return switch (this.*) {
-           inline else => |*r| r.source_index,
+            inline else => |*r| r.source_index,
         };
     }
 };

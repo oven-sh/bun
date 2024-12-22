@@ -29,11 +29,11 @@ pub const HTMLScanner = struct {
         this.import_records.deinitWithAllocator(this.allocator);
     }
 
-    fn createImportRecord(this: *HTMLScanner, path: []const u8, range: logger.Range, kind: ImportKind) !void {
+    fn createImportRecord(this: *HTMLScanner, path: []const u8, kind: ImportKind) !void {
         const record = ImportRecord{
             .path = fs.Path.init(try this.allocator.dupe(u8, path)),
-            .range = range,
             .kind = kind,
+            .range = logger.Range.None,
         };
         try this.import_records.push(this.allocator, record);
     }
@@ -53,17 +53,18 @@ pub const HTMLScanner = struct {
         ) catch bun.outOfMemory();
     }
 
-    pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, range: logger.Range, kind: ImportKind) void {
-        this.createImportRecord(path, range, kind) catch {};
+    pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
+        _ = url_attribute; // autofix
+        this.createImportRecord(path, kind) catch {};
     }
 
-    const processor = HTMLProcessor(HTMLScanner);
+    const processor = HTMLProcessor(HTMLScanner, false);
 
     pub fn scan(this: *HTMLScanner, input: []const u8) !void {
         try processor.run(this, input);
     }
 
-    pub fn HTMLProcessor(comptime T: type) type {
+    pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type {
         return struct {
             const TagHandler = struct {
                 /// CSS selector to match elements
@@ -74,55 +75,32 @@ pub const HTMLScanner = struct {
                 url_attribute: []const u8,
                 /// The kind of import to create
                 kind: ImportKind,
+
+                is_head_or_html: bool = false,
             };
 
-            const tag_handlers = [_]TagHandler{
+            const tag_handlers_ = [_]TagHandler{
                 // Module scripts with src
                 .{
-                    .selector = "script[type='module'][src]",
+                    .selector = "script[src]",
                     .has_content = false,
                     .url_attribute = "src",
                     .kind = .stmt,
                 },
-                // Regular scripts with src
-                .{
-                    .selector = "script:not([type='module'])[src]",
-                    .has_content = true,
-                    .url_attribute = "src",
-                    .kind = .require,
-                },
-                // Inline scripts (no src)
-                .{
-                    .selector = "script:not([src])",
-                    .has_content = false,
-                    .url_attribute = "",
-                    .kind = .require,
-                },
-                // Style tags
-                .{
-                    .selector = "style",
-                    .has_content = true,
-                    .url_attribute = "",
-                    .kind = .at,
-                },
+                // // Style tags
+                // .{
+                //     .selector = "style",
+                //     .has_content = true,
+                //     .url_attribute = "",
+                //     .kind = .at,
+                // },
                 // CSS Stylesheets
                 .{
                     .selector = "link[rel='stylesheet'][href]",
                     .url_attribute = "href",
                     .kind = .at,
                 },
-                // JavaScript modules
-                .{
-                    .selector = "link[rel='modulepreload'][href], link[as='script'][type='module'][href]",
-                    .url_attribute = "href",
-                    .kind = .stmt,
-                },
-                // Regular JavaScript
-                .{
-                    .selector = "link[as='script']:not([type='module'])[href]",
-                    .url_attribute = "href",
-                    .kind = .require,
-                },
+
                 // CSS Assets
                 .{
                     .selector = "link[as='style'][href]",
@@ -221,9 +199,19 @@ pub const HTMLScanner = struct {
                 //     },
             };
 
-            fn generateHandlerForTag(comptime tag_info: TagHandler) fn (*HTMLScanner, *lol.Element) bool {
+            const html_head_tag_handler: TagHandler = .{
+                .selector = "head",
+                .has_content = false,
+                .url_attribute = "",
+                .kind = .stmt,
+                .is_head_or_html = true,
+            };
+
+            const tag_handlers = if (add_head_or_html_tag) tag_handlers_ ++ [_]TagHandler{html_head_tag_handler} else tag_handlers_;
+
+            fn generateHandlerForTag(comptime tag_info: TagHandler) fn (*T, *lol.Element) bool {
                 const Handler = struct {
-                    pub fn handle(this: *HTMLScanner, element: *lol.Element) bool {
+                    pub fn handle(this: *T, element: *lol.Element) bool {
                         // Handle URL attribute if present
                         if (tag_info.url_attribute.len > 0) {
                             if (element.hasAttribute(tag_info.url_attribute) catch false) {
@@ -231,8 +219,14 @@ pub const HTMLScanner = struct {
                                 defer value.deinit();
                                 if (value.len > 0) {
                                     debug("{s} {s}", .{ tag_info.selector, value.slice() });
-                                    T.onTag(this, element, value.slice(), .{}, tag_info.kind);
+                                    T.onTag(this, element, value.slice(), tag_info.url_attribute, tag_info.kind);
                                 }
+                            }
+                        }
+
+                        if (comptime add_head_or_html_tag) {
+                            if (tag_info.is_head_or_html) {
+                                T.onHEADTag(this, element);
                             }
                         }
 

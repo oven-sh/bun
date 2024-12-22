@@ -20,14 +20,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const ParseResult = bun.bundler.ParseResult;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = bun.Bundler;
-const PluginRunner = bun.bundler.PluginRunner;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const PluginRunner = bun.transpiler.PluginRunner;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -567,7 +567,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
         .global_object = globalObject,
         .allocator = jsc_vm.allocator,
     };
-    jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
+    jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
 const WindowsOnly = struct {
@@ -772,7 +772,7 @@ pub const VirtualMachine = struct {
     global: *JSGlobalObject,
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
-    bundler: Bundler,
+    transpiler: Transpiler,
     bun_watcher: ImportWatcher = .{ .none = {} },
     console: *ConsoleObject,
     log: *logger.Log,
@@ -942,7 +942,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
-        return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+        return this.default_tls_reject_unauthorized orelse this.transpiler.env.getTLSRejectUnauthorized();
     }
 
     pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
@@ -955,7 +955,7 @@ pub const VirtualMachine = struct {
 
     pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
         return this.default_verbose_fetch orelse {
-            if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
+            if (this.transpiler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
                 if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
                     this.default_verbose_fetch = .headers;
                     return .headers;
@@ -972,10 +972,15 @@ pub const VirtualMachine = struct {
     pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
-        pub var main_thread_vm: *VirtualMachine = undefined;
+        pub var main_thread_vm: ?*VirtualMachine = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
             if (vm) |vm_instance| {
                 vm_instance.global = global;
+
+                // Ensure this is always set when it should be.
+                if (vm_instance.is_main_thread) {
+                    VMHolder.main_thread_vm = vm_instance;
+                }
             }
 
             cached_global_object = global;
@@ -995,7 +1000,7 @@ pub const VirtualMachine = struct {
         return VMHolder.vm.?;
     }
 
-    pub fn getMainThreadVM() *VirtualMachine {
+    pub fn getMainThreadVM() ?*VirtualMachine {
         return VMHolder.main_thread_vm;
     }
 
@@ -1031,7 +1036,7 @@ pub const VirtualMachine = struct {
         printer: *js_printer.BufferPrinter,
 
         pub fn get(this: *SourceMapHandlerGetter) js_printer.SourceMapHandler {
-            if (this.vm.debugger == null) {
+            if (this.vm.debugger == null or this.vm.debugger.?.mode == .connect) {
                 return SavedSourceMap.SourceMapHandler.init(&this.vm.source_mappings);
             }
 
@@ -1122,7 +1127,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
-        var map = this.bundler.env.map;
+        var map = this.transpiler.env.map;
 
         ensureSourceCodePrinter(this);
 
@@ -1246,7 +1251,7 @@ pub const VirtualMachine = struct {
     }
 
     pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
-        return this.bundler.getPackageManager();
+        return this.transpiler.getPackageManager();
     }
 
     pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
@@ -1267,7 +1272,7 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine, _: *HotReloader.HotReloadTask) void {
         Output.debug("Reloading...", .{});
-        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+        const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
             Output.flush();
             bun.reloadProcess(
@@ -1705,7 +1710,7 @@ pub const VirtualMachine = struct {
             vm.allocator = arena.allocator();
             vm.arena = &arena;
 
-            vm.bundler.configureDefines() catch @panic("Failed to configure defines");
+            vm.transpiler.configureDefines() catch @panic("Failed to configure defines");
             vm.is_main_thread = false;
             vm.eventLoop().ensureWaker();
 
@@ -1823,8 +1828,8 @@ pub const VirtualMachine = struct {
             ensureSourceCodePrinter(this);
         }
 
-        this.bundler.options.target = .bun_macro;
-        this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
+        this.transpiler.options.target = .bun_macro;
+        this.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
         Analytics.Features.macros += 1;
@@ -1832,8 +1837,8 @@ pub const VirtualMachine = struct {
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
-        this.bundler.options.target = .bun;
-        this.bundler.resolver.caches.fs.use_alternate_source_cache = false;
+        this.transpiler.options.target = .bun;
+        this.transpiler.resolver.caches.fs.use_alternate_source_cache = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;
         this.transpiler_store.enabled = true;
@@ -1873,7 +1878,7 @@ pub const VirtualMachine = struct {
         const console = try allocator.create(ConsoleObject);
         console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const log = opts.log.?;
-        const bundler = try Bundler.init(
+        const transpiler = try Transpiler.init(
             allocator,
             log,
             opts.args,
@@ -1886,10 +1891,10 @@ pub const VirtualMachine = struct {
             .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .bundler = bundler,
+            .transpiler = transpiler,
             .console = console,
             .log = log,
-            .origin = bundler.options.origin,
+            .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -1915,23 +1920,25 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
 
-        vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = false;
-        vm.bundler.resolver.prefer_module_field = false;
+        vm.transpiler.macro_context = null;
+        vm.transpiler.resolver.store_fd = false;
+        vm.transpiler.resolver.prefer_module_field = false;
 
-        vm.bundler.resolver.onWakePackageManager = .{
+        vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        vm.bundler.resolver.standalone_module_graph = opts.graph.?;
+        vm.transpiler.resolver.standalone_module_graph = opts.graph.?;
 
         // Avoid reading from tsconfig.json & package.json when we're in standalone mode
-        vm.bundler.configureLinkerWithAutoJSX(false);
+        vm.transpiler.configureLinkerWithAutoJSX(false);
 
-        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
+        vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
+        if (opts.is_main_thread) {
+            VMHolder.main_thread_vm = vm;
+        }
         vm.global = ZigGlobalObject.create(
             vm.console,
             -1,
@@ -1947,6 +1954,10 @@ pub const VirtualMachine = struct {
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
+    }
+
+    export fn Bun__isMainThreadVM() callconv(.C) bool {
+        return get().is_main_thread;
     }
 
     pub const Options = struct {
@@ -1981,7 +1992,7 @@ pub const VirtualMachine = struct {
         VMHolder.vm = try allocator.create(VirtualMachine);
         const console = try allocator.create(ConsoleObject);
         console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
-        const bundler = try Bundler.init(
+        const transpiler = try Transpiler.init(
             allocator,
             log,
             try Config.configureTransformOptionsForBunVM(allocator, opts.args),
@@ -1996,10 +2007,10 @@ pub const VirtualMachine = struct {
             .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .bundler = bundler,
+            .transpiler = transpiler,
             .console = console,
             .log = log,
-            .origin = bundler.options.origin,
+            .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -2024,19 +2035,19 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
 
-        vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = opts.store_fd;
-        vm.bundler.resolver.prefer_module_field = false;
+        vm.transpiler.macro_context = null;
+        vm.transpiler.resolver.store_fd = opts.store_fd;
+        vm.transpiler.resolver.prefer_module_field = false;
 
-        vm.bundler.resolver.onWakePackageManager = .{
+        vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        vm.bundler.configureLinker();
+        vm.transpiler.configureLinker();
 
-        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+        vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
             vm.console,
@@ -2073,16 +2084,12 @@ pub const VirtualMachine = struct {
         }
 
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
         const connect_to = bun.getenvZ("BUN_INSPECT_CONNECT_TO") orelse "";
 
         const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
         const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
 
-        const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
-            true => if (notify.len > 0 or connect_to.len > 0) .shortly else .forever,
-            false => .off,
-        };
+        const wait_for_connection: Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
 
         switch (cli_flag) {
             .unspecified => {
@@ -2093,22 +2100,14 @@ pub const VirtualMachine = struct {
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                     };
-                } else if (notify.len > 0) {
-                    this.debugger = Debugger{
-                        .path_or_port = null,
-                        .from_environment_variable = notify,
-                        .wait_for_connection = wait_for_connection,
-                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
-                        .mode = .connect,
-                    };
                 } else if (connect_to.len > 0) {
                     // This works in the vscode debug terminal because that relies on unix or notify being set, which they
                     // are in the debug terminal. This branch doesn't reach
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = connect_to,
-                        .wait_for_connection = wait_for_connection,
-                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .wait_for_connection = .off,
+                        .set_breakpoint_on_first_line = false,
                         .mode = .connect,
                     };
                 }
@@ -2123,11 +2122,11 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (this.debugger != null) {
-            this.bundler.options.minify_identifiers = false;
-            this.bundler.options.minify_syntax = false;
-            this.bundler.options.minify_whitespace = false;
-            this.bundler.options.debugger = true;
+        if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
         }
     }
 
@@ -2148,7 +2147,7 @@ pub const VirtualMachine = struct {
         VMHolder.vm = try allocator.create(VirtualMachine);
         const console = try allocator.create(ConsoleObject);
         console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
-        const bundler = try Bundler.init(
+        const transpiler = try Transpiler.init(
             allocator,
             log,
             try Config.configureTransformOptionsForBunVM(allocator, opts.args),
@@ -2161,10 +2160,10 @@ pub const VirtualMachine = struct {
             .allocator = allocator,
             .transpiler_store = RuntimeTranspilerStore.init(),
             .entry_point = ServerEntryPoint{},
-            .bundler = bundler,
+            .transpiler = transpiler,
             .console = console,
             .log = log,
-            .origin = bundler.options.origin,
+            .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -2191,24 +2190,24 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
         vm.hot_reload = worker.parent.hot_reload;
-        vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = opts.store_fd;
-        vm.bundler.resolver.prefer_module_field = false;
-        vm.bundler.resolver.onWakePackageManager = .{
+        vm.transpiler.macro_context = null;
+        vm.transpiler.resolver.store_fd = opts.store_fd;
+        vm.transpiler.resolver.prefer_module_field = false;
+        vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
-        vm.bundler.resolver.standalone_module_graph = opts.graph;
+        vm.transpiler.resolver.standalone_module_graph = opts.graph;
 
         if (opts.graph == null) {
-            vm.bundler.configureLinker();
+            vm.transpiler.configureLinker();
         } else {
-            vm.bundler.configureLinkerWithAutoJSX(false);
+            vm.transpiler.configureLinkerWithAutoJSX(false);
         }
 
         vm.smol = opts.smol;
-        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+        vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
             vm.console,
@@ -2220,7 +2219,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
-        vm.bundler.setAllocator(allocator);
+        vm.transpiler.setAllocator(allocator);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
@@ -2240,7 +2239,7 @@ pub const VirtualMachine = struct {
         VMHolder.vm = try allocator.create(VirtualMachine);
         const console = try allocator.create(ConsoleObject);
         console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
-        const bundler = try Bundler.init(
+        const transpiler = try Transpiler.init(
             allocator,
             log,
             try Config.configureTransformOptionsForBunVM(allocator, opts.args),
@@ -2253,10 +2252,10 @@ pub const VirtualMachine = struct {
             .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .bundler = bundler,
+            .transpiler = transpiler,
             .console = console,
             .log = log,
-            .origin = bundler.options.origin,
+            .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -2281,19 +2280,19 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
 
-        vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = opts.store_fd;
-        vm.bundler.resolver.prefer_module_field = false;
+        vm.transpiler.macro_context = null;
+        vm.transpiler.resolver.store_fd = opts.store_fd;
+        vm.transpiler.resolver.prefer_module_field = false;
 
-        vm.bundler.resolver.onWakePackageManager = .{
+        vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        vm.bundler.configureLinker();
+        vm.transpiler.configureLinker();
 
-        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+        vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.regular_event_loop.virtual_machine = vm;
         vm.smol = opts.smol;
@@ -2474,7 +2473,7 @@ pub const VirtualMachine = struct {
             }
 
             break :brk .{
-                jsc_vm.bundler.options.loaders.get(ext_for_loader) orelse brk2: {
+                jsc_vm.transpiler.options.loaders.get(ext_for_loader) orelse brk2: {
                     if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                         break :brk2 options.Loader.js;
                     }
@@ -2583,7 +2582,7 @@ pub const VirtualMachine = struct {
             else
                 source
         else
-            jsc_vm.bundler.fs.top_level_dir;
+            jsc_vm.transpiler.fs.top_level_dir;
 
         const result: Resolver.Result = try brk: {
             // TODO: We only want to retry on not found only when the directories we searched for were cached.
@@ -2593,7 +2592,7 @@ pub const VirtualMachine = struct {
             // This cache-bust is disabled when the filesystem is not being used to resolve.
             var retry_on_not_found = std.fs.path.isAbsolute(source_to_use);
             while (true) {
-                break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
+                break :brk switch (jsc_vm.transpiler.resolver.resolveAndAutoInstall(
                     source_to_use,
                     normalized_specifier,
                     if (is_esm) .stmt else .require,
@@ -2621,7 +2620,7 @@ pub const VirtualMachine = struct {
                             };
 
                             break :name bun.path.joinAbsStringBufZ(
-                                jsc_vm.bundler.fs.top_level_dir,
+                                jsc_vm.transpiler.fs.top_level_dir,
                                 &specifier_cache_resolver_buf,
                                 &parts,
                                 .auto,
@@ -2629,7 +2628,7 @@ pub const VirtualMachine = struct {
                         };
 
                         // Only re-query if we previously had something cached.
-                        if (jsc_vm.bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
+                        if (jsc_vm.transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                             continue;
                         }
 
@@ -2640,7 +2639,7 @@ pub const VirtualMachine = struct {
         };
 
         if (!jsc_vm.macro_mode) {
-            jsc_vm.has_any_macro_remappings = jsc_vm.has_any_macro_remappings or jsc_vm.bundler.options.macro_remap.count() > 0;
+            jsc_vm.has_any_macro_remappings = jsc_vm.has_any_macro_remappings or jsc_vm.transpiler.options.macro_remap.count() > 0;
         }
         ret.result = result;
         ret.query_string = query_string;
@@ -2739,7 +2738,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.bundler.options.target)) |hardcoded| {
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.transpiler.options.target)) |hardcoded| {
             // if (hardcoded.tag == .none) {
             //     resolveMaybeNeedsTrailingSlash(
             //         res,
@@ -2762,12 +2761,12 @@ pub const VirtualMachine = struct {
         var log = logger.Log.init(bun.default_allocator);
         defer log.deinit();
         jsc_vm.log = &log;
-        jsc_vm.bundler.resolver.log = &log;
-        jsc_vm.bundler.linker.log = &log;
+        jsc_vm.transpiler.resolver.log = &log;
+        jsc_vm.transpiler.linker.log = &log;
         defer {
             jsc_vm.log = old_log;
-            jsc_vm.bundler.linker.log = old_log;
-            jsc_vm.bundler.resolver.log = old_log;
+            jsc_vm.transpiler.linker.log = old_log;
+            jsc_vm.transpiler.resolver.log = old_log;
         }
         _resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
@@ -2985,8 +2984,8 @@ pub const VirtualMachine = struct {
         defer this.is_in_preload = false;
 
         for (this.preload) |preload| {
-            var result = switch (this.bundler.resolver.resolveAndAutoInstall(
-                this.bundler.fs.top_level_dir,
+            var result = switch (this.transpiler.resolver.resolveAndAutoInstall(
+                this.transpiler.fs.top_level_dir,
                 normalizeSource(preload),
                 .stmt,
                 if (this.standalone_module_graph == null) .read_only else .disable,
@@ -3081,7 +3080,7 @@ pub const VirtualMachine = struct {
         );
         this.eventLoop().ensureWaker();
 
-        if (!this.bundler.options.disable_transpilation) {
+        if (!this.transpiler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
                 JSC.JSValue.fromCell(promise).ensureStillAlive();
                 JSC.JSValue.fromCell(promise).protect();
@@ -3111,7 +3110,7 @@ pub const VirtualMachine = struct {
 
         try this.ensureDebugger(true);
 
-        if (!this.bundler.options.disable_transpilation) {
+        if (!this.transpiler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
                 JSC.JSValue.fromCell(promise).ensureStillAlive();
                 this.pending_internal_promise = promise;
@@ -3226,7 +3225,7 @@ pub const VirtualMachine = struct {
         if (!entry_point_entry.found_existing) {
             var macro_entry_pointer: *MacroEntryPoint = this.allocator.create(MacroEntryPoint) catch unreachable;
             entry_point_entry.value_ptr.* = macro_entry_pointer;
-            try macro_entry_pointer.generate(&this.bundler, Fs.PathName.init(entry_path), function_name, hash, specifier);
+            try macro_entry_pointer.generate(&this.transpiler, Fs.PathName.init(entry_path), function_name, hash, specifier);
         }
         const entry_point = entry_point_entry.value_ptr.*;
 
@@ -3315,7 +3314,7 @@ pub const VirtualMachine = struct {
                     }
 
                     if (exception_list) |list| {
-                        zig_exception.addToErrorList(list, this.bundler.fs.top_level_dir, &this.origin) catch {};
+                        zig_exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch {};
                     }
                 }
             }
@@ -3434,7 +3433,7 @@ pub const VirtualMachine = struct {
         if (stack.len > 0) {
             var vm = VirtualMachine.get();
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
-            const dir = vm.bundler.fs.top_level_dir;
+            const dir = vm.transpiler.fs.top_level_dir;
 
             for (stack) |frame| {
                 const file_slice = frame.source_url.toUTF8(bun.default_allocator);
@@ -3560,7 +3559,7 @@ pub const VirtualMachine = struct {
         // defer this so that it copies correctly
         defer {
             if (exception_list) |list| {
-                exception.addToErrorList(list, this.bundler.fs.top_level_dir, &this.origin) catch unreachable;
+                exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch unreachable;
             }
         }
 
@@ -3993,7 +3992,7 @@ pub const VirtualMachine = struct {
 
         if (show.system_code) {
             if (show.syscall) {
-                try writer.writeAll("  ");
+                try writer.writeAll("   ");
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }
@@ -4366,12 +4365,12 @@ pub const VirtualMachine = struct {
 
     /// To satisfy the interface from NewHotReloader()
     pub fn getLoaders(vm: *VirtualMachine) *bun.options.Loader.HashTable {
-        return &vm.bundler.options.loaders;
+        return &vm.transpiler.options.loaders;
     }
 
     /// To satisfy the interface from NewHotReloader()
     pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
-        return vm.bundler.resolver.bustDirCache(path);
+        return vm.transpiler.resolver.bustDirCache(path);
     }
 
     comptime {
@@ -4533,7 +4532,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .{ .watch = Watcher.init(
                         Reloader,
                         reloader,
-                        this.bundler.fs,
+                        this.transpiler.fs,
                         bun.default_allocator,
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -4543,7 +4542,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .{ .hot = Watcher.init(
                         Reloader,
                         reloader,
-                        this.bundler.fs,
+                        this.transpiler.fs,
                         bun.default_allocator,
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -4551,24 +4550,24 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     } };
 
                 if (reload_immediately) {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                    this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.watch);
                 } else {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                    this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
                 }
             } else {
                 this.bun_watcher = Watcher.init(
                     Reloader,
                     reloader,
-                    this.bundler.fs,
+                    this.transpiler.fs,
                     bun.default_allocator,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                 };
-                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
+                this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+            clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }

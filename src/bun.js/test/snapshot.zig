@@ -115,7 +115,7 @@ pub const Snapshots = struct {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
-        const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        const opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
         const test_file = Jest.runner.?.files.get(file.id);
@@ -141,7 +141,7 @@ pub const Snapshots = struct {
             opts,
             &temp_log,
             &source,
-            vm.bundler.options.define,
+            vm.transpiler.options.define,
             this.allocator,
         );
 
@@ -224,7 +224,7 @@ pub const Snapshots = struct {
 
         var success = true;
         const vm = VirtualMachine.get();
-        const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        const opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .js);
 
         for (this.inline_snapshots_to_write.keys(), this.inline_snapshots_to_write.values()) |file_id, *ils_info| {
             _ = arena_backing.reset(.retain_capacity);
@@ -311,7 +311,7 @@ pub const Snapshots = struct {
                     }
                     try lexer.next();
                     var parser: bun.js_parser.TSXParser = undefined;
-                    try bun.js_parser.TSXParser.init(arena, &log, &source, vm.bundler.options.define, lexer, opts, &parser);
+                    try bun.js_parser.TSXParser.init(arena, &log, &source, vm.transpiler.options.define, lexer, opts, &parser);
 
                     try parser.lexer.expect(.t_open_paren);
                     const after_open_paren_loc = parser.lexer.loc().start;

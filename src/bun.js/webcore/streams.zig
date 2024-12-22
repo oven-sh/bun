@@ -1544,6 +1544,11 @@ pub const ArrayBufferSink = struct {
         return Sink.init(this);
     }
 
+    pub fn memoryCost(this: *const ArrayBufferSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        return this.bytes.cap;
+    }
+
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
@@ -1636,6 +1641,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             pub fn start(_: *@This()) void {}
         };
+
+        pub fn memoryCost(this: *ThisSink) callconv(.C) usize {
+            return @sizeOf(ThisSink) + SinkType.memoryCost(&this.sink);
+        }
 
         pub fn onClose(ptr: JSValue, reason: JSValue) callconv(.C) void {
             JSC.markBinding(@src());
@@ -1951,6 +1960,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             @export(jsConstruct, .{ .name = shim.symbolName("construct") });
             @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
             @export(updateRef, .{ .name = shim.symbolName("updateRef") });
+            @export(memoryCost, .{ .name = shim.symbolName("memoryCost") });
 
             shim.assertJSFunction(.{
                 write,
@@ -2027,6 +2037,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn connect(this: *@This(), signal: Signal) void {
             this.signal = signal;
+        }
+
+        // Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
+        pub fn memoryCost(this: *@This()) usize {
+            // TODO: include Socket send buffer size. We can't here because we
+            // don't track if it's still accessible.
+            // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+            return this.buffer.cap;
         }
 
         fn handleWrote(this: *@This(), amount1: usize) void {
@@ -2869,6 +2887,12 @@ pub const FetchTaskletChunkedRequestSink = struct {
         _ = this.end(null);
         return .{ .result = JSC.JSValue.jsNumber(0) };
     }
+
+    pub fn memoryCost(this: *const @This()) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        return this.buffer.memoryCost();
+    }
+
     const name = "FetchTaskletChunkedRequestSink";
     pub const JSSink = NewJSSink(@This(), name);
 };
@@ -2889,6 +2913,7 @@ pub fn ReadableStreamSource(
     comptime deinit_fn: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
     comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
+    comptime memoryCostFn: ?fn (this: *const Context) usize,
     comptime toBufferedValue: ?fn (this: *Context, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue,
 ) type {
     return struct {
@@ -3053,6 +3078,14 @@ pub fn ReadableStreamSource(
         pub const arrayBufferFromJS = JSReadableStreamSource.arrayBuffer;
         pub const blobFromJS = JSReadableStreamSource.blob;
         pub const bytesFromJS = JSReadableStreamSource.bytes;
+
+        pub fn memoryCost(this: *const ReadableStreamSourceType) usize {
+            if (memoryCostFn) |function| {
+                return function(&this.context) + @sizeOf(@This());
+            }
+            return @sizeOf(@This());
+        }
+
         pub const JSReadableStreamSource = struct {
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
@@ -3309,6 +3342,11 @@ pub const FileSink = struct {
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
+
+    pub fn memoryCost(this: *const FileSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
+        return this.writer.memoryCost();
+    }
 
     fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
         comptime bun.assert(Environment.isWindows);
@@ -4420,6 +4458,11 @@ pub const FileReader = struct {
         return this.reader.setRawMode(flag);
     }
 
+    pub fn memoryCost(this: *const FileReader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        return this.reader.memoryCost();
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "File",
@@ -4429,6 +4472,7 @@ pub const FileReader = struct {
         deinit,
         setRefOrUnref,
         drain,
+        memoryCost,
         null,
     );
 };
@@ -4570,6 +4614,14 @@ pub const ByteBlobLoader = struct {
         return .zero;
     }
 
+    pub fn memoryCost(this: *const ByteBlobLoader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        if (this.store) |store| {
+            return store.memoryCost();
+        }
+        return 0;
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "Blob",
@@ -4579,6 +4631,7 @@ pub const ByteBlobLoader = struct {
         deinit,
         null,
         drain,
+        memoryCost,
         toBufferedValue,
     );
 };
@@ -4985,6 +5038,11 @@ pub const ByteStream = struct {
         }
     }
 
+    pub fn memoryCost(this: *const @This()) usize {
+        // ReadableStreamSource covers @sizeOf(ByteStream)
+        return this.buffer.capacity;
+    }
+
     pub fn deinit(this: *@This()) void {
         JSC.markBinding(@src());
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
@@ -5080,6 +5138,7 @@ pub const ByteStream = struct {
         deinit,
         null,
         drain,
+        memoryCost,
         toBufferedValue,
     );
 };

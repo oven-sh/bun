@@ -59,7 +59,22 @@ export interface ClassDefinition {
   JSType?: string;
   noConstructor?: boolean;
   wantsThis?: boolean;
+  /**
+   * Called from any thread.
+   *
+   * Used for GC.
+   */
   estimatedSize?: boolean;
+  /**
+   * Used in heap snapshots.
+   *
+   * If true, the class will have a `memoryCost` method that returns the size of the object in bytes.
+   *
+   * Unlike estimatedSize, this is always called on the main thread and not used for GC.
+   *
+   * If none is provided, we use the struct size.
+   */
+  memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;

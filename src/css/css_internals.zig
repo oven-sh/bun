@@ -60,18 +60,19 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
 
-    const options_arg = arguments.nextEat();
+    const browser_options_arg = arguments.nextEat();
 
     var log = bun.logger.Log.init(alloc);
     defer log.deinit();
 
+    var browsers: ?bun.css.targets.Browsers = null;
     const parser_options = parser_options: {
         const opts = bun.css.ParserOptions.default(alloc, &log);
         // if (test_kind == .prefix) break :parser_options opts;
 
-        if (options_arg) |optargs| {
+        if (browser_options_arg) |optargs| {
             if (optargs.isObject()) {
-                // minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                browsers = try targetsFromJS(globalThis, optargs);
             }
         }
 
@@ -88,11 +89,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
-            if (options_arg) |optarg| {
-                if (optarg.isObject()) {
-                    minify_options.targets.browsers = try targetsFromJS(globalThis, optarg);
-                }
-            }
+            minify_options.targets.browsers = browsers;
             _ = stylesheet.minify(alloc, minify_options).assert();
 
             const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{

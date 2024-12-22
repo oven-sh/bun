@@ -4060,6 +4060,37 @@ pub const Expect = struct {
         return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
     }
 
+    pub fn toHaveBeenCalledOnce(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        defer this.postMatch(globalThis);
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledOnce", "<green>expected<r>");
+
+        incrementExpectCallCounter();
+
+        const calls = JSMockFunction__getCalls(value);
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        }
+
+        var pass = @as(i32, @intCast(calls.getLength(globalThis))) == 1;
+
+        const not = this.flags.not;
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        // handle failure
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", true);
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+        }
+
+        const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", false);
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+    }
+
     pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
@@ -4161,7 +4192,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledWith", "<green>expected<r>");
 
@@ -4220,7 +4251,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>expected<r>");
 
@@ -4278,7 +4309,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>");
 
@@ -4721,12 +4752,11 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         // prepare the args array
-        const args_ptr = callFrame.argumentsPtr();
-        const args_count = callFrame.argumentsCount();
+        const args = callFrame.arguments();
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1);
+        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args.len + 1);
         matcher_args.appendAssumeCapacity(value);
-        for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
+        for (args) |arg| matcher_args.appendAssumeCapacity(arg);
 
         _ = try executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
 
@@ -5202,14 +5232,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         ExpectCustomAsymmetricMatcher.matcherFnSetCached(instance_jsvalue, globalThis, matcher_fn);
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
-        const args_ptr = callFrame.argumentsPtr();
-        const args_count: usize = callFrame.argumentsCount();
-        var args = JSValue.createEmptyArray(globalThis, args_count);
-        for (0..args_count) |i| {
-            args.putIndex(globalThis, @truncate(i), args_ptr[i]);
+        const args = callFrame.arguments();
+        const array = JSValue.createEmptyArray(globalThis, args.len);
+        for (args, 0..) |arg, i| {
+            array.putIndex(globalThis, @truncate(i), arg);
         }
-        args.ensureStillAlive();
-        ExpectCustomAsymmetricMatcher.capturedArgsSetCached(instance_jsvalue, globalThis, args);
+        ExpectCustomAsymmetricMatcher.capturedArgsSetCached(instance_jsvalue, globalThis, array);
+        array.ensureStillAlive();
 
         // return the same instance, now fully initialized including the captured args (previously it was incomplete)
         return instance_jsvalue;

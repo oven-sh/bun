@@ -151,7 +151,7 @@ pub const PathWatcherManager = struct {
             .main_watcher = try Watcher.init(
                 PathWatcherManager,
                 this,
-                vm.bundler.fs,
+                vm.transpiler.fs,
                 bun.default_allocator,
             ),
             .vm = vm,

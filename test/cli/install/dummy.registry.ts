@@ -116,6 +116,10 @@ export function dummyAfterAll() {
   server.stop();
 }
 
+export function getPort() {
+  return server.port;
+}
+
 let packageDirGetter: () => string = () => {
   return tmpdirSync();
 };

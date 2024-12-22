@@ -32,7 +32,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
@@ -243,6 +243,7 @@ pub const Arguments = struct {
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
@@ -250,6 +251,7 @@ pub const Arguments = struct {
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -290,7 +292,9 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--env <inline|prefix*|disable>    Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
+        clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
         clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -499,6 +503,15 @@ pub const Arguments = struct {
 
         if (cmd == .RunCommand or cmd == .AutoCommand) {
             ctx.filters = args.options("--filter");
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         if (cmd == .TestCommand) {
@@ -928,6 +941,31 @@ pub const Arguments = struct {
                 ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
+            if (args.flag("--windows-hide-console")) {
+                // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
+                // does, all of these customization options have been gated to windows-only
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-hide-console requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_hide_console = true;
+            }
+            if (args.option("--windows-icon")) |path| {
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-icon requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_icon = path;
+            }
+
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;
@@ -1077,6 +1115,15 @@ pub const Arguments = struct {
             // "run.silent" in bunfig.toml
             if (args.flag("--silent")) {
                 ctx.debug.silent = true;
+            }
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
             }
 
             if (opts.define) |define| {
@@ -1456,9 +1503,6 @@ pub const Command = struct {
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
-            compile: bool = false,
-            compile_target: Cli.CompileTarget = .{},
-
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
@@ -1489,6 +1533,12 @@ pub const Command = struct {
 
             env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
+            elide_lines: ?usize = null,
+            // Compile options
+            compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
+            windows_hide_console: bool = false,
+            windows_icon: ?[]const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

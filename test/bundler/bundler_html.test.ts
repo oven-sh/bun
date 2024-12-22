@@ -1,7 +1,5 @@
-import { describe } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
-import { expect } from "bun:test";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS

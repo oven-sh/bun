@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
+const GlobWalker = Glob.BunGlobWalkerZ;
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -1303,7 +1303,7 @@ pub const Interpreter = struct {
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
-                    break :env_loader event_loop.js.virtual_machine.bundler.env;
+                    break :env_loader event_loop.js.virtual_machine.transpiler.env;
                 }
 
                 break :env_loader event_loop.env();

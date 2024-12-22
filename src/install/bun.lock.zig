@@ -246,11 +246,7 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile) OOM!string {
-        var writer_buf = MutableString.initEmpty(allocator);
-        var buffered_writer = writer_buf.bufferedWriter();
-        var writer = buffered_writer.writer();
-
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile, writer: anytype) @TypeOf(writer).Error!void {
         const buf = lockfile.buffers.string_bytes.items;
         const deps_buf = lockfile.buffers.dependencies.items;
         const resolution_buf = lockfile.buffers.resolutions.items;
@@ -594,15 +590,17 @@ pub const Stringifier = struct {
                         TreeDepsSortCtx.isLessThan,
                     );
 
-                    // first index is resolution for all dependency types
-                    // npm         -> [ "name@version", registry or "" (default), deps..., integrity, ... ]
-                    // symlink     -> [ "name@link:path", deps..., ... ]
-                    // folder      -> [ "name@path", deps..., ... ]
-                    // workspace   -> [ "name@workspace:path", version or "", deps..., ... ]
-                    // tarball     -> [ "name@tarball", deps..., ... ]
-                    // root        -> [ "name@root:", bins ]
-                    // git         -> [ "name@git+repo", deps..., ... ]
-                    // github      -> [ "name@github:user/repo", deps..., ... ]
+                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+
+                    // first index is resolution for each type of package
+                    // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+                    // symlink     -> [ "name@link:path", INFO ]
+                    // folder      -> [ "name@file:path", INFO ]
+                    // workspace   -> [ "name@workspace:path", INFO ]
+                    // tarball     -> [ "name@tarball", INFO ]
+                    // root        -> [ "name@root:", { bin, binDir } ]
+                    // git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+                    // github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
 
                     switch (res.tag) {
                         .root => {
@@ -716,9 +714,6 @@ pub const Stringifier = struct {
         }
         try decIndent(writer, indent);
         try writer.writeAll("}\n");
-
-        try buffered_writer.flush();
-        return writer_buf.list.items;
     }
 
     /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
@@ -1218,21 +1213,26 @@ pub fn parseIntoBinaryLockfile(
     var optional_peers_buf: std.AutoHashMapUnmanaged(u64, void) = .{};
     defer optional_peers_buf.deinit(allocator);
 
-    if (maybe_root_pkg) |root_pkg| {
-        const maybe_name = if (root_pkg.get("name")) |name| name.asString(allocator) orelse {
+    const root_pkg_exr = maybe_root_pkg orelse {
+        try log.addError(source, workspaces.loc, "Expected root package");
+        return error.InvalidWorkspaceObject;
+    };
+
+    {
+        const maybe_name = if (root_pkg_exr.get("name")) |name| name.asString(allocator) orelse {
             try log.addError(source, name.loc, "Expected a string");
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source, &optional_peers_buf);
+        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf);
 
-        var pkg: BinaryLockfile.Package = .{};
-        pkg.meta.id = 0;
+        var root_pkg: BinaryLockfile.Package = .{};
+        root_pkg.meta.id = 0;
 
         if (maybe_name) |name| {
             const name_hash = String.Builder.stringHash(name);
-            pkg.name = try string_buf.appendWithHash(name, name_hash);
-            pkg.name_hash = name_hash;
+            root_pkg.name = try string_buf.appendWithHash(name, name_hash);
+            root_pkg.name_hash = name_hash;
         }
 
         workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
@@ -1262,15 +1262,12 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        pkg.dependencies = .{ .off = off, .len = len };
-        pkg.resolutions = .{ .off = off, .len = len };
+        root_pkg.dependencies = .{ .off = off, .len = len };
+        root_pkg.resolutions = .{ .off = off, .len = len };
 
-        pkg.meta.id = 0;
-        try lockfile.packages.append(allocator, pkg);
-        try lockfile.getOrPutID(0, pkg.name_hash);
-    } else {
-        try log.addError(source, workspaces.loc, "Expected root package");
-        return error.InvalidWorkspaceObject;
+        root_pkg.meta.id = 0;
+        try lockfile.packages.append(allocator, root_pkg);
+        try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
     var pkg_map = bun.StringArrayHashMap(PackageID).init(allocator);
@@ -1491,9 +1488,15 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                if (pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items))) |res_pkg_id| {
-                    lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
-                }
+                const res_pkg_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
+                    if (dep.behavior.optional) {
+                        continue;
+                    }
+                    try dependencyResolutionFailure(&dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                    return error.InvalidPackageInfo;
+                };
+
+                lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
             }
 
             // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
@@ -1533,10 +1536,10 @@ pub fn parseIntoBinaryLockfile(
                     }
 
                     if (offset == 0) {
-                        if (dep.behavior.isOptionalPeer()) {
+                        if (dep.behavior.optional) {
                             continue :deps;
                         }
-                        try log.addError(source, key.loc, "Unable to resolve dependencies for package");
+                        try dependencyResolutionFailure(&dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
                         return error.InvalidPackageInfo;
                     }
 
@@ -1584,7 +1587,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log, if (manager) |pm| pm.options.local_package_features.dev_dependencies else true) catch |err| {
+        lockfile.hoist(log, .resolvable, {}) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {
@@ -1597,6 +1600,32 @@ pub fn parseIntoBinaryLockfile(
     }
 
     lockfile.initEmpty(allocator);
+}
+
+fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
+    const behavior_str = if (dep.behavior.isDev())
+        "dev"
+    else if (dep.behavior.isOptional())
+        "optional"
+    else if (dep.behavior.isPeer())
+        "peer"
+    else if (dep.behavior.isWorkspaceOnly())
+        "workspace"
+    else
+        "prod";
+
+    if (pkg_path) |path| {
+        try log.addErrorFmt(source, loc, allocator, "Failed to resolve {s} dependency '{s}' for package '{s}'", .{
+            behavior_str,
+            dep.name.slice(buf),
+            path,
+        });
+    } else {
+        try log.addErrorFmt(source, loc, allocator, "Failed to resolve root {s} dependency '{s}'", .{
+            behavior_str,
+            dep.name.slice(buf),
+        });
+    }
 }
 
 fn parseAppendDependencies(

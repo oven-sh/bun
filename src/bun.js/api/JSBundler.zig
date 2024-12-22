@@ -8,7 +8,7 @@ const string = bun.string;
 const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
-const Bundler = bun.bundler;
+const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
@@ -44,7 +44,7 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
-const debug = bun.Output.scoped(.Bundler, false);
+const debug = bun.Output.scoped(.Transpiler, false);
 
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
@@ -389,7 +389,7 @@ pub const JSBundler = struct {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -748,7 +748,7 @@ pub const JSBundler = struct {
                 .bv2 = bv2,
                 .parse_task = parse,
                 .source_index = parse.source_index,
-                .default_loader = parse.path.loader(&bv2.bundler.options.loaders) orelse .js,
+                .default_loader = parse.path.loader(&bv2.transpiler.options.loaders) orelse .js,
                 .value = .pending,
                 .path = parse.path.text,
                 .namespace = parse.path.namespace,

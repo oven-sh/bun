@@ -1,4 +1,4 @@
-// This is Bun's JavaScript/TypeScript bundler
+// This is Bun's JavaScript/TypeScript transpiler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
 //
@@ -41,7 +41,7 @@
 //
 //     make mimalloc-debug
 //
-const Bundler = bun.Bundler;
+const Transpiler = bun.Transpiler;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -100,7 +100,6 @@ const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
 const EntryPoints = @import("./entry_points.zig");
-const ThisBundler = @import("../bundler.zig").Bundler;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
@@ -134,7 +133,7 @@ const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
 fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
-    return bun.tracy.traceNamed(src, "Bundler." ++ name);
+    return bun.tracy.traceNamed(src, "Transpiler." ++ name);
 }
 
 pub const ThreadPool = struct {
@@ -264,7 +263,7 @@ pub const ThreadPool = struct {
             log: *Logger.Log,
             estimated_input_lines_of_code: usize = 0,
             macro_context: js_ast.Macro.MacroContext,
-            bundler: Bundler = undefined,
+            transpiler: Transpiler = undefined,
         };
 
         pub fn init(worker: *Worker, v2: *BundleV2) void {
@@ -292,18 +291,18 @@ pub const ThreadPool = struct {
             };
             this.data.log.* = Logger.Log.init(allocator);
             this.ctx = ctx;
-            this.data.bundler = ctx.bundler.*;
-            this.data.bundler.setLog(this.data.log);
-            this.data.bundler.setAllocator(allocator);
-            this.data.bundler.linker.resolver = &this.data.bundler.resolver;
-            this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
-            this.data.macro_context = this.data.bundler.macro_context.?;
+            this.data.transpiler = ctx.transpiler.*;
+            this.data.transpiler.setLog(this.data.log);
+            this.data.transpiler.setAllocator(allocator);
+            this.data.transpiler.linker.resolver = &this.data.transpiler.resolver;
+            this.data.transpiler.macro_context = js_ast.Macro.MacroContext.init(&this.data.transpiler);
+            this.data.macro_context = this.data.transpiler.macro_context.?;
             this.temporary_arena = bun.ArenaAllocator.init(this.allocator);
             this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
 
-            this.data.bundler.resolver.caches = CacheSet.Set.init(this.allocator);
+            this.data.transpiler.resolver.caches = CacheSet.Set.init(this.allocator);
             debug("Worker.create()", .{});
         }
 
@@ -367,12 +366,12 @@ fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.F
 }
 
 pub const BundleV2 = struct {
-    bundler: *Bundler,
+    transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
-    /// and `bundler` is used for the server bundles.
-    client_bundler: *Bundler,
+    /// and `transpiler` is used for the server bundles.
+    client_bundler: *Transpiler,
     /// See bake.Framework.ServerComponents.separate_ssr_graph
-    ssr_bundler: *Bundler,
+    ssr_bundler: *Transpiler,
     /// When Bun Bake is used, the resolved framework is passed here
     framework: ?bake.Framework,
     graph: Graph,
@@ -397,7 +396,7 @@ pub const BundleV2 = struct {
 
     drain_defer_task: DeferredBatchTask = .{},
 
-    /// Set true by DevServer. Currently every usage of the bundler (Bun.build
+    /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` cli) runs at the top of an event loop. When this is
     /// true, a callback is executed after all work is complete.
     asynchronous: bool = false,
@@ -405,8 +404,8 @@ pub const BundleV2 = struct {
 
     const BakeOptions = struct {
         framework: bake.Framework,
-        client_bundler: *Bundler,
-        ssr_bundler: *Bundler,
+        client_bundler: *Transpiler,
+        ssr_bundler: *Transpiler,
         plugins: ?*JSC.API.JSBundler.Plugin,
     };
 
@@ -427,20 +426,20 @@ pub const BundleV2 = struct {
             // running the plugins.
             .js => |jsc_event_loop| return jsc_event_loop,
             // The CLI currently has no JSC event loop; for now, no plugin support
-            .mini => @panic("No JavaScript event loop for bundler plugins to run on"),
+            .mini => @panic("No JavaScript event loop for transpiler plugins to run on"),
         }
     }
 
-    /// Most of the time, accessing .bundler directly is OK. This is only
+    /// Most of the time, accessing .transpiler directly is OK. This is only
     /// needed when it is important to distinct between client and server
     ///
     /// Note that .log, .allocator, and other things are shared
-    /// between the three bundler configurations
-    pub inline fn bundlerForTarget(this: *BundleV2, target: options.Target) *Bundler {
-        return if (!this.bundler.options.server_components)
-            this.bundler
+    /// between the three transpiler configurations
+    pub inline fn bundlerForTarget(this: *BundleV2, target: options.Target) *Transpiler {
+        return if (!this.transpiler.options.server_components)
+            this.transpiler
         else switch (target) {
-            else => this.bundler,
+            else => this.transpiler,
             .browser => this.client_bundler,
             .bake_server_components_ssr => this.ssr_bundler,
         };
@@ -452,7 +451,7 @@ pub const BundleV2 = struct {
 
     /// Same semantics as bundlerForTarget for `path_to_source_index_map`
     pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *PathToSourceIndexMap {
-        return if (!this.bundler.options.server_components)
+        return if (!this.transpiler.options.server_components)
             &this.graph.path_to_source_index_map
         else switch (target) {
             else => &this.graph.path_to_source_index_map,
@@ -583,7 +582,7 @@ pub const BundleV2 = struct {
         // imported and weird things will happen
         visitor.visit(Index.runtime, false, false);
 
-        switch (this.bundler.options.code_splitting) {
+        switch (this.transpiler.options.code_splitting) {
             inline else => |check_dynamic_imports| {
                 for (this.graph.entry_points.items) |entry_point| {
                     visitor.visit(entry_point, false, comptime check_dynamic_imports);
@@ -636,19 +635,19 @@ pub const BundleV2 = struct {
         import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
         target: options.Target,
     ) void {
-        const bundler = this.bundlerForTarget(target);
+        const transpiler = this.bundlerForTarget(target);
         var had_busted_dir_cache: bool = false;
-        var resolve_result = while (true) break bundler.resolver.resolve(
+        var resolve_result = while (true) break transpiler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
             // Only perform directory busting when hot-reloading is enabled
             if (err == error.ModuleNotFound) {
-                if (this.bundler.options.dev_server) |dev| {
+                if (this.transpiler.options.dev_server) |dev| {
                     if (!had_busted_dir_cache) {
                         // Only re-query if we previously had something cached.
-                        if (bundler.resolver.bustDirCacheFromSpecifier(import_record.source_file, import_record.specifier)) {
+                        if (transpiler.resolver.bustDirCacheFromSpecifier(import_record.source_file, import_record.specifier)) {
                             had_busted_dir_cache = true;
                             continue;
                         }
@@ -751,7 +750,7 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relativePlatform(bundler.fs.top_level_dir, path.text, .loose, false);
+            const rel = bun.path.relativePlatform(transpiler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
         }
         path.assertPrettyIsValid();
@@ -777,7 +776,7 @@ pub const BundleV2 = struct {
                     }
                 }
 
-                break :brk path.loader(&bundler.options.loaders) orelse options.Loader.file;
+                break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
             };
             const idx = this.enqueueParseTask(
                 &resolve_result,
@@ -794,7 +793,7 @@ pub const BundleV2 = struct {
             // For non-javascript files, make all of these files share indices.
             // For example, it is silly to bundle index.css depended on by client+server twice.
             // It makes sense to separate these for JS because the target affects DCE
-            if (this.bundler.options.server_components and !loader.isJavaScriptLike()) {
+            if (this.transpiler.options.server_components and !loader.isJavaScriptLike()) {
                 const a, const b = switch (target) {
                     else => .{ &this.graph.client_path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
                     .browser => .{ &this.graph.path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
@@ -833,7 +832,7 @@ pub const BundleV2 = struct {
         }
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
-        const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
+        const loader = this.transpiler.options.loaders.get(path.name.ext) orelse .file;
 
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
@@ -860,7 +859,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -876,7 +875,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn init(
-        bundler: *ThisBundler,
+        transpiler: *Transpiler,
         bake_options: ?BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
@@ -884,16 +883,16 @@ pub const BundleV2 = struct {
         thread_pool: ?*ThreadPoolLib,
         heap: ?ThreadlocalArena,
     ) !*BundleV2 {
-        bundler.env.loadTracy();
+        transpiler.env.loadTracy();
 
         const this = try allocator.create(BundleV2);
-        bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
-        bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
+        transpiler.options.mark_builtins_as_external = transpiler.options.target.isBun() or transpiler.options.target == .node;
+        transpiler.resolver.opts.mark_builtins_as_external = transpiler.options.target.isBun() or transpiler.options.target == .node;
 
         this.* = .{
-            .bundler = bundler,
-            .client_bundler = bundler,
-            .ssr_bundler = bundler,
+            .transpiler = transpiler,
+            .client_bundler = transpiler,
+            .ssr_bundler = transpiler,
             .framework = null,
             .graph = .{
                 .pool = undefined,
@@ -920,50 +919,50 @@ pub const BundleV2 = struct {
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
             this.plugins = bo.plugins;
-            bun.assert(bundler.options.server_components);
+            bun.assert(transpiler.options.server_components);
             bun.assert(this.client_bundler.options.server_components);
             if (bo.framework.server_components.?.separate_ssr_graph)
                 bun.assert(this.ssr_bundler.options.server_components);
         }
         this.linker.graph.allocator = this.graph.heap.allocator();
         this.graph.allocator = this.linker.graph.allocator;
-        this.bundler.allocator = this.graph.allocator;
-        this.bundler.resolver.allocator = this.graph.allocator;
-        this.bundler.linker.allocator = this.graph.allocator;
-        this.bundler.log.msgs.allocator = this.graph.allocator;
-        this.bundler.log.clone_line_text = true;
+        this.transpiler.allocator = this.graph.allocator;
+        this.transpiler.resolver.allocator = this.graph.allocator;
+        this.transpiler.linker.allocator = this.graph.allocator;
+        this.transpiler.log.msgs.allocator = this.graph.allocator;
+        this.transpiler.log.clone_line_text = true;
 
         // We don't expose an option to disable this. Bake forbids tree-shaking
         // since every export must is always exist in case a future module
         // starts depending on it.
-        if (this.bundler.options.output_format == .internal_bake_dev) {
-            this.bundler.options.tree_shaking = false;
-            this.bundler.resolver.opts.tree_shaking = false;
+        if (this.transpiler.options.output_format == .internal_bake_dev) {
+            this.transpiler.options.tree_shaking = false;
+            this.transpiler.resolver.opts.tree_shaking = false;
         } else {
-            this.bundler.options.tree_shaking = true;
-            this.bundler.resolver.opts.tree_shaking = true;
+            this.transpiler.options.tree_shaking = true;
+            this.transpiler.resolver.opts.tree_shaking = true;
         }
 
-        this.linker.resolver = &this.bundler.resolver;
-        this.linker.graph.code_splitting = bundler.options.code_splitting;
+        this.linker.resolver = &this.transpiler.resolver;
+        this.linker.graph.code_splitting = transpiler.options.code_splitting;
 
-        this.linker.options.minify_syntax = bundler.options.minify_syntax;
-        this.linker.options.minify_identifiers = bundler.options.minify_identifiers;
-        this.linker.options.minify_whitespace = bundler.options.minify_whitespace;
-        this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
-        this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
-        this.linker.options.banner = bundler.options.banner;
-        this.linker.options.footer = bundler.options.footer;
-        this.linker.options.experimental_css = bundler.options.experimental_css;
-        this.linker.options.css_chunking = bundler.options.css_chunking;
-        this.linker.options.source_maps = bundler.options.source_map;
-        this.linker.options.tree_shaking = bundler.options.tree_shaking;
-        this.linker.options.public_path = bundler.options.public_path;
-        this.linker.options.target = bundler.options.target;
-        this.linker.options.output_format = bundler.options.output_format;
-        this.linker.options.generate_bytecode_cache = bundler.options.bytecode;
+        this.linker.options.minify_syntax = transpiler.options.minify_syntax;
+        this.linker.options.minify_identifiers = transpiler.options.minify_identifiers;
+        this.linker.options.minify_whitespace = transpiler.options.minify_whitespace;
+        this.linker.options.emit_dce_annotations = transpiler.options.emit_dce_annotations;
+        this.linker.options.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
+        this.linker.options.banner = transpiler.options.banner;
+        this.linker.options.footer = transpiler.options.footer;
+        this.linker.options.experimental_css = transpiler.options.experimental_css;
+        this.linker.options.css_chunking = transpiler.options.css_chunking;
+        this.linker.options.source_maps = transpiler.options.source_map;
+        this.linker.options.tree_shaking = transpiler.options.tree_shaking;
+        this.linker.options.public_path = transpiler.options.public_path;
+        this.linker.options.target = transpiler.options.target;
+        this.linker.options.output_format = transpiler.options.output_format;
+        this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
 
-        this.linker.dev_server = bundler.options.dev_server;
+        this.linker.dev_server = transpiler.options.dev_server;
 
         var pool = try this.graph.allocator.create(ThreadPool);
         if (cli_watch_flag) {
@@ -999,7 +998,7 @@ pub const BundleV2 = struct {
 
     pub fn onAfterDecrementScanCounter(this: *BundleV2) void {
         if (this.asynchronous and this.isDone()) {
-            this.finishFromBakeDevServer(this.bundler.options.dev_server orelse
+            this.finishFromBakeDevServer(this.transpiler.options.dev_server orelse
                 @panic("No dev server attached in asynchronous bundle job")) catch
                 bun.outOfMemory();
         }
@@ -1021,7 +1020,7 @@ pub const BundleV2 = struct {
 
         {
             // Add the runtime
-            const rt = ParseTask.getRuntimeSource(this.bundler.options.target);
+            const rt = ParseTask.getRuntimeSource(this.transpiler.options.target);
             try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
                 .source = rt.source,
                 .loader = .js,
@@ -1045,7 +1044,7 @@ pub const BundleV2 = struct {
         // gets its content set after the scan+parse phase, but before linking.
         //
         // The dev server does not use these, as it is implement in the HMR runtime.
-        if (this.bundler.options.dev_server == null) {
+        if (this.transpiler.options.dev_server == null) {
             try this.reserveSourceIndexesForBake();
         }
 
@@ -1064,14 +1063,14 @@ pub const BundleV2 = struct {
             switch (variant) {
                 .normal => {
                     for (data) |entry_point| {
-                        const resolved = this.bundler.resolveEntryPoint(entry_point) catch
+                        const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
-                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.bundler.options.target);
+                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
                     }
                 },
                 .dev_server => {
                     for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
-                        const resolved = this.bundler.resolveEntryPoint(abs_path) catch
+                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch
                             continue;
 
                         if (flags.client) brk: {
@@ -1080,19 +1079,19 @@ pub const BundleV2 = struct {
                                 try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                             }
                         }
-                        if (flags.server) _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.bundler.options.target);
+                        if (flags.server) _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
                         if (flags.ssr) _ = try this.enqueueEntryItem(null, &batch, resolved, true, .bake_server_components_ssr);
                     }
                 },
                 .bake_production => {
                     for (data.files.keys()) |key| {
-                        const resolved = this.bundler.resolveEntryPoint(key.absPath()) catch
+                        const resolved = this.transpiler.resolveEntryPoint(key.absPath()) catch
                             continue;
 
                         // TODO: wrap client files so the exports arent preserved.
                         _ = try this.enqueueEntryItem(null, &batch, resolved, true, switch (key.side) {
                             .client => .browser,
-                            .server => this.bundler.options.target,
+                            .server => this.transpiler.options.target,
                         }) orelse continue;
                     }
                 },
@@ -1105,8 +1104,8 @@ pub const BundleV2 = struct {
     fn cloneAST(this: *BundleV2) !void {
         const trace = tracer(@src(), "cloneAST");
         defer trace.end();
-        this.linker.allocator = this.bundler.allocator;
-        this.linker.graph.allocator = this.bundler.allocator;
+        this.linker.allocator = this.transpiler.allocator;
+        this.linker.graph.allocator = this.transpiler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
         var ast = this.linker.graph.ast.slice();
         for (ast.items(.module_scope)) |*module_scope| {
@@ -1135,8 +1134,8 @@ pub const BundleV2 = struct {
 
         const alloc = this.graph.allocator;
 
-        var server = try AstBuilder.init(this.graph.allocator, &bake.server_virtual_source, this.bundler.options.hot_module_reloading);
-        var client = try AstBuilder.init(this.graph.allocator, &bake.client_virtual_source, this.bundler.options.hot_module_reloading);
+        var server = try AstBuilder.init(this.graph.allocator, &bake.server_virtual_source, this.transpiler.options.hot_module_reloading);
+        var client = try AstBuilder.init(this.graph.allocator, &bake.client_virtual_source, this.transpiler.options.hot_module_reloading);
 
         var server_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
         var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
@@ -1287,7 +1286,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1326,7 +1325,7 @@ pub const BundleV2 = struct {
             },
             .side_effects = .has_side_effects,
             .jsx = if (known_target == .bake_server_components_ssr and !this.framework.?.server_components.?.separate_ssr_graph)
-                this.bundler.options.jsx
+                this.transpiler.options.jsx
             else
                 this.bundlerForTarget(known_target).options.jsx,
             .source_index = source_index,
@@ -1343,7 +1342,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1386,7 +1385,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn generateFromCLI(
-        bundler: *ThisBundler,
+        transpiler: *Transpiler,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         enable_reloading: bool,
@@ -1394,16 +1393,16 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(bundler, null, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = generateUniqueKey();
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, this.bundler.options.entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points));
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1412,7 +1411,7 @@ pub const BundleV2 = struct {
         minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1439,7 +1438,7 @@ pub const BundleV2 = struct {
 
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
-        server_bundler: *ThisBundler,
+        server_bundler: *Transpiler,
         kit_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
@@ -1447,19 +1446,19 @@ pub const BundleV2 = struct {
         var this = try BundleV2.init(server_bundler, kit_options, allocator, event_loop, false, null, null);
         this.unique_key = generateUniqueKey();
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.bake_production, entry_points));
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.waitForParse();
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1507,7 +1506,7 @@ pub const BundleV2 = struct {
             const unique_key_for_additional_files = this.graph.input_files.items(.unique_key_for_additional_file);
             const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
             const sources = this.graph.input_files.items(.source);
-            var additional_output_files = std.ArrayList(options.OutputFile).init(this.bundler.allocator);
+            var additional_output_files = std.ArrayList(options.OutputFile).init(this.transpiler.allocator);
 
             const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
             const loaders = this.graph.input_files.items(.loader);
@@ -1517,13 +1516,13 @@ pub const BundleV2 = struct {
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
                     var template = PathTemplate.asset;
-                    if (this.bundler.options.asset_naming.len > 0)
-                        template.data = this.bundler.options.asset_naming;
+                    if (this.transpiler.options.asset_naming.len > 0)
+                        template.data = this.transpiler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
 
                     // TODO: outbase
-                    pathname = Fs.PathName.init(bun.path.relativePlatform(this.bundler.options.root_dir, source.path.text, .loose, false));
+                    pathname = Fs.PathName.init(bun.path.relativePlatform(this.transpiler.options.root_dir, source.path.text, .loose, false));
 
                     template.placeholder.name = pathname.base;
                     template.placeholder.dir = pathname.dir;
@@ -1579,7 +1578,7 @@ pub const BundleV2 = struct {
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
             .poll_ref = Async.KeepAlive.init(),
-            .env = globalThis.bunVM().bundler.env,
+            .env = globalThis.bunVM().transpiler.env,
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = JSBundleCompletionTask.TaskCompletion.init(completion),
@@ -1623,18 +1622,18 @@ pub const BundleV2 = struct {
         result: Result = .{ .pending = {} },
 
         next: ?*JSBundleCompletionTask = null,
-        bundler: *BundleV2 = undefined,
+        transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
-            bundler: *Bundler,
+            transpiler: *Transpiler,
             allocator: std.mem.Allocator,
         ) !void {
             const config = &completion.config;
 
-            bundler.* = try bun.Bundler.init(
+            transpiler.* = try bun.Transpiler.init(
                 allocator,
                 &completion.log,
                 Api.TransformOptions{
@@ -1651,52 +1650,52 @@ pub const BundleV2 = struct {
                     .extension_order = &.{},
                     .env_files = &.{},
                     .conditions = config.conditions.map.keys(),
-                    .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
+                    .ignore_dce_annotations = transpiler.options.ignore_dce_annotations,
                     .drop = config.drop.map.keys(),
                 },
                 completion.env,
             );
-            bundler.options.env.behavior = config.env_behavior;
-            bundler.options.env.prefix = config.env_prefix.slice();
+            transpiler.options.env.behavior = config.env_behavior;
+            transpiler.options.env.prefix = config.env_prefix.slice();
 
-            bundler.options.entry_points = config.entry_points.keys();
-            bundler.options.jsx = config.jsx;
-            bundler.options.no_macros = config.no_macros;
-            bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
-            bundler.options.entry_naming = config.names.entry_point.data;
-            bundler.options.chunk_naming = config.names.chunk.data;
-            bundler.options.asset_naming = config.names.asset.data;
+            transpiler.options.entry_points = config.entry_points.keys();
+            transpiler.options.jsx = config.jsx;
+            transpiler.options.no_macros = config.no_macros;
+            transpiler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
+            transpiler.options.entry_naming = config.names.entry_point.data;
+            transpiler.options.chunk_naming = config.names.chunk.data;
+            transpiler.options.asset_naming = config.names.asset.data;
 
-            bundler.options.public_path = config.public_path.list.items;
-            bundler.options.output_format = config.format;
-            bundler.options.bytecode = config.bytecode;
+            transpiler.options.public_path = config.public_path.list.items;
+            transpiler.options.output_format = config.format;
+            transpiler.options.bytecode = config.bytecode;
 
-            bundler.options.output_dir = config.outdir.slice();
-            bundler.options.root_dir = config.rootdir.slice();
-            bundler.options.minify_syntax = config.minify.syntax;
-            bundler.options.minify_whitespace = config.minify.whitespace;
-            bundler.options.minify_identifiers = config.minify.identifiers;
-            bundler.options.inlining = config.minify.syntax;
-            bundler.options.source_map = config.source_map;
-            bundler.options.packages = config.packages;
-            bundler.options.code_splitting = config.code_splitting;
-            bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
-            bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-            bundler.options.experimental_css = config.experimental_css;
-            bundler.options.css_chunking = config.css_chunking;
-            bundler.options.banner = config.banner.slice();
-            bundler.options.footer = config.footer.slice();
+            transpiler.options.output_dir = config.outdir.slice();
+            transpiler.options.root_dir = config.rootdir.slice();
+            transpiler.options.minify_syntax = config.minify.syntax;
+            transpiler.options.minify_whitespace = config.minify.whitespace;
+            transpiler.options.minify_identifiers = config.minify.identifiers;
+            transpiler.options.inlining = config.minify.syntax;
+            transpiler.options.source_map = config.source_map;
+            transpiler.options.packages = config.packages;
+            transpiler.options.code_splitting = config.code_splitting;
+            transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
+            transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+            transpiler.options.experimental_css = config.experimental_css;
+            transpiler.options.css_chunking = config.css_chunking;
+            transpiler.options.banner = config.banner.slice();
+            transpiler.options.footer = config.footer.slice();
 
-            bundler.configureLinker();
-            try bundler.configureDefines();
+            transpiler.configureLinker();
+            try transpiler.configureDefines();
 
             if (bun.FeatureFlags.breaking_changes_1_2) {
-                if (!bundler.options.production) {
-                    try bundler.options.conditions.appendSlice(&.{"development"});
+                if (!transpiler.options.production) {
+                    try transpiler.options.conditions.appendSlice(&.{"development"});
                 }
             }
 
-            bundler.resolver.opts = bundler.options;
+            transpiler.resolver.opts = transpiler.options;
         }
 
         pub fn completeOnBundleThread(completion: *JSBundleCompletionTask) void {
@@ -1868,7 +1867,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
-        const log = this.bundler.log;
+        const log = this.transpiler.log;
 
         // TODO: watcher
 
@@ -1893,7 +1892,7 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
-                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.bundler.options.experimental_css);
+                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.transpiler.options.experimental_css);
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -1912,7 +1911,7 @@ pub const BundleV2 = struct {
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
             },
             .err => |msg| {
-                if (this.bundler.options.dev_server) |dev| {
+                if (this.transpiler.options.dev_server) |dev| {
                     const source = &this.graph.input_files.items(.source)[load.source_index.get()];
                     // A stack-allocated Log object containing the singular message
                     var msg_mut = msg;
@@ -1955,7 +1954,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
-        const log = this.bundler.log;
+        const log = this.transpiler.log;
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -2010,7 +2009,7 @@ pub const BundleV2 = struct {
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
-                        const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
+                        const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
                         this.graph.input_files.append(bun.default_allocator, .{
                             .source = .{
@@ -2046,7 +2045,7 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-                            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2135,7 +2134,7 @@ pub const BundleV2 = struct {
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = generateUniqueKey();
 
-        if (this.bundler.log.errors > 0) {
+        if (this.transpiler.log.errors > 0) {
             return error.BuildFailed;
         }
 
@@ -2148,7 +2147,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        if (this.bundler.log.errors > 0) {
+        if (this.transpiler.log.errors > 0) {
             return error.BuildFailed;
         }
 
@@ -2173,14 +2172,14 @@ pub const BundleV2 = struct {
             reachable_files,
         );
 
-        if (this.bundler.log.errors > 0) {
+        if (this.transpiler.log.errors > 0) {
             return error.BuildFailed;
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
-    /// Dev Server uses this instead to run a subset of the bundler, and to run it asynchronously.
+    /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
     pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !BakeBundleStart {
         this.unique_key = generateUniqueKey();
 
@@ -2383,7 +2382,7 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
-                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                     parse.defer_copy_for_bundling = true;
                 }
                 // This is where onLoad plugins are enqueued
@@ -2402,7 +2401,7 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        return genericPathWithPrettyInitialized(path, target, this.bundler.fs.top_level_dir, this.graph.allocator);
+        return genericPathWithPrettyInitialized(path, target, this.transpiler.fs.top_level_dir, this.graph.allocator);
     }
 
     fn reserveSourceIndexesForBake(this: *BundleV2) !void {
@@ -2484,7 +2483,7 @@ pub const BundleV2 = struct {
                     inline else => |is_server| {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
-                            if (this.bundler.options.dev_server != null) {
+                            if (this.transpiler.options.dev_server != null) {
                                 import_record.is_external_without_side_effects = true;
                                 import_record.source_index = Index.invalid;
                             } else {
@@ -2511,7 +2510,7 @@ pub const BundleV2 = struct {
                     continue;
                 }
 
-                if (this.bundler.options.rewrite_jest_for_tests) {
+                if (this.transpiler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
                         "@jest/globals",
@@ -2556,13 +2555,13 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const bundler, const renderer: bake.Graph, const target =
+            const transpiler, const renderer: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 // TODO: consider moving this error into js_parser so it is caught more reliably
                 // Then we can assert(this.framework != null)
                 if (this.framework == null) {
-                    this.bundler.log.addErrorFmt(
+                    this.transpiler.log.addErrorFmt(
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
@@ -2575,7 +2574,7 @@ pub const BundleV2 = struct {
                 const is_supported = this.framework.?.server_components != null and
                     this.framework.?.server_components.?.separate_ssr_graph;
                 if (!is_supported) {
-                    this.bundler.log.addErrorFmt(
+                    this.transpiler.log.addErrorFmt(
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
@@ -2597,17 +2596,17 @@ pub const BundleV2 = struct {
             };
 
             var had_busted_dir_cache = false;
-            var resolve_result = inner: while (true) break bundler.resolver.resolveWithFramework(
+            var resolve_result = inner: while (true) break transpiler.resolver.resolveWithFramework(
                 source_dir,
                 import_record.path.text,
                 import_record.kind,
             ) catch |err| {
                 // Only perform directory busting when hot-reloading is enabled
                 if (err == error.ModuleNotFound) {
-                    if (this.bundler.options.dev_server) |dev| {
+                    if (this.transpiler.options.dev_server) |dev| {
                         if (!had_busted_dir_cache) {
                             // Only re-query if we previously had something cached.
-                            if (bundler.resolver.bustDirCacheFromSpecifier(
+                            if (transpiler.resolver.bustDirCacheFromSpecifier(
                                 source.path.text,
                                 import_record.path.text,
                             )) {
@@ -2640,7 +2639,7 @@ pub const BundleV2 = struct {
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     addError(
-                                        this.bundler.log,
+                                        this.transpiler.log,
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
@@ -2650,7 +2649,7 @@ pub const BundleV2 = struct {
                                     ) catch @panic("unexpected log error");
                                 } else {
                                     addError(
-                                        this.bundler.log,
+                                        this.transpiler.log,
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
@@ -2661,7 +2660,7 @@ pub const BundleV2 = struct {
                                 }
                             } else {
                                 addError(
-                                    this.bundler.log,
+                                    this.transpiler.log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
@@ -2699,12 +2698,12 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (this.bundler.options.dev_server) |dev_server| {
+            if (this.transpiler.options.dev_server) |dev_server| {
                 import_record.source_index = Index.invalid;
                 import_record.is_external_without_side_effects = true;
 
                 if (dev_server.isFileCached(path.text, renderer)) |entry| {
-                    const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+                    const rel = bun.path.relativePlatform(this.transpiler.fs.top_level_dir, path.text, .loose, false);
                     import_record.path.text = rel;
                     import_record.path.pretty = rel;
                     import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
@@ -2718,7 +2717,7 @@ pub const BundleV2 = struct {
             const hash_key = path.hashKey();
 
             if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
-                if (this.bundler.options.dev_server != null) {
+                if (this.transpiler.options.dev_server != null) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
                     import_record.source_index = Index.init(id);
@@ -2759,8 +2758,8 @@ pub const BundleV2 = struct {
             }
 
             if (resolve_task.loader == null) {
-                resolve_task.loader = path.loader(&this.bundler.options.loaders);
-                resolve_task.tree_shaking = this.bundler.options.tree_shaking;
+                resolve_task.loader = path.loader(&this.transpiler.options.loaders);
+                resolve_task.tree_shaking = this.transpiler.options.tree_shaking;
             }
 
             resolve_entry.value_ptr.* = resolve_task;
@@ -2804,7 +2803,7 @@ pub const BundleV2 = struct {
                 .success => |val| val.source.index.get(),
             };
             const loader: Loader = this.graph.input_files.items(.loader)[source];
-            if (!loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+            if (!loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                 this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
             } else {
                 this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
@@ -2834,7 +2833,7 @@ pub const BundleV2 = struct {
             }
         }
 
-        // To minimize contention, watchers are appended by the bundler thread.
+        // To minimize contention, watchers are appended by the transpiler thread.
         if (this.bun_watcher) |watcher| {
             if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
                 const source = switch (parse_result.value) {
@@ -2866,7 +2865,7 @@ pub const BundleV2 = struct {
                 }
             },
             .success => |*result| {
-                result.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
+                result.log.cloneToWithRecycled(this.transpiler.log, true) catch unreachable;
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.
@@ -2911,7 +2910,7 @@ pub const BundleV2 = struct {
                             .side_effects = value.side_effects,
                         };
 
-                        const loader = new_task.loader orelse new_input_file.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
+                        const loader = new_task.loader orelse new_input_file.source.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
                         new_input_file.source.index = Index.source(graph.input_files.len);
                         new_input_file.source.path = new_task.path;
@@ -2931,7 +2930,7 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2941,8 +2940,8 @@ pub const BundleV2 = struct {
                         // schedule as early as possible
                         graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
-                        const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
-                        if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                        const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
                             graph.estimated_file_loader_count += 1;
@@ -2958,7 +2957,7 @@ pub const BundleV2 = struct {
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
-                        if (this.bundler.options.dev_server == null or
+                        if (this.transpiler.options.dev_server == null or
                             input_file_loaders[to_assign.to_source_index.get()] == .css)
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
@@ -2975,7 +2974,7 @@ pub const BundleV2 = struct {
 
                 for (import_records.slice(), 0..) |*record, i| {
                     if (path_to_source_index_map.get(record.path.hashKey())) |source_index| {
-                        if (this.bundler.options.dev_server == null or
+                        if (this.transpiler.options.dev_server == null or
                             input_file_loaders[source_index] == .css)
                             record.source_index.value = source_index;
 
@@ -3027,7 +3026,7 @@ pub const BundleV2 = struct {
                         // Enqueue only one file
                         var server_source = result.source;
                         server_source.path.pretty = server_source.path.text;
-                        server_source.path = this.pathWithPrettyInitialized(server_source.path, this.bundler.options.target) catch bun.outOfMemory();
+                        server_source.path = this.pathWithPrettyInitialized(server_source.path, this.transpiler.options.target) catch bun.outOfMemory();
                         const server_index = this.enqueueParseTask2(
                             server_source,
                             this.graph.input_files.items(.loader)[result.source.index.get()],
@@ -3058,7 +3057,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (process_log) {
-                    if (this.bundler.options.dev_server) |dev_server| {
+                    if (this.transpiler.options.dev_server) |dev_server| {
                         dev_server.handleParseTaskFailure(
                             err.err,
                             err.target.bakeGraph(),
@@ -3066,19 +3065,19 @@ pub const BundleV2 = struct {
                             &err.log,
                         ) catch bun.outOfMemory();
                     } else if (err.log.msgs.items.len > 0) {
-                        err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
+                        err.log.cloneToWithRecycled(this.transpiler.log, true) catch unreachable;
                     } else {
-                        this.bundler.log.addErrorFmt(
+                        this.transpiler.log.addErrorFmt(
                             null,
                             Logger.Loc.Empty,
-                            this.bundler.log.msgs.allocator,
+                            this.transpiler.log.msgs.allocator,
                             "{s} while {s}",
                             .{ @errorName(err.err), @tagName(err.step) },
                         ) catch unreachable;
                     }
                 }
 
-                if (Environment.allow_assert and this.bundler.options.dev_server != null) {
+                if (Environment.allow_assert and this.transpiler.options.dev_server != null) {
                     bun.assert(this.graph.ast.items(.parts)[err.source_index.get()].len == 0);
                 }
             },
@@ -3087,12 +3086,12 @@ pub const BundleV2 = struct {
 
     /// To satisfy the interface from NewHotReloader()
     pub fn getLoaders(vm: *BundleV2) *bun.options.Loader.HashTable {
-        return &vm.bundler.options.loaders;
+        return &vm.transpiler.options.loaders;
     }
 
     /// To satisfy the interface from NewHotReloader()
     pub fn bustDirCache(vm: *BundleV2, path: []const u8) bool {
-        return vm.bundler.resolver.bustDirCache(path);
+        return vm.transpiler.resolver.bustDirCache(path);
     }
 };
 
@@ -3209,14 +3208,14 @@ pub fn BundleThread(CompletionStruct: type) type {
             ast_memory_allocator.reset();
             ast_memory_allocator.push();
 
-            const bundler = try allocator.create(bun.Bundler);
+            const transpiler = try allocator.create(bun.Transpiler);
 
-            try completion.configureBundler(bundler, allocator);
+            try completion.configureBundler(transpiler, allocator);
 
-            bundler.resolver.generation = generation;
+            transpiler.resolver.generation = generation;
 
             const this = try BundleV2.init(
-                bundler,
+                transpiler,
                 null, // TODO: Kit
                 allocator,
                 JSC.AnyEventLoop.init(allocator),
@@ -3230,7 +3229,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 BundleV2.JSBundleCompletionTask => completion,
                 else => @compileError("Unknown completion struct: " ++ CompletionStruct),
             };
-            completion.bundler = this;
+            completion.transpiler = this;
 
             defer {
                 if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
@@ -3247,16 +3246,16 @@ pub fn BundleThread(CompletionStruct: type) type {
                 this.linker.source_maps.quoted_contents_wait_group.wait();
 
                 var out_log = Logger.Log.init(bun.default_allocator);
-                this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+                this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
                 completion.log = out_log;
             }
 
             completion.result = .{ .value = .{
-                .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
+                .output_files = try this.runFromJSInNewThread(transpiler.options.entry_points),
             } };
 
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
             completion.log = out_log;
             completion.completeOnBundleThread();
         }
@@ -3284,8 +3283,8 @@ pub const DeferredBatchTask = struct {
     }
 
     pub fn getCompletion(this: *DeferredBatchTask) ?*bun.BundleV2.JSBundleCompletionTask {
-        const bundler: *BundleV2 = @alignCast(@fieldParentPtr("drain_defer_task", this));
-        return bundler.completion;
+        const transpiler: *BundleV2 = @alignCast(@fieldParentPtr("drain_defer_task", this));
+        return transpiler.completion;
     }
 
     pub fn schedule(this: *DeferredBatchTask) void {
@@ -3308,7 +3307,7 @@ pub const DeferredBatchTask = struct {
             return;
         };
 
-        completion.bundler.plugins.?.drainDeferred(completion.result == .err);
+        completion.transpiler.plugins.?.drainDeferred(completion.result == .err);
     }
 };
 
@@ -3421,7 +3420,7 @@ pub const ParseTask = struct {
             .module_type = resolve_result.module_type,
             .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
             .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
-            .known_target = ctx.bundler.options.target,
+            .known_target = ctx.transpiler.options.target,
         };
     }
 
@@ -3576,25 +3575,25 @@ pub const ParseTask = struct {
 
     fn getEmptyCSSAST(
         log: *Logger.Log,
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         opts: js_parser.Parser.Options,
         allocator: std.mem.Allocator,
         source: Logger.Source,
     ) !JSAst {
         const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
-        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
         ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
         return ast;
     }
 
-    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
+    fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
         const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
-        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
     }
 
     fn getAST(
         log: *Logger.Log,
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         opts: js_parser.Parser.Options,
         allocator: std.mem.Allocator,
         resolver: *Resolver,
@@ -3608,9 +3607,9 @@ pub const ParseTask = struct {
                 const trace = tracer(@src(), "ParseJS");
                 defer trace.end();
                 return if (try resolver.caches.js.parse(
-                    bundler.allocator,
+                    transpiler.allocator,
                     opts,
-                    bundler.options.define,
+                    transpiler.options.define,
                     log,
                     &source,
                 )) |res|
@@ -3618,7 +3617,7 @@ pub const ParseTask = struct {
                 else switch (opts.module_type == .esm) {
                     inline else => |as_undefined| try getEmptyAST(
                         log,
-                        bundler,
+                        transpiler,
                         opts,
                         allocator,
                         source,
@@ -3630,25 +3629,25 @@ pub const ParseTask = struct {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator, false);
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
                 const root = Expr.init(E.String, E.String{
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
-                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain", null);
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, "text/plain", null);
                 return ast;
             },
 
             .sqlite_embedded, .sqlite => {
-                if (!bundler.options.target.isBun()) {
+                if (!transpiler.options.target.isBun()) {
                     log.addError(
                         null,
                         Logger.Loc.Empty,
@@ -3708,11 +3707,11 @@ pub const ParseTask = struct {
                     .name = "db",
                 }, Logger.Loc{ .start = 0 });
 
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .napi => {
                 // (dap-eval-cb "source.contents.ptr")
-                if (bundler.options.target == .browser) {
+                if (transpiler.options.target == .browser) {
                     log.addError(
                         null,
                         Logger.Loc.Empty,
@@ -3739,10 +3738,10 @@ pub const ParseTask = struct {
                 }, Logger.Loc{ .start = 0 });
 
                 unique_key_for_additional_file.* = unique_key;
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .css => {
-                if (bundler.options.experimental_css) {
+                if (transpiler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
                     var import_records = BabyList(ImportRecord){};
@@ -3750,7 +3749,7 @@ pub const ParseTask = struct {
                     var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
                         allocator,
                         source_code,
-                        bun.css.ParserOptions.default(allocator, bundler.log),
+                        bun.css.ParserOptions.default(allocator, transpiler.log),
                         &import_records,
                     )) {
                         .result => |v| v,
@@ -3760,7 +3759,7 @@ pub const ParseTask = struct {
                         },
                     };
                     if (css_ast.minify(allocator, bun.css.MinifyOptions{
-                        .targets = bun.css.Targets.forBundlerTarget(bundler.options.target),
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                         .unused_symbols = .{},
                     }).asErr()) |e| {
                         try e.addToLogger(log, &source);
@@ -3768,7 +3767,7 @@ pub const ParseTask = struct {
                     }
                     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
                     ast.css = css_ast_heap;
                     ast.import_records = import_records;
                     return ast;
@@ -3781,16 +3780,16 @@ pub const ParseTask = struct {
             .data = unique_key,
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
-        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
         ast.url_for_css = unique_key;
-        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null, unique_key);
+        ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, null, unique_key);
         return ast;
     }
 
     fn getCodeForParseTaskWithoutPlugins(
         task: *ParseTask,
         log: *Logger.Log,
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         resolver: *Resolver,
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
@@ -3826,7 +3825,7 @@ pub const ParseTask = struct {
                         bun.default_allocator
                     else
                         allocator,
-                    bundler.fs,
+                    transpiler.fs,
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
@@ -3870,7 +3869,7 @@ pub const ParseTask = struct {
     fn getCodeForParseTask(
         task: *ParseTask,
         log: *Logger.Log,
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         resolver: *Resolver,
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
@@ -3890,7 +3889,7 @@ pub const ParseTask = struct {
         };
 
         if (!might_have_on_parse_plugins) {
-            return getCodeForParseTaskWithoutPlugins(task, log, bundler, resolver, allocator, file_path, loader.*, experimental_css);
+            return getCodeForParseTaskWithoutPlugins(task, log, transpiler, resolver, allocator, file_path, loader.*, experimental_css);
         }
 
         var should_continue_running: i32 = 1;
@@ -3898,7 +3897,7 @@ pub const ParseTask = struct {
         var ctx = OnBeforeParsePlugin{
             .task = task,
             .log = log,
-            .bundler = bundler,
+            .transpiler = transpiler,
             .resolver = resolver,
             .allocator = allocator,
             .file_path = file_path,
@@ -3914,7 +3913,7 @@ pub const ParseTask = struct {
     const OnBeforeParsePlugin = struct {
         task: *ParseTask,
         log: *Logger.Log,
-        bundler: *Bundler,
+        transpiler: *Transpiler,
         resolver: *Resolver,
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
@@ -4075,7 +4074,7 @@ pub const ParseTask = struct {
             const entry = getCodeForParseTaskWithoutPlugins(
                 this.task,
                 this.log,
-                this.bundler,
+                this.transpiler,
                 this.resolver,
                 this.allocator,
                 this.file_path,
@@ -4208,7 +4207,7 @@ pub const ParseTask = struct {
                 }
             }
 
-            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.bundler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental_css);
+            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.transpiler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental_css);
         }
     };
 
@@ -4221,15 +4220,15 @@ pub const ParseTask = struct {
         const allocator = this.allocator;
 
         var data = this.data;
-        var bundler = &data.bundler;
-        errdefer bundler.resetStore();
-        var resolver: *Resolver = &bundler.resolver;
+        var transpiler = &data.transpiler;
+        errdefer transpiler.resetStore();
+        var resolver: *Resolver = &transpiler.resolver;
         var file_path = task.path;
         step.* = .read_file;
-        var loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
+        var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
         var contents_came_from_plugin: bool = false;
-        var entry = try getCodeForParseTask(task, log, bundler, resolver, allocator, &file_path, &loader, this.ctx.bundler.options.experimental_css, &contents_came_from_plugin);
+        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, this.ctx.transpiler.options.experimental_css, &contents_came_from_plugin);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4273,7 +4272,7 @@ pub const ParseTask = struct {
 
         const is_empty = strings.isAllWhitespace(entry.contents);
 
-        const use_directive: UseDirective = if (!is_empty and bundler.options.server_components)
+        const use_directive: UseDirective = if (!is_empty and transpiler.options.server_components)
             if (UseDirective.parse(entry.contents)) |use|
                 use
             else
@@ -4288,11 +4287,11 @@ pub const ParseTask = struct {
             task.known_target != .bake_server_components_ssr and
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
-            (bundler.options.server_components and task.known_target == .browser))
+            (transpiler.options.server_components and task.known_target == .browser))
         {
-            bundler = this.ctx.client_bundler;
-            resolver = &bundler.resolver;
-            bun.assert(bundler.options.target == .browser);
+            transpiler = this.ctx.client_bundler;
+            resolver = &transpiler.resolver;
+            bun.assert(transpiler.options.target == .browser);
         }
 
         var source = Logger.Source{
@@ -4303,12 +4302,12 @@ pub const ParseTask = struct {
         };
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
-            if (task.known_target == .bake_server_components_ssr and bundler.options.framework.?.server_components.?.separate_ssr_graph)
+            if (task.known_target == .bake_server_components_ssr and transpiler.options.framework.?.server_components.?.separate_ssr_graph)
             .bake_server_components_ssr
         else
-            bundler.options.target;
+            transpiler.options.target;
 
-        const output_format = bundler.options.output_format;
+        const output_format = transpiler.options.output_format;
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.bundle = true;
@@ -4321,25 +4320,25 @@ pub const ParseTask = struct {
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
-        opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
-        opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
-        opts.features.inlining = bundler.options.minify_syntax;
+        opts.features.auto_import_jsx = task.jsx.parse and transpiler.options.auto_import_jsx;
+        opts.features.trim_unused_imports = loader.isTypeScript() or (transpiler.options.trim_unused_imports orelse false);
+        opts.features.inlining = transpiler.options.minify_syntax;
         opts.output_format = output_format;
-        opts.features.minify_syntax = bundler.options.minify_syntax;
-        opts.features.minify_identifiers = bundler.options.minify_identifiers;
-        opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
-        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
+        opts.features.minify_syntax = transpiler.options.minify_syntax;
+        opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+        opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+        opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
         opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
         opts.features.react_fast_refresh = target == .browser and
-            bundler.options.react_fast_refresh and
+            transpiler.options.react_fast_refresh and
             loader.isJSX() and
             !source.path.isNodeModule();
 
-        opts.features.server_components = if (bundler.options.server_components) switch (target) {
+        opts.features.server_components = if (transpiler.options.server_components) switch (target) {
             .browser => .client_side,
             else => switch (use_directive) {
                 .none => .wrap_anon_server_functions,
-                .client => if (bundler.options.framework.?.server_components.?.separate_ssr_graph)
+                .client => if (transpiler.options.framework.?.server_components.?.separate_ssr_graph)
                     .client_side
                 else
                     .wrap_exports_for_client_reference,
@@ -4347,37 +4346,37 @@ pub const ParseTask = struct {
             },
         } else .none;
 
-        opts.framework = bundler.options.framework;
+        opts.framework = transpiler.options.framework;
 
-        opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
+        opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations and !source.index.isRuntime();
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
-        if (bundler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
+        if (transpiler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
             opts.import_meta_main_value = task.is_entry_point;
-        } else if (bundler.options.target == .node) {
+        } else if (transpiler.options.target == .node) {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
+        opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
         opts.module_type = task.module_type;
 
         task.jsx.parse = loader.isJSX();
 
         var unique_key_for_additional_file: []const u8 = "";
         var ast: JSAst = if (!is_empty)
-            try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
+            try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css and this.ctx.bundler.options.experimental_css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader == .css and this.ctx.transpiler.options.experimental_css) try getEmptyCSSAST(
                 log,
-                bundler,
+                transpiler,
                 opts,
                 allocator,
                 source,
             ) else try getEmptyAST(
                 log,
-                bundler,
+                transpiler,
                 opts,
                 allocator,
                 source,
@@ -4401,7 +4400,7 @@ pub const ParseTask = struct {
             .side_effects = task.side_effects,
 
             // Hash the files in here so that we do it in parallel.
-            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.bundler.options.experimental_css))
+            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.transpiler.options.experimental_css))
                 ContentHasher.run(source.contents)
             else
                 0,
@@ -4422,7 +4421,7 @@ pub const ParseTask = struct {
         const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast| value: {
             // When using HMR, always flag asts with errors as parse failures.
             // Not done outside of the dev server out of fear of breaking existing code.
-            if (this.ctx.bundler.options.dev_server != null and ast.log.hasErrors()) {
+            if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
                 break :value .{
                     .err = .{
                         .err = error.SyntaxError,
@@ -4554,7 +4553,7 @@ pub const ServerComponentParseTask = struct {
         log: *Logger.Log,
         allocator: std.mem.Allocator,
     ) bun.OOM!ParseTask.Result.Success {
-        var ab = try AstBuilder.init(allocator, &task.source, task.ctx.bundler.options.hot_module_reloading);
+        var ab = try AstBuilder.init(allocator, &task.source, task.ctx.transpiler.options.hot_module_reloading);
 
         switch (task.data) {
             .client_reference_proxy => |data| try task.generateClientReferenceProxy(data, &ab),
@@ -4564,7 +4563,7 @@ pub const ServerComponentParseTask = struct {
         return .{
             .ast = try ab.toBundledAst(switch (task.data) {
                 // Server-side
-                .client_reference_proxy => task.ctx.bundler.options.target,
+                .client_reference_proxy => task.ctx.transpiler.options.target,
                 // Client-side,
                 .client_entry_wrapper => .browser,
             }),
@@ -4604,7 +4603,7 @@ pub const ServerComponentParseTask = struct {
             // In production, the path here must be the final chunk path, but
             // that information is not yet available since chunks are not
             // computed. The unique_key replacement system is used here.
-            .data = if (task.ctx.bundler.options.dev_server != null)
+            .data = if (task.ctx.transpiler.options.dev_server != null)
                 data.other_source.path.pretty
             else
                 try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
@@ -4944,15 +4943,15 @@ pub const Graph = struct {
     /// each `.defer()` called in an onLoad plugin.
     ///
     /// Returns true if there were more tasks queued.
-    pub fn drainDeferredTasks(this: *@This(), bundler: *BundleV2) bool {
-        bundler.thread_lock.assertLocked();
+    pub fn drainDeferredTasks(this: *@This(), transpiler: *BundleV2) bool {
+        transpiler.thread_lock.assertLocked();
 
         if (this.deferred_pending > 0) {
             this.pending_items += this.deferred_pending;
             this.deferred_pending = 0;
 
-            bundler.drain_defer_task.init();
-            bundler.drain_defer_task.schedule();
+            transpiler.drain_defer_task.init();
+            transpiler.drain_defer_task.schedule();
 
             return true;
         }
@@ -5649,10 +5648,10 @@ pub const LinkerContext = struct {
         defer trace.end();
         this.parse_graph = &bundle.graph;
 
-        this.graph.code_splitting = bundle.bundler.options.code_splitting;
-        this.log = bundle.bundler.log;
+        this.graph.code_splitting = bundle.transpiler.options.code_splitting;
+        this.log = bundle.transpiler.log;
 
-        this.resolver = &bundle.bundler.resolver;
+        this.resolver = &bundle.transpiler.resolver;
         this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator);
 
         this.graph.reachable_files = reachable;
@@ -7672,7 +7671,7 @@ pub const LinkerContext = struct {
                                 // module may be simultaneously imported and required, and the
                                 // importing code should not see "__esModule" while the requiring
                                 // code should see "__esModule". This is an extremely complex
-                                // and subtle set of bundler interop issues. See for example
+                                // and subtle set of transpiler interop issues. See for example
                                 // https://github.com/evanw/esbuild/issues/1591.
                                 if (kind == .require) {
                                     record.wrap_with_to_commonjs = true;
@@ -8918,8 +8917,8 @@ pub const LinkerContext = struct {
             }
 
             top_level_symbols.clearRetainingCapacity();
-            for (sorted_imports_from_other_chunks.items) |stable| {
-                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, stable.ref, 1, stable_source_indices);
+            for (sorted_imports_from_other_chunks.items) |stable_ref| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, stable_ref.ref, 1, stable_source_indices);
             }
             top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
             try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols_all);
@@ -11474,7 +11473,7 @@ pub const LinkerContext = struct {
                     // hmr-runtime.ts defines `module.importSync` to be
                     // a synchronous import. this is different from
                     // require in that esm <-> cjs is handled
-                    // automatically, instead of with bundler-added
+                    // automatically, instead of with transpiler-added
                     // annotations like '__commonJS'.
                     //
                     // this cannot be done in the parse step because the final
@@ -12482,7 +12481,7 @@ pub const LinkerContext = struct {
         // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
         // - Send only the newly changed code through a socket.
         //
-        // When this isnt the initial bundle, concatenation as usual would produce a
+        // When this isn't the initial bundle, concatenation as usual would produce a
         // broken module. It is DevServer's job to create and send HMR patches.
         if (is_dev_server) return;
 
@@ -13248,7 +13247,6 @@ pub const LinkerContext = struct {
                             .buffer = JSC.Buffer{
                                 .buffer = .{
                                     .ptr = @constCast(bytes.ptr),
-                                    // TODO: handle > 4 GB files
                                     .len = @as(u32, @truncate(bytes.len)),
                                     .byte_len = @as(u32, @truncate(bytes.len)),
                                 },
@@ -13735,7 +13733,7 @@ pub const LinkerContext = struct {
                                     next_source.path.pretty,
                                     named_import.alias.?,
                                 },
-                                "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                                "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
                                 .{},
                                 r,
                             ) catch unreachable;
@@ -13761,7 +13759,7 @@ pub const LinkerContext = struct {
                                 next_source.path.pretty,
                                 named_import.alias.?,
                             },
-                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options.",
                             .{},
                             r,
                         ) catch unreachable;
@@ -15558,7 +15556,8 @@ pub const AstBuilder = struct {
 
             _ = try js_parser.ImportScanner.scan(AstBuilder, p, p.stmts.items, false, true, &hmr_transform_ctx);
 
-            const new_parts = try hmr_transform_ctx.finalize(p, parts.slice());
+            try hmr_transform_ctx.finalize(p, parts.slice());
+            const new_parts = parts.slice();
             // preserve original capacity
             parts.len = @intCast(new_parts.len);
             bun.assert(new_parts.ptr == parts.ptr);
@@ -15653,12 +15652,12 @@ pub const CssEntryPointMeta = struct {
     imported_on_server: bool,
 };
 
-/// The lifetime of this structure is tied to the bundler's arena
+/// The lifetime of this structure is tied to the transpiler's arena
 pub const BakeBundleStart = struct {
     css_entry_points: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
 };
 
-/// The lifetime of this structure is tied to the bundler's arena
+/// The lifetime of this structure is tied to the transpiler's arena
 pub const BakeBundleOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),

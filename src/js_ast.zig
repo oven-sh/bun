@@ -7902,8 +7902,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = bun.Bundler;
-    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+    const Transpiler = bun.Transpiler;
+    const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -7928,12 +7928,12 @@ pub const Macro = struct {
             return this.remap.get(path);
         }
 
-        pub fn init(bundler: *Bundler) MacroContext {
+        pub fn init(transpiler: *Transpiler) MacroContext {
             return MacroContext{
                 .macros = MacroMap.init(default_allocator),
-                .resolver = &bundler.resolver,
-                .env = bundler.env,
-                .remap = bundler.options.macro_remap,
+                .resolver = &transpiler.resolver,
+                .env = transpiler.env,
+                .remap = transpiler.options.macro_remap,
             };
         }
 
@@ -8096,7 +8096,7 @@ pub const Macro = struct {
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();
 
-            try _vm.bundler.configureDefines();
+            try _vm.transpiler.configureDefines();
             break :brk _vm;
         };
 

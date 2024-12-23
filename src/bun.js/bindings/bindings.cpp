@@ -4554,6 +4554,23 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     trace->frames_len = frame_i;
 }
 
+static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
+{
+    PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (obj->getNonIndexPropertySlot(global, propertyName, slot)) {
+        if (slot.isAccessor()) {
+            return {};
+        }
+
+        JSValue value = slot.getValue(global, propertyName);
+        if (!value || value.isUndefinedOrNull()) {
+            return {};
+        }
+        return value;
+    }
+    return {};
+}
+
 #define SYNTAX_ERROR_CODE 4
 
 static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
@@ -4593,6 +4610,10 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
 
+    if (UNLIKELY(scope.exception())) {
+        scope.clearExceptionExceptTermination();
+    }
+
     except->name = Bun::toStringRef(err->sanitizedNameString(global));
 
     except->runtime_type = err->runtimeTypeForCause();
@@ -4600,7 +4621,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     const auto& names = builtinNames(vm);
     if (except->code != SYNTAX_ERROR_CODE) {
 
-        if (JSC::JSValue syscall = obj->getIfPropertyExists(global, names.syscallPublicName())) {
+        if (JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName())) {
             if (syscall.isString()) {
                 except->syscall = Bun::toStringRef(global, syscall);
             }
@@ -4610,7 +4631,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue code = obj->getIfPropertyExists(global, names.codePublicName())) {
+        if (JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName())) {
             if (code.isString() || code.isNumber()) {
                 except->code_ = Bun::toStringRef(global, code);
             }
@@ -4620,7 +4641,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue path = obj->getIfPropertyExists(global, names.pathPublicName())) {
+        if (JSC::JSValue path = getNonObservable(vm, global, obj, names.pathPublicName())) {
             if (path.isString()) {
                 except->path = Bun::toStringRef(global, path);
             }
@@ -4630,7 +4651,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue fd = obj->getIfPropertyExists(global, names.fdPublicName())) {
+        if (JSC::JSValue fd = getNonObservable(vm, global, obj, names.fdPublicName())) {
             if (fd.isNumber()) {
                 except->fd = fd.toInt32(global);
             }
@@ -4640,7 +4661,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, names.errnoPublicName())) {
+        if (JSC::JSValue errno_ = getNonObservable(vm, global, obj, names.errnoPublicName())) {
             if (errno_.isNumber()) {
                 except->errno_ = errno_.toInt32(global);
             }
@@ -4652,86 +4673,102 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 
     if (getFromSourceURL) {
-        // we don't want to serialize JSC::StackFrame longer than we need to
-        // so in this case, we parse the stack trace as a string
-        if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
-            if (stackValue.isString()) {
-                WTF::String stack = stackValue.toWTFString(global);
-                if (!stack.isEmpty()) {
 
-                    V8StackTraceIterator iterator(stack);
-                    const uint8_t frame_count = except->stack.frames_len;
+        {
+            // we don't want to serialize JSC::StackFrame longer than we need to
+            // so in this case, we parse the stack trace as a string
 
-                    except->stack.frames_len = 0;
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
-                    iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                        ASSERT(except->stack.frames_len < frame_count);
-                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
-                        current = {};
+            // This one intentionally calls getters.
+            if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
+                if (stackValue.isString()) {
+                    WTF::String stack = stackValue.toWTFString(global);
+                    if (UNLIKELY(catchScope.exception())) {
+                        catchScope.clearExceptionExceptTermination();
+                    }
+                    if (!stack.isEmpty()) {
 
-                        String functionName = frame.functionName.toString();
-                        String sourceURL = frame.sourceURL.toString();
-                        current.function_name = Bun::toStringRef(functionName);
-                        current.source_url = Bun::toStringRef(sourceURL);
-                        current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
-                        current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        V8StackTraceIterator iterator(stack);
+                        const uint8_t frame_count = except->stack.frames_len;
 
-                        current.remapped = true;
+                        except->stack.frames_len = 0;
 
-                        if (frame.isConstructor) {
-                            current.code_type = ZigStackFrameCodeConstructor;
-                        } else if (frame.isGlobalCode) {
-                            current.code_type = ZigStackFrameCodeGlobal;
+                        iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                            ASSERT(except->stack.frames_len < frame_count);
+                            auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                            current = {};
+
+                            String functionName = frame.functionName.toString();
+                            String sourceURL = frame.sourceURL.toString();
+                            current.function_name = Bun::toStringRef(functionName);
+                            current.source_url = Bun::toStringRef(sourceURL);
+                            current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                            current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+
+                            current.remapped = true;
+
+                            if (frame.isConstructor) {
+                                current.code_type = ZigStackFrameCodeConstructor;
+                            } else if (frame.isGlobalCode) {
+                                current.code_type = ZigStackFrameCodeGlobal;
+                            }
+
+                            except->stack.frames_len += 1;
+
+                            stop = except->stack.frames_len >= frame_count;
+                        });
+
+                        if (except->stack.frames_len > 0) {
+                            getFromSourceURL = false;
+                            except->remapped = true;
+                        } else {
+                            except->stack.frames_len = frame_count;
                         }
-
-                        except->stack.frames_len += 1;
-
-                        stop = except->stack.frames_len >= frame_count;
-                    });
-
-                    if (except->stack.frames_len > 0) {
-                        getFromSourceURL = false;
-                        except->remapped = true;
-                    } else {
-                        except->stack.frames_len = frame_count;
                     }
                 }
             }
+
+            if (UNLIKELY(catchScope.exception())) {
+                catchScope.clearExceptionExceptTermination();
+            }
         }
 
-        if (getFromSourceURL) {
+        if (JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL)) {
+            if (sourceURL.isString()) {
+                except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
-            if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
-                if (sourceURL.isString()) {
-                    except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                // Take care not to make these getter calls observable.
 
-                    if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                        if (column.isNumber()) {
-                            except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
-                        }
+                if (JSC::JSValue column = getNonObservable(vm, global, obj, vm.propertyNames->column)) {
+                    if (column.isNumber()) {
+                        except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                     }
+                }
 
-                    if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                        if (line.isNumber()) {
-                            except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                if (JSC::JSValue line = getNonObservable(vm, global, obj, vm.propertyNames->line)) {
+                    if (line.isNumber()) {
+                        except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
-                            if (JSC::JSValue lineText = obj->getIfPropertyExists(global, names.lineTextPublicName())) {
-                                if (lineText.isString()) {
-                                    if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
-                                        auto str = jsStr->value(global);
-                                        except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                                        except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
-                                        except->stack.source_lines_len = 1;
-                                        except->remapped = true;
-                                    }
+                        if (JSC::JSValue lineText = getNonObservable(vm, global, obj, builtinNames(vm).lineTextPublicName())) {
+                            if (lineText.isString()) {
+                                if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
+                                    auto str = jsStr->value(global);
+                                    except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                                    except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
+                                    except->stack.source_lines_len = 1;
+                                    except->remapped = true;
                                 }
                             }
                         }
                     }
-
-                    except->stack.frames_len = 1;
-                    except->stack.frames_ptr[0].remapped = obj->hasProperty(global, names.originalLinePublicName());
                 }
+            }
+
+            {
+                except->stack.frames_len = 1;
+                PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+                except->stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
             }
         }
     }

@@ -816,6 +816,7 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+    imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null else {},
 
@@ -1368,6 +1369,10 @@ pub const EventLoop = struct {
             }
         }
 
+        if (this.imminent_gc_timer.swap(null, .monotonic)) |timer| {
+            timer.run(this.virtual_machine);
+        }
+
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -1442,7 +1447,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
@@ -1527,7 +1532,7 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
         }

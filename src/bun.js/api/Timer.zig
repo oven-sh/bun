@@ -160,15 +160,28 @@ pub const All = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
-    pub fn getTimeout(this: *const All, spec: *timespec) bool {
+    pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         if (this.active_timer_count == 0) {
             return false;
         }
 
-        if (this.timers.peek()) |min| {
-            const now = timespec.now();
+        var now: timespec = undefined;
+        var has_set_now: bool = false;
+        while (this.timers.peek()) |min| {
+            if (!has_set_now) {
+                now = timespec.now();
+                has_set_now = true;
+            }
+
             switch (now.order(&min.next)) {
                 .gt, .eq => {
+                    // Side-effect: potentially call the StopIfNecessary timer.
+                    if (min.tag == .WTFTimer) {
+                        _ = this.timers.deleteMin();
+                        _ = min.fire(&now, vm);
+                        continue;
+                    }
+
                     spec.* = .{ .nsec = 0, .sec = 0 };
                     return true;
                 },
@@ -177,6 +190,8 @@ pub const All = struct {
                     return true;
                 },
             }
+
+            unreachable;
         }
 
         return false;
@@ -900,6 +915,7 @@ pub const WTFTimer = struct {
     vm: *VirtualMachine,
     run_loop_timer: *RunLoopTimer,
     event_loop_timer: EventLoopTimer,
+    event_loop: *JSC.EventLoop,
     repeat: bool,
     lock: bun.Lock = .{},
 
@@ -908,6 +924,7 @@ pub const WTFTimer = struct {
     pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
         const this = WTFTimer.new(.{
             .vm = js_vm,
+            .event_loop = js_vm.eventLoop(),
             .event_loop_timer = .{
                 .next = .{
                     .sec = std.math.maxInt(i64),
@@ -923,25 +940,32 @@ pub const WTFTimer = struct {
         return this;
     }
 
-    var auto_incrementing_integer_for_dedupe = std.atomic.Value(i64).init(0);
+    pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            vm.timer.remove(&this.event_loop_timer);
+        }
+        this.runWithoutRemoving();
+    }
+
+    inline fn runWithoutRemoving(this: *const WTFTimer) void {
+        WTFTimer__fire(this.run_loop_timer);
+    }
 
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
-        const interval: bun.timespec = if (seconds == 0.0) blk: {
-            break :blk .{
-                .nsec = 1024 + auto_incrementing_integer_for_dedupe.fetchAdd(1, .monotonic),
-                .sec = 1024,
-            };
-        } else blk: {
-            const modf = std.math.modf(seconds);
-            var interval = bun.timespec.now();
-            interval.sec += @intFromFloat(modf.ipart);
-            interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
-            if (interval.nsec >= std.time.ns_per_s) {
-                interval.sec += 1;
-                interval.nsec -= std.time.ns_per_s;
-            }
-            break :blk interval;
-        };
+        if (seconds == 0.0) {
+            this.event_loop.imminent_gc_timer.store(this, .monotonic);
+            return;
+        }
+
+        this.event_loop.imminent_gc_timer.store(null, .monotonic);
+        const modf = std.math.modf(seconds);
+        var interval = bun.timespec.now();
+        interval.sec += @intFromFloat(modf.ipart);
+        interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
+        if (interval.nsec >= std.time.ns_per_s) {
+            interval.sec += 1;
+            interval.nsec -= std.time.ns_per_s;
+        }
 
         this.vm.timer.update(&this.event_loop_timer, &interval);
         this.repeat = repeat;
@@ -955,11 +979,10 @@ pub const WTFTimer = struct {
         }
     }
 
-    pub fn fire(this: *WTFTimer, now: *const bun.timespec, js_vm: *VirtualMachine) EventLoopTimer.Arm {
-        _ = now;
-        _ = js_vm;
+    pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
         this.event_loop_timer.state = .FIRED;
-        WTFTimer__fire(this.run_loop_timer);
+        this.event_loop.imminent_gc_timer.store(null, .monotonic);
+        this.runWithoutRemoving();
         return if (this.repeat)
             .{ .rearm = this.event_loop_timer.next }
         else
@@ -984,7 +1007,7 @@ pub const WTFTimer = struct {
     }
 
     export fn WTFTimer__isActive(this: *const WTFTimer) bool {
-        return this.event_loop_timer.state == .ACTIVE;
+        return this.event_loop_timer.state == .ACTIVE or (this.event_loop.imminent_gc_timer.load(.monotonic) orelse return false) == this;
     }
 
     export fn WTFTimer__cancel(this: *WTFTimer) void {

@@ -9,7 +9,7 @@
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-const Chunk = @import("../bundler//bundle_v2.zig").Chunk;
+
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
@@ -4486,3 +4486,4 @@ const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const Chunk = bun.bundle_v2.Chunk;

@@ -90,7 +90,7 @@ const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
 const OOM = bun.OOM;
 
-const HTMLScanner = @import("../html_scanner.zig").HTMLScanner;
+const HTMLScanner = @import("../HTMLScanner.zig");
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Lock = @import("../lock.zig").Lock;
@@ -6114,9 +6114,8 @@ pub const LinkerContext = struct {
             }
 
             if (experimental_html) {
-                for (html_chunks.values()) |*chunk| {
-                    sorted_chunks.appendAssumeCapacity(chunk.*);
-                }
+                // Assume capacity should be fine here? But slightly less confident due to the CSS stuff above.
+                try sorted_chunks.appendSlice(this.allocator, html_chunks.values());
             }
 
             break :sort_chunks sorted_chunks.slice();
@@ -9535,9 +9534,7 @@ pub const LinkerContext = struct {
                 ) catch bun.outOfMemory();
             }
 
-            pub fn onTag(this: *@This(), element: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
-                _ = kind; // autofix
-                _ = path; // autofix
+            pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
                 if (this.current_import_record_index >= this.import_records.len) {
                     Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
                 }

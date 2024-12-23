@@ -203,8 +203,20 @@ pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translat
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
 
 const std = @import("std");
-pub fn canUseAlignedAlloc(len: usize, alignment: usize) bool {
-    return alignment > 0 and std.math.isPowerOfTwo(alignment) and !mi_malloc_satisfies_alignment(alignment, len);
+pub fn canUseAlignedAlloc(_: usize, alignment: usize) bool {
+    // Must be nonzero, power-of-two, etc.
+    if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) {
+        return false;
+    }
+
+    // Our "native alignment" check:
+    // Suppose we consider anything up to 16 bytes as "already satisfied" by mimalloc.
+    // (mimalloc often aligns small allocations to 16 bytes on 64-bit.)
+    if (alignment <= MI_MAX_ALIGN_SIZE) {
+        return false; // no need for aligned allocation
+    }
+
+    return false;
 }
 const MI_MAX_ALIGN_SIZE = 16;
 inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {

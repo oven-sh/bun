@@ -229,7 +229,12 @@ function lookup(hostname, options, callback) {
 
   dns.lookup(hostname, options).then(res => {
     throwIfEmpty(res);
-    res.sort((a, b) => a.family - b.family);
+
+    if (options.order == "ipv4first") {
+      res.sort((a, b) => a.family - b.family);
+    } else if (options.order == "ipv6first") {
+      res.sort((a, b) => b.family - a.family);
+    }
 
     if (options?.all) {
       callback(null, res.map(mapLookupAll));
@@ -629,16 +634,24 @@ function throwIfEmpty(res) {
 }
 Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
-const promisifyLookup = res => {
+const promisifyLookup = order => res => {
   throwIfEmpty(res);
-  res.sort((a, b) => a.family - b.family);
+  if (order == "ipv4first") {
+    res.sort((a, b) => a.family - b.family);
+  } else if (order == "ipv6first") {
+    res.sort((a, b) => b.family - a.family);
+  }
   const [{ address, family }] = res;
   return { address, family };
 };
 
-const promisifyLookupAll = res => {
+const promisifyLookupAll = order => res => {
   throwIfEmpty(res);
-  res.sort((a, b) => a.family - b.family);
+  if (order == "ipv4first") {
+    res.sort((a, b) => a.family - b.family);
+  } else if (order == "ipv6first") {
+    res.sort((a, b) => b.family - a.family);
+  }
   return res.map(mapLookupAll);
 };
 
@@ -680,9 +693,9 @@ const promises = {
     }
 
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll));
+      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup));
+    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
   },
 
   lookupService(address, port) {
@@ -705,7 +718,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup));
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder)));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
     }
@@ -790,7 +803,9 @@ const promises = {
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup));
+          return translateErrorCode(
+            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder)),
+          );
         default:
           return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
       }

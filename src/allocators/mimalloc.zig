@@ -216,7 +216,7 @@ pub fn canUseAlignedAlloc(_: usize, alignment: usize) bool {
         return false; // no need for aligned allocation
     }
 
-    return false;
+    return true;
 }
 const MI_MAX_ALIGN_SIZE = 16;
 inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {

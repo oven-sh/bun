@@ -838,7 +838,7 @@ pub const BundleV2 = struct {
         const loader = brk: {
             const default = path.loader(&this.transpiler.options.loaders) orelse .file;
 
-            if (!is_entry_point or !this.transpiler.options.experimental.html) {
+            if (!this.transpiler.options.experimental.html) {
                 break :brk default.disableHTML();
             }
 
@@ -3775,48 +3775,55 @@ pub const ParseTask = struct {
                     var scanner = HTMLScanner.init(allocator, log, &source);
                     try scanner.scan(source.contents);
 
-                    return JSAst.init(.{
-                        .import_records = scanner.import_records,
-                        .parts = brk: {
-                            var parts = try Part.List.initCapacity(allocator, 2);
-                            parts.append(allocator, &.{
-                                .{
-                                    .stmts = &.{},
-                                    .import_record_indices = .{},
-                                    .can_be_removed_if_unused = true,
-                                },
-                                // This is not a lazy export AST, we're banning importing .html files for now.
-                                //
-                                // TLDR: it kept including:
-                                //
-                                //   var name_default = ...;
-                                //
-                                // in the bundle because of the exports AST, and gave up on figuring out
-                                // how to fix it so that this feature could ship.
-                                .{
-                                    .stmts = &.{},
-                                    .is_live = true,
-                                    .import_record_indices = brk2: {
-                                        // Generate a single part that depends on all the import records.
-                                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                                        var import_record_indices = try Part.ImportRecordIndices.initCapacity(allocator, scanner.import_records.len);
-                                        import_record_indices.len = @truncate(scanner.import_records.len);
-                                        for (import_record_indices.slice(), 0..) |*import_record, index| {
-                                            import_record.* = @intCast(index);
-                                        }
-                                        break :brk2 import_record_indices;
-                                    },
-                                },
-                            }) catch unreachable;
-                            break :brk parts;
+                    // Reuse existing code for creating the AST
+                    // because it handles the various Ref and other structs we
+                    // need in order to print code later.
+                    var ast = (try js_parser.newLazyExportAST(
+                        allocator,
+                        transpiler.options.define,
+                        opts,
+                        log,
+                        Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
+                        &source,
+                        "",
+                    )).?;
+                    ast.import_records = scanner.import_records;
+
+                    // We're banning import default of html loader files for now.
+                    //
+                    // TLDR: it kept including:
+                    //
+                    //   var name_default = ...;
+                    //
+                    // in the bundle because of the exports AST, and
+                    // gave up on figuring out how to fix it so that
+                    // this feature could ship.
+                    ast.has_lazy_export = false;
+                    ast.parts.ptr[1] = .{
+                        .stmts = &.{},
+                        .is_live = true,
+                        .import_record_indices = brk2: {
+                            // Generate a single part that depends on all the import records.
+                            // This is to ensure that we generate a JavaScript bundle containing all the user's code.
+                            var import_record_indices = try Part.ImportRecordIndices.initCapacity(allocator, scanner.import_records.len);
+                            import_record_indices.len = @truncate(scanner.import_records.len);
+                            for (import_record_indices.slice(), 0..) |*import_record, index| {
+                                import_record.* = @intCast(index);
+                            }
+                            break :brk2 import_record_indices;
                         },
-                    });
+                    };
+
+                    // Try to avoid generating unnecessary ESM <> CJS wrapper code.
+                    if (opts.output_format == .esm or opts.output_format == .iife) {
+                        ast.exports_kind = .esm;
+                    }
+
+                    return JSAst.init(ast);
                 }
             },
             .css => {
                 if (transpiler.options.experimental.css) {
-                    // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-                    // unique_key_for_additional_file.* = unique_key;
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
@@ -4301,10 +4308,12 @@ pub const ParseTask = struct {
         var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
         // Do not process files as HTML if any of the following are true:
-        // - it didn't come from an entry point.
         // - building for node or bun.js
         // - the experimental.html flag is not enabled.
-        if (!transpiler.options.experimental.html or !task.is_entry_point) {
+        //
+        //   We allow non-entrypoints to import HTML so that people could
+        //   potentially use an onLoad plugin that returns HTML.
+        if (!transpiler.options.experimental.html or task.known_target != .browser) {
             loader = loader.disableHTML();
             task.loader = loader;
         }

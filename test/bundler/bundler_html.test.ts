@@ -467,4 +467,190 @@ export const largeModule = {
       expect(page2Css).toContain(".shared");
     },
   });
+
+  // Test JS importing HTML
+  itBundled("html/js-importing-html", {
+    outdir: "out/",
+    files: {
+      "/in/entry.js": `
+import htmlContent from './template.html';
+console.log('Loaded HTML:', htmlContent);`,
+
+      "/in/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>HTML Template</title>
+  </head>
+  <body>
+    <h1>HTML Template</h1>
+  </body>
+</html>`,
+    },
+    experimentalHtml: true,
+
+    // This becomes:
+    //
+    // - out/entry.js
+    // - out/template-hash.html
+    //
+    // Like a regular asset.
+    entryPoints: ["/in/entry.js"],
+    onAfterBundle(api) {
+      const entryBundle = api.readFile("out/entry.js");
+      // Check taht we dind't bundle the HTML file
+      expect(entryBundle).toMatch(/\.\/template-.*\.html/);
+    },
+  });
+
+  itBundled("html/js-importing-html-and-entry-point-side-effect-import", {
+    outdir: "out/",
+    target: "browser",
+    files: {
+      "/in/2nd.js": `
+console.log('2nd');`,
+      "/in/entry.js": `
+import './template.html';
+console.log('Loaded HTML!');`,
+
+      "/in/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>HTML Template</title>
+  </head>
+  <body>
+    <h1>HTML Template</h1>
+    <script src="./entry.js"></script>
+    <script src="./2nd.js"></script>
+  </body>
+</html>`,
+    },
+    experimentalHtml: true,
+    // This becomes:
+    // - ./template.html
+    // - ./template-*.js
+    // - ./entry.js
+    entryPointsRaw: ["in/template.html", "in/entry.js"],
+    onAfterBundle(api) {
+      const templateBundle = api.readFile("out/template.html");
+      expect(templateBundle).toContain("HTML Template");
+
+      // Get the entry.js file from looking at <script src="./template-*.js">
+      const entryJsPath = templateBundle.match(/(.\/.*template-.*\.js)">/)?.[1];
+      const entryBundle = api.readFile("out/" + entryJsPath!);
+
+      // Verify we DID bundle the HTML file
+      expect(entryBundle).not.toMatch(/\.\/template-.*\.html/);
+      console.log(entryBundle);
+    },
+  });
+
+  itBundled("html/js-importing-html-and-entry-point-default-import-fails", {
+    outdir: "out/",
+    target: "browser",
+    files: {
+      "/in/2nd.js": `
+console.log('2nd');`,
+      "/in/entry.js": `
+import badDefaultImport from './template.html';
+console.log('Loaded HTML!', badDefaultImport);`,
+
+      "/in/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>HTML Template</title>
+  </head>
+  <body>
+    <h1>HTML Template</h1>
+    <script src="./entry.js"></script>
+    <script src="./2nd.js"></script>
+  </body>
+</html>`,
+    },
+    experimentalHtml: true,
+    entryPointsRaw: ["in/template.html", "in/entry.js"],
+    bundleErrors: {
+      "/in/entry.js": ['No matching export in "in/template.html" for import "default"'],
+    },
+    onAfterBundle(api) {
+      const templateBundle = api.readFile("out/template.html");
+      expect(templateBundle).toContain("HTML Template");
+
+      // Get the entry.js file from looking at <script src="./template-*.js">
+      const entryJsPath = templateBundle.match(/(.\/.*template-.*\.js)">/)?.[1];
+      const entryBundle = api.readFile("out/" + entryJsPath!);
+
+      // Verify we DID bundle the HTML file
+      expect(entryBundle).not.toMatch(/\.\/template-.*\.html/);
+      console.log(entryBundle);
+    },
+  });
+
+  itBundled("html/js-importing-html-and-entry-point-default-import-succeeds-html-loader-disabled", {
+    outdir: "out/",
+    target: "browser",
+    files: {
+      "/in/2nd.js": `
+console.log('2nd');`,
+      "/in/entry.js": `
+import badDefaultImport from './template.html';
+console.log('Loaded HTML!', badDefaultImport);`,
+
+      "/in/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>HTML Template</title>
+  </head>
+  <body>
+    <h1>HTML Template</h1>
+    <script src="./entry.js"></script>
+    <script src="./2nd.js"></script>
+  </body>
+</html>`,
+    },
+    experimentalHtml: false,
+    entryPointsRaw: ["in/template.html", "in/entry.js"],
+    onAfterBundle(api) {
+      const entryBundle = api.readFile("out/entry.js");
+
+      // Verify we DID bundle the HTML file
+      expect(entryBundle).toMatch(/\.\/template-.*\.html/);
+      const filename = entryBundle.match(/\.\/(template-.*\.html)/)?.[1];
+      expect(filename).toBeDefined();
+      const templateBundle = api.readFile("out/" + filename!);
+      expect(templateBundle).toContain("HTML Template");
+    },
+  });
+
+  // Test circular dependencies between JS and HTML
+  itBundled("html/circular-js-html", {
+    outdir: "out/",
+    files: {
+      "/in/main.js": `
+import page from './page.html';
+console.log('Main JS loaded page:', page);`,
+
+      "/in/page.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./main.js"></script>
+  </head>
+  <body>
+    <div id="content">Circular Import Test</div>
+  </body>
+</html>`,
+    },
+    experimentalHtml: true,
+    entryPoints: ["/in/main.js"],
+    onAfterBundle(api) {
+      const bundle = api.readFile("out/main.js");
+
+      // Check that it is a hashed file
+      expect(bundle).toMatch(/\.\/page-.*\.html/);
+    },
+  });
 });

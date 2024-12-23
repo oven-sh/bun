@@ -3817,7 +3817,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**

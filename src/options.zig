@@ -646,6 +646,13 @@ pub const Loader = enum(u8) {
     sqlite_embedded,
     html,
 
+    pub fn disableHTML(this: Loader) Loader {
+        return switch (this) {
+            .html => .file,
+            else => this,
+        };
+    }
+
     pub inline fn isSQLite(this: Loader) bool {
         return switch (this) {
             .sqlite, .sqlite_embedded => true,
@@ -1289,7 +1296,10 @@ const default_loader_ext = [_]string{
 
     ".toml", ".wasm",
     ".txt",  ".text",
+};
 
+// Only set it for browsers by default.
+const default_loader_ext_browser = [_]string{
     ".html",
 };
 
@@ -1360,6 +1370,12 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (target == .browser) {
+        inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }

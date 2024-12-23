@@ -6115,7 +6115,7 @@ pub const LinkerContext = struct {
 
             if (experimental_html) {
                 // Assume capacity should be fine here? But slightly less confident due to the CSS stuff above.
-                try sorted_chunks.appendSlice(this.allocator, html_chunks.values());
+                try sorted_chunks.append(this.allocator, html_chunks.values());
             }
 
             break :sort_chunks sorted_chunks.slice();

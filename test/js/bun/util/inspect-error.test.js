@@ -5,8 +5,8 @@ test("error.cause", () => {
   const err2 = new Error("error 2", { cause: err });
   expect(
     Bun.inspect(err2)
-      .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
-      .replaceAll("\\", "/"),
+      .replaceAll("\\", "/")
+      .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { expect, test, describe, jest } from "bun:test";
 2 | 
@@ -32,8 +32,8 @@ test("Error", () => {
   const err = new Error("my message");
   expect(
     Bun.inspect(err)
-      .replaceAll(import.meta.dir, "[dir]")
-      .replaceAll("\\", "/"),
+      .replaceAll("\\", "/")
+      .replaceAll(import.meta.dir, "[dir]"),
   ).toMatchInlineSnapshot(`
 "27 | "
 28 | \`);
@@ -55,8 +55,8 @@ test("BuildMessage", async () => {
   } catch (e) {
     expect(
       Bun.inspect(e)
-        .replaceAll(import.meta.dir, "[dir]")
-        .replaceAll("\\", "/"),
+        .replaceAll("\\", "/")
+        .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
     ).toMatchInlineSnapshot(`
 "2 | const duplicateConstDecl = 456;
           ^
@@ -135,8 +135,8 @@ test("Error inside minified file (color) ", () => {
       normalizeError(
         stripANSIColors(
           Bun.inspect(e, { colors: true })
-            .replaceAll(import.meta.dir, "[dir]")
             .replaceAll("\\", "/")
+            .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
             .trim(),
         ).trim(),
       ),

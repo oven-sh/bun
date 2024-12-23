@@ -29,7 +29,7 @@ const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
-
+const Loader = bun.options.Loader;
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
 /// getters on an exports object for ES6 export statements, and is both for
@@ -7008,7 +7008,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: ?[]const u8 = null,
+    url_for_css: []const u8 = "",
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7125,7 +7125,6 @@ pub const BundledAst = struct {
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = ast.symbols,
@@ -7173,12 +7172,12 @@ pub const BundledAst = struct {
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        css_enabled: bool,
+        experimental: Loader.Experimental,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (css_enabled) {
+        if (experimental.css) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable

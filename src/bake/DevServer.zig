@@ -1585,7 +1585,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     }
 }
 
-fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !Chunk.EntryPoint.ID {
     const path_hash = bun.hash(abs_path);
     const gop = try dev.css_files.getOrPut(dev.allocator, path_hash);
     if (gop.found_existing) {
@@ -4486,3 +4486,4 @@ const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const Chunk = bun.bundle_v2.Chunk;

@@ -1,4 +1,4 @@
-Bun's bundler now has first-class support for HTML. Build static sites, landing pages, and web applications with zero configuration. Just point Bun at your HTML file and it handles everything else.
+As of Bun v1.1.43, Bun's bundler now has first-class support for HTML. Build static sites, landing pages, and web applications with zero configuration. Just point Bun at your HTML file and it handles everything else.
 
 ```html#index.html
 <!doctype html>
@@ -43,7 +43,7 @@ Bun automatically:
 
 ## Zero Config, Maximum Performance
 
-The HTML bundler is enabled by default after Bun v1.2+. It just works™️. Drop in your existing HTML files and Bun will handle:
+The HTML bundler is enabled by default after Bun v1.2+. Drop in your existing HTML files and Bun will handle:
 
 - **TypeScript & JSX** - Write modern JavaScript for browsers without the setup
 - **CSS** - Bundle CSS stylesheets directly from `<link rel="stylesheet">` or `@import`

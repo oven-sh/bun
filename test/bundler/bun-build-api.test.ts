@@ -580,7 +580,9 @@ describe("Bun.build", () => {
         </html>
       `,
       "style.css": ".foo { color: red; }",
-      "script.js": "console.log('hello' + __dirname)",
+
+      // Check we actually do bundle the script
+      "script.js": "console.log(1 + 2)",
     });
 
     let onLoadCalled = false;
@@ -590,6 +592,9 @@ describe("Bun.build", () => {
       entrypoints: [join(fixture, "index.html")],
       html: true,
       experimentalCss: true,
+      minify: {
+        syntax: true,
+      },
       plugins: [
         {
           name: "test-plugin",
@@ -630,7 +635,7 @@ describe("Bun.build", () => {
 
     // Verify the JS output contains the __dirname
     const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
-    expect(await js?.text()).toContain(fixture);
+    expect(await js?.text()).toContain("console.log(3)");
 
     // Verify our plugin modified the HTML
     const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");

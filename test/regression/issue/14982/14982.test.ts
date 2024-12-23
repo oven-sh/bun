@@ -8,6 +8,7 @@ describe("issue 14982", () => {
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",
+      cwd: __dirname,
       env: bunEnv,
     });
     await process.exited;

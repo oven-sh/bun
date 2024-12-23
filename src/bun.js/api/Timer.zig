@@ -915,7 +915,7 @@ pub const WTFTimer = struct {
     vm: *VirtualMachine,
     run_loop_timer: *RunLoopTimer,
     event_loop_timer: EventLoopTimer,
-    event_loop: *JSC.EventLoop,
+    imminent: *std.atomic.Value(?*WTFTimer),
     repeat: bool,
     lock: bun.Lock = .{},
 
@@ -924,7 +924,7 @@ pub const WTFTimer = struct {
     pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
         const this = WTFTimer.new(.{
             .vm = js_vm,
-            .event_loop = js_vm.eventLoop(),
+            .imminent = &js_vm.eventLoop().imminent_gc_timer,
             .event_loop_timer = .{
                 .next = .{
                     .sec = std.math.maxInt(i64),
@@ -952,12 +952,13 @@ pub const WTFTimer = struct {
     }
 
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
+        // There's only one of these.
+        this.imminent.store(if (seconds == 0) null else this, .monotonic);
+
         if (seconds == 0.0) {
-            this.event_loop.imminent_gc_timer.store(this, .monotonic);
             return;
         }
 
-        this.event_loop.imminent_gc_timer.store(null, .monotonic);
         const modf = std.math.modf(seconds);
         var interval = bun.timespec.now();
         interval.sec += @intFromFloat(modf.ipart);
@@ -974,6 +975,7 @@ pub const WTFTimer = struct {
     pub fn cancel(this: *WTFTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
+        this.imminent.store(null, .monotonic);
         if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
@@ -981,7 +983,7 @@ pub const WTFTimer = struct {
 
     pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
         this.event_loop_timer.state = .FIRED;
-        this.event_loop.imminent_gc_timer.store(null, .monotonic);
+        this.imminent.store(null, .monotonic);
         this.runWithoutRemoving();
         return if (this.repeat)
             .{ .rearm = this.event_loop_timer.next }
@@ -1007,7 +1009,7 @@ pub const WTFTimer = struct {
     }
 
     export fn WTFTimer__isActive(this: *const WTFTimer) bool {
-        return this.event_loop_timer.state == .ACTIVE or (this.event_loop.imminent_gc_timer.load(.monotonic) orelse return false) == this;
+        return this.event_loop_timer.state == .ACTIVE or (this.imminent.load(.monotonic) orelse return false) == this;
     }
 
     export fn WTFTimer__cancel(this: *WTFTimer) void {

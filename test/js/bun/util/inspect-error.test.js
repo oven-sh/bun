@@ -105,8 +105,8 @@ test("Error inside minified file (no color) ", () => {
     expect(
       normalizeError(
         Bun.inspect(e)
-          .replaceAll(import.meta.dir, "[dir]")
           .replaceAll("\\", "/")
+          .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
           .trim(),
       ),
     ).toMatchInlineSnapshot(`

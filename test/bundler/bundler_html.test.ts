@@ -653,4 +653,72 @@ console.log('Main JS loaded page:', page);`,
       expect(bundle).toMatch(/\.\/page-.*\.html/);
     },
   });
+
+  // Test HTML with only CSS (no JavaScript)
+  itBundled("html/css-only", {
+    outdir: "out/",
+    files: {
+      "/in/page.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./theme.css">
+  </head>
+  <body>
+    <div class="container">
+      <h1 class="title">Styled Page</h1>
+      <p class="content">This page only has CSS styling.</p>
+    </div>
+  </body>
+</html>`,
+      "/in/styles-imported.css": `
+* {
+  box-sizing: border-box;
+}
+`,
+      "/in/styles.css": `
+@import "./styles-imported.css";
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+.title {
+  color: navy;
+}`,
+      "/in/theme.css": `
+@import "./styles-imported.css";
+.content {
+  line-height: 1.6;
+  color: #333;
+}
+body {
+  background-color: #f5f5f5;
+}`,
+    },
+    experimentalHtml: true,
+    experimentalCss: true,
+    entryPoints: ["/in/page.html"],
+    onAfterBundle(api) {
+      const htmlBundle = api.readFile("out/page.html");
+
+      // Check that CSS is properly referenced and hashed
+      expect(htmlBundle).toMatch(/href=".*\.css"/);
+      expect(htmlBundle).not.toContain("styles.css");
+      expect(htmlBundle).not.toContain("theme.css");
+
+      // Get the CSS bundle path
+      const cssPath = htmlBundle.match(/href="(.*\.css)"/)?.[1];
+      expect(cssPath).toBeDefined();
+
+      // Check the CSS bundle contents
+      const cssBundle = api.readFile("out/" + cssPath!);
+      expect(cssBundle).toContain(".container");
+      expect(cssBundle).toContain(".title");
+      expect(cssBundle).toContain(".content");
+      expect(cssBundle).toContain("background-color");
+      expect(cssBundle).toContain("box-sizing: border-box");
+    },
+  });
 });

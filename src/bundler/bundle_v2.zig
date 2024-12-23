@@ -5952,6 +5952,7 @@ pub const LinkerContext = struct {
                 if (code_splitting) {
                     break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
                 } else {
+                    // Force HTML chunks to always be generated, even if there's an identical JS file.
                     break :brk try std.fmt.allocPrint(temp_allocator, "{}", .{JSChunkKeyFormatter{
                         .has_html = has_html_chunk,
                         .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
@@ -6152,12 +6153,20 @@ pub const LinkerContext = struct {
             sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
             sorted_keys.sortAsc();
             var js_chunk_indices_with_css = try BabyList(u32).initCapacity(temp_allocator, js_chunks_with_css);
-            for (sorted_keys.slice(), 0..) |key, i| {
+            for (sorted_keys.slice()) |key| {
                 const chunk = js_chunks.get(key) orelse unreachable;
-                sorted_chunks.appendAssumeCapacity(chunk);
 
                 if (chunk.content.javascript.css_chunks.len > 0)
-                    js_chunk_indices_with_css.appendAssumeCapacity(@intCast(i));
+                    js_chunk_indices_with_css.appendAssumeCapacity(sorted_chunks.len);
+
+                sorted_chunks.appendAssumeCapacity(chunk);
+
+                // Attempt to order the JS HTML chunk immediately after the non-html one.
+                if (chunk.has_html_chunk and experimental_html) {
+                    if (html_chunks.fetchSwapRemove(key)) |html_chunk| {
+                        sorted_chunks.appendAssumeCapacity(html_chunk.value);
+                    }
+                }
             }
 
             if (css_chunks.count() > 0) {
@@ -6182,8 +6191,9 @@ pub const LinkerContext = struct {
                 }
             }
 
+            // We don't care about the order of the HTML chunks that have
+            // no JS chunks.
             if (experimental_html) {
-                // Assume capacity should be fine here? But slightly less confident due to the CSS stuff above.
                 try sorted_chunks.append(this.allocator, html_chunks.values());
             }
 

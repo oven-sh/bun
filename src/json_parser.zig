@@ -1015,8 +1015,8 @@ const js_printer = bun.js_printer;
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-const Bundler = bun.Bundler;
-const ParseResult = bun.bundler.ParseResult;
+const Transpiler = bun.Transpiler;
+const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);

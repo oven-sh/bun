@@ -96,9 +96,9 @@ bundles_since_last_error: usize = 0,
 framework: bake.Framework,
 bundler_options: bake.SplitBundlerOptions,
 // Each logical graph gets its own bundler configuration
-server_bundler: Bundler,
-client_bundler: Bundler,
-ssr_bundler: Bundler,
+server_bundler: Transpiler,
+client_bundler: Transpiler,
+ssr_bundler: Transpiler,
 /// The log used by all `server_bundler`, `client_bundler` and `ssr_bundler`.
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -837,7 +837,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) voi
     }
 
     const ctx = &dev.vm.rareData().editor_context;
-    ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
+    ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
     const line: ?[]const u8 = req.header("editor-line");
     const column: ?[]const u8 = req.header("editor-column");
 
@@ -3431,7 +3431,7 @@ pub const SerializedFailure = struct {
             // TODO: syntax highlighted line text + give more context lines
             try writeString32(loc.line_text orelse "", w);
 
-            // The file is not specified here. Since the bundler runs every file
+            // The file is not specified here. Since the transpiler runs every file
             // in isolation, it would be impossible to reference any other file
             // in this Log. Thus, it is not serialized.
         } else {
@@ -4463,7 +4463,7 @@ const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const Log = bun.logger.Log;
 const Output = bun.Output;
 
-const Bundler = bun.bundler.Bundler;
+const Transpiler = bun.transpiler.Transpiler;
 const BundleV2 = bun.bundle_v2.BundleV2;
 
 const Define = bun.options.Define;

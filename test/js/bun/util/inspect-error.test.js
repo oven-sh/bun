@@ -33,7 +33,7 @@ test("Error", () => {
   expect(
     Bun.inspect(err)
       .replaceAll("\\", "/")
-      .replaceAll(import.meta.dir, "[dir]"),
+      .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "27 | "
 28 | \`);

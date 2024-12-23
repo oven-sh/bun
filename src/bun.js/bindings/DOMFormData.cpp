@@ -200,4 +200,19 @@ std::optional<KeyValuePair<String, DOMFormData::FormDataEntryValue>> DOMFormData
     return makeKeyValuePair(item.name, item.data);
 }
 
+size_t DOMFormData::memoryCost() const
+{
+    size_t cost = m_items.sizeInBytes();
+    for (auto& item : m_items) {
+        cost += item.name.sizeInBytes();
+        if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
+            cost += value->get()->memoryCost();
+        } else if (auto value = std::get_if<String>(&item.data)) {
+            cost += value->sizeInBytes();
+        }
+    }
+
+    return cost;
+}
+
 } // namespace WebCore

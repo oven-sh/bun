@@ -1331,8 +1331,8 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = bundler.Bundler;
-pub const bundler = @import("./bundler.zig");
+pub const Transpiler = transpiler.Transpiler;
+pub const transpiler = @import("./transpiler.zig");
 pub const which = @import("./which.zig").which;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");

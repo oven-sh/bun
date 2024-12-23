@@ -7,6 +7,7 @@ function source(name) {
     noConstructor: true,
     finalize: true,
     configurable: false,
+    memoryCost: true,
     proto: {
       drain: {
         fn: "drainFromJS",

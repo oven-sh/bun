@@ -59,6 +59,8 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
 
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
 protected:

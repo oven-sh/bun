@@ -16,12 +16,12 @@ const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const Sys = @import("../../sys.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -32,7 +32,7 @@ const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -1154,7 +1154,7 @@ pub const ServerConfig = struct {
         allow_bake_config: bool,
     ) bun.JSError!void {
         const vm = arguments.vm;
-        const env = vm.bundler.env;
+        const env = vm.transpiler.env;
 
         args.* = .{
             .address = .{
@@ -1175,7 +1175,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        if (arguments.vm.bundler.options.production) {
+        if (arguments.vm.transpiler.options.production) {
             args.development = false;
         }
 
@@ -1190,7 +1190,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arguments.vm.bundler.options.transform_options.port) |port| {
+            if (arguments.vm.transpiler.options.transform_options.port) |port| {
                 break :brk port;
             }
 
@@ -1198,7 +1198,7 @@ pub const ServerConfig = struct {
         };
         var port = args.address.tcp.port;
 
-        if (arguments.vm.bundler.options.transform_options.origin) |origin| {
+        if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
             args.base_uri = origin;
         }
 
@@ -1686,6 +1686,29 @@ pub const AnyRequestContext = struct {
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
+
+    pub fn memoryCost(self: AnyRequestContext) usize {
+        if (self.tagged_pointer.isNull()) {
+            return 0;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).memoryCost();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).memoryCost();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
     pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
         return self.tagged_pointer.get(T);
     }
@@ -1908,6 +1931,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
+
+        pub fn memoryCost(this: *const RequestContext) usize {
+            // The Sink and ByteStream aren't owned by this.
+            return @sizeOf(RequestContext) + this.request_body_buf.capacity + this.response_buf_owned.capacity + this.blob.memoryCost();
+        }
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -2190,7 +2218,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
-                .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
+                .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,
                 .problems = Api.Problems{
                     .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
@@ -4464,6 +4492,13 @@ pub const ServerWebSocket = struct {
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
     pub usingnamespace bun.New(ServerWebSocket);
 
+    pub fn memoryCost(this: *const ServerWebSocket) usize {
+        if (this.flags.closed) {
+            return @sizeOf(ServerWebSocket);
+        }
+        return this.websocket().memoryCost() + @sizeOf(ServerWebSocket);
+    }
+
     const log = Output.scoped(.WebSocketServer, false);
 
     pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
@@ -6719,7 +6754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
-                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
+                bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
                 &source,
                 .{},
             ) catch unreachable;
@@ -6745,7 +6780,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
+            ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
             const line: ?string = req.header("editor-line");
             const column: ?string = req.header("editor-column");
 

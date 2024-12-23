@@ -20,25 +20,28 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
-const net = require('net');
-const http = require('http');
 
-const server = net.createServer(function(socket) {
-  // Neither Content-Length nor Connection
-  socket.end('HTTP/1.1 200 ok\r\n\r\nHello');
-}).listen(0, common.mustCall(function() {
-  http.get({ port: this.address().port }, common.mustCall(function(res) {
-    let body = '';
+const vm = require('vm');
 
-    res.setEncoding('utf8');
-    res.on('data', function(chunk) {
-      body += chunk;
-    });
-    res.on('end', common.mustCall(function() {
-      assert.strictEqual(body, 'Hello');
-      server.close();
-    }));
-  }));
-}));
+const code =
+    'Object.defineProperty(this, "f", {\n' +
+    '  get: function() { return x; },\n' +
+    '  set: function(k) { x = k; },\n' +
+    '  configurable: true,\n' +
+    '  enumerable: true\n' +
+    '});\n' +
+    'g = f;\n' +
+    'f;\n';
+
+const x = {};
+const o = vm.createContext({ console, x });
+
+const res = vm.runInContext(code, o, 'test');
+
+assert(res);
+assert.strictEqual(typeof res, 'object');
+assert.strictEqual(res, x);
+assert.strictEqual(o.f, res);
+assert.deepStrictEqual(Object.keys(o), ['console', 'x', 'f', 'g']);

@@ -996,7 +996,11 @@ pub const WTFTimer = struct {
         this.destroy();
     }
 
-    export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) *WTFTimer {
+    export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
+        if (VirtualMachine.is_bundler_thread_for_bytecode_cache) {
+            return null;
+        }
+
         return init(run_loop_timer, VirtualMachine.get());
     }
 

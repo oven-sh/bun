@@ -911,6 +911,8 @@ pub const VirtualMachine = struct {
         return BodyValueRef.init(body, &this.body_value_hive_allocator);
     }
 
+    pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
+
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
             if (Environment.allow_assert) {

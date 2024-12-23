@@ -12701,6 +12701,7 @@ pub const LinkerContext = struct {
                             .js;
 
                         if (loader.isJavaScriptLike()) {
+                            JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                             JSC.initialize(false);
                             var fdpath: bun.PathBuffer = undefined;
                             var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});

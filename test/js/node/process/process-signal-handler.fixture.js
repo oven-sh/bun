@@ -54,15 +54,16 @@ const SIGUSR2 = os.constants.signals.SIGUSR2;
 
 switch (process.argv.at(-1)) {
   case "SIGUSR1": {
-    process.on("SIGUSR1", function () {
-      checkSignal("SIGUSR1", arguments);
+    const SIGNAL = os.constants.signals[process.platform === "linux" ? "SIGUSR2" : "SIGUSR1"];
+    process.on(SIGNAL, function () {
+      checkSignal(SIGNAL, arguments);
       done();
     });
-    process.on("SIGUSR1", function () {
-      checkSignal("SIGUSR1", arguments);
+    process.on(SIGNAL, function () {
+      checkSignal(SIGNAL, arguments);
       done();
     });
-    raise(SIGUSR1);
+    raise(SIGNAL);
     break;
   }
   case "SIGUSR2": {

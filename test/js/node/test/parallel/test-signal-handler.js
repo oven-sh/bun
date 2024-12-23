@@ -34,7 +34,6 @@ console.log(`process.pid: ${process.pid}`);
 // So we need to use a different signal.
 const SIGNAL = process.platform === 'linux' ? 'SIGUSR2' : 'SIGUSR1';
 
-
 process.on(SIGNAL, common.mustCall());
 process.on(SIGNAL, common.mustCall(function() {
   setTimeout(function() {

@@ -4,12 +4,9 @@ const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("./net");
 const {
   validateFunction,
-  validateAbortSignal,
   validateArray,
   validateString,
   validateBoolean,
-  validateInteger,
-  validateUint32,
   validateNumber,
 } = require("internal/validators");
 
@@ -41,6 +38,17 @@ function getServers() {
 
 function setServers(servers) {
   return setServersOn(servers, dns);
+}
+
+let defaultResultOrder = "verbatim";
+
+function setDefaultResultOrder(order) {
+  validateOrder(order);
+  defaultResultOrder = order;
+}
+
+function getDefaultResultOrder() {
+  return defaultResultOrder;
 }
 
 function setServersOn(servers, object) {
@@ -136,11 +144,15 @@ function validateVerbatimOption(options) {
   }
 }
 
+function validateOrder(order) {
+  if (!["ipv4first", "ipv6first", "verbatim"].includes(order)) {
+    throw $ERR_INVALID_ARG_VALUE(`The "order" argument is invalid. Received: ${String(order)}`);
+  }
+}
+
 function validateOrderOption(options) {
   if (options.order !== undefined) {
-    if (!["ipv4first", "ipv6first", "verbatim"].includes(options.order)) {
-      throw $ERR_INVALID_ARG_VALUE(`The "order" option is invalid. Received: ${String(options.order)}`);
-    }
+    validateOrder(options.order);
   }
 }
 
@@ -157,7 +169,7 @@ function invalidHostname(hostname) {
   );
 }
 
-function translateLookupOptions(options, defaultOrder) {
+function translateLookupOptions(options) {
   if (!options || typeof options !== "object") {
     options = { family: options };
   }
@@ -167,6 +179,8 @@ function translateLookupOptions(options, defaultOrder) {
   if (order === undefined && typeof verbatim === "boolean") {
     order = verbatim ? "verbatim" : "ipv4first";
   }
+
+  order ??= defaultResultOrder;
 
   return {
     family,
@@ -898,6 +912,8 @@ export default {
   lookupService,
   Resolver,
   setServers,
+  setDefaultResultOrder,
+  getDefaultResultOrder,
   resolve,
   reverse,
   resolve4,

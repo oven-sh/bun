@@ -103,6 +103,20 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
+            var did_set_target = false;
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                this.target = target;
+                did_set_target = true;
+            }
+
+            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
+                this.experimental.html = enable_html;
+
+                if (enable_html and this.target != .browser) {
+                    return globalThis.throwInvalidArguments("'html' is currently only supported when target is 'browser'. You can still import HTML files via the 'file' loader, just not using the 'html' loader.", .{});
+                }
+            }
+
             if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
                 this.experimental.css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
@@ -113,10 +127,6 @@ pub const JSBundler = struct {
 
                     break :true true;
                 } else false;
-            }
-
-            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
-                this.experimental.html = enable_html;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -194,15 +204,10 @@ pub const JSBundler = struct {
                 if (bytecode) {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = .cjs;
+                    if (did_set_target and this.target != .bun and this.bytecode) {
+                        return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    }
                     this.target = .bun;
-                }
-            }
-
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-
-                if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 

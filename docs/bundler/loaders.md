@@ -212,6 +212,8 @@ To enable the html loader:
 - For `Bun.build`: set `html: true`
 - For `bun build`: `--experimental-html` CLI flag
 
+You most likely want to use the `html` loader in conjunction with `experimentalCss: true` or `--experimental-css`.
+
 The html loader processes HTML files and bundles any referenced assets. It will:
 
 - Bundle and hash referenced JavaScript files (`<script src="...">`)

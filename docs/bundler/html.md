@@ -57,7 +57,7 @@ You've never seen a watch mode this fast.
 
 ## Plugin API
 
-Need more control? Configure the bundler through the JavaScript API:
+Need more control? Configure the bundler through the JavaScript API and use Bun's builtin `HTMLRewriter` to preprocess HTML.
 
 ```ts
 await Bun.build({
@@ -85,6 +85,8 @@ await Bun.build({
           const html = await Bun.file(args.path).text();
 
           return {
+            // Bun's bundler will scan the HTML for <script> tags, <link rel="stylesheet"> tags, and other assets
+            // and bundle them automatically
             contents: rewriter.transform(html),
             loader: "html",
           };

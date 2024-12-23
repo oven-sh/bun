@@ -163,6 +163,8 @@ pub fn BrowsersImpl(comptime T: type) type {
         //     .opera = 67 << 16,
         // };
 
+        /// Ported from here:
+        /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
         pub fn convertFromString(esbuild_target: []const []const u8) anyerror!T {
             var browsers: T = .{};
 

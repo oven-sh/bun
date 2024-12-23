@@ -203,6 +203,79 @@ When using a [standalone executable](https://bun.sh/docs/bundler/executables), t
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
+### `html`
+
+**HTML loader**. Default for `.html` after Bun v1.2.0.
+
+To enable the html loader:
+
+- For `Bun.build`: set `html: true`
+- For `bun build`: `--experimental-html` CLI flag
+
+The html loader processes HTML files and bundles any referenced assets. It will:
+
+- Bundle and hash referenced JavaScript files (`<script src="...">`)
+- Bundle and hash referenced CSS files (`<link rel="stylesheet" href="...">`)
+- Hash referenced images (`<img src="...">`)
+- Preserve external URLs (by default, anything starting with `http://` or `https://`)
+
+For example, given this HTML file:
+
+{% codetabs %}
+
+```html#src/index.html
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image.jpg" alt="Local image">
+    <img src="https://example.com/image.jpg" alt="External image">
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>
+```
+
+{% /codetabs %}
+
+It will output a new HTML file with the bundled assets:
+
+{% codetabs %}
+
+```html#dist/output.html
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image-HASHED.jpg" alt="Local image">
+    <img src="https://example.com/image.jpg" alt="External image">
+    <script type="module" src="./output-ALSO-HASHED.js"></script>
+  </body>
+</html>
+```
+
+{% /codetabs %}
+
+Under the hood, it uses [`lol-html`](https://github.com/cloudflare/lol-html) to extract script and link tags as entrypoints, and other assets as external.
+
+Currently, the list of selectors is:
+
+- `audio[src]`
+- `iframe[src]`
+- `img[src]`
+- `img[srcset]`
+- `link:not([rel~='stylesheet']):not([rel~='modulepreload']):not([rel~='manifest']):not([rel~='icon']):not([rel~='apple-touch-icon'])[href]`
+- `link[as='font'][href], link[type^='font/'][href]`
+- `link[as='image'][href]`
+- `link[as='style'][href]`
+- `link[as='video'][href], link[as='audio'][href]`
+- `link[as='worker'][href]`
+- `link[rel='icon'][href], link[rel='apple-touch-icon'][href]`
+- `link[rel='manifest'][href]`
+- `link[rel='stylesheet'][href]`
+- `script[src]`
+- `source[src]`
+- `source[srcset]`
+- `video[poster]`
+- `video[src]`
+
 ### `sh` loader
 
 **Bun Shell loader**. Default for `.sh` files

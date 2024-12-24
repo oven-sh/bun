@@ -1837,6 +1837,38 @@ pub const DNSResolver = struct {
         this.destroy();
     }
 
+    pub const Order = enum(u8) {
+        verbatim = 0,
+        ipv4first = 4,
+        ipv6first = 6,
+
+        pub const default = .verbatim;
+
+        pub const map = bun.ComptimeStringMap(Order, .{
+            .{ "verbatim", .verbatim },
+            .{ "ipv4first", .ipv4first },
+            .{ "ipv6first", .ipv6first },
+            .{ "0", .verbatim },
+            .{ "4", .ipv4first },
+            .{ "6", .ipv6first },
+        });
+
+        pub fn toJS(this: Order, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+            return JSC.ZigString.init(@tagName(this)).toJS(globalThis);
+        }
+
+        pub fn fromString(order: []const u8) ?Order {
+            return Order.map.get(order);
+        }
+
+        pub fn fromStringOrDie(order: []const u8) Order {
+            return fromString(order) orelse {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Invalid DNS result order.", .{});
+                Global.exit(1);
+            };
+        }
+    };
+
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
     const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
     const SoaPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_soa_reply, "soa").PendingCacheKey, 32);
@@ -3249,6 +3281,10 @@ pub const DNSResolver = struct {
 
         resolver.requestSent(globalThis.bunVM());
         return promise;
+    }
+
+    pub fn getRuntimeDefaultResultOrderOption(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return globalThis.bunVM().dns_result_order.toJS(globalThis);
     }
 
     comptime {

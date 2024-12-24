@@ -375,6 +375,11 @@ pub const SNativeZlib = struct {
         this.write_result = writeResult;
         SNativeZlib.writeCallbackSetCached(callframe.this(), globalThis, writeCallback);
 
+        // Keep the dictionary alive by keeping a reference to it in the JS object.
+        if (dictionary != null) {
+            SNativeZlib.dictionarySetCached(callframe.this(), globalThis, arguments[6]);
+        }
+
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
         return .undefined;
@@ -723,7 +728,7 @@ pub const SNativeBrotli = struct {
         };
     }
 
-    pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn init(this: *SNativeBrotli, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
         const this_value = callframe.this();
         if (arguments.len != 3) {

@@ -229,7 +229,11 @@ function lookup(hostname, options, callback) {
 
   if (!hostname) {
     invalidHostname(hostname);
-    callback(null, null, 4);
+    if (options.all) {
+      callback(null, []);
+    } else {
+      callback(null, null, 4);
+    }
     return;
   }
 
@@ -692,10 +696,14 @@ const promises = {
 
     if (!hostname) {
       invalidHostname(hostname);
-      return Promise.resolve({
-        address: null,
-        family: 4,
-      });
+      return Promise.resolve(
+        options.all
+          ? []
+          : {
+              address: null,
+              family: 4,
+            },
+      );
     }
 
     if (options.all) {
@@ -711,7 +719,11 @@ const promises = {
 
     validateString(address);
 
-    return translateErrorCode(dns.lookupService(address, port));
+    try {
+      return translateErrorCode(dns.lookupService(address, port));
+    } catch (err) {
+      return Promise.reject(withTranslatedError(err));
+    }
   },
 
   resolve(hostname, rrtype) {

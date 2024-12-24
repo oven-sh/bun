@@ -40,7 +40,13 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-let defaultResultOrder = "verbatim";
+const getRuntimeDefaultResultOrderOption = $newZigFunction(
+  "dns_resolver.zig",
+  "DNSResolver.getRuntimeDefaultResultOrderOption",
+  0,
+);
+
+let defaultResultOrder = getRuntimeDefaultResultOrderOption();
 
 function setDefaultResultOrder(order) {
   validateOrder(order);

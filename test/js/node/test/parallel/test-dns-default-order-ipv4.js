@@ -14,8 +14,6 @@ Bun.dns.lookup = common.mustCallAtLeast((...args) => {
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
-dns.setDefaultResultOrder('ipv4first');
-
 // We want to test the parameter of order only so that we
 // ignore possible errors here.
 function allowFailed(fn) {

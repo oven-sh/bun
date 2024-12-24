@@ -83,6 +83,7 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
+const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 pub const GenericWatcher = @import("../watcher.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
@@ -790,6 +791,7 @@ pub const VirtualMachine = struct {
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
+    dns_result_order: DNSResolver.Order = .verbatim,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *JSC.VM = undefined,
@@ -1967,6 +1969,7 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+        dns_result_order: DNSResolver.Order = .verbatim,
 
         // --print needs the result from evaluating the main module
         eval: bool = false,
@@ -2060,6 +2063,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
+        vm.dns_result_order = opts.dns_result_order;
 
         if (opts.smol)
             is_smol_mode = opts.smol;

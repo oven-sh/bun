@@ -5709,7 +5709,7 @@ extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JS
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC__VM* vm)
 {
 #if ENABLE(RESOURCE_USAGE)
-    return vm->heap.blockBytesAllocated() + vm->heap.extraMemorySize();
+    return vm->heap.blockBytesAllocated() + vm->heap.extraMemorySize() + vm->heap.externalMemorySize();
 #else
     return 0;
 #endif

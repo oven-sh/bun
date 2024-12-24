@@ -218,6 +218,18 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
     return getWebKitBytecodeCacheVersion();
 }
 
+extern "C" void Bun__onEachMicrotaskTick(void* bun_vm, JSC::VM* vm);
+
+static void defaultOnEachMicrotaskTick(JSC::VM& vm)
+{
+    Bun__onEachMicrotaskTick(clientData(vm)->bunVM, &vm);
+}
+
+static void defaultOnEachMicrotaskTickWithVM(void* bun_vm, JSC::VM& vm)
+{
+    Bun__onEachMicrotaskTick(bun_vm, &vm);
+}
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     static bool has_loaded_jsc = false;
@@ -799,6 +811,8 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
         globalObject->resetOnEachMicrotaskTick();
         queue->drain(vm, globalObject);
     }
+
+    Bun__onEachMicrotaskTick(globalObject->m_bunVM, &vm);
 }
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
@@ -810,7 +824,8 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
-        vm.setOnEachMicrotaskTick(nullptr);
+        vm.setOnEachMicrotaskTick(&defaultOnEachMicrotaskTick);
+        Bun__onEachMicrotaskTick(globalObject->m_bunVM, &vm);
     }
 }
 
@@ -856,7 +871,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
         if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
+            vm.setOnEachMicrotaskTick(&defaultOnEachMicrotaskTick);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         }
@@ -923,8 +938,10 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             globalObject->resetOnEachMicrotaskTick();
             Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
             queue->drain(vm, globalObject);
+            Bun__onEachMicrotaskTick(globalObject->m_bunVM, &vm);
             return;
         }
+        Bun__onEachMicrotaskTick(globalObject->m_bunVM, &vm);
     });
 
     if (executionContextId > -1) {

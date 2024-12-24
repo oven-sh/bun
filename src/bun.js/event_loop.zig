@@ -543,6 +543,9 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer_fast: bool = true,
     disabled: bool = false,
 
+    pub export fn Bun__onEachMicrotaskTick(vm: *VirtualMachine, jsc_vm: *JSC.VM) void {
+        vm.gc_controller.processGCTimerWithHeapSize(jsc_vm, jsc_vm.blockBytesAllocated());
+    }
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
@@ -612,7 +615,7 @@ pub const GarbageCollectionController = struct {
     pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
         var this = timer.as(*GarbageCollectionController);
         const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-        this.performGC();
+        this.performGC(this.bunVM().jsc);
         this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
         if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
@@ -652,7 +655,7 @@ pub const GarbageCollectionController = struct {
                     this.updateGCRepeatTimer(.fast);
 
                     if (this_heap_size > prev * 2) {
-                        this.performGC();
+                        this.performGC(vm);
                     } else {
                         this.scheduleGCTimer();
                     }
@@ -661,17 +664,16 @@ pub const GarbageCollectionController = struct {
             .scheduled => {
                 if (this_heap_size > prev * 2) {
                     this.updateGCRepeatTimer(.fast);
-                    this.performGC();
+                    this.performGC(vm);
                 }
             },
         }
     }
 
-    pub fn performGC(this: *GarbageCollectionController) void {
+    pub fn performGC(this: *GarbageCollectionController, js_vm: *JSC.VM) void {
         if (this.disabled) return;
-        var vm = this.bunVM().jsc;
-        vm.collectAsync();
-        this.gc_last_heap_size = vm.blockBytesAllocated();
+        js_vm.collectAsync();
+        this.gc_last_heap_size = js_vm.blockBytesAllocated();
     }
 
     pub const GCTimerState = enum {
@@ -1618,7 +1620,7 @@ pub const EventLoop = struct {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn performGC(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.performGC();
+        this.virtual_machine.gc_controller.performGC(this.virtual_machine.jsc);
     }
 
     pub fn wakeup(this: *EventLoop) void {

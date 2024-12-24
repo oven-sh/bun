@@ -280,6 +280,7 @@ const searchIterator = new JSCallback(
   {
     returns: "bool",
     args: ["ptr", "usize"],
+    threadsafe: true // Optional. Defaults to `false`
   },
 );
 

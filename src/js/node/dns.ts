@@ -720,7 +720,10 @@ const promises = {
     validateString(address);
 
     try {
-      return translateErrorCode(dns.lookupService(address, port));
+      return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
+        hostname,
+        service,
+      }));
     } catch (err) {
       return Promise.reject(withTranslatedError(err));
     }

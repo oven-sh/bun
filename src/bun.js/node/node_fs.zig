@@ -4728,7 +4728,7 @@ pub const NodeFS = struct {
                     };
                 },
                 .string => brk: {
-                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding);
+                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bun.libpas_allocator, @constCast(ret.result.string), args.encoding);
 
                     if (str.underlying.tag == .Dead and str.utf8.len == 0) {
                         return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
@@ -4873,10 +4873,10 @@ pub const NodeFS = struct {
                         return .{
                             .result = .{
                                 .buffer = Buffer.fromBytes(
-                                    bun.default_allocator.dupe(u8, temporary_read_buffer) catch return .{
+                                    bun.libpas_allocator.dupe(u8, temporary_read_buffer) catch return .{
                                         .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
                                     },
-                                    bun.default_allocator,
+                                    bun.libpas_allocator,
                                     .Uint8Array,
                                 ),
                             },
@@ -4940,7 +4940,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var buf = std.ArrayList(u8).init(bun.default_allocator);
+        var buf = std.ArrayList(u8).init(bun.libpas_allocator);
         defer if (!did_succeed) buf.clearAndFree();
         buf.ensureTotalCapacityPrecise(
             @min(
@@ -5051,7 +5051,7 @@ pub const NodeFS = struct {
         return switch (args.encoding) {
             .buffer => .{
                 .result = .{
-                    .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
+                    .buffer = Buffer.fromBytes(buf.items, bun.libpas_allocator, .Uint8Array),
                 },
             },
             else => brk: {

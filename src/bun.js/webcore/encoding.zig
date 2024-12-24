@@ -1056,18 +1056,18 @@ pub const Encoder = struct {
         };
     }
 
-    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) bun.String {
+    pub fn toBunStringFromOwnedSlice(allocator: std.mem.Allocator, input: []u8, encoding: JSC.Node.Encoding) bun.String {
         if (input.len == 0)
             return bun.String.empty;
 
         switch (encoding) {
             .ascii => {
                 if (strings.isAllASCII(input)) {
-                    return bun.String.createExternalGloballyAllocated(.latin1, input);
+                    return bun.String.createExternalWithKnownAllocator(allocator, input, .latin1);
                 }
 
                 const str, const chars = bun.String.createUninitialized(.latin1, input.len);
-                defer bun.default_allocator.free(input);
+                defer allocator.free(input);
                 if (str.tag == .Dead) {
                     return str;
                 }
@@ -1075,35 +1075,35 @@ pub const Encoder = struct {
                 return str;
             },
             .latin1 => {
-                return bun.String.createExternalGloballyAllocated(.latin1, input);
+                return bun.String.createExternalWithKnownAllocator(allocator, input, .latin1);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch {
-                    bun.default_allocator.free(input);
+                const converted = strings.toUTF16Alloc(allocator, input, false, false) catch {
+                    allocator.free(input);
                     return bun.String.dead;
                 };
 
                 if (converted) |utf16| {
-                    defer bun.default_allocator.free(input);
-                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                    defer allocator.free(input);
+                    return bun.String.createExternalWithKnownAllocator(allocator, utf16, .utf16);
                 }
 
                 // If we get here, it means we can safely assume the string is 100% ASCII characters
-                return bun.String.createExternalGloballyAllocated(.latin1, input);
+                return bun.String.createExternalWithKnownAllocator(allocator, input, .latin1);
             },
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
                 if (input.len / 2 == 0) {
-                    bun.default_allocator.free(input);
+                    allocator.free(input);
                     return bun.String.empty;
                 }
 
                 const as_u16 = std.mem.bytesAsSlice(u16, input);
-                return bun.String.createExternalGloballyAllocated(.utf16, @alignCast(as_u16));
+                return bun.String.createExternalWithKnownAllocator(allocator, as_u16, .utf16);
             },
 
             .hex => {
-                defer bun.default_allocator.free(input);
+                defer allocator.free(input);
                 const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
 
                 if (str.tag == .Dead) {
@@ -1125,7 +1125,7 @@ pub const Encoder = struct {
             // be addressed separately because constructFromU8's base64url also
             // appears inconsistent with Node.js.
             .base64url => {
-                defer bun.default_allocator.free(input);
+                defer allocator.free(input);
                 const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
                 if (out.tag != .Dead) {
                     _ = bun.base64.encodeURLSafe(chars, input);
@@ -1134,11 +1134,11 @@ pub const Encoder = struct {
             },
 
             .base64 => {
-                defer bun.default_allocator.free(input);
+                defer allocator.free(input);
                 const to_len = bun.base64.encodeLen(input);
-                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const to = allocator.alloc(u8, to_len) catch return bun.String.dead;
                 const wrote = bun.base64.encode(to, input);
-                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
+                return bun.String.createExternalWithKnownAllocator(allocator, to[0..wrote], .latin1);
             },
         }
     }

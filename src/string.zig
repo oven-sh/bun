@@ -625,6 +625,27 @@ pub const String = extern struct {
     /// len is the number of characters in that buffer.
     pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
 
+    fn freeExternalStringImplFromVTable(vtable: *const std.mem.Allocator.VTable, buffer: *anyopaque, _: u32) callconv(.C) void {
+        if (vtable == bun.default_allocator.vtable or vtable == bun.MimallocArena.VTable) {
+            bun.Mimalloc.mi_free(buffer);
+        } else if (vtable == bun.libpas_allocator.vtable) {
+            bun.libpas.bun_libpas_free(buffer);
+        } else {
+            @panic("Unknown allocator");
+        }
+    }
+
+    pub fn createExternalWithKnownAllocator(allocator: std.mem.Allocator, bytes: anytype, latin1_or_utf16: String.WTFStringEncoding) String {
+        JSC.markBinding(@src());
+        bun.assert(bytes.len > 0);
+        if (bytes.len > max_length()) {
+            allocator.free(bytes);
+            return dead;
+        }
+
+        return BunString__createExternal(@ptrCast(bytes.ptr), bytes.len, latin1_or_utf16 == .latin1, @constCast(allocator.vtable), @ptrCast(&freeExternalStringImplFromVTable));
+    }
+
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
@@ -1395,7 +1416,7 @@ pub const SliceWithUnderlyingString = struct {
     /// Transcode a byte array to an encoded String, avoiding unnecessary copies.
     ///
     /// owned_input_bytes ownership is transferred to this function
-    pub fn transcodeFromOwnedSlice(owned_input_bytes: []u8, encoding: JSC.Node.Encoding) SliceWithUnderlyingString {
+    pub fn transcodeFromOwnedSlice(allocator: std.mem.Allocator, owned_input_bytes: []u8, encoding: JSC.Node.Encoding) SliceWithUnderlyingString {
         if (owned_input_bytes.len == 0) {
             return .{
                 .utf8 = ZigString.Slice.empty,
@@ -1404,7 +1425,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(allocator, owned_input_bytes, encoding),
         };
     }
 

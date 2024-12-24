@@ -433,7 +433,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
-
+        // The reason for this is
         // The reason for this is
         // JSC C API returns a detached arraybuffer
         // if you pass it a zero-length TypedArray
@@ -457,7 +457,7 @@ pub const ArrayBuffer = extern struct {
                 this.ptr,
                 this.byte_len,
                 MarkedArrayBuffer_deallocator,
-                @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+                @constCast(@ptrCast(bun.default_allocator.vtable)),
                 exception,
             ));
         }
@@ -468,7 +468,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+            @constCast(@ptrCast(bun.default_allocator.vtable)),
             exception,
         ));
     }
@@ -478,32 +478,6 @@ pub const ArrayBuffer = extern struct {
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
         if (this.value != .zero) {
             return this.value;
-        }
-
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
-            log("toJS but will never free: {d} bytes", .{this.len});
-
-            if (this.typed_array_type == .ArrayBuffer) {
-                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
-                    ctx,
-                    this.ptr,
-                    this.byte_len,
-                    null,
-                    null,
-                    exception,
-                ));
-            }
-
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
-                ctx,
-                this.typed_array_type.toC(),
-                this.ptr,
-                this.byte_len,
-                null,
-                null,
-                exception,
-            ));
         }
 
         return this.toJSUnchecked(ctx, exception);
@@ -640,7 +614,22 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
-        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
+        return JSValue.createBufferWithCtx(
+            ctx,
+            this.buffer.byteSlice(),
+            @constCast(@ptrCast(if (this.allocator) |allocator| allocator.vtable else bun.default_allocator.vtable)),
+            @ptrCast(&Bun__freeTypedArrayWithAllocatorVTable),
+        );
+    }
+
+    fn Bun__freeTypedArrayWithAllocatorVTable(ptr: *anyopaque, vtable: *const std.mem.Allocator.VTable) callconv(.C) void {
+        if (vtable == bun.default_allocator.vtable or vtable == bun.MimallocArena.VTable) {
+            bun.Mimalloc.mi_free(ptr);
+        } else if (vtable == bun.libpas_allocator.vtable) {
+            bun.libpas.bun_libpas_free(ptr);
+        } else {
+            @panic("Unknown allocator used");
+        }
     }
 
     pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -662,8 +651,8 @@ pub const MarkedArrayBuffer = struct {
             this.buffer.ptr,
 
             this.buffer.byte_len,
-            MarkedArrayBuffer_deallocator,
-            this.buffer.ptr,
+            @ptrCast(&Bun__freeTypedArrayWithAllocatorVTable),
+            @constCast(@ptrCast(if (this.allocator) |allocator| allocator.vtable else bun.default_allocator.vtable)),
             exception,
         );
     }

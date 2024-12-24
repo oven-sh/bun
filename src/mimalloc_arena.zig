@@ -136,7 +136,7 @@ pub const Arena = struct {
     /// It uses pthread_getspecific to do that.
     /// We can save those extra calls if we just do it once in here
     pub fn getThreadlocalDefault() Allocator {
-        return Allocator{ .ptr = mimalloc.mi_heap_get_default(), .vtable = &c_allocator_vtable };
+        return Allocator{ .ptr = mimalloc.mi_heap_get_default(), .vtable = c_allocator_vtable };
     }
 
     pub fn backingAllocator(this: Arena) Allocator {
@@ -146,7 +146,7 @@ pub const Arena = struct {
 
     pub fn allocator(this: Arena) Allocator {
         @setRuntimeSafety(false);
-        return Allocator{ .ptr = this.heap.?, .vtable = &c_allocator_vtable };
+        return Allocator{ .ptr = this.heap.?, .vtable = c_allocator_vtable };
     }
 
     pub fn deinit(this: *Arena) void {
@@ -283,9 +283,11 @@ pub const Arena = struct {
             mimalloc.mi_free(buf.ptr);
         }
     }
+
+    pub const VTable = c_allocator_vtable;
 };
 
-const c_allocator_vtable = Allocator.VTable{
+const c_allocator_vtable = &Allocator.VTable{
     .alloc = &Arena.alloc,
     .resize = &Arena.resize,
     .free = &Arena.free,

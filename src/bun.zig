@@ -4122,3 +4122,6 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+pub const libpas = @import("./libpas.zig");
+pub const libpas_allocator = libpas.libpas_allocator;

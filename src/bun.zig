@@ -4161,7 +4161,7 @@ pub const StackCheck = struct {
 };
 
 // Workaround for lack of branch hints.
-pub fn throwStackOverflow() StackOverflow!void {
+pub noinline fn throwStackOverflow() StackOverflow!void {
     @setCold(true);
     return error.StackOverflow;
 }

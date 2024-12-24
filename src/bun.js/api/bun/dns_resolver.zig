@@ -3191,9 +3191,9 @@ pub const DNSResolver = struct {
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
     pub fn globalLookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(3);
+        const arguments = callframe.arguments_old(2);
         if (arguments.len < 2) {
-            return globalThis.throwNotEnoughArguments("lookupService", 3, arguments.len);
+            return globalThis.throwNotEnoughArguments("lookupService", 2, arguments.len);
         }
 
         const addr_value = arguments.ptr[0];

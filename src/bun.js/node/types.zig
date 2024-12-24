@@ -1123,7 +1123,7 @@ pub const ArgumentsSlice = struct {
     arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
-    protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
     will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
@@ -1132,7 +1132,7 @@ pub const ArgumentsSlice = struct {
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
-        this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
+        this.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
     }
 
     pub fn deinit(this: *ArgumentsSlice) void {

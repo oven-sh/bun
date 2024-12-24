@@ -1709,6 +1709,14 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) bun.JSError!JSValue {
+        if (comptime is_sync) {
+            // Since the event loop is recursively called, we need to check if it's safe to recurse.
+            if (!bun.StackCheck.init().isSafeToRecurse()) {
+                globalThis.throwStackOverflow();
+                return error.JSError;
+            }
+        }
+
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();

@@ -506,6 +506,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
@@ -523,15 +524,19 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
+    if (globalThis.hasException()) {
+        return .zero;
+    }
+
     buffered_writer.flush() catch {
-        return .undefined;
+        return globalThis.throwOutOfMemory();
     };
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.slice()).withEncoding();
     const ret = out.toJS(globalThis);
-    array.deinit();
+
     return ret;
 }
 

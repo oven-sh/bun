@@ -4059,11 +4059,14 @@ pub const VirtualMachine = struct {
                         this.global,
                         allow_ansi_color,
                     );
+
+                    // Always include a newline in this case
+                    try writer.writeAll("\n");
                 }
             }
 
             // "cause" is not enumerable, so the above loop won't see it.
-            if (!saw_cause and error_instance.jsType() == .ErrorInstance) {
+            if (!saw_cause and error_instance_type == .ErrorInstance) {
                 if (error_instance.getOwn(this.global, "cause")) |cause| {
                     if (cause.jsType() == .ErrorInstance) {
                         cause.protect();

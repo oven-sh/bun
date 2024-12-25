@@ -383,7 +383,7 @@ pub const Subprocess = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
-        return globalObject.throw2("Cannot construct Subprocess", .{});
+        return globalObject.throw("Cannot construct Subprocess", .{});
     }
 
     const Readable = union(enum) {
@@ -394,6 +394,14 @@ pub const Subprocess = struct {
         ignore: void,
         closed: void,
         buffer: []u8,
+
+        pub fn memoryCost(this: *const Readable) usize {
+            return switch (this.*) {
+                .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
+                .buffer => this.buffer.len,
+                else => 0,
+            };
+        }
 
         pub fn hasPendingActivity(this: *const Readable) bool {
             return switch (this.*) {
@@ -495,7 +503,7 @@ pub const Subprocess = struct {
             _ = exited; // autofix
             switch (this.*) {
                 // should only be reachable when the entire output is buffered.
-                .memfd => return this.toBufferedValue(globalThis),
+                .memfd => return this.toBufferedValue(globalThis) catch .zero,
 
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -521,7 +529,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
             switch (this.*) {
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -594,8 +602,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // Signal 9 should always be fine, but just in case that somehow fails.
-                global.throwValue(err.toJSC(global));
-                return .zero;
+                return global.throwValue(err.toJSC(global));
             },
         }
 
@@ -652,8 +659,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
         }
 
@@ -710,11 +716,10 @@ pub const Subprocess = struct {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
-                global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
+                return global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
             } else {
-                global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+                return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
             }
-            return .zero;
         });
 
         if (callFrame.argumentsCount() == 0) {
@@ -796,6 +801,16 @@ pub const Subprocess = struct {
         blob: JSC.WebCore.AnyBlob,
         array_buffer: JSC.ArrayBuffer.Strong,
         detached: void,
+
+        pub fn memoryCost(this: *const Source) usize {
+            // Memory cost of Source and each of the particular fields is covered by @sizeOf(Subprocess).
+            return switch (this.*) {
+                .blob => this.blob.memoryCost(),
+                // ArrayBuffer is owned by GC.
+                .array_buffer => 0,
+                .detached => 0,
+            };
+        }
 
         pub fn slice(this: *const Source) []const u8 {
             return switch (this.*) {
@@ -924,6 +939,10 @@ pub const Subprocess = struct {
                 this.destroy();
             }
 
+            pub fn memoryCost(this: *const This) usize {
+                return @sizeOf(@This()) + this.source.memoryCost() + this.writer.memoryCost();
+            }
+
             pub fn loop(this: *This) *uws.Loop {
                 return this.event_loop.loop();
             }
@@ -956,6 +975,10 @@ pub const Subprocess = struct {
         pub const Poll = IOReader;
 
         pub usingnamespace bun.NewRefCounted(PipeReader, PipeReader.deinit);
+
+        pub fn memoryCost(this: *const PipeReader) usize {
+            return this.reader.memoryCost();
+        }
 
         pub fn hasPendingActivity(this: *const PipeReader) bool {
             if (this.state == .pending)
@@ -1143,6 +1166,15 @@ pub const Subprocess = struct {
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
+
+        pub fn memoryCost(this: *const Writable) usize {
+            return switch (this.*) {
+                .pipe => |pipe| pipe.memoryCost(),
+                .buffer => |buffer| buffer.memoryCost(),
+                // TODO: memfd
+                else => 0,
+            };
+        }
 
         pub fn hasPendingActivity(this: *const Writable) bool {
             return switch (this.*) {
@@ -1418,6 +1450,14 @@ pub const Subprocess = struct {
         }
     };
 
+    pub fn memoryCost(this: *const Subprocess) usize {
+        return @sizeOf(@This()) +
+            this.process.memoryCost() +
+            this.stdin.memoryCost() +
+            this.stdout.memoryCost() +
+            this.stderr.memoryCost();
+    }
+
     pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
         log("onProcessExit()", .{});
         const this_jsvalue = this.this_jsvalue;
@@ -1677,7 +1717,7 @@ pub const Subprocess = struct {
         var env_array = std.ArrayListUnmanaged(?[*:0]const u8){};
         var jsc_vm = globalThis.bunVM();
 
-        var cwd = jsc_vm.bundler.fs.top_level_dir;
+        var cwd = jsc_vm.transpiler.fs.top_level_dir;
 
         var stdio = [3]Stdio{
             .{ .ignore = {} },
@@ -1692,7 +1732,7 @@ pub const Subprocess = struct {
         var lazy = false;
         var on_exit_callback = JSValue.zero;
         var on_disconnect_callback = JSValue.zero;
-        var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
+        var PATH = jsc_vm.transpiler.env.get("PATH") orelse "";
         var argv = std.ArrayList(?[*:0]const u8).init(allocator);
         var cmd_value = JSValue.zero;
         var detached = false;
@@ -1769,13 +1809,13 @@ pub const Subprocess = struct {
                     if (argv0 == null) {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
                         argv0 = try allocator.dupeZ(u8, resolved);
                     } else {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
                         argv0 = try allocator.dupeZ(u8, resolved);
                     }
@@ -1814,7 +1854,7 @@ pub const Subprocess = struct {
                                         };
                                     } else {
                                         if (!globalThis.hasException()) {
-                                            globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
+                                            return globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
                                         }
                                         return .zero;
                                     }
@@ -1945,7 +1985,7 @@ pub const Subprocess = struct {
         }
 
         if (!override_env and env_array.items.len == 0) {
-            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
+            env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
             env_array.capacity = env_array.items.len;
         }
 
@@ -2058,8 +2098,7 @@ pub const Subprocess = struct {
         }) {
             .err => |err| {
                 spawn_options.deinit();
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
             .result => |result| result,
         };
@@ -2174,8 +2213,7 @@ pub const Subprocess = struct {
                     subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
                 ).asErr()) |err| {
                     subprocess.deref();
-                    globalThis.throwValue(err.toJSC(globalThis));
-                    return .zero;
+                    return globalThis.throwValue(err.toJSC(globalThis));
                 }
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
             }
@@ -2296,8 +2334,8 @@ pub const Subprocess = struct {
 
         const signalCode = subprocess.getSignalCode(globalThis);
         const exitCode = subprocess.getExitCode(globalThis);
-        const stdout = subprocess.stdout.toBufferedValue(globalThis);
-        const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        const stdout = try subprocess.stdout.toBufferedValue(globalThis);
+        const stderr = try subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
         subprocess.finalize();
 
@@ -2317,6 +2355,15 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
 
         return sync_value;
+    }
+
+    fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
+        const message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory();
+        defer message.deref();
+        const err = message.toZigString().toErrorInstance(globalThis);
+        err.putZigString(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init("ENOENT").toJS(globalThis));
+        err.putZigString(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(command).toJS(globalThis));
+        return globalThis.throwValue(err);
     }
 
     const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");

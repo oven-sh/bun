@@ -228,7 +228,7 @@ pub const StepPosition = enum {
     pub fn toCss(this: *const StepPosition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix
-        @panic(css.todo_stuff.depth);
+        @compileError(css.todo_stuff.depth);
     }
 
     pub fn parse(input: *css.Parser) Result(StepPosition) {

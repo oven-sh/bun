@@ -14,6 +14,7 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
@@ -1543,7 +1544,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1552,6 +1553,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -1609,14 +1630,41 @@ declare module "bun" {
     /**
      * **Experimental**
      *
-     * Enable CSS support.
+     * Bundle CSS files.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bunv 1.2)
      */
     experimentalCss?: boolean;
+
+    /**
+     * **Experimental**
+     *
+     * Bundle JavaScript & CSS files from HTML files. JavaScript & CSS files
+     * from non-external <script> or <link> tags will be bundled.
+     *
+     * Underneath, this works similarly to HTMLRewriter.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bun v1.2)
+     */
+    html?: boolean;
 
     /**
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     *
+     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+     * as most usage of `Bun.build` forgets to check for errors.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -2130,6 +2178,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -3785,7 +3835,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**
@@ -3873,7 +3923,6 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
-
     /**
      * Defer the execution of this callback until all other modules have been parsed.
      *
@@ -3882,7 +3931,7 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
 
@@ -3899,6 +3948,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /**
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -3928,7 +3981,30 @@ declare module "bun" {
     args: OnResolveArgs,
   ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
 
+  type FFIFunctionCallable = Function & {
+    // Making a nominally typed function so that the user must get it from dlopen
+    readonly __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+  };
+
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
+    onBeforeParse(
+      constraints: PluginConstraints,
+      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+    ): void;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -3961,20 +4037,6 @@ declare module "bun" {
      * ```
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
-    /**
-     * Register a callback which will be invoked when bundling starts.
-     * @example
-     * ```ts
-     * Bun.plugin({
-     *   setup(builder) {
-     *     builder.onStart(() => {
-     *       console.log("bundle just started!!")
-     *     });
-     *   },
-     * });
-     * ```
-     */
-    onStart(callback: OnStartCallback): void;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */

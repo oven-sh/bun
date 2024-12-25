@@ -72,12 +72,14 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   this._maxListeners = n;
   return this;
 };
+Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
 
 EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return this?._maxListeners ?? defaultMaxListeners;
 };
+Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
 function emitError(emitter, args) {
   var { _events: events } = emitter;
@@ -259,24 +261,33 @@ function overflowWarning(emitter, type, handlers) {
   process.emitWarning(warn);
 }
 
-function onceWrapper(type, listener, ...args) {
-  this.removeListener(type, listener);
-  listener.$apply(this, args);
+function _onceWrap(target, type, listener) {
+  const state = { fired: false, wrapFn: undefined, target, type, listener };
+  const wrapped = onceWrapper.bind(state);
+  wrapped.listener = listener;
+  state.wrapFn = wrapped;
+  return wrapped;
+}
+
+function onceWrapper() {
+  if (!this.fired) {
+    this.target.removeListener(this.type, this.wrapFn);
+    this.fired = true;
+    if (arguments.length === 0) return this.listener.$call(this.target);
+    return this.listener.$apply(this.target, arguments);
+  }
 }
 
 EventEmitterPrototype.once = function once(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.addListener(type, bound);
+  this.on(type, _onceWrap(this, type, fn));
   return this;
 };
+Object.defineProperty(EventEmitterPrototype.once, "name", { value: "once" });
 
 EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.prependListener(type, bound);
+  this.prependListener(type, _onceWrap(this, type, fn));
   return this;
 };
 
@@ -338,11 +349,21 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
   return handlers.slice();
 };
 
-EventEmitterPrototype.listenerCount = function listenerCount(type) {
+EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
   var { _events: events } = this;
   if (!events) return 0;
+  if (method != null) {
+    var length = 0;
+    for (const handler of events[type] ?? []) {
+      if (handler === method || handler.listener === method) {
+        length++;
+      }
+    }
+    return length;
+  }
   return events[type]?.length ?? 0;
 };
+Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
 EventEmitterPrototype.eventNames = function eventNames() {
   return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
@@ -391,6 +412,7 @@ function once(emitter, type, options = kEmptyObject) {
 
   return promise;
 }
+Object.defineProperty(once, "name", { value: "once" });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
 function createIterResult(value, done) {
@@ -541,6 +563,8 @@ function on(emitter, event, options = kEmptyObject) {
     return Promise.resolve(doneResult);
   }
 }
+Object.defineProperty(on, "name", { value: "on" });
+
 function listenersController() {
   const listeners = [];
 
@@ -591,6 +615,7 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
     defaultMaxListeners = n;
   }
 }
+Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });
 
 const jsEventTargetGetEventListenersCount = $newCppFunction(
   "JSEventTarget.cpp",
@@ -605,6 +630,7 @@ function listenerCount(emitter, type) {
 
   return jsEventTargetGetEventListenersCount(emitter, type);
 }
+Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
@@ -659,6 +685,7 @@ const eventTargetMaxListenersSymbol = Symbol("EventTarget.maxListeners");
 function getMaxListeners(emitterOrTarget) {
   return emitterOrTarget?.[eventTargetMaxListenersSymbol] ?? emitterOrTarget?._maxListeners ?? defaultMaxListeners;
 }
+Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
 
 // Copy-pasta from Node.js source code
 function addAbortListener(signal, listener) {

@@ -115,22 +115,26 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
-        globalObject,
-        globalObject->requireResolveFunctionUnbound(),
-        moduleObject->id(),
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
-    JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
-        globalObject,
-        globalObject->requireFunctionUnbound(),
-        moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
-    requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
-    moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+    JSFunction* resolveFunction = nullptr;
+    JSFunction* requireFunction = nullptr;
+    const auto initializeModuleObject = [&]() {
+        resolveFunction = JSC::JSBoundFunction::create(vm,
+            globalObject,
+            globalObject->requireResolveFunctionUnbound(),
+            moduleObject->id(),
+            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+        requireFunction = JSC::JSBoundFunction::create(vm,
+            globalObject,
+            globalObject->requireFunctionUnbound(),
+            moduleObject,
+            ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+        requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
+        moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+        moduleObject->hasEvaluated = true;
+    };
 
-    moduleObject->hasEvaluated = true;
-
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) {
+    if (UNLIKELY(Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))) {
+        initializeModuleObject();
 
         // Using same approach as node, `arguments` in the entry point isn't defined
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
@@ -158,9 +162,22 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
+    JSObject* fn = fnValue.getObject();
+
+    if (UNLIKELY(!fn)) {
+        exception = Exception::create(vm, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
+        return false;
+    }
 
     JSC::CallData callData = JSC::getCallData(fn);
+
+    if (UNLIKELY(callData.type == CallData::Type::None)) {
+        exception = Exception::create(vm, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
+        return false;
+    }
+
+    initializeModuleObject();
+
     MarkedArgumentBuffer args;
     args.append(moduleObject->exportsObject()); // exports
     args.append(requireFunction); // require
@@ -168,9 +185,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     args.append(filename); // filename
     args.append(dirname); // dirname
 
-    if (fn->jsExecutable()->parameterCount() > 5) {
-        // it expects ImportMetaObject
-        args.append(Zig::ImportMetaObject::create(globalObject, filename));
+    if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(fn)) {
+        if (jsFunction->jsExecutable()->parameterCount() > 5) {
+            // it expects ImportMetaObject
+            args.append(Zig::ImportMetaObject::create(globalObject, filename));
+        }
     }
 
     // Clear the source code as early as possible.
@@ -727,6 +746,19 @@ JSCommonJSModule* JSCommonJSModule::create(
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
 
+size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+    size_t additionalSize = 0;
+    if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
+        additionalSize += thisObject->sourceCode.view().length();
+        if (!thisObject->sourceCode.view().is8Bit()) {
+            additionalSize *= 2;
+        }
+    }
+    return Base::estimatedSize(cell, vm) + additionalSize;
+}
+
 void JSCommonJSModule::destroy(JSC::JSCell* cell)
 {
     static_cast<JSCommonJSModule*>(cell)->JSCommonJSModule::~JSCommonJSModule();
@@ -999,9 +1031,14 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (auto* id = thisObject->m_id.get()) {
         if (!id->isRope()) {
             auto label = id->tryGetValue(false);
-            analyzer.setLabelForCell(cell, label);
+            analyzer.setLabelForCell(cell, makeString("CommonJS Module: "_s, StringView(label)));
+        } else {
+            analyzer.setLabelForCell(cell, "CommonJS Module"_s);
         }
+    } else {
+        analyzer.setLabelForCell(cell, "CommonJS Module"_s);
     }
+
     Base::analyzeHeap(cell, analyzer);
 }
 

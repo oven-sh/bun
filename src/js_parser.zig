@@ -3,6 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
+const bun = @import("root").bun;
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
@@ -15,7 +16,6 @@ pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
-const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -187,7 +187,15 @@ const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 // kept as a static reference
 const exports_string_name: string = "exports";
-const MacroRefs = std.AutoArrayHashMap(Ref, u32);
+
+const MacroRefData = struct {
+    import_record_id: u32,
+    // if name is null the macro is imported as a namespace import
+    // import * as macros from "./macros.js" with {type: "macro"};
+    name: ?string = null,
+};
+
+const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
 
 pub const AllocatedNamesPool = ObjectPool(
     std.ArrayList(string),
@@ -780,7 +788,7 @@ pub const TypeScript = struct {
     };
 
     pub fn isTSArrowFnJSX(p: anytype) !bool {
-        var oldLexer = std.mem.toBytes(p.lexer);
+        const old_lexer = p.lexer;
 
         try p.lexer.next();
         // Look ahead to see if this should be an arrow function instead
@@ -800,7 +808,7 @@ pub const TypeScript = struct {
         }
 
         // Restore the lexer
-        p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
+        p.lexer.restore(&old_lexer);
         return is_ts_arrow_fn;
     }
 
@@ -870,11 +878,13 @@ pub const TypeScript = struct {
     }
 
     fn lookAheadNextTokenIsOpenParenOrLessThanOrDot(p: anytype) bool {
-        var old_lexer = std.mem.toBytes(p.lexer);
+        const old_lexer = p.lexer;
         const old_log_disabled = p.lexer.is_log_disabled;
         p.lexer.is_log_disabled = true;
-        defer p.lexer.is_log_disabled = old_log_disabled;
-        defer p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+        defer {
+            p.lexer.restore(&old_lexer);
+            p.lexer.is_log_disabled = old_log_disabled;
+        }
         p.lexer.next() catch {};
 
         return switch (p.lexer.token) {
@@ -3060,8 +3070,8 @@ pub const Parser = struct {
             .symbol_uses = p.symbol_uses,
         };
         p.symbol_uses = .{};
-        var parts = try p.allocator.alloc(js_ast.Part, 2);
-        parts[0..2].* = .{ ns_export_part, part };
+        var parts = try ListManaged(js_ast.Part).initCapacity(p.allocator, 2);
+        parts.appendSliceAssumeCapacity(&.{ ns_export_part, part });
 
         const exports_kind: js_ast.ExportsKind = brk: {
             if (expr.data == .e_undefined) {
@@ -3070,7 +3080,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, .none, "") };
+        return .{ .ast = try p.toAST(&parts, exports_kind, .none, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -3216,16 +3226,12 @@ pub const Parser = struct {
         }
 
         // Detect a leading "// @bun" pragma
-        if (p.lexer.bun_pragma != .none and p.options.features.dont_bundle_twice) {
-            return js_ast.Result{
-                .already_bundled = switch (p.lexer.bun_pragma) {
-                    .bun => .bun,
-                    .bytecode => .bytecode,
-                    .bytecode_cjs => .bytecode_cjs,
-                    .bun_cjs => .bun_cjs,
-                    else => unreachable,
-                },
-            };
+        if (self.options.features.dont_bundle_twice) {
+            if (self.hasBunPragma(hashbang.len > 0)) |pragma| {
+                return js_ast.Result{
+                    .already_bundled = pragma,
+                };
+            }
         }
 
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
@@ -3950,9 +3956,10 @@ pub const Parser = struct {
 
                     if (uses_any_import_statements) {
                         exports_kind = .esm;
-
-                        // Otherwise, if they use CommonJS features its CommonJS
-                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                    }
+                    // Otherwise, if they use CommonJS features its CommonJS.
+                    // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
+                    else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename or (!p.options.bundle and p.module_scope.strict_mode == .explicit_strict_mode)) {
                         exports_kind = .cjs;
                     } else {
                         // If unknown, we default to ESM
@@ -4205,41 +4212,21 @@ pub const Parser = struct {
             );
         }
 
-        var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
-
         if (before.items.len > 0 or after.items.len > 0) {
-            const before_len = before.items.len;
-            const after_len = after.items.len;
+            try parts.ensureUnusedCapacity(before.items.len + after.items.len);
             const parts_len = parts.items.len;
+            parts.items.len += before.items.len + after.items.len;
 
-            const _parts = try p.allocator.alloc(
-                js_ast.Part,
-                before_len +
-                    after_len +
-                    parts_len,
-            );
-
-            var remaining_parts = _parts;
-            if (before_len > 0) {
-                const parts_to_copy = before.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-                remaining_parts = remaining_parts[parts_to_copy.len..];
+            if (before.items.len > 0) {
+                if (parts_len > 0) {
+                    // first copy parts to the middle if before exists
+                    bun.copy(js_ast.Part, parts.items[before.items.len..][0..parts_len], parts.items[0..parts_len]);
+                }
+                bun.copy(js_ast.Part, parts.items[0..before.items.len], before.items);
             }
-
-            if (parts_len > 0) {
-                const parts_to_copy = parts.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-                remaining_parts = remaining_parts[parts_to_copy.len..];
+            if (after.items.len > 0) {
+                bun.copy(js_ast.Part, parts.items[parts_len + before.items.len ..][0..after.items.len], after.items);
             }
-
-            if (after_len > 0) {
-                const parts_to_copy = after.items;
-                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
-            }
-
-            parts_slice = _parts;
-        } else {
-            parts_slice = parts.items;
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
@@ -4258,7 +4245,7 @@ pub const Parser = struct {
             }
         }
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrap_mode, hashbang) };
+        return js_ast.Result{ .ast = try p.toAST(&parts, exports_kind, wrap_mode, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -4270,6 +4257,64 @@ pub const Parser = struct {
             .source = source,
             .log = log,
         };
+    }
+
+    const PragmaState = packed struct { seen_cjs: bool = false, seen_bytecode: bool = false };
+
+    fn hasBunPragma(self: *const Parser, has_hashbang: bool) ?js_ast.Result.AlreadyBundled {
+        const BUN_PRAGMA = "// @bun";
+        const contents = self.lexer.source.contents;
+        const end = contents.len;
+
+        // pragmas may appear after a hashbang comment
+        //
+        //   ```js
+        //   #!/usr/bin/env bun
+        //   // @bun
+        //   const myCode = 1;
+        //   ```
+        var cursor: usize = 0;
+        if (has_hashbang) {
+            while (contents[cursor] != '\n') {
+                cursor += 1;
+                if (cursor >= end) return null;
+            }
+
+            // eat the last newline
+            // NOTE: in windows, \n comes after \r so no extra work needs to be done
+            cursor += 1;
+        }
+
+        if (!bun.strings.startsWith(contents[cursor..], BUN_PRAGMA)) return null;
+        cursor += BUN_PRAGMA.len;
+
+        var state: PragmaState = .{};
+
+        while (cursor < self.lexer.end) : (cursor += 1) {
+            switch (contents[cursor]) {
+                '\n' => break,
+                '@' => {
+                    cursor += 1;
+                    if (cursor >= contents.len) break;
+                    if (contents[cursor] != 'b') continue;
+                    const slice = contents[cursor..];
+                    if (bun.strings.startsWith(slice, "bun-cjs")) {
+                        state.seen_cjs = true;
+                        cursor += "bun-cjs".len;
+                    } else if (bun.strings.startsWith(slice, "bytecode")) {
+                        state.seen_bytecode = true;
+                        cursor += "bytecode".len;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (state.seen_cjs) {
+            return if (state.seen_bytecode) .bytecode_cjs else .bun_cjs;
+        } else {
+            return if (state.seen_bytecode) .bytecode else .bun;
+        }
     }
 };
 
@@ -8935,20 +8980,33 @@ fn NewParser_(
                     const name = p.loadNameFromRef(name_loc.ref.?);
                     const ref = try p.declareSymbol(.other, name_loc.loc, name);
                     try p.is_import_item.put(p.allocator, ref, {});
-                    try p.macro.refs.put(ref, id);
+                    try p.macro.refs.put(ref, .{
+                        .import_record_id = id,
+                        .name = "default",
+                    });
+                }
+
+                if (stmt.star_name_loc) |star| {
+                    const name = p.loadNameFromRef(stmt.namespace_ref);
+                    const ref = try p.declareSymbol(.other, star, name);
+                    stmt.namespace_ref = ref;
+                    try p.macro.refs.put(ref, .{ .import_record_id = id });
                 }
 
                 for (stmt.items) |item| {
                     const name = p.loadNameFromRef(item.name.ref.?);
                     const ref = try p.declareSymbol(.other, item.name.loc, name);
                     try p.is_import_item.put(p.allocator, ref, {});
-                    try p.macro.refs.put(ref, id);
+                    try p.macro.refs.put(ref, .{
+                        .import_record_id = id,
+                        .name = item.alias,
+                    });
                 }
 
                 return p.s(S.Empty{}, loc);
             }
 
-            const macro_remap = if ((comptime allow_macros) and !is_macro)
+            const macro_remap = if (comptime allow_macros)
                 p.options.macro_context.getRemap(path.text)
             else
                 null;
@@ -8967,6 +9025,8 @@ fn NewParser_(
                         .import_record_index = stmt.import_record_index,
                     }) catch unreachable;
                 }
+
+                // TODO: not sure how to handle macro remappings for namespace imports
             } else {
                 var path_name = fs.PathName.init(path.text);
                 const name = try strings.append(p.allocator, "import_", try path_name.nonUniqueNameString(p.allocator));
@@ -8986,64 +9046,59 @@ fn NewParser_(
             try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
             var remap_count: u32 = 0;
             // Link the default item to the namespace
-            if (stmt.default_name) |*name_loc| {
-                outer: {
-                    const name = p.loadNameFromRef(name_loc.ref.?);
-                    const ref = try p.declareSymbol(.import, name_loc.loc, name);
-                    name_loc.ref = ref;
-                    try p.is_import_item.put(p.allocator, ref, {});
+            if (stmt.default_name) |*name_loc| outer: {
+                const name = p.loadNameFromRef(name_loc.ref.?);
+                const ref = try p.declareSymbol(.import, name_loc.loc, name);
+                name_loc.ref = ref;
+                try p.is_import_item.put(p.allocator, ref, {});
 
-                    // ensure every e_import_identifier holds the namespace
-                    if (p.options.features.hot_module_reloading) {
-                        const symbol = &p.symbols.items[ref.inner_index];
-                        if (symbol.namespace_alias == null) {
-                            symbol.namespace_alias = .{
-                                .namespace_ref = stmt.namespace_ref,
-                                .alias = "default",
-                                .import_record_index = stmt.import_record_index,
-                            };
-                        }
-                    }
-
-                    if (macro_remap) |*remap| {
-                        if (remap.get("default")) |remapped_path| {
-                            const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                            try p.macro.refs.put(ref, new_import_id);
-
-                            p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                            p.import_records.items[new_import_id].is_unused = true;
-                            if (comptime only_scan_imports_and_do_not_visit) {
-                                p.import_records.items[new_import_id].is_internal = true;
-                                p.import_records.items[new_import_id].path.is_disabled = true;
-                            }
-                            stmt.default_name = null;
-                            remap_count += 1;
-                            break :outer;
-                        }
-                    }
-
-                    if (comptime track_symbol_usage_during_parse_pass) {
-                        p.parse_pass_symbol_uses.put(name, .{
-                            .ref = ref,
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = stmt.namespace_ref,
+                            .alias = "default",
                             .import_record_index = stmt.import_record_index,
-                        }) catch unreachable;
+                        };
                     }
+                }
 
-                    if (is_macro) {
-                        try p.macro.refs.put(ref, stmt.import_record_index);
+                if (macro_remap) |*remap| {
+                    if (remap.get("default")) |remapped_path| {
+                        const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                        try p.macro.refs.put(ref, .{
+                            .import_record_id = new_import_id,
+                            .name = "default",
+                        });
+
+                        p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                        p.import_records.items[new_import_id].is_unused = true;
+                        if (comptime only_scan_imports_and_do_not_visit) {
+                            p.import_records.items[new_import_id].is_internal = true;
+                            p.import_records.items[new_import_id].path.is_disabled = true;
+                        }
                         stmt.default_name = null;
+                        remap_count += 1;
                         break :outer;
                     }
-
-                    if (comptime ParsePassSymbolUsageType != void) {
-                        p.parse_pass_symbol_uses.put(name, .{
-                            .ref = ref,
-                            .import_record_index = stmt.import_record_index,
-                        }) catch unreachable;
-                    }
-
-                    item_refs.putAssumeCapacity(name, name_loc.*);
                 }
+
+                if (comptime track_symbol_usage_during_parse_pass) {
+                    p.parse_pass_symbol_uses.put(name, .{
+                        .ref = ref,
+                        .import_record_index = stmt.import_record_index,
+                    }) catch unreachable;
+                }
+
+                if (comptime ParsePassSymbolUsageType != void) {
+                    p.parse_pass_symbol_uses.put(name, .{
+                        .ref = ref,
+                        .import_record_index = stmt.import_record_index,
+                    }) catch unreachable;
+                }
+
+                item_refs.putAssumeCapacity(name, name_loc.*);
             }
             var end: usize = 0;
 
@@ -9062,7 +9117,7 @@ fn NewParser_(
                     if (symbol.namespace_alias == null) {
                         symbol.namespace_alias = .{
                             .namespace_ref = stmt.namespace_ref,
-                            .alias = name,
+                            .alias = item.alias,
                             .import_record_index = stmt.import_record_index,
                         };
                     }
@@ -9071,7 +9126,10 @@ fn NewParser_(
                 if (macro_remap) |*remap| {
                     if (remap.get(item.alias)) |remapped_path| {
                         const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                        try p.macro.refs.put(ref, new_import_id);
+                        try p.macro.refs.put(ref, .{
+                            .import_record_id = new_import_id,
+                            .name = item.alias,
+                        });
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
@@ -12469,7 +12527,6 @@ fn NewParser_(
 
         fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
-
             if (comptime !is_generated) {
                 // Forbid declaring a symbol with a reserved word in strict mode
                 if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
@@ -12816,7 +12873,7 @@ fn NewParser_(
         pub const Backtracking = struct {
             pub inline fn lexerBacktracker(p: *P, func: anytype, comptime ReturnType: type) ReturnType {
                 p.markTypeScriptOnly();
-                var old_lexer = std.mem.toBytes(p.lexer);
+                const old_lexer = p.lexer;
                 const old_log_disabled = p.lexer.is_log_disabled;
                 p.lexer.is_log_disabled = true;
                 defer p.lexer.is_log_disabled = old_log_disabled;
@@ -12841,7 +12898,7 @@ fn NewParser_(
                 };
 
                 if (backtrack) {
-                    p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+                    p.lexer.restore(&old_lexer);
 
                     if (comptime FnReturnType == anyerror!bool) {
                         return false;
@@ -12861,7 +12918,7 @@ fn NewParser_(
 
             pub inline fn lexerBacktrackerWithArgs(p: *P, func: anytype, args: anytype, comptime ReturnType: type) ReturnType {
                 p.markTypeScriptOnly();
-                var old_lexer = std.mem.toBytes(p.lexer);
+                const old_lexer = p.lexer;
                 const old_log_disabled = p.lexer.is_log_disabled;
                 p.lexer.is_log_disabled = true;
 
@@ -12882,7 +12939,7 @@ fn NewParser_(
                 };
 
                 if (backtrack) {
-                    p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+                    p.lexer.restore(&old_lexer);
                     if (comptime FnReturnType == anyerror!bool) {
                         return false;
                     }
@@ -14631,48 +14688,6 @@ fn NewParser_(
             }
         }
 
-        pub const MacroVisitor = struct {
-            p: *P,
-
-            loc: logger.Loc,
-
-            pub fn visitImport(this: MacroVisitor, import_data: js_ast.Macro.JSNode.ImportData) void {
-                var p = this.p;
-
-                const record_id = p.addImportRecord(.stmt, this.loc, import_data.path);
-                var record: *ImportRecord = &p.import_records.items[record_id];
-                record.was_injected_by_macro = true;
-                p.macro.imports.ensureUnusedCapacity(import_data.import.items.len) catch unreachable;
-                var import = import_data.import;
-                import.import_record_index = record_id;
-
-                p.is_import_item.ensureUnusedCapacity(
-                    p.allocator,
-                    @as(u32, @intCast(p.is_import_item.count() + import.items.len)),
-                ) catch unreachable;
-
-                for (import.items) |*clause| {
-                    const import_hash_name = clause.original_name;
-
-                    if (strings.eqlComptime(clause.alias, "default")) {
-                        const non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
-                        clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
-                        record.contains_default_alias = true;
-                    }
-                    const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
-                    clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
-
-                    p.is_import_item.putAssumeCapacity(name_ref, {});
-
-                    p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(import_hash_name, import_data.path), name_ref);
-
-                    // Ensure we don't accidentally think this is an export from
-                }
-
-                p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
-            }
-        };
-
         pub fn panic(p: *P, comptime fmt: string, args: anytype) noreturn {
             p.panicLoc(fmt, args, null);
             @setCold(true);
@@ -15429,7 +15444,10 @@ fn NewParser_(
 
             p.lexer.preserve_all_comments_before = true;
             try p.lexer.expect(.t_open_paren);
-            const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
+
+            // const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
+            p.lexer.comments_to_preserve_before.clearRetainingCapacity();
+
             p.lexer.preserve_all_comments_before = false;
 
             const value = try p.parseExpr(.comma);
@@ -15467,7 +15485,7 @@ fn NewParser_(
                 }
             }
 
-            _ = comments; // TODO: leading_interior comments
+            // _ = comments; // TODO: leading_interior comments
 
             return p.newExpr(E.Import{
                 .expr = value,
@@ -16497,12 +16515,15 @@ fn NewParser_(
                         e_.tag = p.visitExpr(tag);
 
                         if (comptime allow_macros) {
-                            if (e_.tag.?.data == .e_import_identifier and !p.options.features.is_macro_runtime) {
-                                const ref = e_.tag.?.data.e_import_identifier.ref;
+                            const ref = switch (e_.tag.?.data) {
+                                .e_import_identifier => |ident| ident.ref,
+                                .e_dot => |dot| if (dot.target.data == .e_identifier) dot.target.data.e_identifier.ref else null,
+                                else => null,
+                            };
 
-                                if (p.macro.refs.get(ref)) |import_record_id| {
-                                    const name = p.symbols.items[ref.innerIndex()].original_name;
-                                    p.ignoreUsage(ref);
+                            if (ref != null and !p.options.features.is_macro_runtime) {
+                                if (p.macro.refs.get(ref.?)) |macro_ref_data| {
+                                    p.ignoreUsage(ref.?);
                                     if (p.is_control_flow_dead) {
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
@@ -16519,7 +16540,8 @@ fn NewParser_(
                                     }
 
                                     p.macro_call_count += 1;
-                                    const record = &p.import_records.items[import_record_id];
+                                    const name = macro_ref_data.name orelse e_.tag.?.data.e_dot.name;
+                                    const record = &p.import_records.items[macro_ref_data.import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
                                         record.path.text,
@@ -17294,10 +17316,18 @@ fn NewParser_(
                         else => {},
                     }
 
-                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled)
-                        e_.target.data == .e_import_identifier and p.macro.refs.contains(e_.target.data.e_import_identifier.ref)
-                    else
-                        false;
+                    const is_macro_ref: bool = if (comptime allow_macros) brk: {
+                        const possible_macro_ref = switch (e_.target.data) {
+                            .e_import_identifier => |ident| ident.ref,
+                            .e_dot => |dot| if (dot.target.data == .e_identifier)
+                                dot.target.data.e_identifier.ref
+                            else
+                                null,
+                            else => null,
+                        };
+
+                        break :brk possible_macro_ref != null and p.macro.refs.contains(possible_macro_ref.?);
+                    } else false;
 
                     {
                         const old_ce = p.options.ignore_dce_annotations;
@@ -17423,8 +17453,13 @@ fn NewParser_(
 
                     if (comptime allow_macros) {
                         if (is_macro_ref and !p.options.features.is_macro_runtime) {
-                            const ref = e_.target.data.e_import_identifier.ref;
-                            const import_record_id = p.macro.refs.get(ref).?;
+                            const ref = switch (e_.target.data) {
+                                .e_import_identifier => |ident| ident.ref,
+                                .e_dot => |dot| dot.target.data.e_identifier.ref,
+                                else => unreachable,
+                            };
+
+                            const macro_ref_data = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
                             if (p.is_control_flow_dead) {
                                 return p.newExpr(E.Undefined{}, e_.target.loc);
@@ -17440,8 +17475,8 @@ fn NewParser_(
                                 return p.newExpr(E.Undefined{}, expr.loc);
                             }
 
-                            const name = p.symbols.items[ref.innerIndex()].original_name;
-                            const record = &p.import_records.items[import_record_id];
+                            const name = macro_ref_data.name orelse e_.target.data.e_dot.name;
+                            const record = &p.import_records.items[macro_ref_data.import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
                             p.macro_call_count += 1;
@@ -19046,16 +19081,6 @@ fn NewParser_(
                     }
                 },
                 .s_export_from => |data| {
-                    // When HMR is enabled, we need to transform this into
-                    // import {foo} from "./foo";
-                    // export {foo};
-
-                    // From:
-                    // export {foo as default} from './foo';
-                    // To:
-                    // import {default as foo} from './foo';
-                    // export {foo};
-
                     // "export {foo} from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
 
@@ -19079,7 +19104,7 @@ fn NewParser_(
 
                             const _name = p.loadNameFromRef(old_ref);
 
-                            const ref = try p.newSymbol(.other, _name);
+                            const ref = try p.newSymbol(.import, _name);
                             try p.current_scope.generated.push(p.allocator, ref);
                             try p.recordDeclaredSymbol(ref);
                             data.items[j] = item;
@@ -19093,11 +19118,10 @@ fn NewParser_(
                             return;
                         }
                     } else {
-
                         // This is a re-export and the symbols created here are used to reference
                         for (data.items) |*item| {
                             const _name = p.loadNameFromRef(item.name.ref.?);
-                            const ref = try p.newSymbol(.other, _name);
+                            const ref = try p.newSymbol(.import, _name);
                             try p.current_scope.generated.push(p.allocator, ref);
                             try p.recordDeclaredSymbol(ref);
                             item.name.ref = ref;
@@ -19182,6 +19206,10 @@ fn NewParser_(
                                 data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                             }
 
+                            if (p.options.features.server_components.wrapsExports()) {
+                                data.value.expr = p.wrapValueForServerComponentReference(data.value.expr, "default");
+                            }
+
                             // If there are lowered "using" declarations, change this into a "var"
                             if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                                 try stmts.ensureUnusedCapacity(2);
@@ -19263,6 +19291,10 @@ fn NewParser_(
                                         data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
+                                    if (p.options.features.server_components.wrapsExports()) {
+                                        data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(E.Function{ .func = func.func }, stmt.loc), "default") };
+                                    }
+
                                     stmts.append(stmt.*) catch unreachable;
 
                                     // if (func.func.name != null and func.func.name.?.ref != null) {
@@ -19311,6 +19343,10 @@ fn NewParser_(
                                     } else {
                                         data.value.stmt = class_stmts[0];
                                         stmts.append(stmt.*) catch {};
+                                    }
+
+                                    if (p.options.features.server_components.wrapsExports()) {
+                                        data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(class.class, stmt.loc), "default") };
                                     }
 
                                     return;
@@ -21821,8 +21857,9 @@ fn NewParser_(
                                 if (arg.is_typescript_ctor_field) {
                                     switch (arg.binding.data) {
                                         .b_identifier => |id| {
-                                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
-                                            const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
+                                            const arg_symbol = p.symbols.items[id.ref.innerIndex()];
+                                            const name = arg_symbol.original_name;
+                                            const arg_ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
 
                                             stmts.insert(if (super_index) |k| j + k + 1 else j, Stmt.assign(
                                                 p.newExpr(E.Dot{
@@ -21830,12 +21867,17 @@ fn NewParser_(
                                                     .name = name,
                                                     .name_loc = arg.binding.loc,
                                                 }, arg.binding.loc),
-                                                ident,
+                                                arg_ident,
                                             )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
                                             bun.copy(G.Property, class_body.items[j + 1 ..], class_body.items[j .. class_body.items.len - 1]);
-                                            class_body.items[j] = G.Property{ .key = ident };
+                                            // Copy the argument name symbol to prevent the class field declaration from being renamed
+                                            // but not the constructor argument.
+                                            const field_symbol_ref = p.declareSymbol(.other, arg.binding.loc, name) catch id.ref;
+                                            field_symbol_ref.getSymbol(p.symbols.items).must_not_be_renamed = true;
+                                            const field_ident = p.newExpr(E.Identifier{ .ref = field_symbol_ref }, arg.binding.loc);
+                                            class_body.items[j] = G.Property{ .key = field_ident };
                                             j += 1;
                                         },
                                         else => {},
@@ -23274,13 +23316,12 @@ fn NewParser_(
 
         pub fn toAST(
             p: *P,
-            input_parts: []js_ast.Part,
+            parts: *ListManaged(js_ast.Part),
             exports_kind: js_ast.ExportsKind,
             wrap_mode: WrapMode,
             hashbang: []const u8,
         ) !js_ast.Ast {
             const allocator = p.allocator;
-            var parts = input_parts;
 
             // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
             //     p.treeShake(&parts, false);
@@ -23298,20 +23339,20 @@ fn NewParser_(
                 bun.assert(!p.options.tree_shaking);
                 bun.assert(p.options.features.hot_module_reloading);
 
-                var hmr_transform_ctx = ConvertESMExportsForHmr{ .last_part = &parts[parts.len - 1] };
+                var hmr_transform_ctx = ConvertESMExportsForHmr{ .last_part = &parts.items[parts.items.len - 1] };
                 try hmr_transform_ctx.stmts.ensureTotalCapacity(p.allocator, prealloc_count: {
                     // get a estimate on how many statements there are going to be
                     var count: usize = 0;
-                    for (parts) |part| count += part.stmts.len;
+                    for (parts.items) |part| count += part.stmts.len;
                     break :prealloc_count count + 2;
                 });
 
-                for (parts) |part| {
+                for (parts.items) |part| {
                     // Bake does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
                 }
 
-                parts = try hmr_transform_ctx.finalize(p, parts);
+                try hmr_transform_ctx.finalize(p, parts.items);
             } else {
                 // Handle import paths after the whole file has been visited because we need
                 // symbol usage counts to be able to remove unused type-only imports in
@@ -23323,7 +23364,7 @@ fn NewParser_(
                     const begin = parts_end;
                     // Potentially remove some statements, then filter out parts to remove any
                     // with no statements
-                    for (parts[begin..]) |part_| {
+                    for (parts.items[begin..]) |part_| {
                         var part = part_;
                         p.import_records_for_current_part.clearRetainingCapacity();
                         p.declared_symbols.clearRetainingCapacity();
@@ -23354,7 +23395,7 @@ fn NewParser_(
                                 part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
                             }
 
-                            parts[parts_end] = part;
+                            parts.items[parts_end] = part;
                             parts_end += 1;
                         }
                     }
@@ -23367,11 +23408,11 @@ fn NewParser_(
                 }
 
                 // leave the first part in there for namespace export when bundling
-                parts = parts[0..parts_end];
+                parts.items.len = parts_end;
 
                 // Do a second pass for exported items now that imported items are filled out.
                 // This isn't done for HMR because it already deletes all `.s_export_clause`s
-                for (parts) |part| {
+                for (parts.items) |part| {
                     for (part.stmts) |stmt| {
                         switch (stmt.data) {
                             .s_export_clause => |clause| {
@@ -23409,14 +23450,14 @@ fn NewParser_(
                 }
 
                 var total_stmts_count: usize = 0;
-                for (parts) |part| {
+                for (parts.items) |part| {
                     total_stmts_count += part.stmts.len;
                 }
 
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
-                    !(parts.len > 0 and
-                    parts[0].stmts.len > 0 and
-                    parts[0].stmts[0].data == .s_directive);
+                    !(parts.items.len > 0 and
+                    parts.items[0].stmts.len > 0 and
+                    parts.items[0].stmts[0].data == .s_directive);
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
@@ -23433,7 +23474,7 @@ fn NewParser_(
                         remaining_stmts = remaining_stmts[1..];
                     }
 
-                    for (parts) |part| {
+                    for (parts.items) |part| {
                         for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
                             dest.* = src;
                         }
@@ -23455,14 +23496,16 @@ fn NewParser_(
                 );
 
                 var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
-                parts[0].stmts = top_level_stmts;
                 top_level_stmts[0] = p.s(
                     S.SExpr{
                         .value = wrapper,
                     },
                     logger.Loc.Empty,
                 );
-                parts.len = 1;
+
+                try parts.ensureUnusedCapacity(1);
+                parts.items.len = 1;
+                parts.items[0].stmts = top_level_stmts;
             }
 
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
@@ -23495,7 +23538,7 @@ fn NewParser_(
                 };
 
                 // Each part tracks the other parts it depends on within this file
-                for (parts, 0..) |*part, part_index| {
+                for (parts.items, 0..) |*part, part_index| {
                     const decls = &part.declared_symbols;
                     const ctx = Ctx{
                         .allocator = p.allocator,
@@ -23521,7 +23564,7 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle and p.needsWrapperRef(parts)) {
+                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
@@ -23535,8 +23578,7 @@ fn NewParser_(
                 break :brk Ref.None;
             };
 
-            var parts_list = bun.BabyList(js_ast.Part).init(parts);
-            parts_list.cap = @intCast(input_parts.len);
+            const parts_list = bun.BabyList(js_ast.Part).fromList(parts);
 
             return .{
                 .runtime_imports = p.runtime_imports,
@@ -23851,7 +23893,7 @@ pub const ConvertESMExportsForHmr = struct {
 
                 if (st.kind.isReassignable()) {
                     for (st.decls.slice()) |decl| {
-                        try ctx.visitBindingForKitModuleExports(p, decl.binding, true);
+                        try ctx.visitBindingToExport(p, decl.binding, true);
                     }
                 } else {
                     // TODO: remove this dupe
@@ -23875,13 +23917,13 @@ pub const ConvertESMExportsForHmr = struct {
                                     });
                                 } else {
                                     dupe_decls.appendAssumeCapacity(decl);
-                                    try ctx.visitBindingForKitModuleExports(p, decl.binding, false);
+                                    try ctx.visitBindingToExport(p, decl.binding, false);
                                 }
                             },
 
                             else => {
                                 dupe_decls.appendAssumeCapacity(decl);
-                                try ctx.visitBindingForKitModuleExports(p, decl.binding, false);
+                                try ctx.visitBindingToExport(p, decl.binding, false);
                             },
                         }
                     }
@@ -23961,24 +24003,49 @@ pub const ConvertESMExportsForHmr = struct {
             },
             .s_export_clause => |st| {
                 for (st.items) |item| {
-                    try ctx.export_props.append(p.allocator, .{
-                        .key = Expr.init(E.String, .{
-                            .data = item.alias,
-                        }, stmt.loc),
-                        .value = Expr.initIdentifier(item.name.ref.?, item.name.loc),
-                    });
+                    const ref = item.name.ref.?;
+                    try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, false);
                 }
 
                 return; // do not emit a statement here
             },
+            .s_export_from => |st| stmt: {
+                for (st.items) |*item| {
+                    const ref = item.name.ref.?;
+                    const symbol = &p.symbols.items[ref.innerIndex()];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = st.namespace_ref,
+                            .alias = item.original_name,
+                            .import_record_index = st.import_record_index,
+                        };
+                    }
+                    try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, true);
 
-            .s_export_from => {
-                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export {{ ... }} from'", .{});
+                    // imports and export statements have their alias +
+                    // original_name swapped. this is likely a design bug in
+                    // the parser but since everything uses these
+                    // assumptions, this hack is simpler than making it
+                    // proper
+                    const alias = item.alias;
+                    item.alias = item.original_name;
+                    item.original_name = alias;
+                }
+
+                const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);
+                if (gop.found_existing) return;
+                break :stmt Stmt.alloc(S.Import, .{
+                    .import_record_index = st.import_record_index,
+                    .is_single_line = true,
+                    .default_name = null,
+                    .items = st.items,
+                    .namespace_ref = st.namespace_ref,
+                    .star_name_loc = null,
+                }, stmt.loc);
             },
             .s_export_star => {
                 bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});
             },
-
             // De-duplicate import statements. It is okay to disregard
             // named/default imports here as we always rewrite them as
             // full qualified property accesses (need to so live-bindings)
@@ -23992,7 +24059,7 @@ pub const ConvertESMExportsForHmr = struct {
         try ctx.stmts.append(p.allocator, new_stmt);
     }
 
-    fn visitBindingForKitModuleExports(
+    fn visitBindingToExport(
         ctx: *ConvertESMExportsForHmr,
         p: anytype,
         binding: Binding,
@@ -24001,33 +24068,41 @@ pub const ConvertESMExportsForHmr = struct {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefForKitModuleExports(p, id.ref, binding.loc, is_live_binding);
+                try ctx.visitRefToExport(p, id.ref, null, binding.loc, is_live_binding);
             },
             .b_array => |array| {
                 for (array.items) |item| {
-                    try ctx.visitBindingForKitModuleExports(p, item.binding, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.binding, is_live_binding);
                 }
             },
             .b_object => |object| {
                 for (object.properties) |item| {
-                    try ctx.visitBindingForKitModuleExports(p, item.value, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.value, is_live_binding);
                 }
             },
         }
     }
 
-    fn visitRefForKitModuleExports(
+    fn visitRefToExport(
         ctx: *ConvertESMExportsForHmr,
         p: anytype,
         ref: Ref,
+        export_symbol_name: ?[]const u8,
         loc: logger.Loc,
-        is_live_binding: bool,
+        is_live_binding_source: bool,
     ) !void {
         const symbol = p.symbols.items[ref.inner_index];
-        const id = Expr.initIdentifier(ref, loc);
-        if (is_live_binding) {
+        const id = if (symbol.kind == .import)
+            Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
+        else
+            Expr.initIdentifier(ref, loc);
+        if (is_live_binding_source or symbol.kind == .import) {
+            // TODO: instead of requiring getters for live-bindings,
+            // a callback propagation system should be considered.
+            // mostly because here, these might not even be live
+            // bindings, and re-exports are so, so common.
             const key = Expr.init(E.String, .{
-                .data = symbol.original_name,
+                .data = export_symbol_name orelse symbol.original_name,
             }, loc);
 
             // This is technically incorrect in that we've marked this as a
@@ -24052,49 +24127,20 @@ pub const ConvertESMExportsForHmr = struct {
                     },
                 } }, loc),
             });
-            // 'set abc(abc2) { abc = abc2 }'
-            try ctx.export_props.append(p.allocator, .{
-                .kind = .set,
-                .key = key,
-                .value = Expr.init(E.Function, .{ .func = .{
-                    .args = try p.allocator.dupe(G.Arg, &.{.{
-                        .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = arg1 }, loc),
-                    }}),
-                    .body = .{
-                        .stmts = try p.allocator.dupe(Stmt, &.{
-                            Stmt.alloc(S.SExpr, .{
-                                .value = Expr.assign(id, Expr.initIdentifier(arg1, loc)),
-                            }, loc),
-                        }),
-                        .loc = loc,
-                    },
-                } }, loc),
-            });
+            // no setter is added since live bindings are read-only
         } else {
             // 'abc,'
             try ctx.export_props.append(p.allocator, .{
                 .key = Expr.init(E.String, .{
-                    .data = symbol.original_name,
+                    .data = export_symbol_name orelse symbol.original_name,
                 }, loc),
                 .value = id,
             });
         }
     }
 
-    pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) ![]js_ast.Part {
+    pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) !void {
         if (ctx.export_props.items.len > 0) {
-            // add a marker for the client runtime to tell that this is an ES module
-            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
-                        .name = "__esModule",
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                    Expr.init(E.Boolean, .{ .value = true }, logger.Loc.Empty),
-                ),
-            }, logger.Loc.Empty));
-
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.assign(
                     Expr.init(E.Dot, .{
@@ -24140,8 +24186,6 @@ pub const ConvertESMExportsForHmr = struct {
 
         ctx.last_part.stmts = ctx.stmts.items;
         ctx.last_part.tag = .none;
-
-        return all_parts;
     }
 };
 

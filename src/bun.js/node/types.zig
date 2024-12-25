@@ -699,13 +699,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError {
-        globalObject.ERR_INVALID_ARG_VALUE(
-            "encoding '{}' is an invalid encoding",
-            .{
-                value.fmtString(globalObject),
-            },
-        ).throw();
-        return error.JSError;
+        return globalObject.ERR_INVALID_ARG_VALUE("encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
@@ -733,8 +727,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.Encoder.toString(input.ptr, size, globalObject, enc);
                 if (res.isError()) {
-                    globalObject.throwValue(res);
-                    return .zero;
+                    return globalObject.throwValue(res) catch .zero;
                 }
 
                 return res;
@@ -770,8 +763,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.Encoder.toString(input.ptr, input.len, globalObject, enc);
                 if (res.isError()) {
-                    globalObject.throwValue(res);
-                    return .zero;
+                    return globalObject.throwValue(res) catch .zero;
                 }
 
                 return res;
@@ -1047,8 +1039,7 @@ pub const Valid = struct {
                 // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
         unreachable;
@@ -1061,8 +1052,7 @@ pub const Valid = struct {
                 // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
         unreachable;
@@ -1081,8 +1071,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
             1...bun.MAX_PATH_BYTES => return,
         }
@@ -1285,8 +1274,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-            ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
-            return error.JSError;
+            return ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -1458,8 +1446,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
-                ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
-                return error.JSError;
+                return ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
@@ -1739,7 +1726,7 @@ pub fn StatType(comptime Big: bool) type {
             }
 
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
-            var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
+            var args = callFrame.arguments();
 
             const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
             const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
@@ -1839,7 +1826,7 @@ pub const Dirent = struct {
     pub usingnamespace bun.New(@This());
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Dirent {
-        return globalObject.throw2("Dirent is not a constructor", .{});
+        return globalObject.throw("Dirent is not a constructor", .{});
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -2082,7 +2069,7 @@ pub const Process = struct {
         switch (Path.getCwd(&buf)) {
             .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
             .err => |e| {
-                return globalObject.throwValue2(e.toJSC(globalObject));
+                return globalObject.throwValue(e.toJSC(globalObject));
             },
         }
     }
@@ -2097,8 +2084,7 @@ pub const Process = struct {
 
         var buf: bun.PathBuffer = undefined;
         const slice = to.sliceZBuf(&buf) catch {
-            globalObject.throw("Invalid path", .{});
-            return .zero;
+            return globalObject.throw("Invalid path", .{});
         };
 
         switch (Syscall.chdir(slice)) {
@@ -2106,13 +2092,12 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                const fs = JSC.VirtualMachine.get().bundler.fs;
+                const fs = JSC.VirtualMachine.get().transpiler.fs;
                 const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
                     .err => |err| {
                         _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
-                        globalObject.throwValue(err.toJSC(globalObject));
-                        return .zero;
+                        return globalObject.throwValue(err.toJSC(globalObject));
                     },
                 };
                 @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
@@ -2130,8 +2115,7 @@ pub const Process = struct {
                 return str.transferToJS(globalObject);
             },
             .err => |e| {
-                globalObject.throwValue(e.toJSC(globalObject));
-                return .zero;
+                return globalObject.throwValue(e.toJSC(globalObject));
             },
         }
     }
@@ -2147,6 +2131,42 @@ pub const Process = struct {
         vm.exit_handler.exit_code = code;
         vm.onExit();
         vm.globalExit();
+    }
+
+    // TODO: switch this to using *bun.wtf.String when it is added
+    pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+        if (k.tag == .Empty) return;
+        const wtf1 = k.value.WTFStringImpl;
+        var buf1: [32768]u16 = undefined;
+        var buf2: [32768]u16 = undefined;
+        const len1: usize = switch (wtf1.is8Bit()) {
+            true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf1.latin1Slice()).written,
+            false => b: {
+                @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
+                break :b wtf1.length();
+            },
+        };
+        buf1[len1] = 0;
+        const str2: ?[*:0]const u16 = if (v.tag != .Dead) str: {
+            if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
+            const wtf2 = v.value.WTFStringImpl;
+            const len2: usize = switch (wtf2.is8Bit()) {
+                true => bun.strings.copyLatin1IntoUTF16([]u16, &buf2, []const u8, wtf2.latin1Slice()).written,
+                false => b: {
+                    @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
+                    break :b wtf2.length();
+                },
+            };
+            buf2[len2] = 0;
+            break :str buf2[0..len2 :0].ptr;
+        } else null;
+        _ = bun.windows.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
+    }
+
+    comptime {
+        if (Environment.export_cpp_apis and Environment.isWindows) {
+            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+        }
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

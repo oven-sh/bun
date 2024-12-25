@@ -1879,7 +1879,7 @@ pub const Formatter = struct {
 
                         writer.print(
                             comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                            .{bun.fmt.formatJSONString(key.slice())},
+                            .{bun.fmt.formatJSONStringLatin1(key.slice())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {
@@ -2492,8 +2492,15 @@ pub const Formatter = struct {
                 return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
-                this.addForNewLine("[native code]".len);
-                writer.writeAll("[native code]");
+                if (value.getClassInfoName()) |class_name| {
+                    this.addForNewLine("[native code: ]".len + class_name.len);
+                    writer.writeAll("[native code: ");
+                    writer.writeAll(class_name);
+                    writer.writeAll("]");
+                } else {
+                    this.addForNewLine("[native code]".len);
+                    writer.writeAll("[native code]");
+                }
             },
             .Promise => {
                 if (!this.single_line and this.goodTimeForANewLine()) {

@@ -5371,14 +5371,18 @@ function createNativeStreamReadable(Readable) {
       }
 
       if (isClosed) {
-        nativeReadable.push(null);
+        ProcessNextTick(() => {
+          nativeReadable.push(null);
+        });
       }
 
       return remainder.byteLength > 0 ? remainder : undefined;
     }
 
     if (isClosed) {
-      nativeReadable.push(null);
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
     }
 
     return view;
@@ -5390,7 +5394,9 @@ function createNativeStreamReadable(Readable) {
     }
 
     if (isClosed) {
-      nativeReadable.push(null);
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
     }
 
     return view;

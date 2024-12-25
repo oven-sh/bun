@@ -2048,7 +2048,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     defer str.deinit();
 
     const out_slice = joinAbsStringBuf(
-        globalObject.bunVM().bundler.fs.top_level_dir,
+        globalObject.bunVM().transpiler.fs.top_level_dir,
         &join_buf,
         &.{str.slice()},
         comptime Platform.auto.resolve(),
@@ -2067,8 +2067,26 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
 
 pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
+    if (comptime bun.Environment.isWindows) {
+        if (path.len > "C:".len and isDriveLetter(path[0]) and path[1] == ':' and isSepAny(path[2])) {
+            // Uppercase drive letter
+            switch (path[0]) {
+                'a'...'z' => path[0] = 'A' + (path[0] - 'a'),
+                'A'...'Z' => {},
+                else => unreachable,
+            }
+        }
+    }
+
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
         path[index] = '/';
+    }
+}
+
+pub fn dangerouslyConvertPathToWindowsInPlace(comptime T: type, path: []T) void {
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_posix)) |index| : (idx = index + 1) {
+        path[index] = '\\';
     }
 }
 

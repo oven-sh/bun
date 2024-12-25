@@ -376,7 +376,7 @@ pub const ReadableStream = struct {
         globalThis: *JSGlobalObject,
         blob: *const Blob,
         offset: usize,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var store = blob.store orelse {
             return ReadableStream.empty(globalThis);
@@ -398,8 +398,7 @@ pub const ReadableStream = struct {
                 return reader.toReadableStream(globalThis);
             },
             else => {
-                globalThis.throw("Expected FileBlob", .{});
-                return .zero;
+                return globalThis.throw("Expected FileBlob", .{});
             },
         }
     }
@@ -471,6 +470,7 @@ pub const StreamStart = union(Tag) {
     FileSink: FileSinkOptions,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
+    FetchTaskletChunkedRequestSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
     done: bun.ByteList,
@@ -497,6 +497,7 @@ pub const StreamStart = union(Tag) {
         FileSink,
         HTTPSResponseSink,
         HTTPResponseSink,
+        FetchTaskletChunkedRequestSink,
         ready,
         owned_and_done,
         done,
@@ -511,8 +512,7 @@ pub const StreamStart = union(Tag) {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis)) catch .zero;
             },
             .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -648,7 +648,7 @@ pub const StreamStart = union(Tag) {
                     },
                 };
             },
-            .HTTPSResponseSink, .HTTPResponseSink => {
+            .FetchTaskletChunkedRequestSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
@@ -1544,6 +1544,11 @@ pub const ArrayBufferSink = struct {
         return Sink.init(this);
     }
 
+    pub fn memoryCost(this: *const ArrayBufferSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        return this.bytes.cap;
+    }
+
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
@@ -1637,6 +1642,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             pub fn start(_: *@This()) void {}
         };
 
+        pub fn memoryCost(this: *ThisSink) callconv(.C) usize {
+            return @sizeOf(ThisSink) + SinkType.memoryCost(&this.sink);
+        }
+
         pub fn onClose(ptr: JSValue, reason: JSValue) callconv(.C) void {
             JSC.markBinding(@src());
 
@@ -1684,14 +1693,12 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     .message = bun.String.static(Static.message),
                     .code = bun.String.static(@tagName(.ERR_ILLEGAL_CONSTRUCTOR)),
                 };
-                globalThis.throwValue(err.toErrorInstance(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toErrorInstance(globalThis));
             }
 
             var allocator = globalThis.bunVM().allocator;
             var this = allocator.create(ThisSink) catch {
-                globalThis.vm().throwError(globalThis, Syscall.Error.oom.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(Syscall.Error.oom.toJSC(globalThis));
             };
             this.sink.construct(allocator);
             return createObject(globalThis, this, 0);
@@ -1721,21 +1728,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         inline fn getThis(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) ?*ThisSink {
-            return @as(
-                *ThisSink,
-                @ptrCast(@alignCast(
-                    fromJS(
-                        globalThis,
-                        callframe.this(),
-                    ) orelse return null,
-                )),
-            );
+            return @as(*ThisSink, @ptrCast(@alignCast(fromJS(globalThis, callframe.this()) orelse return null)));
         }
 
-        fn invalidThis(globalThis: *JSGlobalObject) JSValue {
-            const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
-            globalThis.vm().throwError(globalThis, err);
-            return .zero;
+        fn invalidThis(globalThis: *JSGlobalObject) bun.JSError {
+            return globalThis.ERR_INVALID_THIS("Expected Sink", .{}).throw();
         }
 
         pub fn unprotect(this: *@This()) void {
@@ -1749,8 +1746,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1758,8 +1754,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
-                return .zero;
+                return globalThis.throwValue(JSC.toTypeError(.ERR_MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const arg = args[0];
@@ -1767,8 +1762,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
-                return .zero;
+                return globalThis.throwValue(JSC.toTypeError(.ERR_STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
@@ -1781,8 +1775,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (!arg.isString()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
-                return .zero;
+                return globalThis.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const str = arg.getZigString(globalThis);
@@ -1804,8 +1797,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1818,8 +1810,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     .{},
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return .zero;
+                return globalThis.throwValue(err);
             }
 
             const arg = args[0];
@@ -1838,12 +1829,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            var this = @as(*ThisSink, @ptrCast(@alignCast(sink_ptr orelse return invalidThis(globalThis))));
+            var this = @as(*ThisSink, @ptrCast(@alignCast(sink_ptr orelse return invalidThis(globalThis) catch .zero)));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.vm().throwError(globalThis, err) catch .zero;
                 }
             }
 
@@ -1857,8 +1847,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1869,16 +1858,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (comptime @hasDecl(SinkType, "flushFromJS")) {
-                const wait = callframe.argumentsCount() > 0 and
-                    callframe.argument(0).isBoolean() and
-                    callframe.argument(0).asBoolean();
+                const wait = callframe.argumentsCount() > 0 and callframe.argument(0).isBoolean() and callframe.argument(0).asBoolean();
                 const maybe_value: JSC.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
                 return switch (maybe_value) {
                     .result => |value| value,
-                    .err => |err| blk: {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                        break :blk .zero;
-                    },
+                    .err => |err| return globalThis.throwValue(err.toJSC(globalThis)),
                 };
             }
 
@@ -1892,8 +1876,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1921,8 +1904,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1944,8 +1926,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return .zero;
+                    return globalThis.throwValue(err);
                 }
             }
 
@@ -1979,6 +1960,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             @export(jsConstruct, .{ .name = shim.symbolName("construct") });
             @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
             @export(updateRef, .{ .name = shim.symbolName("updateRef") });
+            @export(memoryCost, .{ .name = shim.symbolName("memoryCost") });
 
             shim.assertJSFunction(.{
                 write,
@@ -2005,7 +1987,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
 //                 const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
-//                 globalThis.vm().throwError(globalThis, err);
+//                 globalThis.throwValue( err);
 //                 return .zero;
 //             }));
 //         }
@@ -2055,6 +2037,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn connect(this: *@This(), signal: Signal) void {
             this.signal = signal;
+        }
+
+        // Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
+        pub fn memoryCost(this: *@This()) usize {
+            // TODO: include Socket send buffer size. We can't here because we
+            // don't track if it's still accessible.
+            // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+            return this.buffer.cap;
         }
 
         fn handleWrote(this: *@This(), amount1: usize) void {
@@ -2630,7 +2620,282 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 }
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
+pub const FetchTaskletChunkedRequestSink = struct {
+    task: ?*JSC.WebCore.Fetch.FetchTasklet = null,
+    signal: Signal = .{},
+    globalThis: *JSGlobalObject = undefined,
+    highWaterMark: Blob.SizeType = 2048,
+    buffer: bun.io.StreamBuffer,
+    ended: bool = false,
+    done: bool = false,
+    auto_flusher: AutoFlusher = AutoFlusher{},
 
+    pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
+
+    fn unregisterAutoFlusher(this: *@This()) void {
+        if (this.auto_flusher.registered)
+            AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+    }
+
+    fn registerAutoFlusher(this: *@This()) void {
+        if (!this.auto_flusher.registered)
+            AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+    }
+
+    pub fn onAutoFlush(this: *@This()) bool {
+        if (this.done) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+
+        _ = this.internalFlush() catch 0;
+        if (this.buffer.isEmpty()) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+        return true;
+    }
+
+    pub fn start(this: *@This(), stream_start: StreamStart) JSC.Maybe(void) {
+        if (this.ended) {
+            return .{ .result = {} };
+        }
+        switch (stream_start) {
+            .chunk_size => |chunk_size| {
+                if (chunk_size > 0) {
+                    this.highWaterMark = chunk_size;
+                }
+            },
+            else => {},
+        }
+        this.ended = false;
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn connect(this: *@This(), signal: Signal) void {
+        this.signal = signal;
+    }
+    pub fn sink(this: *@This()) Sink {
+        return Sink.init(this);
+    }
+    pub fn toSink(this: *@This()) *@This().JSSink {
+        return @ptrCast(this);
+    }
+    pub fn finalize(this: *@This()) void {
+        this.unregisterAutoFlusher();
+
+        var buffer = this.buffer;
+        this.buffer = .{};
+        buffer.deinit();
+
+        if (this.task) |task| {
+            this.task = null;
+            task.deref();
+        }
+    }
+
+    pub fn send(this: *@This(), data: []const u8, is_last: bool) !void {
+        if (this.done) return;
+
+        if (this.task) |task| {
+            if (is_last) this.done = true;
+
+            if (data.len == 0) {
+                task.sendRequestData(bun.http.end_of_chunked_http1_1_encoding_response_body, true);
+                return;
+            }
+
+            // chunk encoding is really simple
+            if (is_last) {
+                const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
+                task.sendRequestData(chunk, true);
+            } else {
+                const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
+                task.sendRequestData(chunk, false);
+            }
+        }
+    }
+
+    pub fn internalFlush(this: *@This()) !usize {
+        if (this.done) return 0;
+        var flushed: usize = 0;
+        // we need to respect the max len for the chunk
+        while (this.buffer.isNotEmpty()) {
+            const bytes = this.buffer.slice();
+            const len: u32 = @min(bytes.len, std.math.maxInt(u32));
+            try this.send(bytes, this.buffer.list.items.len - (this.buffer.cursor + len) == 0 and this.ended);
+            flushed += len;
+            this.buffer.cursor = len;
+            if (this.buffer.isEmpty()) {
+                this.buffer.reset();
+            }
+        }
+        if (this.ended and !this.done) {
+            try this.send("", true);
+            this.finalize();
+        }
+        return flushed;
+    }
+
+    pub fn flush(this: *@This()) JSC.Maybe(void) {
+        _ = this.internalFlush() catch 0;
+        return .{ .result = {} };
+    }
+    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
+        return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(this.internalFlush() catch 0)) };
+    }
+    pub fn finalizeAndDestroy(this: *@This()) void {
+        this.finalize();
+        this.destroy();
+    }
+
+    pub fn abort(this: *@This()) void {
+        this.ended = true;
+        this.done = true;
+        this.signal.close(null);
+        this.finalize();
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.ended) {
+            return .{ .owned = 0 };
+        }
+        const bytes = data.slice();
+        const len = @as(Blob.SizeType, @truncate(bytes.len));
+
+        if (this.buffer.size() == 0 and len >= this.highWaterMark) {
+            // fast path:
+            // - large-ish chunk
+            this.send(bytes, false) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            return .{ .owned = len };
+        } else if (this.buffer.size() + len >= this.highWaterMark) {
+            _ = this.buffer.write(bytes) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            _ = this.internalFlush() catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            return .{ .owned = len };
+        } else {
+            // queue the data wait until highWaterMark is reached or the auto flusher kicks in
+            this.buffer.write(bytes) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+        }
+        this.registerAutoFlusher();
+        return .{ .owned = len };
+    }
+
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.ended) {
+            return .{ .owned = 0 };
+        }
+
+        const bytes = data.slice();
+        const len = @as(Blob.SizeType, @truncate(bytes.len));
+
+        if (this.buffer.size() == 0 and len >= this.highWaterMark) {
+            // common case
+            if (strings.isAllASCII(bytes)) {
+                // fast path:
+                // - large-ish chunk
+                this.send(bytes, false) catch {
+                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+                };
+                return .{ .owned = len };
+            }
+
+            this.buffer.writeLatin1(bytes) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+
+            _ = this.internalFlush() catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            return .{ .owned = len };
+        } else if (this.buffer.size() + len >= this.highWaterMark) {
+            // kinda fast path:
+            // - combined chunk is large enough to flush automatically
+            this.buffer.writeLatin1(bytes) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            _ = this.internalFlush() catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            return .{ .owned = len };
+        } else {
+            this.buffer.writeLatin1(bytes) catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+        }
+
+        this.registerAutoFlusher();
+
+        return .{ .owned = len };
+    }
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.ended) {
+            return .{ .owned = 0 };
+        }
+        const bytes = data.slice();
+        // we must always buffer UTF-16
+        // we assume the case of all-ascii UTF-16 string is pretty uncommon
+        this.buffer.writeUTF16(@alignCast(std.mem.bytesAsSlice(u16, bytes))) catch {
+            return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+        };
+
+        const readable = this.buffer.slice();
+        if (readable.len >= this.highWaterMark) {
+            _ = this.internalFlush() catch {
+                return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+            };
+            return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
+        }
+
+        this.registerAutoFlusher();
+        return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
+    }
+
+    pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Maybe(void) {
+        if (this.ended) {
+            return .{ .result = {} };
+        }
+
+        // send EOF
+        this.ended = true;
+        // flush everything and send EOF
+        _ = this.internalFlush() catch 0;
+
+        this.signal.close(err);
+        return .{ .result = {} };
+    }
+    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) JSC.Maybe(JSValue) {
+        if (this.ended) {
+            return .{ .result = JSC.JSValue.jsNumber(0) };
+        }
+
+        if (this.done) {
+            this.ended = true;
+            this.signal.close(null);
+            this.finalize();
+            return .{ .result = JSC.JSValue.jsNumber(0) };
+        }
+        _ = this.end(null);
+        return .{ .result = JSC.JSValue.jsNumber(0) };
+    }
+
+    pub fn memoryCost(this: *const @This()) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        return this.buffer.memoryCost();
+    }
+
+    const name = "FetchTaskletChunkedRequestSink";
+    pub const JSSink = NewJSSink(@This(), name);
+};
 pub const BufferedReadableStreamAction = enum {
     text,
     arrayBuffer,
@@ -2648,7 +2913,8 @@ pub fn ReadableStreamSource(
     comptime deinit_fn: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
     comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
-    comptime toBufferedValue: ?fn (this: *Context, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue,
+    comptime memoryCostFn: ?fn (this: *const Context) usize,
+    comptime toBufferedValue: ?fn (this: *Context, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue,
 ) type {
     return struct {
         context: Context,
@@ -2812,13 +3078,15 @@ pub fn ReadableStreamSource(
         pub const arrayBufferFromJS = JSReadableStreamSource.arrayBuffer;
         pub const blobFromJS = JSReadableStreamSource.blob;
         pub const bytesFromJS = JSReadableStreamSource.bytes;
-        pub const JSReadableStreamSource = struct {
-            pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) ?*ReadableStreamSourceType {
-                _ = callFrame; // autofix
-                globalThis.throw("Cannot construct ReadableStreamSource", .{});
-                return null;
-            }
 
+        pub fn memoryCost(this: *const ReadableStreamSourceType) usize {
+            if (memoryCostFn) |function| {
+                return function(&this.context) + @sizeOf(@This());
+            }
+            return @sizeOf(@This());
+        }
+
+        pub const JSReadableStreamSource = struct {
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
@@ -2844,8 +3112,7 @@ pub fn ReadableStreamSource(
                     .ready => return JSValue.jsNumber(16384),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                        return .zero;
+                        return globalThis.throwValue(err.toJSC(globalThis));
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -2858,18 +3125,17 @@ pub fn ReadableStreamSource(
                 return JSC.JSValue.jsBoolean(this.is_closed);
             }
 
-            fn processResult(this_jsvalue: JSC.JSValue, globalThis: *JSGlobalObject, flags: JSValue, result: StreamResult) JSC.JSValue {
+            fn processResult(this_jsvalue: JSC.JSValue, globalThis: *JSGlobalObject, flags: JSValue, result: StreamResult) bun.JSError!JSC.JSValue {
                 switch (result) {
                     .err => |err| {
                         if (err == .Error) {
-                            globalThis.vm().throwError(globalThis, err.Error.toJSC(globalThis));
+                            return globalThis.throwValue(err.Error.toJSC(globalThis));
                         } else {
                             const js_err = err.JSValue;
                             js_err.ensureStillAlive();
                             js_err.unprotect();
-                            globalThis.vm().throwError(globalThis, js_err);
+                            return globalThis.throwValue(js_err);
                         }
-                        return .zero;
                     },
                     .pending => {
                         const out = result.toJS(globalThis);
@@ -2903,7 +3169,7 @@ pub fn ReadableStreamSource(
                 }
 
                 if (!value.isCallable(globalObject.vm())) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function");
+                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
                     return false;
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
@@ -2921,7 +3187,7 @@ pub fn ReadableStreamSource(
                 }
 
                 if (!value.isCallable(globalObject.vm())) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function");
+                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
                     return false;
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
@@ -3076,6 +3342,11 @@ pub const FileSink = struct {
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
+
+    pub fn memoryCost(this: *const FileSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
+        return this.writer.memoryCost();
+    }
 
     fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
         comptime bun.assert(Environment.isWindows);
@@ -4187,6 +4458,11 @@ pub const FileReader = struct {
         return this.reader.setRawMode(flag);
     }
 
+    pub fn memoryCost(this: *const FileReader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        return this.reader.memoryCost();
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "File",
@@ -4196,6 +4472,7 @@ pub const FileReader = struct {
         deinit,
         setRefOrUnref,
         drain,
+        memoryCost,
         null,
     );
 };
@@ -4328,13 +4605,21 @@ pub const ByteBlobLoader = struct {
         return bun.ByteList.fromList(cloned);
     }
 
-    pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue {
+    pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue {
         if (this.toAnyBlob(globalThis)) |blob_| {
             var blob = blob_;
             return blob.toPromise(globalThis, action);
         }
 
         return .zero;
+    }
+
+    pub fn memoryCost(this: *const ByteBlobLoader) usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        if (this.store) |store| {
+            return store.memoryCost();
+        }
+        return 0;
     }
 
     pub const Source = ReadableStreamSource(
@@ -4346,6 +4631,7 @@ pub const ByteBlobLoader = struct {
         deinit,
         null,
         drain,
+        memoryCost,
         toBufferedValue,
     );
 };
@@ -4752,6 +5038,11 @@ pub const ByteStream = struct {
         }
     }
 
+    pub fn memoryCost(this: *const @This()) usize {
+        // ReadableStreamSource covers @sizeOf(ByteStream)
+        return this.buffer.capacity;
+    }
+
     pub fn deinit(this: *@This()) void {
         JSC.markBinding(@src());
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
@@ -4809,10 +5100,9 @@ pub const ByteStream = struct {
         return null;
     }
 
-    pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue {
+    pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue {
         if (this.buffer_action != null) {
-            globalThis.throw("Cannot buffer value twice", .{});
-            return .zero;
+            return globalThis.throw("Cannot buffer value twice", .{});
         }
 
         if (this.pending.result == .err) {
@@ -4848,6 +5138,7 @@ pub const ByteStream = struct {
         deinit,
         null,
         drain,
+        memoryCost,
         toBufferedValue,
     );
 };

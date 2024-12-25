@@ -96,13 +96,24 @@ pub const Loc = struct {
 };
 
 pub const Location = struct {
-    file: string = "",
+    file: string,
     namespace: string = "file",
-    line: i32 = 1, // 1-based
-    column: i32 = 0, // 0-based, in bytes
-    length: usize = 0, // in bytes
+    /// 1-based line number.
+    /// Line <= 0 means there is no line and column information.
+    // TODO: move to `bun.Ordinal`
+    line: i32,
+    // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
+    // original docs: 0-based, in bytes.
+    // but there is a place where this is emitted in output, implying one based character offset
+    column: i32,
+    /// Number of bytes this location should highlight.
+    /// 0 to just point at a single character
+    length: usize = 0,
+    /// Text on the line, avoiding the need to refetch the source code
     line_text: ?string = null,
+    // TODO: remove this unused field
     suggestion: ?string = null,
+    // TODO: document or remove
     offset: usize = 0,
 
     pub fn count(this: Location, builder: *StringBuilder) void {
@@ -340,7 +351,7 @@ pub const Data = struct {
                     location.file,
                 });
 
-                if (location.line > -1 and location.column > -1) {
+                if (location.line > 0 and location.column > -1) {
                     try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
                         location.column,
@@ -401,6 +412,8 @@ pub const Msg = struct {
                 .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
+                    .line = 0,
+                    .column = 0,
                 },
             },
         };
@@ -729,35 +742,15 @@ pub const Log = struct {
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: []const u8) JSC.JSValue {
-        const msgs: []const Msg = this.msgs.items;
-
-        // TODO: remove arbitrary upper limit. cannot use the heap because
-        // values could be GC'd. to do this correctly, expose a binding that
-        // allows creating an AggregateError using an array
-        var errors_stack: [256]JSC.JSValue = undefined;
-
-        const count = @min(msgs.len, errors_stack.len);
-
-        for (msgs[0..count], 0..) |msg, i| {
-            errors_stack[i] = switch (msg.metadata) {
-                .build => JSC.BuildMessage.create(global, bun.default_allocator, msg),
-                .resolve => JSC.ResolveMessage.create(global, bun.default_allocator, msg, ""),
-            };
-        }
-
-        const out = JSC.ZigString.init(message);
-        return global.createAggregateError(errors_stack[0..count], &out);
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) JSC.JSValue {
+        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.default_allocator));
     }
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        const errors_stack: [256]*anyopaque = undefined;
 
-        const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
-        var arr = JSC.JSValue.createEmptyArray(global, count);
-
-        for (msgs[0..count], 0..) |msg, i| {
+        const arr = JSC.JSValue.createEmptyArray(global, msgs.len);
+        for (msgs, 0..) |msg, i| {
             arr.putIndex(global, @as(u32, @intCast(i)), msg.toJS(global, allocator));
         }
 
@@ -1227,7 +1220,7 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *Log, to: anytype) !void {
+    pub fn print(self: *const Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
@@ -1491,6 +1484,48 @@ pub const Source = struct {
             .line_count = line_count,
             .column_count = column_number,
         };
+    }
+    pub fn lineColToByteOffset(source_contents: []const u8, start_line: usize, start_col: usize, line: usize, col: usize) ?usize {
+        var iter_ = strings.CodepointIterator{
+            .bytes = source_contents,
+            .i = 0,
+        };
+        var iter = strings.CodepointIterator.Cursor{};
+
+        var line_count: usize = start_line;
+        var column_number: usize = start_col;
+
+        _ = iter_.next(&iter);
+        while (true) {
+            const c = iter.c;
+            if (!iter_.next(&iter)) break;
+            switch (c) {
+                '\n' => {
+                    column_number = 1;
+                    line_count += 1;
+                },
+
+                '\r' => {
+                    column_number = 1;
+                    line_count += 1;
+                    if (iter.c == '\n') {
+                        _ = iter_.next(&iter);
+                    }
+                },
+
+                0x2028, 0x2029 => {
+                    line_count += 1;
+                    column_number = 1;
+                },
+                else => {
+                    column_number += 1;
+                },
+            }
+
+            if (line_count == line and column_number == col) return iter.i;
+            if (line_count > line) return null;
+        }
+        return null;
     }
 };
 

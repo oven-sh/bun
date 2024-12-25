@@ -457,7 +457,7 @@ WTF::String Bun::formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
+                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -599,8 +599,8 @@ WTF::String Bun::formatStackTrace(
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     }
                 }
             }
@@ -1139,8 +1139,9 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
     &Zig::deriveShadowRealmGlobalObject,
-    nullptr, // codeForEval
-    nullptr, // canCompileStrings
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
 };
 
 const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
@@ -1164,8 +1165,9 @@ const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable =
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
     &Zig::deriveShadowRealmGlobalObject,
-    nullptr, // codeForEval
-    nullptr, // canCompileStrings
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
 };
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
@@ -1460,8 +1462,8 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     double cellPtr = callFrame->uncheckedArgument(0).asNumber();
     double callbackPtr = callFrame->uncheckedArgument(1).asNumber();
 
-    void* cell = reinterpret_cast<void*>(bitwise_cast<uintptr_t>(cellPtr));
-    auto* callback = reinterpret_cast<MicrotaskCallback>(bitwise_cast<uintptr_t>(callbackPtr));
+    void* cell = reinterpret_cast<void*>(__bit_cast<uintptr_t>(cellPtr));
+    auto* callback = reinterpret_cast<MicrotaskCallback>(__bit_cast<uintptr_t>(callbackPtr));
     callback(cell);
     return JSValue::encode(jsUndefined());
 }
@@ -1708,14 +1710,14 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     // That means even though this looks like the wrong thing to do,
     // we should be converting to latin1, not utf8.
     if (!encodedString.is8Bit()) {
-        LChar* ptr;
+        std::span<LChar> ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::createUninitialized(length, ptr);
         if (UNLIKELY(dest.isNull())) {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
         }
-        WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
+        WTF::StringImpl::copyCharacters(ptr.data(), encodedString.span16());
         encodedString = WTFMove(dest);
     }
 
@@ -3076,11 +3078,6 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
 
-    m_cachedNodeVMGlobalObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
-        });
-
     m_cachedGlobalProxyStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3124,6 +3121,12 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSHTTPSResponseControllerPrototype.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
+            init.set(prototype);
+        });
+
+    m_JSFetchTaskletChunkedRequestControllerPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FetchTaskletChunkedRequestSink);
             init.set(prototype);
         });
 
@@ -3255,6 +3258,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSFetchTaskletChunkedRequestSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchTaskletChunkedRequestSink);
+            auto* structure = JSFetchTaskletChunkedRequestSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSFetchTaskletChunkedRequestSinkConstructor::create(init.vm, init.global, JSFetchTaskletChunkedRequestSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -3330,18 +3343,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_NodeVMScriptClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
-            auto* structure = NodeVMScript::createStructure(init.vm, init.global, prototype);
-            auto* constructorStructure = NodeVMScriptConstructor::createStructure(
-                init.vm, init.global, init.global->m_functionPrototype.get());
-            auto* constructor = NodeVMScriptConstructor::create(
-                init.vm, init.global, constructorStructure, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
+    configureNodeVM(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);
@@ -3810,6 +3812,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSFetchTaskletChunkedRequestSinkClassStructure.visit(visitor);
+    thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_V8GlobalInternals.visit(visitor);
@@ -4025,7 +4029,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
 
     // Do not use JSCell* here because the GC will try to visit it.
-    globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+    globalObject->queueMicrotask(function, JSValue(__bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(__bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
@@ -4349,6 +4353,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
+    } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

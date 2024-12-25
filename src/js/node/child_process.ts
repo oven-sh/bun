@@ -22,18 +22,20 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
-var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeSort = Array.prototype.sort;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const ArrayPrototypePush = Array.prototype.push;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
 
-var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
@@ -558,20 +560,27 @@ function spawnSync(file, args, options) {
     }
   }
 
-  const {
-    stdout = null,
-    stderr = null,
-    success,
-    exitCode,
-    signalCode,
-  } = Bun.spawnSync({
-    cmd: options.args,
-    env: options.env || undefined,
-    cwd: options.cwd || undefined,
-    stdio: bunStdio,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
-    windowsHide: options.windowsHide,
-  });
+  var error;
+  try {
+    var {
+      stdout = null,
+      stderr = null,
+      success,
+      exitCode,
+      signalCode,
+    } = Bun.spawnSync({
+      cmd: options.args,
+      env: options.env || undefined,
+      cwd: options.cwd || undefined,
+      stdio: bunStdio,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+      windowsHide: options.windowsHide,
+    });
+  } catch (err) {
+    error = err;
+    stdout = null;
+    stderr = null;
+  }
 
   const result = {
     signal: signalCode ?? null,
@@ -579,6 +588,10 @@ function spawnSync(file, args, options) {
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
+
+  if (error) {
+    result.error = error;
+  }
 
   if (stdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
@@ -591,8 +604,11 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (!success) {
+  if (!success && error == null) {
     result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
+  }
+
+  if (result.error) {
     result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
@@ -953,13 +969,38 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   const env = options.env || process.env;
-  const envPairs = env;
+  const envPairs = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
   // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
 
-  // TODO: Windows env support here...
+  let envKeys: string[] = [];
+  for (const key in env) {
+    ArrayPrototypePush.$call(envKeys, key);
+  }
+
+  if (process.platform === "win32") {
+    // On Windows env keys are case insensitive. Filter out duplicates, keeping only the first one (in lexicographic order)
+    const sawKey = new Set();
+    envKeys = ArrayPrototypeFilter.$call(ArrayPrototypeSort.$call(envKeys), key => {
+      const uppercaseKey = StringPrototypeToUpperCase.$call(key);
+      if (sawKey.has(uppercaseKey)) {
+        return false;
+      }
+      sawKey.add(uppercaseKey);
+      return true;
+    });
+  }
+
+  for (const key of envKeys) {
+    const value = env[key];
+    if (value !== undefined) {
+      validateArgumentNullCheck(key, `options.env['${key}']`);
+      validateArgumentNullCheck(value, `options.env['${key}']`);
+      envPairs[key] = value;
+    }
+  }
 
   return {
     // Make a shallow copy so we don't clobber the user's options object.

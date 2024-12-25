@@ -17,7 +17,6 @@ import {
   accessSync,
   appendFileSync,
   readdirSync,
-  rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join, basename, dirname, relative, sep } from "node:path";
@@ -27,18 +26,22 @@ import {
   getBuildUrl,
   getEnv,
   getFileUrl,
+  getLoggedInUserCountOrDetails,
+  getShell,
   getWindowsExitReason,
   isBuildkite,
   isCI,
   isGithubAction,
+  isMacOS,
   isWindows,
+  isX64,
   printEnvironment,
   startGroup,
   tmpdir,
   unzip,
 } from "./utils.mjs";
 import { userInfo } from "node:os";
-
+let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
@@ -49,11 +52,19 @@ const integrationTimeout = 5 * 60_000;
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
+    ["node-tests"]: {
+      type: "boolean",
+      default: false,
+    },
     ["exec-path"]: {
       type: "string",
       default: "bun",
     },
     ["step"]: {
+      type: "string",
+      default: undefined,
+    },
+    ["build-id"]: {
       type: "string",
       default: undefined,
     },
@@ -79,6 +90,10 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
+    ["quiet"]: {
+      type: "boolean",
+      default: false,
+    },
     ["smoke"]: {
       type: "string",
       default: undefined,
@@ -87,8 +102,16 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    ["retries"]: {
+      type: "string",
+      default: isCI ? "4" : "0", // N retries = N+1 attempts
+    },
   },
 });
+
+if (options["quiet"]) {
+  isQuiet = true;
+}
 
 /**
  *
@@ -97,42 +120,17 @@ const { values: options, positionals: filters } = parseArgs({
 async function runTests() {
   let execPath;
   if (options["step"]) {
-    downloadLoop: for (let i = 0; i < 10; i++) {
-      execPath = await getExecPathFromBuildKite(options["step"]);
-      for (let j = 0; j < 10; j++) {
-        const { error } = spawnSync(execPath, ["--version"], {
-          encoding: "utf-8",
-          timeout: spawnTimeout,
-          env: {
-            PATH: process.env.PATH,
-            BUN_DEBUG_QUIET_LOGS: 1,
-          },
-        });
-        if (!error) {
-          break downloadLoop;
-        }
-        const { code } = error;
-        if (code === "EBUSY") {
-          console.log("Bun appears to be busy, retrying...");
-          continue;
-        }
-        if (code === "UNKNOWN") {
-          console.log("Bun appears to be corrupted, downloading again...");
-          rmSync(execPath, { force: true });
-          continue downloadLoop;
-        }
-      }
-    }
+    execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
-  console.log("Bun:", execPath);
+  !isQuiet && console.log("Bun:", execPath);
 
   const revision = getRevision(execPath);
-  console.log("Revision:", revision);
+  !isQuiet && console.log("Revision:", revision);
 
   const tests = getRelevantTests(testsPath);
-  console.log("Running tests:", tests.length);
+  !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -141,13 +139,17 @@ async function runTests() {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
       vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
-      console.log("Running vendor tests:", vendorTotal);
+      !isQuiet && console.log("Running vendor tests:", vendorTotal);
     }
   }
 
   let i = 0;
   let total = vendorTotal + tests.length + 2;
-  const results = [];
+
+  const okResults = [];
+  const flakyResults = [];
+  const failedResults = [];
+  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   /**
    * @param {string} title
@@ -155,57 +157,122 @@ async function runTests() {
    * @returns {Promise<TestResult>}
    */
   const runTest = async (title, fn) => {
-    const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
-    const result = await startGroup(label, fn);
-    results.push(result);
+    const index = ++i;
 
-    if (isBuildkite) {
-      const { ok, error, stdoutPreview } = result;
-      if (title.startsWith("vendor")) {
-        const markdown = formatTestToMarkdown({ ...result, testPath: title });
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
-        }
-      } else {
-        const markdown = formatTestToMarkdown(result);
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
-        }
+    let result, failure, flaky;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      if (!ok) {
-        const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-        startGroup(label, () => {
-          process.stderr.write(stdoutPreview);
-        });
+      result = await startGroup(
+        attempt === 1
+          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
+          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
+        fn,
+      );
+
+      const { ok, stdoutPreview, error } = result;
+      if (ok) {
+        if (failure) {
+          flakyResults.push(failure);
+        } else {
+          okResults.push(result);
+        }
+        break;
+      }
+
+      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      startGroup(label, () => {
+        process.stderr.write(stdoutPreview);
+      });
+
+      failure ||= result;
+      flaky ||= true;
+
+      if (attempt >= maxAttempts) {
+        flaky = false;
+        failedResults.push(failure);
+      }
+    }
+
+    if (!failure) {
+      return result;
+    }
+
+    if (isBuildkite) {
+      // Group flaky tests together, regardless of the title
+      const context = flaky ? "flaky" : title;
+      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+
+      if (title.startsWith("vendor")) {
+        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
+      } else {
+        const content = formatTestToMarkdown(failure);
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
       }
     }
 
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(result);
+        const longMarkdown = formatTestToMarkdown(failure);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(result, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true);
       appendFileSync("comment.md", shortMarkdown);
     }
 
-    if (options["bail"] && !result.ok) {
+    if (options["bail"]) {
       process.exit(getExitCode("fail"));
     }
 
     return result;
   };
 
-  for (const path of [cwd, testsPath]) {
-    const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-    await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+  if (!isQuiet) {
+    for (const path of [cwd, testsPath]) {
+      const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
+      await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+    }
   }
 
-  if (results.every(({ ok }) => ok)) {
+  if (!failedResults.length) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      if (title.startsWith("test/js/node/test/parallel/")) {
+        await runTest(title, async () => {
+          const { ok, error, stdout } = await spawnBun(execPath, {
+            cwd: cwd,
+            args: [title],
+            timeout: 10_000,
+            env: {
+              FORCE_COLOR: "0",
+            },
+            stdout: chunk => pipeTestStdout(process.stdout, chunk),
+            stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          });
+          const mb = 1024 ** 3;
+          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+          return {
+            testPath: title,
+            ok: ok,
+            status: ok ? "pass" : "fail",
+            error: error,
+            errors: [],
+            tests: [],
+            stdout: stdout,
+            stdoutPreview: stdoutPreview,
+          };
+        });
+        continue;
+      }
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
@@ -247,21 +314,37 @@ async function runTests() {
     }
   }
 
-  const failedTests = results.filter(({ ok }) => !ok);
   if (isGithubAction) {
-    reportOutputToGitHubAction("failing_tests_count", failedTests.length);
-    const markdown = formatTestToMarkdown(failedTests);
+    reportOutputToGitHubAction("failing_tests_count", failedResults.length);
+    const markdown = formatTestToMarkdown(failedResults);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) {
-    console.log("-------");
-    console.log("passing", results.length - failedTests.length, "/", results.length);
-    for (const { testPath } of failedTests) {
-      console.log("-", testPath);
+  if (!isCI && !isQuiet) {
+    console.table({
+      "Total Tests": okResults.length + failedResults.length + flakyResults.length,
+      "Passed Tests": okResults.length,
+      "Failing Tests": failedResults.length,
+      "Flaky Tests": flakyResults.length,
+    });
+
+    if (failedResults.length) {
+      console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
+      for (const { testPath } of failedResults) {
+        console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
+      }
+    }
+
+    if (flakyResults.length) {
+      console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
+      for (const { testPath } of flakyResults) {
+        console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
+      }
     }
   }
-  return results;
+
+  // Exclude flaky tests from the final results
+  return [...okResults, ...failedResults];
 }
 
 /**
@@ -455,12 +538,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = addPath(dirname(execPath), process.env.PATH);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
+  const shellPath = getShell();
   const bunEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
+    SHELL: shellPath,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
@@ -577,7 +662,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker/i.test(testPath)) {
+  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -770,13 +855,18 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+function targetDoesRunNodeTests() {
+  if (isMacOS && isX64) return false;
+  return true;
 }
 
 /**
@@ -940,9 +1030,13 @@ async function getVendorTests(cwd) {
  * @returns {string[]}
  */
 function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+  let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
+
+  if (options["node-tests"]) {
+    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+  }
 
   const isMatch = (testPath, filter) => {
     return testPath.replace(/\\/g, "/").includes(filter);
@@ -960,7 +1054,7 @@ function getRelevantTests(cwd) {
   const includes = options["include"]?.flatMap(getFilter);
   if (includes?.length) {
     availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
-    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
+    !isQuiet && console.log("Including tests:", includes, availableTests.length, "/", tests.length);
   } else {
     availableTests.push(...tests);
   }
@@ -975,7 +1069,7 @@ function getRelevantTests(cwd) {
           availableTests.splice(index, 1);
         }
       }
-      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+      !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
   }
 
@@ -983,7 +1077,7 @@ function getRelevantTests(cwd) {
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
     filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
-    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
   } else if (options["smoke"] !== undefined) {
     const smokePercent = parseFloat(options["smoke"]) || 0.01;
     const smokeCount = Math.ceil(availableTests.length * smokePercent);
@@ -993,23 +1087,24 @@ function getRelevantTests(cwd) {
       smokeTests.add(availableTests[randomIndex]);
     }
     filteredTests.push(...Array.from(smokeTests));
-    console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
     for (let i = 0; i < availableTests.length; i++) {
       if (i % maxShards === shardId) {
         filteredTests.push(availableTests[i]);
       }
     }
-    console.log(
-      "Sharding tests:",
-      shardId,
-      "/",
-      maxShards,
-      "with tests",
-      filteredTests.length,
-      "/",
-      availableTests.length,
-    );
+    !isQuiet &&
+      console.log(
+        "Sharding tests:",
+        shardId,
+        "/",
+        maxShards,
+        "with tests",
+        filteredTests.length,
+        "/",
+        availableTests.length,
+      );
   } else {
     filteredTests.push(...availableTests);
   }
@@ -1053,9 +1148,10 @@ function getExecPath(bunExe) {
 
 /**
  * @param {string} target
+ * @param {string} [buildId]
  * @returns {Promise<string>}
  */
-async function getExecPathFromBuildKite(target) {
+async function getExecPathFromBuildKite(target, buildId) {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
@@ -1063,23 +1159,27 @@ async function getExecPathFromBuildKite(target) {
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
-  const args = ["artifact", "download", "**", releasePath, "--step", target];
-  const buildId = process.env["BUILDKITE_ARTIFACT_BUILD_ID"];
-  if (buildId) {
-    args.push("--build", buildId);
-  }
-
-  await spawnSafe({
-    command: "buildkite-agent",
-    args,
-  });
-
   let zipPath;
-  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-      zipPath = join(releasePath, entry);
-      break;
+  downloadLoop: for (let i = 0; i < 10; i++) {
+    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    if (buildId) {
+      args.push("--build", buildId);
     }
+
+    await spawnSafe({
+      command: "buildkite-agent",
+      args,
+    });
+
+    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+        zipPath = join(releasePath, entry);
+        break downloadLoop;
+      }
+    }
+
+    console.warn(`Waiting for ${target}.zip to be available...`);
+    await new Promise(resolve => setTimeout(resolve, i * 1000));
   }
 
   if (!zipPath) {
@@ -1088,13 +1188,15 @@ async function getExecPathFromBuildKite(target) {
 
   await unzip(zipPath, releasePath);
 
-  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+  const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
+  for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
+    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
@@ -1251,6 +1353,7 @@ function listArtifactsFromBuildKite(glob, step) {
 
 /**
  * @typedef {object} BuildkiteAnnotation
+ * @property {string} [context]
  * @property {string} label
  * @property {string} content
  * @property {"error" | "warning" | "info"} [style]
@@ -1261,10 +1364,10 @@ function listArtifactsFromBuildKite(glob, step) {
 /**
  * @param {BuildkiteAnnotation} annotation
  */
-function reportAnnotationToBuildKite({ label, content, style = "error", priority = 3, attempt = 0 }) {
+function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
   const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
@@ -1283,7 +1386,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
+  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
   if (stderr) {
     errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }
@@ -1438,9 +1541,46 @@ export async function main() {
     process.on(signal, () => onExit(signal));
   }
 
-  printEnvironment();
+  if (!isQuiet) {
+    printEnvironment();
+  }
+
+  // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
+  // It also appears to hang on 1.1.1.1, which could explain this issue:
+  // https://github.com/oven-sh/bun/issues/11136
+  if (isWindows && isCI) {
+    await spawn("pwsh", [
+      "-Command",
+      "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
+    ]);
+  }
+
   const results = await runTests();
   const ok = results.every(({ ok }) => ok);
+
+  let waitForUser = false;
+  while (isCI) {
+    const userCount = getLoggedInUserCountOrDetails();
+    if (!userCount) {
+      if (waitForUser) {
+        !isQuiet && console.log("No users logged in, exiting runner...");
+      }
+      break;
+    }
+
+    if (!waitForUser) {
+      startGroup("Summary");
+      if (typeof userCount === "number") {
+        console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      } else {
+        console.warn(userCount);
+      }
+      waitForUser = true;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 60_000));
+  }
+
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 

@@ -54,6 +54,10 @@ public:
     }
     void unpauseForInitializedInspector() override
     {
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        }
     }
 };
 
@@ -110,6 +114,7 @@ public:
                 WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
         }
 
+        this->hasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -117,11 +122,6 @@ public:
             debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
                 BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
             };
-        }
-
-        if (waitingForConnection) {
-            waitingForConnection = false;
-            Debugger__didConnect();
         }
 
         this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
@@ -174,7 +174,12 @@ public:
                 return;
 
             connection->status = ConnectionStatus::Disconnected;
-            connection->inspector().disconnect(*connection);
+
+            // Do not call .disconnect() if we never actually connected.
+            if (connection->hasEverConnected) {
+                connection->inspector().disconnect(*connection);
+            }
+
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
                 Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);

@@ -4155,7 +4155,10 @@ pub const StackCheck = struct {
             .linux => stack_ptr -| this.cached_stack_end,
 
             // Reverse the operands for Windows
-            .windows => this.cached_stack_end -| stack_ptr,
+            .windows => if (stack_ptr <= this.cached_stack_end)
+                return false
+            else
+                stack_ptr - this.cached_stack_end,
 
             else => @compileError("Unsupported platform"),
         };

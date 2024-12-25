@@ -46,7 +46,6 @@ const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
 const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
 const uws = bun.uws;
-const patterns = @import("../patterns.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;

@@ -4151,7 +4151,7 @@ pub const StackCheck = struct {
     pub fn isSafeToRecurse(this: StackCheck) bool {
         const stack_ptr: usize = @frameAddress();
         const remaining_stack = stack_ptr -| this.cached_stack_end;
-        return remaining_stack > 1024 * 128;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
     }
 };
 

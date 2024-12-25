@@ -4150,12 +4150,7 @@ pub const StackCheck = struct {
     /// Is there at least 128 KB of stack space available?
     pub fn isSafeToRecurse(this: StackCheck) bool {
         const stack_ptr: usize = @frameAddress();
-        const remaining_stack = switch (builtin.os.tag) {
-            .macos, .ios => stack_ptr -| this.cached_stack_end,
-            .linux => stack_ptr -| this.cached_stack_end,
-            .windows => stack_ptr -| this.cached_stack_end,
-            else => @compileError("Unsupported platform"),
-        };
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
         return remaining_stack > 1024 * 128;
     }
 };

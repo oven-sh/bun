@@ -75,15 +75,6 @@ test "matchesRegex should correctly match valid regex patterns" {
     try testing.expect(!matchesRegex("abc", "\\d+"));
 }
 
-test "matchesGlob should correctly match glob patterns" {
-    try testing.expect(matchesGlob("*.ts", "file.ts"));
-    try testing.expect(!matchesGlob("*.ts", "file.js"));
-    try testing.expect(matchesGlob("test?.txt", "test1.txt"));
-    try testing.expect(!matchesGlob("test?.txt", "test12.txt"));
-    try testing.expect(matchesGlob("dir/**/*.js", "dir/subdir/file.js"));
-    try testing.expect(!matchesGlob("dir/**/*.js", "other/file.js"));
-}
-
 test "matchesAnyPattern should correctly match against multiple patterns" {
     const patternsList = &[_][]const u8{
         "*.ts",

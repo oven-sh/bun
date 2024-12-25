@@ -1384,10 +1384,10 @@ pub const TestCommand = struct {
             for (test_files) |test_file| {
                 const test_name = test_file.slice();
                 if (coverage_options.include) |includes| {
-                    if (!patterns.matchesAnyPattern(test_name, includes)) continue;
+                    if (!glob.detectGlobSyntax(includes) or !glob.matchImpl(test_name, includes)) continue;
                 }
                 if (coverage_options.exclude) |excludes| {
-                    if (patterns.matchesAnyPattern(test_name, excludes)) continue;
+                    if (glob.detectGlobSyntax(includes) and glob.matchImpl(test_name, includes)) continue;
                 }
                 try filtered_files.append(test_file);
             }

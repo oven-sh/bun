@@ -186,12 +186,11 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -203,7 +202,7 @@ const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -379,10 +378,10 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.env.get("PATH") orelse "",
+        globalThis.bunVM().transpiler.env.get("PATH") orelse "",
     );
     cwd_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.fs.top_level_dir,
+        globalThis.bunVM().transpiler.fs.top_level_dir,
     );
 
     if (arguments.nextEat()) |arg| {
@@ -572,7 +571,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn getCWD(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
+    return ZigString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -696,7 +695,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
                     const prev = edit.*;
                     edit.name = sliced.slice();
-                    edit.detectEditor(VirtualMachine.get().bundler.env);
+                    edit.detectEditor(VirtualMachine.get().transpiler.env);
                     editor_choice = edit.editor;
                     if (editor_choice == null) {
                         edit.* = prev;
@@ -719,7 +718,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
     }
 
     const editor = editor_choice orelse edit.editor orelse brk: {
-        edit.autoDetectEditor(VirtualMachine.get().bundler.env);
+        edit.autoDetectEditor(VirtualMachine.get().transpiler.env);
         if (edit.editor == null) {
             return globalThis.throw("Failed to auto-detect editor", .{});
         }
@@ -741,7 +740,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
     return getPublicPathWithAssetPrefix(
         to,
-        VirtualMachine.get().bundler.fs.top_level_dir,
+        VirtualMachine.get().transpiler.fs.top_level_dir,
         origin,
         "",
         comptime Writer,
@@ -762,7 +761,7 @@ pub fn getPublicPathWithAssetPrefix(
     const relative_path = if (strings.hasPrefix(to, dir))
         strings.withoutTrailingSlash(to[dir.len..])
     else
-        VirtualMachine.get().bundler.fs.relativePlatform(dir, to, platform);
+        VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -770,7 +769,7 @@ pub fn getPublicPathWithAssetPrefix(
             if (std.fs.path.isAbsolute(to)) {
                 writer.writeAll(to) catch return;
             } else {
-                writer.writeAll(VirtualMachine.get().bundler.fs.abs(&[_]string{to})) catch return;
+                writer.writeAll(VirtualMachine.get().transpiler.fs.abs(&[_]string{to})) catch return;
             }
         } else {
             origin.joinWrite(
@@ -4193,8 +4192,8 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
         const bunVM = globalObject.bunVM();
-        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
-        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+        ptr.* = bunVM.transpiler.env.map.map.keys().ptr;
+        return bunVM.transpiler.env.map.map.unmanaged.entries.len;
     }
 
     pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
@@ -4214,7 +4213,7 @@ pub const EnvironmentVariables = struct {
 
     pub fn getEnvNames(globalObject: *JSC.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
-        const keys = vm.bundler.env.map.map.keys();
+        const keys = vm.transpiler.env.map.map.keys();
         const len = @min(names.len, keys.len);
         for (keys[0..len], names[0..len]) |key, *name| {
             name.* = ZigString.initUTF8(key);
@@ -4226,7 +4225,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.get(sliced.slice()) orelse return null;
+        const value = vm.transpiler.env.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };

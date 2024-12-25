@@ -742,35 +742,15 @@ pub const Log = struct {
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: []const u8) JSC.JSValue {
-        const msgs: []const Msg = this.msgs.items;
-
-        // TODO: remove arbitrary upper limit. cannot use the heap because
-        // values could be GC'd. to do this correctly, expose a binding that
-        // allows creating an AggregateError using an array
-        var errors_stack: [256]JSC.JSValue = undefined;
-
-        const count = @min(msgs.len, errors_stack.len);
-
-        for (msgs[0..count], 0..) |msg, i| {
-            errors_stack[i] = switch (msg.metadata) {
-                .build => JSC.BuildMessage.create(global, bun.default_allocator, msg),
-                .resolve => JSC.ResolveMessage.create(global, bun.default_allocator, msg, ""),
-            };
-        }
-
-        const out = JSC.ZigString.init(message);
-        return global.createAggregateError(errors_stack[0..count], &out);
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) JSC.JSValue {
+        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.default_allocator));
     }
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        const errors_stack: [256]*anyopaque = undefined;
 
-        const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
-        var arr = JSC.JSValue.createEmptyArray(global, count);
-
-        for (msgs[0..count], 0..) |msg, i| {
+        const arr = JSC.JSValue.createEmptyArray(global, msgs.len);
+        for (msgs, 0..) |msg, i| {
             arr.putIndex(global, @as(u32, @intCast(i)), msg.toJS(global, allocator));
         }
 

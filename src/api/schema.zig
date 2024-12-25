@@ -342,7 +342,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

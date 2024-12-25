@@ -212,14 +212,14 @@ pub const OutdatedCommand = struct {
 
                             const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                            if (!glob.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.walk.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.matchImpl(pattern, name).matches()) {
+                            if (!glob.walk.matchImpl(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -331,7 +331,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
+                                    if (!glob.walk.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },

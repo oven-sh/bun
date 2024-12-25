@@ -95,8 +95,13 @@ test("throwing inside an error suppresses the error and prints the stack", async
 
   expect(stderr.toString().trim()).toStartWith(
     `error: My custom error message
-      at http://example.com/test.js:42
-    `.trim(),
+{
+  message: "My custom error message",
+  name: [Getter],
+  line: 42,
+  sourceURL: "http://example.com/test.js",
+}      at http://example.com/test.js:42
+`.trim(),
   );
   expect(exitCode).toBe(1);
 });

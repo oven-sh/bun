@@ -3278,21 +3278,8 @@ pub const VirtualMachine = struct {
         return promise;
     }
 
-    fn printErrorLikeObjectSimple(this: *VirtualMachine, value: JSValue, writer: anytype, comptime escape_codes: bool) void {
-        var formatter = ConsoleObject.Formatter{
-            .globalThis = this.global,
-        };
-        defer {
-            formatter.deinit();
-        }
-        this.printErrorlikeObject(value, null, null, &formatter, @TypeOf(writer), writer, escape_codes, true);
-    }
-
     pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
-        this.global.clearException();
-        switch (Output.enable_ansi_colors_stderr) {
-            inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
-        }
+        this.runErrorHandler(value, null);
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.

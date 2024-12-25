@@ -77,3 +77,97 @@ test("coverage excludes node_modules directory", () => {
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });
+
+test("coverage include coverageInclude from bunfig", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+    [coverage]
+    coverageIncludes = ["demo.test.ts"]
+    `,
+    "demo.test.ts": `
+    export const pi = 3.14;
+    `,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.stderr.toString("utf-8")).toContain("demo.test.ts");
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});
+
+test("coverage exclude coverageExclude from bunfig", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+    [coverage]
+    coverageExclude = ["demo.test.ts"]
+    `,
+    "demo.test.ts": `
+    export const pi = 3.14;
+    `,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.stderr.toString("utf-8")).not.toContain("demo.test.ts");
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});
+
+test("coverage include and exclude coverageInclude and coverageExclude from bunfig", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+    [coverage]
+    coverageIncludes = ["demo.test.ts"]
+    coverageExclude = ["demo.test.ts"]
+    `,
+    "demo.test.ts": `
+    export const pi = 3.14;
+    `,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.stderr.toString("utf-8")).not.toContain("demo.test.ts");
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});
+
+test("coverage include and exclude glob", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+    [coverage]
+    coverageIncludes = ["**/*.test.ts"]
+    coverageExclude = ["demo2.test.ts"]
+    `,
+    "demo.test.ts": `
+    export const pi = 3.14;
+    `,
+    "demo2.test.ts": `
+    export const pi = 3.14;
+    `,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.stderr.toString("utf-8")).toContain("demo.test.ts");
+  expect(result.stderr.toString("utf-8")).not.toContain("demo2.test.ts");
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});

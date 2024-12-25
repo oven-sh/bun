@@ -1703,6 +1703,35 @@ pub const Subprocess = struct {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
+    // This is split into a separate function to conserve stack space.
+    // On Windows, a single path buffer can take 64 KB.
+    fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
+        argv0: [:0]const u8,
+        arg0: [:0]u8,
+    } {
+        var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
+        defer arg0.deinit();
+        var path_buf: bun.PathBuffer = undefined;
+        var actual_argv0: [:0]const u8 = "";
+
+        if (argv0 == null) {
+            const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                return throwCommandNotFound(globalThis, arg0.slice());
+            };
+            actual_argv0 = try allocator.dupeZ(u8, resolved);
+        } else {
+            const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
+                return throwCommandNotFound(globalThis, arg0.slice());
+            };
+            actual_argv0 = try allocator.dupeZ(u8, resolved);
+        }
+
+        return .{
+            .argv0 = actual_argv0,
+            .arg0 = try allocator.dupeZ(u8, arg0.slice()),
+        };
+    }
+
     pub fn spawnMaybeSync(
         globalThis: *JSC.JSGlobalObject,
         args_: JSValue,
@@ -1719,7 +1748,7 @@ pub const Subprocess = struct {
 
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
 
         var override_env = false;
         var env_array = std.ArrayListUnmanaged(?[*:0]const u8){};
@@ -1809,30 +1838,13 @@ pub const Subprocess = struct {
                     return globalThis.throwInvalidArguments("cmd must not be empty", .{});
                 }
 
-                {
-                    var first_cmd = cmds_array.next().?;
-                    var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
-                    defer arg0.deinit();
-
-                    if (argv0 == null) {
-                        var path_buf: bun.PathBuffer = undefined;
-                        const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                            return throwCommandNotFound(globalThis, arg0.slice());
-                        };
-                        argv0 = try allocator.dupeZ(u8, resolved);
-                    } else {
-                        var path_buf: bun.PathBuffer = undefined;
-                        const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                            return throwCommandNotFound(globalThis, arg0.slice());
-                        };
-                        argv0 = try allocator.dupeZ(u8, resolved);
-                    }
-
-                    argv.appendAssumeCapacity(try allocator.dupeZ(u8, arg0.slice()));
-                }
+                const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0, cmds_array.next().?, allocator);
+                argv0 = argv0_result.argv0.ptr;
+                argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
                 while (cmds_array.next()) |value| {
-                    const arg = value.getZigString(globalThis);
+                    const arg = try value.toBunString2(globalThis);
+                    defer arg.deref();
 
                     // if the string is empty, ignore it, don't add it to the argv
                     if (arg.len == 0) {

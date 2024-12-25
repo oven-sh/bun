@@ -2920,6 +2920,7 @@ pub const VirtualMachine = struct {
             .globalThis = this.global,
             .quote_strings = false,
             .single_line = false,
+            .stack_check = bun.StackCheck.init(),
         };
         defer formatter.deinit();
         if (Output.enable_ansi_colors) {
@@ -2955,7 +2956,6 @@ pub const VirtualMachine = struct {
 
         if (result.isException(this.global.vm())) {
             const exception = @as(*Exception, @ptrCast(result.asVoid()));
-
             this.printException(
                 exception,
                 exception_list,
@@ -2968,6 +2968,7 @@ pub const VirtualMachine = struct {
                 .globalThis = this.global,
                 .quote_strings = false,
                 .single_line = false,
+                .stack_check = bun.StackCheck.init(),
             };
             defer formatter.deinit();
             switch (Output.enable_ansi_colors) {
@@ -3288,6 +3289,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
+        this.global.clearException();
         switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
         }
@@ -3953,104 +3955,124 @@ pub const VirtualMachine = struct {
         }
 
         var saw_cause = false;
-        if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
-            const Iterator = JSC.JSPropertyIterator(.{
-                .include_value = true,
-                .skip_empty_name = true,
-                .own_properties_only = true,
-                .observable = false,
-            });
-            var iterator = Iterator.init(this.global, error_instance);
-            defer iterator.deinit();
-            const longest_name = @min(iterator.getLongestPropertyName(), 10);
-            var is_first_property = true;
-            while (iterator.next()) |field| {
-                const value = iterator.value;
-                if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
-                    continue;
-                }
+        if (error_instance != .zero) {
+            const error_instance_type = error_instance.jsType();
+            if (error_instance_type == .ErrorInstance) {
+                const Iterator = JSC.JSPropertyIterator(.{
+                    .include_value = true,
+                    .skip_empty_name = true,
+                    .own_properties_only = true,
+                    .observable = false,
+                    .only_non_index_properties = true,
+                });
+                var iterator = Iterator.init(this.global, error_instance);
+                defer iterator.deinit();
+                const longest_name = @min(iterator.getLongestPropertyName(), 10);
+                var is_first_property = true;
+                while (iterator.next()) |field| {
+                    const value = iterator.value;
+                    if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
+                        continue;
+                    }
 
-                // We special-case the code property. Let's avoid printing it twice.
-                if (field.eqlComptime("code")) {
-                    if (value.isString()) {
-                        const str = value.toBunString(this.global);
-                        if (!str.isEmpty()) {
-                            if (str.eql(name)) {
-                                continue;
+                    // We special-case the code property. Let's avoid printing it twice.
+                    if (field.eqlComptime("code")) {
+                        if (value.isString()) {
+                            const str = value.toBunString(this.global);
+                            if (!str.isEmpty()) {
+                                if (str.eql(name)) {
+                                    continue;
+                                }
                             }
                         }
                     }
-                }
 
-                const kind = value.jsType();
-                if (kind == .ErrorInstance and
-                    // avoid infinite recursion
-                    !prev_had_errors)
-                {
-                    if (field.eqlComptime("cause")) {
-                        saw_cause = true;
-                    }
-                    value.protect();
-                    try errors_to_append.append(value);
-                } else if (kind.isObject() or kind.isArray() or value.isPrimitive() or kind.isStringLike()) {
-                    var bun_str = bun.String.empty;
-                    defer bun_str.deref();
-                    const prev_disable_inspect_custom = formatter.disable_inspect_custom;
-                    const prev_quote_strings = formatter.quote_strings;
-                    const prev_max_depth = formatter.max_depth;
-                    formatter.depth += 1;
-                    defer {
-                        formatter.depth -= 1;
-                        formatter.max_depth = prev_max_depth;
-                        formatter.quote_strings = prev_quote_strings;
-                        formatter.disable_inspect_custom = prev_disable_inspect_custom;
-                    }
-                    formatter.max_depth = 1;
-                    formatter.quote_strings = true;
-                    formatter.disable_inspect_custom = true;
-
-                    const pad_left = longest_name -| field.length();
-                    is_first_property = false;
-                    try writer.writeByteNTimes(' ', pad_left);
-
-                    try writer.print(comptime Output.prettyFmt(" {s}<r><d>:<r> ", allow_ansi_color), .{field});
-
-
-                    // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
-                    if (allow_side_effects) {
-                        if (this.global.hasException()) {
-                            this.global.clearException();
+                    const kind = value.jsType();
+                    if (kind == .ErrorInstance and
+                        // avoid infinite recursion
+                        !prev_had_errors)
+                    {
+                        if (field.eqlComptime("cause")) {
+                            saw_cause = true;
                         }
-                    }
+                        value.protect();
+                        try errors_to_append.append(value);
+                    } else if (kind.isObject() or kind.isArray() or value.isPrimitive() or kind.isStringLike()) {
+                        var bun_str = bun.String.empty;
+                        defer bun_str.deref();
+                        const prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                        const prev_quote_strings = formatter.quote_strings;
+                        const prev_max_depth = formatter.max_depth;
+                        formatter.depth += 1;
+                        defer {
+                            formatter.depth -= 1;
+                            formatter.max_depth = prev_max_depth;
+                            formatter.quote_strings = prev_quote_strings;
+                            formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                        }
+                        formatter.max_depth = 1;
+                        formatter.quote_strings = true;
+                        formatter.disable_inspect_custom = true;
 
-                    formatter.format(
-                        JSC.Formatter.Tag.getAdvanced(
+                        const pad_left = longest_name -| field.length();
+                        is_first_property = false;
+                        try writer.writeByteNTimes(' ', pad_left);
+
+                        try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
+
+                        // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                        if (allow_side_effects) {
+                            if (this.global.hasException()) {
+                                this.global.clearException();
+                            }
+                        }
+
+                        formatter.format(
+                            JSC.Formatter.Tag.getAdvanced(
+                                value,
+                                this.global,
+                                .{ .disable_inspect_custom = true, .hide_global = true },
+                            ),
+                            Writer,
+                            writer,
                             value,
                             this.global,
-                            .{ .disable_inspect_custom = true, .hide_global = true },
-                        ),
+                            allow_ansi_color,
+                        );
+
+                        if (allow_side_effects) {
+                            // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                            if (this.global.hasException()) {
+                                this.global.clearException();
+                            }
+                        } else if (this.global.hasException() or formatter.failed) {
+                            return;
+                        }
+
+                        try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>\n", allow_ansi_color));
+                    }
+                }
+
+                if (!is_first_property) {
+                    try writer.writeAll("\n");
+                }
+            } else {
+                // If you do reportError([1,2,3]] we should still show something at least.
+                const tag = JSC.Formatter.Tag.getAdvanced(
+                    error_instance,
+                    this.global,
+                    .{ .disable_inspect_custom = true, .hide_global = true },
+                );
+                if (tag.tag != .NativeCode) {
+                    formatter.format(
+                        tag,
                         Writer,
                         writer,
-                        value,
+                        error_instance,
                         this.global,
                         allow_ansi_color,
                     );
-
-                    if (allow_side_effects) {
-                        // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
-                        if (this.global.hasException()) {
-                            this.global.clearException();
-                        }
-                    } else if (this.global.hasException() or formatter.failed) {
-                        return;
-                    }
-
-                    try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>\n", allow_ansi_color));
                 }
-            }
-
-            if (!is_first_property) {
-                try writer.writeAll("\n");
             }
 
             // "cause" is not enumerable, so the above loop won't see it.

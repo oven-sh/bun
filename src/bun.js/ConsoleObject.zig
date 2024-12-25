@@ -2001,13 +2001,6 @@ pub const Formatter = struct {
             this.failed = true;
             return;
         }
-        if (!this.stack_check.isSafeToRecurse()) {
-            this.failed = true;
-            if (this.can_throw_stack_overflow) {
-                this.globalThis.throwStackOverflow();
-            }
-            return;
-        }
 
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
         defer {
@@ -2016,6 +2009,14 @@ pub const Formatter = struct {
             }
         }
         if (comptime Format.canHaveCircularReferences()) {
+            if (!this.stack_check.isSafeToRecurse()) {
+                this.failed = true;
+                if (this.can_throw_stack_overflow) {
+                    this.globalThis.throwStackOverflow();
+                }
+                return;
+            }
+
             if (this.map_node == null) {
                 this.map_node = Visited.Pool.get(default_allocator);
                 this.map_node.?.data.clearRetainingCapacity();

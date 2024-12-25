@@ -253,12 +253,12 @@ extern "C" void Bun__StackCheck__initialize()
 extern "C" void* Bun__StackCheck__getMaxStack()
 {
 #if OS(WINDOWS)
-    // On Windows, get the stack bounds from the Thread Information Block (TIB)
-    NT_TIB* tib = (NT_TIB*)NtCurrentTeb();
-    return tib->StackLimit; // Return the lower bound of the stack
-#else
-    return stackBoundsForCurrentThread.end();
+    // Don't cache the value on Windows.
+    // Windows stack size changes much more frequently.
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
 #endif
+
+    return stackBoundsForCurrentThread.end();
 }
 
 }

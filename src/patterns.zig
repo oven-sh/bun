@@ -1,5 +1,5 @@
 const bun = @import("root").bun;
-const glob = @import("../glob.zig");
+const glob = @import("./glob.zig");
 const string = bun.string;
 const std = @import("std");
 const c_size_t = std.c_size_t;
@@ -53,49 +53,6 @@ fn matchesRegex(target: string, pattern: string) bool {
     return result >= 0;
 }
 
-fn isGlobPattern(pattern: string) bool {
-    return std.mem.contains(u8, pattern, '*') or std.mem.contains(u8, pattern, '?');
-}
-
-fn matchesGlob(pattern: string, target: string) bool {
-    var i = 0;
-    var j = 0;
-
-    while (i < pattern.len and j < target.len) {
-        switch (pattern[i]) {
-            '*' => {
-                if (i + 1 < pattern.len and pattern[i + 1] == '*') {
-                    // Handle '**' (any directory level)
-                    i += 2;
-                    while (j < target.len and target[j] != '/') {
-                        j += 1;
-                    }
-                } else {
-                    // Handle '*' (any characters except '/')
-                    i += 1;
-                    while (j < target.len and target[j] != '/') {
-                        j += 1;
-                    }
-                }
-            },
-            '?' => {
-                // Handle '?' (any single character)
-                i += 1;
-                j += 1;
-            },
-            else => {
-                // Match characters literally
-                if (pattern[i] != target[j]) return false;
-                i += 1;
-                j += 1;
-            },
-        }
-    }
-
-    // Ensure the entire pattern and target are consumed
-    return i == pattern.len and j == target.len;
-}
-
 pub fn matchesAnyPattern(target: string, patterns: []const string) bool {
     for (patterns) |pattern| {
         if (glob.detectGlobSyntax(pattern)) {
@@ -116,13 +73,6 @@ test "matchesRegex should correctly match valid regex patterns" {
     try testing.expect(!matchesRegex("hello", "^world$"));
     try testing.expect(matchesRegex("12345", "\\d+"));
     try testing.expect(!matchesRegex("abc", "\\d+"));
-}
-
-test "isGlobPattern should correctly identify glob patterns" {
-    try testing.expect(isGlobPattern("*.ts"));
-    try testing.expect(isGlobPattern("test?.txt"));
-    try testing.expect(!isGlobPattern("plain-text"));
-    try testing.expect(isGlobPattern("dir/**/*.js"));
 }
 
 test "matchesGlob should correctly match glob patterns" {

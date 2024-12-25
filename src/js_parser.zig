@@ -19084,7 +19084,7 @@ fn NewParser_(
                 },
                 .s_debugger => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    if (!p.define.drop_debugger) {
+                    if (p.define.drop_debugger) {
                         return;
                     }
                     try stmts.append(stmt.*);

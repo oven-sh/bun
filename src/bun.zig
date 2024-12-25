@@ -4153,7 +4153,10 @@ pub const StackCheck = struct {
         const remaining_stack = switch (builtin.os.tag) {
             .macos, .ios => stack_ptr -| this.cached_stack_end,
             .linux => stack_ptr -| this.cached_stack_end,
-            .windows => stack_ptr -| this.cached_stack_end,
+
+            // Reverse the operands for Windows
+            .windows => this.cached_stack_end -| stack_ptr,
+
             else => @compileError("Unsupported platform"),
         };
         return remaining_stack > 1024 * 128;

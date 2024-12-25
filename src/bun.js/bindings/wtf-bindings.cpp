@@ -247,12 +247,6 @@ extern "C" void Bun__StackCheck__initialize()
 
 extern "C" void* Bun__StackCheck__getMaxStack()
 {
-#if OS(WINDOWS)
-    // Don't cache the value on Windows.
-    // Windows stack size changes much more frequently.
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
-#endif
-
     return stackBoundsForCurrentThread.end();
 }
 

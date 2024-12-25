@@ -1850,7 +1850,7 @@ pub const Subprocess = struct {
                     defer arg.deref();
 
                     // if the string is empty, ignore it, don't add it to the argv
-                    if (arg.len == 0) {
+                    if (arg.isEmpty()) {
                         continue;
                     }
                     argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));

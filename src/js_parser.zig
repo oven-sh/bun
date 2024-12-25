@@ -3086,7 +3086,11 @@ pub const Parser = struct {
         var stmts = try p.allocator.alloc(js_ast.Stmt, 1);
         stmts[0] = Stmt{
             .data = .{
-                .s_lazy_export = expr.data,
+                .s_lazy_export = brk: {
+                    const data = try p.allocator.create(Expr.Data);
+                    data.* = expr.data;
+                    break :brk data;
+                },
             },
             .loc = expr.loc,
         };
@@ -19074,7 +19078,7 @@ fn NewParser_(
             const was_after_after_const_local_prefix = p.current_scope.is_after_const_local_prefix;
             p.current_scope.is_after_const_local_prefix = true;
 
-            switch (stmt.data) {
+            switch (@as(Stmt.Tag, stmt.data)) {
                 .s_directive, .s_comment, .s_empty => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                     try stmts.append(stmt.*);
@@ -19091,8 +19095,8 @@ fn NewParser_(
                     try stmts.append(stmt.*);
                 },
 
-                inline .s_enum, .s_local => |data, tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, data, was_after_after_const_local_prefix),
-                inline else => |data, tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, data),
+                inline .s_enum, .s_local => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)), was_after_after_const_local_prefix),
+                inline else => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag))),
 
                 // Only used by the bundler for lazy export ASTs.
                 .s_lazy_export => unreachable,

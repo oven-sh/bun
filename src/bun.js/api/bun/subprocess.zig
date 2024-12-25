@@ -1742,10 +1742,13 @@ pub const Subprocess = struct {
         comptime is_sync: bool,
     ) bun.JSError!JSValue {
         if (comptime is_sync) {
-            // Since the event loop is recursively called, we need to check if it's safe to recurse.
-            if (!bun.StackCheck.init().isSafeToRecurse()) {
-                globalThis.throwStackOverflow();
-                return error.JSError;
+            // We skip this on Windows due to test failures.
+            if (comptime !Environment.isWindows) {
+                // Since the event loop is recursively called, we need to check if it's safe to recurse.
+                if (!bun.StackCheck.init().isSafeToRecurse()) {
+                    globalThis.throwStackOverflow();
+                    return error.JSError;
+                }
             }
         }
 

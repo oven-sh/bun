@@ -19072,6 +19072,7 @@ fn NewParser_(
         fn visitAndAppendStmt(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt) anyerror!void {
             // By default any statement ends the const local prefix
             const was_after_after_const_local_prefix = p.current_scope.is_after_const_local_prefix;
+            p.current_scope.is_after_const_local_prefix = true;
 
             switch (stmt.data) {
                 .s_directive, .s_comment, .s_empty => {

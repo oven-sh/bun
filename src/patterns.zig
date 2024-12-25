@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const glob = @import("../glob.zig");
 const string = bun.string;
 const std = @import("std");
 const c_size_t = std.c_size_t;
@@ -97,8 +98,8 @@ fn matchesGlob(pattern: string, target: string) bool {
 
 pub fn matchesAnyPattern(target: string, patterns: []const string) bool {
     for (patterns) |pattern| {
-        if (isGlobPattern(pattern)) {
-            if (matchesGlob(target, pattern)) {
+        if (glob.detectGlobSyntax(pattern)) {
+            if (glob.matchImpl(pattern, target)) {
                 return true;
             }
         } else {

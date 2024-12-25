@@ -16135,7 +16135,7 @@ fn NewParser_(
         }
 
         // public for JSNode.JSXWriter usage
-        pub fn visitExpr(p: *P, expr: Expr) Expr {
+        pub inline fn visitExpr(p: *P, expr: Expr) Expr {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -19084,7 +19084,7 @@ fn NewParser_(
                 },
                 .s_debugger => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    if (!(stmt.data == .s_debugger and p.define.drop_debugger)) {
+                    if (!p.define.drop_debugger) {
                         return;
                     }
                     try stmts.append(stmt.*);
@@ -19115,7 +19115,6 @@ fn NewParser_(
                 try stmts.append(stmt.*);
             }
             pub fn s_export_clause(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportClause) !void {
-
                 // "export {foo}"
                 var end: usize = 0;
                 var any_replaced = false;
@@ -19178,6 +19177,8 @@ fn NewParser_(
                 if (remove_for_tree_shaking) {
                     return;
                 }
+
+                try stmts.append(stmt.*);
             }
             pub fn s_export_from(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportFrom) !void {
 
@@ -21726,20 +21727,24 @@ fn NewParser_(
             return res;
         }
 
+        fn visitSingleStmtBlock(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+            var new_stmt = stmt;
+            p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+            var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmt.data.s_block.stmts.len) catch unreachable;
+            stmts.appendSlice(stmt.data.s_block.stmts) catch unreachable;
+            p.visitStmts(&stmts, kind) catch unreachable;
+            p.popScope();
+            new_stmt.data.s_block.stmts = stmts.items;
+            if (p.options.features.minify_syntax) {
+                new_stmt = p.stmtsToSingleStmt(stmt.loc, stmts.items);
+            }
+
+            return new_stmt;
+        }
+
         fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
             if (stmt.data == .s_block) {
-                var new_stmt = stmt;
-                p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
-                var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmt.data.s_block.stmts.len) catch unreachable;
-                stmts.appendSlice(stmt.data.s_block.stmts) catch unreachable;
-                p.visitStmts(&stmts, kind) catch unreachable;
-                p.popScope();
-                new_stmt.data.s_block.stmts = stmts.items;
-                if (p.options.features.minify_syntax) {
-                    new_stmt = p.stmtsToSingleStmt(stmt.loc, stmts.items);
-                }
-
-                return new_stmt;
+                return p.visitSingleStmtBlock(stmt, kind);
             }
 
             const has_if_scope = switch (stmt.data) {

@@ -81,7 +81,7 @@ test("coverage excludes node_modules directory", () => {
 test("coverage include coverageInclude from bunfig", () => {
   const dir = tempDirWithFiles("cov", {
     "bunfig.toml": `
-    [coverage]
+    [test]
     coverageIncludes = ["demo.test.ts"]
     `,
     "demo.test.ts": `
@@ -103,7 +103,7 @@ test("coverage include coverageInclude from bunfig", () => {
 test("coverage exclude coverageExclude from bunfig", () => {
   const dir = tempDirWithFiles("cov", {
     "bunfig.toml": `
-    [coverage]
+    [test]
     coverageExclude = ["demo.test.ts"]
     `,
     "demo.test.ts": `
@@ -125,7 +125,7 @@ test("coverage exclude coverageExclude from bunfig", () => {
 test("coverage include and exclude coverageInclude and coverageExclude from bunfig", () => {
   const dir = tempDirWithFiles("cov", {
     "bunfig.toml": `
-    [coverage]
+    [test]
     coverageIncludes = ["demo.test.ts"]
     coverageExclude = ["demo.test.ts"]
     `,
@@ -148,7 +148,7 @@ test("coverage include and exclude coverageInclude and coverageExclude from bunf
 test("coverage include and exclude glob", () => {
   const dir = tempDirWithFiles("cov", {
     "bunfig.toml": `
-    [coverage]
+    [test]
     coverageIncludes = ["**/*.test.ts"]
     coverageExclude = ["demo2.test.ts"]
     `,

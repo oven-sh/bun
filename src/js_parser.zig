@@ -1612,40 +1612,51 @@ pub const SideEffects = enum(u1) {
 
     pub fn simplifyBoolean(p: anytype, expr: Expr) Expr {
         if (!p.options.features.dead_code_elimination) return expr;
-        switch (expr.data) {
-            .e_unary => |e| {
-                if (e.op == .un_not) {
-                    // "!!a" => "a"
-                    if (e.value.data == .e_unary and e.value.data.e_unary.op == .un_not) {
-                        return simplifyBoolean(p, e.value.data.e_unary.value);
+
+        var result: Expr = expr;
+        _simplifyBoolean(p, &result);
+        return result;
+    }
+
+    fn _simplifyBoolean(p: anytype, expr: *Expr) void {
+        while (true) {
+            switch (expr.data) {
+                .e_unary => |e| {
+                    if (e.op == .un_not) {
+                        // "!!a" => "a"
+                        if (e.value.data == .e_unary and e.value.data.e_unary.op == .un_not) {
+                            expr.* = e.value.data.e_unary.value;
+                            continue;
+                        }
+
+                        _simplifyBoolean(p, &e.value);
                     }
-
-                    e.value = simplifyBoolean(p, e.value);
-                }
-            },
-            .e_binary => |e| {
-                switch (e.op) {
-                    .bin_logical_and => {
-                        const effects = SideEffects.toBoolean(p, e.right.data);
-                        if (effects.ok and effects.value and effects.side_effects == .no_side_effects) {
-                            // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                            return e.left;
-                        }
-                    },
-                    .bin_logical_or => {
-                        const effects = SideEffects.toBoolean(p, e.right.data);
-                        if (effects.ok and !effects.value and effects.side_effects == .no_side_effects) {
-                            // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                            return e.left;
-                        }
-                    },
-                    else => {},
-                }
-            },
-            else => {},
+                },
+                .e_binary => |e| {
+                    switch (e.op) {
+                        .bin_logical_and => {
+                            const effects = SideEffects.toBoolean(p, e.right.data);
+                            if (effects.ok and effects.value and effects.side_effects == .no_side_effects) {
+                                // "if (anything && truthyNoSideEffects)" => "if (anything)"
+                                expr.* = e.left;
+                                continue;
+                            }
+                        },
+                        .bin_logical_or => {
+                            const effects = SideEffects.toBoolean(p, e.right.data);
+                            if (effects.ok and !effects.value and effects.side_effects == .no_side_effects) {
+                                // "if (anything || falsyNoSideEffects)" => "if (anything)"
+                                expr.* = e.left;
+                                continue;
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+            break;
         }
-
-        return expr;
     }
 
     pub const toNumber = Expr.Data.toNumber;
@@ -2274,10 +2285,18 @@ pub const SideEffects = enum(u1) {
     }
 
     pub fn toBoolean(p: anytype, exp: Expr.Data) Result {
+        // Only do this check once.
         if (!p.options.features.dead_code_elimination) {
             // value should not be read if ok is false, all existing calls to this function already adhere to this
             return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
         }
+
+        return toBooleanWithoutDCECheck(exp);
+    }
+
+    // Avoid passing through *P
+    // This is a very recursive function.
+    fn toBooleanWithoutDCECheck(exp: Expr.Data) Result {
         switch (exp) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
@@ -2311,10 +2330,9 @@ pub const SideEffects = enum(u1) {
                         return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                     },
                     .un_not => {
-                        var result = toBoolean(p, e_.value.data);
+                        const result = toBooleanWithoutDCECheck(e_.value.data);
                         if (result.ok) {
-                            result.value = !result.value;
-                            return result;
+                            return .{ .ok = true, .value = !result.value, .side_effects = result.side_effects };
                         }
                     },
                     else => {},
@@ -2324,21 +2342,21 @@ pub const SideEffects = enum(u1) {
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
-                        const result = toBoolean(p, e_.right.data);
+                        const result = toBooleanWithoutDCECheck(e_.right.data);
                         if (result.value and result.ok) {
                             return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_logical_and => {
                         // "anything && falsy" is falsy
-                        const result = toBoolean(p, e_.right.data);
+                        const result = toBooleanWithoutDCECheck(e_.right.data);
                         if (!result.value and result.ok) {
                             return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_comma => {
                         // "anything, truthy/falsy" is truthy/falsy
-                        var result = toBoolean(p, e_.right.data);
+                        var result = toBooleanWithoutDCECheck(e_.right.data);
                         if (result.ok) {
                             result.side_effects = .could_have_side_effects;
                             return result;
@@ -2376,7 +2394,7 @@ pub const SideEffects = enum(u1) {
                 }
             },
             .e_inlined_enum => |inlined| {
-                return toBoolean(p, inlined.value.data);
+                return toBooleanWithoutDCECheck(inlined.value.data);
             },
             else => {},
         }
@@ -10028,28 +10046,60 @@ fn NewParser_(
                     return p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
                 },
                 .t_if => {
-                    try p.lexer.next();
-                    try p.lexer.expect(.t_open_paren);
-                    const test_ = try p.parseExpr(.lowest);
-                    try p.lexer.expect(.t_close_paren);
-                    var stmtOpts = ParseStatementOptions{
-                        .lexical_decl = .allow_fn_inside_if,
-                    };
-                    const yes = try p.parseStmt(&stmtOpts);
-                    var no: ?Stmt = null;
-                    if (p.lexer.token == .t_else) {
+                    var current_loc = loc;
+                    var root_if: ?Stmt = null;
+                    var current_if: ?*S.If = null;
+
+                    while (true) {
                         try p.lexer.next();
-                        stmtOpts = ParseStatementOptions{
+                        try p.lexer.expect(.t_open_paren);
+                        const test_ = try p.parseExpr(.lowest);
+                        try p.lexer.expect(.t_close_paren);
+                        var stmtOpts = ParseStatementOptions{
                             .lexical_decl = .allow_fn_inside_if,
                         };
-                        no = try p.parseStmt(&stmtOpts);
+                        const yes = try p.parseStmt(&stmtOpts);
+
+                        // Create the if node
+                        const if_stmt = p.s(S.If{
+                            .test_ = test_,
+                            .yes = yes,
+                            .no = null,
+                        }, current_loc);
+
+                        // First if statement becomes root
+                        if (root_if == null) {
+                            root_if = if_stmt;
+                        }
+
+                        // Link to previous if statement's else branch
+                        if (current_if) |prev_if| {
+                            prev_if.no = if_stmt;
+                        }
+
+                        // Set current if for next iteration
+                        current_if = if_stmt.data.s_if;
+
+                        if (p.lexer.token != .t_else) {
+                            return root_if.?;
+                        }
+
+                        try p.lexer.next();
+
+                        // Handle final else
+                        if (p.lexer.token != .t_if) {
+                            stmtOpts = ParseStatementOptions{
+                                .lexical_decl = .allow_fn_inside_if,
+                            };
+                            current_if.?.no = try p.parseStmt(&stmtOpts);
+                            return root_if.?;
+                        }
+
+                        // Continue with else if
+                        current_loc = p.lexer.loc();
                     }
 
-                    return p.s(S.If{
-                        .test_ = test_,
-                        .yes = yes,
-                        .no = no,
-                    }, loc);
+                    unreachable;
                 },
                 .t_do => {
                     try p.lexer.next();
@@ -10169,7 +10219,6 @@ fn NewParser_(
                         var binding: ?js_ast.Binding = null;
 
                         // The catch binding is optional, and can be omitted
-                        // jarred: TIL!
                         if (p.lexer.token != .t_open_brace) {
                             try p.lexer.expect(.t_open_paren);
                             var value = try p.parseBinding(.{});
@@ -15905,15 +15954,19 @@ fn NewParser_(
 
         fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
             if (!p.options.features.dead_code_elimination) return false;
+            return bindingCanBeRemovedIfUnusedWithoutDCECheck(p, binding);
+        }
+
+        fn bindingCanBeRemovedIfUnusedWithoutDCECheck(p: *P, binding: Binding) bool {
             switch (binding.data) {
                 .b_array => |bi| {
                     for (bi.items) |*item| {
-                        if (!p.bindingCanBeRemovedIfUnused(item.binding)) {
+                        if (!p.bindingCanBeRemovedIfUnusedWithoutDCECheck(item.binding)) {
                             return false;
                         }
 
                         if (item.default_value) |*default| {
-                            if (!p.exprCanBeRemovedIfUnused(default)) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(default)) {
                                 return false;
                             }
                         }
@@ -15921,16 +15974,16 @@ fn NewParser_(
                 },
                 .b_object => |bi| {
                     for (bi.properties) |*property| {
-                        if (!property.flags.contains(.is_spread) and !p.exprCanBeRemovedIfUnused(&property.key)) {
+                        if (!property.flags.contains(.is_spread) and !p.exprCanBeRemovedIfUnusedWithoutDCECheck(&property.key)) {
                             return false;
                         }
 
-                        if (!p.bindingCanBeRemovedIfUnused(property.value)) {
+                        if (!p.bindingCanBeRemovedIfUnusedWithoutDCECheck(property.value)) {
                             return false;
                         }
 
                         if (property.default_value) |*default| {
-                            if (!p.exprCanBeRemovedIfUnused(default)) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(default)) {
                                 return false;
                             }
                         }
@@ -15944,6 +15997,10 @@ fn NewParser_(
 
         fn stmtsCanBeRemovedIfUnused(p: *P, stmts: []Stmt) bool {
             if (!p.options.features.dead_code_elimination) return false;
+            return stmtsCanBeRemovedifUnusedWithoutDCECheck(p, stmts);
+        }
+
+        fn stmtsCanBeRemovedifUnusedWithoutDCECheck(p: *P, stmts: []Stmt) bool {
             for (stmts) |stmt| {
                 switch (stmt.data) {
                     // These never have side effects
@@ -15968,7 +16025,7 @@ fn NewParser_(
                             continue;
                         }
 
-                        if (!p.exprCanBeRemovedIfUnused(&st.value)) {
+                        if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(&st.value)) {
                             return false;
                         }
                     },
@@ -15978,12 +16035,12 @@ fn NewParser_(
                         if (st.kind == .k_await_using) return false;
 
                         for (st.decls.slice()) |*decl| {
-                            if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
+                            if (!p.bindingCanBeRemovedIfUnusedWithoutDCECheck(decl.binding)) {
                                 return false;
                             }
 
                             if (decl.value) |*decl_value| {
-                                if (!p.exprCanBeRemovedIfUnused(decl_value)) {
+                                if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(decl_value)) {
                                     return false;
                                 } else if (st.kind == .k_using) {
                                     // "using" declarations are only side-effect free if they are initialized to null or undefined
@@ -15996,7 +16053,7 @@ fn NewParser_(
                     },
 
                     .s_try => |try_| {
-                        if (!p.stmtsCanBeRemovedIfUnused(try_.body) or (try_.finally != null and !p.stmtsCanBeRemovedIfUnused(try_.finally.?.stmts))) {
+                        if (!p.stmtsCanBeRemovedifUnusedWithoutDCECheck(try_.body) or (try_.finally != null and !p.stmtsCanBeRemovedifUnusedWithoutDCECheck(try_.finally.?.stmts))) {
                             return false;
                         }
                     },
@@ -16009,7 +16066,7 @@ fn NewParser_(
                             .stmt => |s2| {
                                 switch (s2.data) {
                                     .s_expr => |s_expr| {
-                                        if (!p.exprCanBeRemovedIfUnused(&s_expr.value)) {
+                                        if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(&s_expr.value)) {
                                             return false;
                                         }
                                     },
@@ -16028,7 +16085,7 @@ fn NewParser_(
                                 }
                             },
                             .expr => |*exp| {
-                                if (!p.exprCanBeRemovedIfUnused(exp)) {
+                                if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(exp)) {
                                     return false;
                                 }
                             },
@@ -17839,34 +17896,34 @@ fn NewParser_(
             return true;
         }
 
+        // This one is never called in places that haven't already checked if DCE is enabled.
         pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
-            if (!p.options.features.dead_code_elimination) return false;
             if (class.extends) |*extends| {
-                if (!p.exprCanBeRemovedIfUnused(extends)) {
+                if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(extends)) {
                     return false;
                 }
             }
 
             for (class.properties) |*property| {
                 if (property.kind == .class_static_block) {
-                    if (!p.stmtsCanBeRemovedIfUnused(property.class_static_block.?.stmts.slice())) {
+                    if (!p.stmtsCanBeRemovedifUnusedWithoutDCECheck(property.class_static_block.?.stmts.slice())) {
                         return false;
                     }
                     continue;
                 }
 
-                if (!p.exprCanBeRemovedIfUnused(&(property.key orelse unreachable))) {
+                if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(&(property.key orelse unreachable))) {
                     return false;
                 }
 
                 if (property.value) |*val| {
-                    if (!p.exprCanBeRemovedIfUnused(val)) {
+                    if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(val)) {
                         return false;
                     }
                 }
 
                 if (property.initializer) |*val| {
-                    if (!p.exprCanBeRemovedIfUnused(val)) {
+                    if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(val)) {
                         return false;
                     }
                 }
@@ -17880,6 +17937,11 @@ fn NewParser_(
         // This is to improve the reliability of fast refresh between page loads.
         pub fn exprCanBeRemovedIfUnused(p: *P, expr: *const Expr) bool {
             if (!p.options.features.dead_code_elimination) return false;
+
+            return exprCanBeRemovedIfUnusedWithoutDCECheck(p, expr);
+        }
+
+        fn exprCanBeRemovedIfUnusedWithoutDCECheck(p: *P, expr: *const Expr) bool {
             switch (expr.data) {
                 .e_null,
                 .e_undefined,
@@ -17897,7 +17959,7 @@ fn NewParser_(
                     return true;
                 },
 
-                .e_inlined_enum => |e| return p.exprCanBeRemovedIfUnused(&e.value),
+                .e_inlined_enum => |e| return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&e.value),
 
                 .e_dot => |ex| {
                     return ex.can_be_removed_if_unused;
@@ -17956,24 +18018,24 @@ fn NewParser_(
                     return true;
                 },
                 .e_if => |ex| {
-                    return p.exprCanBeRemovedIfUnused(&ex.test_) and
+                    return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.test_) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
                         ex.yes,
                         ex.test_,
                         true,
                     ) or
-                        p.exprCanBeRemovedIfUnused(&ex.yes)) and
+                        p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
                         ex.no,
                         ex.test_,
                         false,
-                    ) or p.exprCanBeRemovedIfUnused(
+                    ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
                         &ex.no,
                     ));
                 },
                 .e_array => |ex| {
                     for (ex.items.slice()) |*item| {
-                        if (!p.exprCanBeRemovedIfUnused(item)) {
+                        if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(item)) {
                             return false;
                         }
                     }
@@ -17989,7 +18051,7 @@ fn NewParser_(
                         }
 
                         if (property.value) |*val| {
-                            if (!p.exprCanBeRemovedIfUnused(val)) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(val)) {
                                 return false;
                             }
                         }
@@ -18001,7 +18063,7 @@ fn NewParser_(
                     // can be removed. The annotation causes us to ignore the target.
                     if (ex.can_be_unwrapped_if_unused) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnused(arg)) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
                                 return false;
                             }
                         }
@@ -18014,7 +18076,7 @@ fn NewParser_(
                     // can be removed. The annotation causes us to ignore the target.
                     if (ex.can_be_unwrapped_if_unused) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnused(arg)) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
                                 return false;
                             }
                         }
@@ -18027,7 +18089,7 @@ fn NewParser_(
                         // These operators must not have any type conversions that can execute code
                         // such as "toString" or "valueOf". They must also never throw any exceptions.
                         .un_void, .un_not => {
-                            return p.exprCanBeRemovedIfUnused(&ex.value);
+                            return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.value);
                         },
 
                         // The "typeof" operator doesn't do any type conversions so it can be removed
@@ -18045,7 +18107,7 @@ fn NewParser_(
                                 return true;
                             }
 
-                            return p.exprCanBeRemovedIfUnused(&ex.value);
+                            return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.value);
                         },
 
                         else => {},
@@ -18059,15 +18121,15 @@ fn NewParser_(
                         .bin_strict_ne,
                         .bin_comma,
                         .bin_nullish_coalescing,
-                        => return p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right),
+                        => return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
 
                         // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
-                        .bin_logical_or => return p.exprCanBeRemovedIfUnused(&ex.left) and
-                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, false) or p.exprCanBeRemovedIfUnused(&ex.right)),
+                        .bin_logical_or => return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and
+                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, false) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right)),
 
                         // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
-                        .bin_logical_and => return p.exprCanBeRemovedIfUnused(&ex.left) and
-                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, true) or p.exprCanBeRemovedIfUnused(&ex.right)),
+                        .bin_logical_and => return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and
+                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, true) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right)),
 
                         // For "==" and "!=", pretend the operator was actually "===" or "!==". If
                         // we know that we can convert it to "==" or "!=", then we can consider the
@@ -18079,14 +18141,14 @@ fn NewParser_(
                             ex.left.data,
                             ex.right.data,
                         ) and
-                            p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right),
+                            p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
                         else => {},
                     }
                 },
                 .e_template => |templ| {
                     if (templ.tag == null) {
                         for (templ.parts) |part| {
-                            if (!p.exprCanBeRemovedIfUnused(&part.value) or part.value.knownPrimitive() == .unknown) {
+                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(&part.value) or part.value.knownPrimitive() == .unknown) {
                                 return false;
                             }
                         }
@@ -18100,7 +18162,7 @@ fn NewParser_(
             return false;
         }
 
-        // // This is based on exprCanBeRemovedIfUnused.
+        // // This is based on exprCanBeRemoved
         // // The main difference: identifiers, functions, arrow functions cause it to return false
         // pub fn exprCanBeHoistedForJSX(p: *P, expr: *const Expr) bool {
         //     if (comptime jsx_transform_type != .react) {

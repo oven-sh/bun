@@ -1711,16 +1711,19 @@ pub const Subprocess = struct {
     } {
         var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
         defer arg0.deinit();
-        var path_buf: bun.PathBuffer = undefined;
+        // Heap allocate it to ensure we don't run out of stack space.
+        const path_buf: *bun.PathBuffer = try bun.default_allocator.create(bun.PathBuffer);
+        defer bun.default_allocator.destroy(path_buf);
+
         var actual_argv0: [:0]const u8 = "";
 
         if (argv0 == null) {
-            const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+            const resolved = Which.which(path_buf, PATH, cwd, arg0.slice()) orelse {
                 return throwCommandNotFound(globalThis, arg0.slice());
             };
             actual_argv0 = try allocator.dupeZ(u8, resolved);
         } else {
-            const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
+            const resolved = Which.which(path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
                 return throwCommandNotFound(globalThis, arg0.slice());
             };
             actual_argv0 = try allocator.dupeZ(u8, resolved);

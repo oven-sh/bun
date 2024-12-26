@@ -37,6 +37,7 @@ const { inspect } = require("node:util");
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
@@ -352,15 +353,36 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
 EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
 
 EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
-  var { _events: events } = this;
-  if (type && events) {
-    if (events[type]) {
-      delete events[type];
-      this._eventsCount--;
+  const events = this._events;
+  if (events === undefined) return this;
+
+  if (events.removeListener === undefined) {
+    if (type) {
+      if (events[type]) {
+        delete events[type];
+        this._eventsCount--;
+      }
+    } else {
+      this._events = { __proto__: null };
     }
-  } else {
-    this._events = { __proto__: null };
+    return this;
   }
+
+  // Emit removeListener for all listeners on all events
+  if (!type) {
+    for (const key of ReflectOwnKeys(events)) {
+      if (key === "removeListener") continue;
+      this.removeAllListeners(key);
+    }
+    this.removeAllListeners("removeListener");
+    this._events = { __proto__: null };
+    this._eventsCount = 0;
+    return this;
+  }
+
+  // emit in LIFO order
+  const listeners = events[type];
+  for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
   return this;
 };
 

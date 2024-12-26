@@ -197,17 +197,6 @@ const MacroRefData = struct {
 
 const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
 
-pub const AllocatedNamesPool = ObjectPool(
-    std.ArrayList(string),
-    struct {
-        pub fn init(allocator: std.mem.Allocator) anyerror!std.ArrayList(string) {
-            return std.ArrayList(string).init(allocator);
-        }
-    }.init,
-    true,
-    4,
-);
-
 const Substitution = union(enum) {
     success: Expr,
     failure: Expr,
@@ -2611,7 +2600,7 @@ const StmtList = ListManaged(Stmt);
 // This hash table is used every time we parse function args
 // Rather than allocating a new hash table each time, we can just reuse the previous allocation
 
-const StringVoidMap = struct {
+pub const StringVoidMap = struct {
     allocator: Allocator,
     map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 

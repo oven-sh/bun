@@ -4186,4 +4186,8 @@ pub const PathBufferPool = struct {
         var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
         path_buf.deinit();
     }
+
+    pub fn deleteAll() void {
+        Pool.deleteAll();
+    }
 };

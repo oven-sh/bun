@@ -523,16 +523,6 @@ pub const WebWorker = struct {
             arena_.deinit();
         }
 
-        const pools_to_delete = .{
-            bun.WPathBufferPool,
-            bun.PathBufferPool,
-            bun.JSC.ConsoleObject.Formatter.Visited.Pool,
-            bun.js_parser.StringVoidMap.Pool,
-            JSC.WebCore.ByteListPool,
-        };
-        inline for (pools_to_delete) |pool| {
-            pool.deleteAll();
-        }
         bun.exitThread();
     }
 

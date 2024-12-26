@@ -60,6 +60,7 @@ public:
     void rejectPull(JSC::JSGlobalObject*, JSC::JSValue error);
     void callPullIfNeeded(JSC::JSGlobalObject*);
     bool shouldCallPull() const;
+    JSReadableStream* stream() const;
 
 private:
     JSReadableStreamDefaultController(JSC::VM&, JSC::Structure*);
@@ -67,7 +68,7 @@ private:
     void finishCreation(JSC::VM&, JSReadableStream*);
 
     // Internal slots
-    JSC::WriteBarrier<JSReadableStream> m_stream;
+    JSC::WriteBarrier<JSObject> m_stream;
     JSC::LazyProperty<JSObject, JSC::JSArray> m_queue;
     JSC::WriteBarrier<JSC::JSObject> m_pullAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_cancelAlgorithm;

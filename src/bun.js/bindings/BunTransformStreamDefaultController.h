@@ -31,15 +31,26 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    bool enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
-    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
-    void terminate(JSC::JSGlobalObject* globalObject);
+    bool enqueue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
+    bool enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk) { return enqueue(this->vm(), globalObject, chunk); }
+    void error(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue error);
+    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue error) { this->error(this->vm(), globalObject, error); }
+    void terminate(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void terminate(JSC::JSGlobalObject* globalObject) { terminate(this->vm(), globalObject); }
+
+    void clearAlgorithms()
+    {
+        m_transformAlgorithm.clear();
+        m_flushAlgorithm.clear();
+    }
+
+    JSTransformStream* stream() const;
 
 private:
     JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSTransformStream* transformStream);
 
-    JSC::WriteBarrier<JSTransformStream> m_stream;
+    JSC::WriteBarrier<JSObject> m_stream;
     JSC::WriteBarrier<JSC::JSObject> m_flushPromise;
     JSC::WriteBarrier<JSC::JSObject> m_transformAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_flushAlgorithm;

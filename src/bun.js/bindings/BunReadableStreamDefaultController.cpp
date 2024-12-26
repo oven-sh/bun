@@ -37,6 +37,11 @@ JSReadableStreamDefaultController* JSReadableStreamDefaultController::create(VM&
     return controller;
 }
 
+JSReadableStream* JSReadableStreamDefaultController::stream() const
+{
+    return jsDynamicCast<JSReadableStream*>(m_stream.get());
+}
+
 JSValue JSReadableStreamDefaultController::desiredSizeValue()
 {
     if (!canCloseOrEnqueue())
@@ -61,7 +66,7 @@ bool JSReadableStreamDefaultController::canCloseOrEnqueue() const
         return false;
 
     // Get stream state
-    auto* stream = jsDynamicCast<JSReadableStream*>(m_stream.get());
+    auto* stream = this->stream();
     ASSERT(stream);
 
     return stream->state() == JSReadableStream::State::Readable;
@@ -74,7 +79,7 @@ JSValue JSReadableStreamDefaultController::enqueue(VM& vm, JSGlobalObject* globa
     if (!canCloseOrEnqueue())
         return throwTypeError(globalObject, scope, "Cannot enqueue chunk to closed stream"_s);
 
-    auto* stream = jsDynamicCast<JSReadableStream*>(m_stream.get());
+    auto* stream = this->stream();
     ASSERT(stream);
 
     // If we have a size algorithm, use it to calculate chunk size
@@ -132,7 +137,7 @@ void JSReadableStreamDefaultController::close(VM& vm, JSGlobalObject* globalObje
     if (!canCloseOrEnqueue())
         return;
 
-    auto* stream = jsDynamicCast<JSReadableStream*>(m_stream.get());
+    auto* stream = this->stream();
     ASSERT(stream);
 
     m_closeRequested = true;
@@ -236,7 +241,7 @@ void JSReadableStreamDefaultController::callPullIfNeeded(JSGlobalObject* globalO
 
 bool JSReadableStreamDefaultController::shouldCallPull() const
 {
-    auto* stream = jsDynamicCast<JSReadableStream*>(m_stream.get());
+    auto* stream = this->stream();
     ASSERT(stream);
 
     if (!m_started)

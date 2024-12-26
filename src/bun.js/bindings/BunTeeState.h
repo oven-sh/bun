@@ -20,7 +20,14 @@ public:
     static TeeState* create(VM&, JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadableStream* branch1, JSReadableStream* branch2);
     static Structure* createStructure(VM&, JSGlobalObject*);
 
-    static Structure* structure(VM&, JSGlobalObject*);
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

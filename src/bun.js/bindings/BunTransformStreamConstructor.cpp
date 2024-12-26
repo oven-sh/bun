@@ -1,10 +1,14 @@
 #include "root.h"
 
+#include "BunReadableStream.h"
+#include "BunWritableStream.h"
+#include "BunTransformStream.h"
+#include "BunReadableStreamDefaultReader.h"
+#include "BunTransformStreamDefaultController.h"
+
 #include "ZigGlobalObject.h"
 #include "BunTransformStreamConstructor.h"
-#include "BunTransformStream.h"
 #include "BunTransformStreamPrototype.h"
-#include "BunTransformStreamDefaultController.h"
 #include "BunBuiltinNames.h"
 
 #include "ErrorCode.h"

@@ -1,7 +1,14 @@
+#include "root.h"
+
+#include "BunWritableStream.h"
+#include "BunReadableStream.h"
 #include "BunTransformStream.h"
 #include "BunTransformStreamDefaultController.h"
+
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+
+#include "BunWritableStreamDefaultController.h"
 
 namespace Bun {
 
@@ -77,13 +84,70 @@ void JSTransformStream::enqueue(VM& vm, JSGlobalObject* globalObject, JSValue ch
 void JSTransformStream::error(VM& vm, JSGlobalObject* globalObject, JSValue error)
 {
     if (m_controller)
-        m_controller->error(globalObject, error);
+        m_controller->error(vm, globalObject, error);
 }
 
 void JSTransformStream::terminate(VM& vm, JSGlobalObject* globalObject)
 {
     if (m_controller)
-        m_controller->terminate(globalObject);
+        m_controller->terminate(vm, globalObject);
+}
+
+void JSTransformStream::errorWritableAndUnblockWrite(VM& vm, JSGlobalObject* globalObject, JSValue error)
+{
+    if (m_controller) {
+        auto* controller = this->controller();
+        // Clear algorithms on controller
+        controller->clearAlgorithms();
+
+        // Error the writable stream's controller if needed
+        if (auto* writable = writableStream()) {
+            if (auto* controller = writable->controller()) {
+                controller->error(vm, globalObject, error);
+            }
+        }
+
+        this->unblockWrite(vm, globalObject);
+    }
+}
+
+void JSTransformStream::unblockWrite(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    // If stream.[[backpressure]] is true, perform ! TransformStreamSetBackpressure(stream, false).
+    if (m_backpressure) {
+        if (m_backpressureChangePromise) {
+            m_backpressureChangePromise->fulfillWithNonPromise(globalObject, jsUndefined());
+            m_backpressureChangePromise.clear();
+        }
+    }
+
+    m_backpressure = false;
+}
+
+JSWritableStream* JSTransformStream::writableStream() const
+{
+    return jsCast<JSWritableStream*>(m_writable.get());
+}
+
+JSReadableStream* JSTransformStream::readableStream() const
+{
+    return jsCast<JSReadableStream*>(m_readable.get());
+}
+
+void JSTransformStream::setBackpressure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    if (m_backpressure) {
+        return;
+    }
+
+    // TransformStreamSetBackpressure(stream, backpressure) performs the following steps:
+    // Assert: stream.[[backpressure]] is not backpressure.
+    if (m_backpressureChangePromise) {
+        m_backpressureChangePromise->fulfillWithNonPromise(globalObject, jsUndefined());
+        m_backpressureChangePromise.clear();
+    }
+
+    m_backpressure = true;
 }
 
 } // namespace Bun

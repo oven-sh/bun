@@ -1,10 +1,14 @@
 #include "root.h"
 
+#include "AbortController.h"
+#include "JSDOMConvertInterface.h"
+#include <JavaScriptCore/JSPromise.h>
+#include "JSAbortController.h"
+#include <JavaScriptCore/WriteBarrierInlines.h>
+
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSPromise.h>
-#include "JSAbortController.h"
 
 #include "BunWritableStreamDefaultController.h"
 #include "BunWritableStream.h"
@@ -18,6 +22,26 @@
 #include "DOMJITIDLType.h"
 
 namespace Bun {
+
+JSWritableStream* JSWritableStreamDefaultController::stream() const
+{
+    return jsDynamicCast<JSWritableStream*>(m_stream.get());
+}
+
+void JSWritableStreamDefaultController::setStream(JSC::VM& vm, JSWritableStream* stream) { m_stream.set(vm, this, stream); }
+void JSWritableStreamDefaultController::setAbortAlgorithm(JSC::VM& vm, JSC::JSObject* abortAlgorithm) { m_abortAlgorithm.set(vm, this, abortAlgorithm); }
+void JSWritableStreamDefaultController::setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm) { m_closeAlgorithm.set(vm, this, closeAlgorithm); }
+void JSWritableStreamDefaultController::setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm) { m_writeAlgorithm.set(vm, this, writeAlgorithm); }
+
+JSC::GCClient::IsoSubspace* JSWritableStreamDefaultController::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); });
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerCloseFulfill, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -100,6 +124,13 @@ void JSWritableStreamDefaultController::finishCreation(JSC::VM& vm)
     });
 }
 
+WebCore::AbortSignal& JSWritableStreamDefaultController::signal() const
+{
+    auto* abortController = m_abortController.getInitializedOnMainThread(this);
+    auto& impl = abortController->wrapped();
+    return impl.signal();
+}
+
 Ref<WebCore::AbortSignal> JSWritableStreamDefaultController::abortSignal() const
 {
     auto* abortController = m_abortController.getInitializedOnMainThread(this);
@@ -107,13 +138,12 @@ Ref<WebCore::AbortSignal> JSWritableStreamDefaultController::abortSignal() const
     return impl.protectedSignal();
 }
 
-JSC::JSValue JSWritableStreamDefaultController::error(JSGlobalObject* globalObject, JSValue reason)
+JSC::JSValue JSWritableStreamDefaultController::error(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue reason)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Let stream be this.[[stream]].
-    JSWritableStream* stream = m_stream.get();
+    JSWritableStream* stream = this->stream();
 
     // 2. Assert: stream is not undefined.
     ASSERT(stream);
@@ -147,7 +177,7 @@ bool JSWritableStreamDefaultController::shouldCallWrite() const
     if (m_inFlightWriteRequest)
         return false;
 
-    if (!m_stream || m_stream->state() != JSWritableStream::State::Writable)
+    if (!stream() || stream()->state() != JSWritableStream::State::Writable)
         return false;
 
     return true;
@@ -164,23 +194,17 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     JSWritableStreamDefaultController* thisObject = jsCast<JSWritableStreamDefaultController*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
-}
 
-template<typename Visitor>
-void JSWritableStreamDefaultController::visitAdditionalChildren(Visitor& visitor)
-{
-    visitor.append(m_stream);
-    visitor.append(m_abortAlgorithm);
-    visitor.append(m_closeAlgorithm);
-    visitor.append(m_writeAlgorithm);
-    visitor.append(m_strategySizeAlgorithm);
-    visitor.append(m_queue);
-    m_abortController.visit(visitor);
+    visitor.append(thisObject->m_stream);
+    visitor.append(thisObject->m_abortAlgorithm);
+    visitor.append(thisObject->m_closeAlgorithm);
+    visitor.append(thisObject->m_writeAlgorithm);
+    visitor.append(thisObject->m_strategySizeAlgorithm);
+    visitor.append(thisObject->m_queue);
+    thisObject->m_abortController.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSWritableStreamDefaultController);
 
 const JSC::ClassInfo JSWritableStreamDefaultController::s_info = {
     "WritableStreamDefaultController"_s,
@@ -196,7 +220,7 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Let stream be this.[[stream]].
-    JSWritableStream* stream = m_stream.get();
+    JSWritableStream* stream = this->stream();
 
     // 2. Assert: stream is not undefined.
     ASSERT(stream);
@@ -256,8 +280,8 @@ bool JSWritableStreamDefaultController::started() const
 void JSWritableStreamDefaultController::errorSteps()
 {
     // Implementation of error steps for the controller
-    if (m_stream)
-        m_stream->error(globalObject(), jsUndefined());
+    if (stream())
+        stream()->error(globalObject(), jsUndefined());
 }
 
 JSValue JSWritableStreamDefaultController::performAbortAlgorithm(JSValue reason)

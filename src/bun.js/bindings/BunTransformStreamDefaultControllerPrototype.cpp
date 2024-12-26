@@ -87,7 +87,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerError, (JSGlobalObjec
     if (UNLIKELY(!controller))
         return throwVMTypeError(globalObject, scope, "Receiver must be a TransformStreamDefaultController"_s);
 
-    controller->error(globalObject, callFrame->argument(0));
+    controller->error(vm, globalObject, callFrame->argument(0));
     return JSValue::encode(jsUndefined());
 }
 

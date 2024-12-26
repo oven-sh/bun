@@ -1,11 +1,14 @@
 #include "root.h"
 
-#include "BunReadableStreamDefaultReaderPrototype.h"
-#include "BunReadableStreamDefaultReaderConstructor.h"
-#include "BunReadableStreamDefaultReader.h"
+#include "BunReadableStreamDefaultController.h"
 #include "BunReadableStream.h"
+#include "BunReadableStreamDefaultReader.h"
+
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSObjectInlines.h>
+
+#include "BunReadableStreamDefaultReaderPrototype.h"
+#include "BunReadableStreamDefaultReaderConstructor.h"
 
 namespace Bun {
 

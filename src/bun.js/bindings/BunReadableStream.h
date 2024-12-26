@@ -45,8 +45,8 @@ public:
     bool isLocked() const;
     bool isDisturbed() const { return m_disturbed; }
 
-    JSReadableStreamDefaultController* controller() { return jsCast<JSReadableStreamDefaultController*>(m_controller.get()); }
-    JSReadableStreamDefaultReader* reader() { return jsCast<JSReadableStreamDefaultReader*>(m_reader.get()); }
+    JSReadableStreamDefaultController* controller() const;
+    JSReadableStreamDefaultReader* reader() const;
 
     bool locked() const { return !!m_reader; }
     JSC::JSValue getReader(VM&, JSGlobalObject*, JSValue options = jsUndefined());
@@ -76,7 +76,7 @@ private:
 
     mutable JSC::WriteBarrier<JSObject> m_controller;
     mutable JSC::WriteBarrier<JSObject> m_reader;
-    mutable JSC::WriteBarrier<JSC::JSObject> m_storedError;
+    mutable JSC::WriteBarrier<JSObject> m_storedError;
 
     State m_state { State::Readable };
     bool m_disturbed { false };

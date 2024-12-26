@@ -25,20 +25,19 @@ JSReadableStreamDefaultReader* JSReadableStreamDefaultReader::create(JSC::VM& vm
     reader->m_stream.set(vm, reader, stream);
     reader->m_readRequests.initLater(
         [](const auto& init) {
-            auto& vm = init.vm();
-            auto& globalObject = init.owner()->globalObject();
+            auto* globalObject = init.owner->globalObject();
             init.set(JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0));
         });
     reader->m_closedPromise.initLater(
         [](const auto& init) {
-            auto& vm = init.vm();
-            auto& globalObject = init.owner()->globalObject();
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
             init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
         });
     reader->m_readyPromise.initLater(
         [](const auto& init) {
-            auto& vm = init.vm();
-            auto& globalObject = init.owner()->globalObject();
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
             init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
         });
     return reader;
@@ -47,7 +46,7 @@ JSReadableStreamDefaultReader* JSReadableStreamDefaultReader::create(JSC::VM& vm
 template<typename Visitor>
 void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* reader = jsCast<JSReadableStreamDefaultReader*>(cell);
+    auto* reader = static_cast<JSReadableStreamDefaultReader*>(cell);
     ASSERT_GC_OBJECT_INHERITS(reader, JSReadableStreamDefaultReader::info());
     Base::visitChildren(reader, visitor);
     visitor.append(reader->m_stream);
@@ -82,7 +81,7 @@ void JSReadableStreamDefaultReader::releaseLock()
         return;
 
     // Release the stream's reader reference
-    m_stream->setReader(nullptr);
+    stream()->setReader(nullptr);
     detach();
 }
 
@@ -114,6 +113,11 @@ JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* glob
     stream()->controller()->callPullIfNeeded(globalObject);
 
     return promise;
+}
+
+JSReadableStream* JSReadableStreamDefaultReader::stream() const
+{
+    return jsCast<JSReadableStream*>(m_stream.get());
 }
 
 GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceForImpl(JSC::VM& vm)

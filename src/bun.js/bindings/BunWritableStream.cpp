@@ -85,8 +85,8 @@ JSValue JSWritableStream::error(JSGlobalObject* globalObject, JSValue error)
     m_state = State::Errored;
     m_storedError.set(vm, this, error);
 
-    if (m_writer)
-        m_writer->error(globalObject, error);
+    if (auto* writer = this->writer())
+        writer->error(globalObject, error);
 
     RELEASE_AND_RETURN(scope, jsUndefined());
 }
@@ -306,7 +306,7 @@ JSValue JSWritableStream::close(JSGlobalObject* globalObject)
     m_closeRequest.set(vm, this, closeRequest);
 
     // 9. Perform ! WritableStreamDefaultControllerClose(this.[[controller]]).
-    m_controller->close(globalObject);
+    controller()->close(globalObject);
 
     // 10. Return closeRequest.[[promise]].
     return closeRequest;
@@ -329,7 +329,7 @@ void JSWritableStream::finishInFlightClose()
     m_state = State::Closed;
 
     // 5. Let writer be this.[[writer]].
-    auto* writer = m_writer.get();
+    auto* writer = this->writer();
 
     // 6. If writer is not undefined,
     if (writer) {
@@ -359,13 +359,33 @@ void JSWritableStream::finishInFlightCloseWithError(JSValue error)
     m_storedError.set(vm, this, error);
 
     // 6. Let writer be this.[[writer]].
-    auto* writer = m_writer.get();
+    auto* writer = this->writer();
 
     // 7. If writer is not undefined,
     if (writer) {
         // a. Reject writer.[[closedPromise]] with error.
         writer->rejectClosedPromise(globalObject, error);
     }
+}
+
+JSWritableStreamDefaultController* JSWritableStream::controller() const
+{
+    return jsCast<JSWritableStreamDefaultController*>(m_controller.get());
+}
+
+void JSWritableStream::setController(JSWritableStreamDefaultController* controller)
+{
+    m_controller.set(vm(), this, controller);
+}
+
+JSWritableStreamDefaultWriter* JSWritableStream::writer() const
+{
+    return jsCast<JSWritableStreamDefaultWriter*>(m_writer.get());
+}
+
+void JSWritableStream::setWriter(VM& vm, JSWritableStreamDefaultWriter* writer)
+{
+    m_writer.set(vm, this, writer);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -376,7 +396,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveAbortPromiseWithUndefined, (JSGlobalOb
     JSPromise* promise = jsDynamicCast<JSPromise*>(callFrame->argument(1));
     if (!promise)
         return JSValue::encode(jsUndefined());
-    promise->resolve(globalObject, jsUndefined());
+    promise->fulfillWithNonPromise(globalObject, jsUndefined());
     return JSValue::encode(jsUndefined());
 }
 

@@ -17,24 +17,19 @@ public:
 
     static JSWritableStreamDefaultWriter* create(JSC::VM&, JSC::Structure*, JSWritableStream*);
 
-    template<typename CellType, JSC::SubspaceAccess>
+    template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWritableStreamDefaultWriter, Base);
-        return &vm.plainObjectSpace();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
-    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     // JavaScript-visible properties
     JSC::JSPromise* closed() { return m_closedPromise.get(this); }
@@ -48,7 +43,7 @@ public:
     void error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
 
     // Internal APIs for C++ use
-    JSWritableStream* stream() { return m_stream.get(); }
+    JSWritableStream* stream() const { return m_stream.get(); }
     void release(); // For releaseLock()
     void write(JSC::JSGlobalObject*, JSC::JSValue chunk);
     void abort(JSC::JSGlobalObject*, JSC::JSValue reason = JSC::jsUndefined());
@@ -59,7 +54,7 @@ protected:
     void finishCreation(JSC::VM&);
 
 private:
-    JSC::WriteBarrier<JSWritableStream> m_stream;
+    mutable JSC::WriteBarrier<JSWritableStream> m_stream;
     JSC::LazyProperty<JSC::JSObject, JSC::JSPromise> m_closedPromise;
     JSC::LazyProperty<JSC::JSObject, JSC::JSPromise> m_readyPromise;
     JSC::LazyProperty<JSC::JSObject, JSC::JSArray> m_writeRequests;

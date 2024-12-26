@@ -16,7 +16,7 @@ class JSReadableStream;
 class JSReadableStreamDefaultReader final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr bool needsDestruction = true;
+    static constexpr bool needsDestruction = false;
 
     static JSReadableStreamDefaultReader* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStream* stream);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -24,7 +24,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static Structure* structure(JSC::VM& vm, JSGlobalObject* globalObject);
     static JSObject* prototype(JSC::VM& vm, JSGlobalObject* globalObject);
     static JSObject* constructor(JSC::VM& vm, JSGlobalObject* globalObject, JSValue prototype);
 
@@ -43,7 +42,7 @@ public:
     // Public API for C++ usage
     JSC::JSPromise* readyPromise() { return m_readyPromise.get(this); }
     JSC::JSPromise* closedPromise() { return m_closedPromise.get(this); }
-    JSReadableStream* stream() { return m_stream.get(); }
+    JSReadableStream* stream() const;
 
     JSC::JSPromise* read(JSC::VM&, JSGlobalObject*);
     JSC::JSPromise* cancel(JSC::VM&, JSGlobalObject*, JSValue reason);
@@ -64,7 +63,7 @@ private:
     void finishCreation(JSC::VM&);
 
     // Internal slots defined by the spec
-    JSC::WriteBarrier<JSReadableStream> m_stream;
+    mutable JSC::WriteBarrier<JSObject> m_stream;
     JSC::LazyProperty<JSObject, JSC::JSPromise> m_readyPromise;
     JSC::LazyProperty<JSObject, JSC::JSPromise> m_closedPromise;
     JSC::LazyProperty<JSObject, JSC::JSArray> m_readRequests;

@@ -39,10 +39,10 @@ public:
 
     State state() const { return m_state; }
     void setState(State state) { m_state = state; }
-    JSWritableStreamDefaultController* controller() const { return m_controller.get(); }
-    void setController(JSWritableStreamDefaultController* controller) { m_controller.set(vm(), this, controller); }
-    JSWritableStreamDefaultWriter* writer() const { return m_writer.get(); }
-    void setWriter(VM& vm, JSWritableStreamDefaultWriter* writer) { m_writer.set(vm, this, writer); }
+    JSWritableStreamDefaultController* controller() const;
+    void setController(JSWritableStreamDefaultController* controller);
+    JSWritableStreamDefaultWriter* writer() const;
+    void setWriter(VM& vm, JSWritableStreamDefaultWriter* writer);
     JSValue storedError() const { return m_storedError.get(); }
     void setStoredError(VM& vm, JSValue error) { m_storedError.set(vm, this, error); }
     JSPromise* pendingAbortRequestPromise() const { return m_pendingAbortRequestPromise.get(); }
@@ -61,14 +61,14 @@ private:
     void finishCreation(VM&);
 
     State m_state { State::Writable };
-    WriteBarrier<JSWritableStreamDefaultController> m_controller;
-    WriteBarrier<JSWritableStreamDefaultWriter> m_writer;
-    WriteBarrier<JSPromise> m_closeRequest;
-    WriteBarrier<JSPromise> m_inFlightWriteRequest;
-    WriteBarrier<JSPromise> m_inFlightCloseRequest;
-    WriteBarrier<Unknown> m_storedError;
-    WriteBarrier<JSPromise> m_pendingAbortRequestPromise;
-    WriteBarrier<Unknown> m_pendingAbortRequestReason;
+    mutable WriteBarrier<JSObject> m_controller;
+    mutable WriteBarrier<JSObject> m_writer;
+    mutable WriteBarrier<JSPromise> m_closeRequest;
+    mutable WriteBarrier<JSPromise> m_inFlightWriteRequest;
+    mutable WriteBarrier<JSPromise> m_inFlightCloseRequest;
+    mutable WriteBarrier<Unknown> m_storedError;
+    mutable WriteBarrier<JSPromise> m_pendingAbortRequestPromise;
+    mutable WriteBarrier<Unknown> m_pendingAbortRequestReason;
     bool m_wasAlreadyErroring { false };
 };
 

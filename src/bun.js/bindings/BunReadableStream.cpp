@@ -5,21 +5,24 @@
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSArray.h>
-#include "BunReadableStream.h"
+
 #include <JavaScriptCore/WriteBarrier.h>
 #include "BunStreamInlines.h"
 #include "BunTeeState.h"
 #include "JSAbortSignal.h"
-#include "BunReadableStreamDefaultController.h"
+
 #include <JavaScriptCore/Completion.h>
-#include "BunReadableStreamDefaultReader.h"
-#include "BunReadableStreamBYOBReader.h"
-#include "BunWritableStream.h"
-#include "BunWritableStreamDefaultWriter.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Completion.h>
 #include "BunReadableStreamPipeToOperation.h"
+
+#include "BunReadableStreamDefaultReader.h"
+#include "BunReadableStreamBYOBReader.h"
+#include "BunWritableStream.h"
+#include "BunWritableStreamDefaultWriter.h"
+#include "BunReadableStream.h"
+#include "BunReadableStreamDefaultController.h"
 
 namespace Bun {
 
@@ -29,10 +32,20 @@ JSC::GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStream, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSReadableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSReadableStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSReadableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSReadableStream = std::forward<decltype(space)>(space); });
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStream = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStream = std::forward<decltype(space)>(space); });
+}
+
+JSReadableStreamDefaultReader* JSReadableStream::reader() const
+{
+    return jsCast<JSReadableStreamDefaultReader*>(m_reader.get());
+}
+
+JSReadableStreamDefaultController* JSReadableStream::controller() const
+{
+    return jsCast<JSReadableStreamDefaultController*>(m_controller.get());
 }
 
 JSValue JSReadableStream::getReader(VM& vm, JSGlobalObject* globalObject, JSValue options)
@@ -182,7 +195,7 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     auto* pipeToOperation = PipeToOperation::create(vm, globalObject, reader, writer, preventClose, preventAbort, preventCancel, signal, promise);
-    pipeToOperation->perform();
+    pipeToOperation->perform(vm, globalObject);
 
     return promise;
 }
@@ -263,4 +276,23 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSValue& firstS
 }
 
 const ClassInfo JSReadableStream::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStream) };
+
+template<typename Visitor>
+void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSReadableStream*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_reader);
+    visitor.append(thisObject->m_controller);
+    visitor.append(thisObject->m_storedError);
+}
+
+DEFINE_VISIT_CHILDREN(JSReadableStream);
+
+JSReadableStream::~JSReadableStream()
+{
+}
+
 }

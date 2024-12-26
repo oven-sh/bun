@@ -103,4 +103,6 @@ void JSTransformStreamPrototype::finishCreation(VM& vm, JSGlobalObject* globalOb
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
+
 } // namespace Bun

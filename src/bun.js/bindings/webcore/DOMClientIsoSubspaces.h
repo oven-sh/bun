@@ -58,6 +58,11 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSReadableStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSReadableStreamDefaultReader;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSReadableStreamBYOBReader;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSReadableStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTeeState;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

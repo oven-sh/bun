@@ -7,7 +7,8 @@
 namespace Bun {
 
 class JSTransformStreamDefaultController;
-
+class JSReadableStream;
+class JSWritableStream;
 class JSTransformStream final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -38,17 +39,23 @@ public:
     }
 
     // Readable side operations
-    JSC::JSValue readable() { return m_readable.get(); }
-    JSC::JSValue writable() { return m_writable.get(); }
-    JSTransformStreamDefaultController* controller() { return m_controller.get(); }
+    JSC::JSValue readable() const { return m_readable.get(); }
+    Bun::JSReadableStream* readableStream() const;
+    JSC::JSValue writable() const { return m_writable.get(); }
+    Bun::JSWritableStream* writableStream() const;
+    JSTransformStreamDefaultController* controller();
+
     // Direct C++ API
     void enqueue(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue chunk);
     void error(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue error);
     void terminate(JSC::VM&, JSC::JSGlobalObject*);
+    void errorWritableAndUnblockWrite(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue error);
+    void errorWritableAndUnblockWrite(JSC::JSGlobalObject* globalObject, JSC::JSValue error) { this->errorWritableAndUnblockWrite(this->vm(), globalObject, error); }
 
     // Backpressure operations
     bool hasBackpressure() const { return m_backpressure; }
-    void setBackpressure(bool value) { m_backpressure = value; }
+    void setBackpressure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void unblockWrite(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
 private:
     JSTransformStream(JSC::VM&, JSC::Structure*);

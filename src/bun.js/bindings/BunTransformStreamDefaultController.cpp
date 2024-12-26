@@ -30,6 +30,11 @@ void JSTransformStreamDefaultController::finishCreation(JSC::VM& vm, JSC::JSGlob
     m_stream.set(vm, this, transformStream);
 }
 
+JSTransformStream* JSTransformStreamDefaultController::stream() const
+{
+    return JSC::jsCast<JSTransformStream*>(m_stream.get());
+}
+
 template<typename Visitor>
 void JSTransformStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -45,9 +50,8 @@ void JSTransformStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor
 
 DEFINE_VISIT_CHILDREN(JSTransformStreamDefaultController);
 
-bool JSTransformStreamDefaultController::enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk)
+bool JSTransformStreamDefaultController::enqueue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue chunk)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the transform stream
@@ -88,29 +92,47 @@ bool JSTransformStreamDefaultController::enqueue(JSC::JSGlobalObject* globalObje
     bool hasBackpressure = desiredSize <= 0;
 
     // If backpressure state changed and is now true
-    if (hasBackpressure && !stream->hasBackpressure()) {
-        stream->setBackpressure(true);
+    if (hasBackpressure) {
+        stream->setBackpressure(vm, globalObject);
+    } else {
+        stream->unblockWrite(vm, globalObject);
     }
 
     return true;
 }
 
-void JSTransformStreamDefaultController::error(JSC::JSGlobalObject* globalObject, JSC::JSValue error)
+void JSTransformStreamDefaultController::error(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue error)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Implementation following spec's TransformStreamDefaultControllerError
-    // This would propagate the error to both the readable and writable sides
+    auto* stream = this->stream();
+    ASSERT(stream);
+    stream->error(vm, globalObject, error);
 }
 
-void JSTransformStreamDefaultController::terminate(JSC::JSGlobalObject* globalObject)
+void JSTransformStreamDefaultController::terminate(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Implementation following spec's TransformStreamDefaultControllerTerminate
-    // This would close the readable side and error the writable side
+    auto* stream = this->stream();
+    ASSERT(stream);
+
+    // Get the readable controller
+    auto* readable = stream->readableStream();
+    ASSERT(readable);
+    auto* readableController = readable->controller();
+    ASSERT(readableController);
+
+    // Close the readable controller
+    readableController->close(vm, globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // Create TypeError for termination
+    JSC::JSValue error = JSC::createTypeError(globalObject, "The stream has been terminated"_s);
+
+    // Error the writable side and unblock write
+    // Call TransformStreamErrorWritableAndUnblockWrite operation
+    stream->errorWritableAndUnblockWrite(vm, globalObject, error);
 }
+
+const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
 
 } // namespace Bun

@@ -58,7 +58,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
-
+    std::unique_ptr<IsoSubspace> m_subspaceForJSReadableStreamDefaultController;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSReadableStreamDefaultReader;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSReadableStreamBYOBReader;
+    std::unique_ptr<IsoSubspace> m_subspaceForTeeState;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

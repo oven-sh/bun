@@ -1,7 +1,5 @@
-#include "BunReadableStreamBYOBReader.h"
-#include "BunReadableStream.h"
-#include "BunReadableStreamDefaultController.h"
-#include "BunStreamInlines.h"
+#include "root.h"
+
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -9,6 +7,12 @@
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+
+#include "BunReadableStreamBYOBReader.h"
+#include "BunReadableStream.h"
+#include "BunReadableStreamDefaultController.h"
+#include "BunReadableStreamDefaultReader.h"
+#include "BunStreamInlines.h"
 
 namespace Bun {
 
@@ -38,7 +42,8 @@ JSReadableStreamBYOBReader* JSReadableStreamBYOBReader::create(VM& vm, JSGlobalO
     return reader;
 }
 
-void JSReadableStreamBYOBReader::visitChildren(JSCell* cell, SlotVisitor& visitor)
+template<typename Visitor>
+void JSReadableStreamBYOBReader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     JSReadableStreamBYOBReader* thisObject = jsCast<JSReadableStreamBYOBReader*>(cell);
     ASSERT(thisObject->inherits(JSReadableStreamBYOBReader::info()));
@@ -49,6 +54,8 @@ void JSReadableStreamBYOBReader::visitChildren(JSCell* cell, SlotVisitor& visito
     visitor.append(thisObject->m_closedPromise);
     visitor.append(thisObject->m_readyPromise);
 }
+
+DEFINE_VISIT_CHILDREN(JSReadableStreamBYOBReader);
 
 JSValue JSReadableStreamBYOBReader::read(VM& vm, JSGlobalObject* globalObject, JSArrayBufferView* view, uint64_t minRequested)
 {

@@ -16,10 +16,10 @@ namespace Bun {
 
 class JSWritableStream;
 
-class JSWritableStreamDefaultController final : public JSC::JSDestructibleObject {
+class JSWritableStreamDefaultController final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
-    static constexpr bool needsDestruction = true;
+    using Base = JSC::JSNonFinalObject;
+    static constexpr bool needsDestruction = false;
 
     static JSWritableStreamDefaultController* create(
         JSC::VM& vm,
@@ -52,7 +52,9 @@ public:
     }
 
     // JavaScript-facing methods
-    JSC::JSValue error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    JSC::JSValue error(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    JSC::JSValue error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason) { return error(this->vm(), globalObject, reason); }
+
     JSC::JSValue close(JSC::JSGlobalObject* globalObject);
     void write(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
 
@@ -67,26 +69,19 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     Ref<WebCore::AbortSignal> abortSignal() const;
+    WebCore::AbortSignal& signal() const;
 
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
-
-    JSWritableStream* stream() const { return m_stream.get(); }
+    JSWritableStream* stream() const;
     JSC::JSObject* abortAlgorithm() const { return m_abortAlgorithm.get(); }
     JSC::JSObject* closeAlgorithm() const { return m_closeAlgorithm.get(); }
     JSC::JSObject* writeAlgorithm() const { return m_writeAlgorithm.get(); }
 
-    void setStream(JSC::VM& vm, JSWritableStream* stream) { m_stream.set(vm, this, stream); }
-    void setAbortAlgorithm(JSC::VM& vm, JSC::JSObject* abortAlgorithm) { m_abortAlgorithm.set(vm, this, abortAlgorithm); }
-    void setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm) { m_closeAlgorithm.set(vm, this, closeAlgorithm); }
-    void setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm) { m_writeAlgorithm.set(vm, this, writeAlgorithm); }
+    void setStream(JSC::VM& vm, JSWritableStream* stream);
+    void setAbortAlgorithm(JSC::VM& vm, JSC::JSObject* abortAlgorithm);
+    void setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm);
+    void setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm);
 
     void clearQueue() { m_queue.clear(); }
-
-    ~JSWritableStreamDefaultController();
-    static void destroy(JSC::JSCell* cell)
-    {
-        static_cast<JSWritableStreamDefaultController*>(cell)->JSWritableStreamDefaultController::~JSWritableStreamDefaultController();
-    }
 
 private:
     JSWritableStreamDefaultController(JSC::VM& vm, JSC::Structure* structure)
@@ -97,7 +92,7 @@ private:
     void finishCreation(JSC::VM&);
 
     // Internal slots per spec
-    JSC::WriteBarrier<JSWritableStream> m_stream;
+    JSC::WriteBarrier<JSObject> m_stream;
 
     // Functions for us to call.
     JSC::WriteBarrier<JSC::JSObject> m_abortAlgorithm;

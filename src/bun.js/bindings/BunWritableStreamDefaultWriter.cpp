@@ -25,6 +25,22 @@ JSWritableStreamDefaultWriter::JSWritableStreamDefaultWriter(VM& vm, Structure* 
 {
 }
 
+JSC::GCClient::IsoSubspace* JSWritableStreamDefaultWriter::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); });
+}
+
+JSC::Structure* JSWritableStreamDefaultWriter::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype,
+        JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+}
+
 JSWritableStreamDefaultWriter* JSWritableStreamDefaultWriter::create(VM& vm, Structure* structure, JSWritableStream* stream)
 {
     JSWritableStreamDefaultWriter* writer = new (
@@ -41,17 +57,17 @@ void JSWritableStreamDefaultWriter::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_closedPromise.initLater([](const auto& init) {
-        auto* globalObject = init.owner.globalObject();
-        init.set(init.vm, init.owner, JSPromise::create(init.vm, globalObject->promiseStructure()));
+        auto* globalObject = init.owner->globalObject();
+        init.set(JSPromise::create(init.vm, globalObject->promiseStructure()));
     });
 
     m_readyPromise.initLater([](const auto& init) {
-        auto* globalObject = init.owner.globalObject();
-        init.set(init.vm, init.owner, JSPromise::create(init.vm, globalObject->promiseStructure()));
+        auto* globalObject = init.owner->globalObject();
+        init.set(JSPromise::create(init.vm, globalObject->promiseStructure()));
     });
 
     m_writeRequests.initLater([](const auto& init) {
-        init.set(init.vm, init.owner, JSC::constructEmptyArray(init.owner->globalObject(), static_cast<ArrayAllocationProfile*>(nullptr), 0));
+        init.set(JSC::constructEmptyArray(init.owner->globalObject(), static_cast<ArrayAllocationProfile*>(nullptr), 0));
     });
 }
 
@@ -62,21 +78,26 @@ void JSWritableStreamDefaultWriter::visitChildrenImpl(JSCell* cell, Visitor& vis
     ASSERT_GC_OBJECT_INHERITS(writer, info());
 
     Base::visitChildren(writer, visitor);
-    writer->visitAdditionalChildren(visitor);
+    visitor.append(writer->m_stream);
+    writer->m_closedPromise.visit(visitor);
+    writer->m_readyPromise.visit(visitor);
+    writer->m_writeRequests.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultWriter);
 
-template<typename Visitor>
-void JSWritableStreamDefaultWriter::visitAdditionalChildren(Visitor& visitor)
+double JSWritableStreamDefaultWriter::desiredSize()
 {
-    visitor.append(m_stream);
-    this->m_closedPromise.visit(visitor);
-    this->m_readyPromise.visit(visitor);
-    this->m_writeRequests.visit(visitor);
+    auto* stream = this->stream();
+    if (!stream) {
+        return 0;
+    }
+    auto* controller = stream->controller();
+    if (!controller) {
+        return 0;
+    }
+    return controller->getDesiredSize();
 }
-
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSWritableStreamDefaultWriter);
 
 // Non-JS Methods for C++ Use
 

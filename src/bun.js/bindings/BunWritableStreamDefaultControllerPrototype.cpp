@@ -14,7 +14,7 @@
 #include "BunStreamInlines.h"
 #include "ZigGlobalObject.h"
 #include "BunWritableStream.h"
-
+#include "AbortSignal.h"
 namespace Bun {
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerErrorFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -44,7 +44,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetSignal, (JSGlobalOb
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    return JSValue::encode(WebCore::toJS<IDLInterface<WebCore::AbortSignal>>(*lexicalGlobalObject, *globalObject, scope, thisObject->abortSignal()));
+    auto& abortSignal = thisObject->signal();
+
+    return JSValue::encode(WebCore::toJS(lexicalGlobalObject, globalObject, abortSignal));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerGetDesiredSize, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))

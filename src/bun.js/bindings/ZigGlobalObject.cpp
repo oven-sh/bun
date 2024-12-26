@@ -2065,10 +2065,10 @@ JSC_DEFINE_HOST_FUNCTION(getInternalWritableStream, (JSGlobalObject*, CallFrame*
     ASSERT(callFrame);
     ASSERT(callFrame->argumentCount() == 1);
 
-    auto* writableStream = jsDynamicCast<JSWritableStream*>(callFrame->uncheckedArgument(0));
-    if (UNLIKELY(!writableStream))
-        return JSValue::encode(jsUndefined());
-    return JSValue::encode(writableStream->wrapped().internalWritableStream());
+    // auto* writableStream = jsDynamicCast<JSWritableStream*>(callFrame->uncheckedArgument(0));
+    // if (UNLIKELY(!writableStream))
+    return JSValue::encode(jsUndefined());
+    // return JSValue::encode(writableStream->wrapped().internalWritableStream());
 }
 
 JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -2139,56 +2139,56 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
 }
 extern "C" bool ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream1, JSC__JSValue* possibleReadableStream2)
 {
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
-    if (UNLIKELY(!readableStream))
-        return false;
+    // auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    // if (UNLIKELY(!readableStream))
+    //     return false;
 
-    auto& lexicalGlobalObject = *globalObject;
-    auto* clientData = static_cast<JSVMClientData*>(lexicalGlobalObject.vm().clientData);
-    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
+    // auto& lexicalGlobalObject = *globalObject;
+    // auto* clientData = static_cast<JSVMClientData*>(lexicalGlobalObject.vm().clientData);
+    // auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(readableStream);
-    arguments.append(JSC::jsBoolean(true));
-    ASSERT(!arguments.hasOverflowed());
-    auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
-    if (!returnedValue)
-        return false;
+    // MarkedArgumentBuffer arguments;
+    // arguments.append(readableStream);
+    // arguments.append(JSC::jsBoolean(true));
+    // ASSERT(!arguments.hasOverflowed());
+    // auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
+    // if (!returnedValue)
+    return false;
 
-    auto results = Detail::SequenceConverter<IDLAny>::convert(lexicalGlobalObject, *returnedValue);
+    // auto results = Detail::SequenceConverter<IDLAny>::convert(lexicalGlobalObject, *returnedValue);
 
-    ASSERT(results.size() == 2);
-    *possibleReadableStream1 = JSValue::encode(results[0]);
-    *possibleReadableStream2 = JSValue::encode(results[1]);
-    return true;
+    // ASSERT(results.size() == 2);
+    // *possibleReadableStream1 = JSValue::encode(results[0]);
+    // *possibleReadableStream2 = JSValue::encode(results[1]);
+    // return true;
 }
 
 extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
-    if (UNLIKELY(!readableStream))
-        return;
+    // auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    // if (UNLIKELY(!readableStream))
+    //     return;
 
-    if (!ReadableStream::isLocked(globalObject, readableStream)) {
-        return;
-    }
+    // if (!ReadableStream::isLocked(globalObject, readableStream)) {
+    //     return;
+    // }
 
-    WebCore::Exception exception { AbortError };
-    ReadableStream::cancel(*globalObject, readableStream, exception);
+    // WebCore::Exception exception { AbortError };
+    // ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    auto value = JSC::JSValue::decode(possibleReadableStream);
-    if (value.isEmpty() || !value.isCell())
-        return;
+    // auto value = JSC::JSValue::decode(possibleReadableStream);
+    // if (value.isEmpty() || !value.isCell())
+    //     return;
 
-    auto* readableStream = static_cast<JSReadableStream*>(value.asCell());
-    if (UNLIKELY(!readableStream))
-        return;
-    readableStream->setNativePtr(globalObject->vm(), jsNumber(-1));
-    readableStream->setNativeType(0);
-    readableStream->setDisturbed(true);
+    // auto* readableStream = static_cast<JSReadableStream*>(value.asCell());
+    // if (UNLIKELY(!readableStream))
+    //     return;
+    // readableStream->setNativePtr(globalObject->vm(), jsNumber(-1));
+    // readableStream->setNativeType(0);
+    // readableStream->setDisturbed(true);
 }
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -2208,90 +2208,90 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);
-    JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
-    if (!object) {
-        *ptr = nullptr;
-        return -1;
-    }
+    // JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
+    // if (!object) {
+    *ptr = nullptr;
+    return -1;
+    // }
 
-    auto& vm = globalObject->vm();
+    // auto& vm = globalObject->vm();
 
-    if (!object->inherits<JSReadableStream>()) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        JSValue target = object;
-        JSValue fn = JSValue();
-        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
-        if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
-            fn = object;
-            target = jsUndefined();
-        } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {
-            if (iterable.isCallable()) {
-                fn = iterable;
-            }
-        }
+    // if (!object->inherits<JSReadableStream>()) {
+    //     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    //     JSValue target = object;
+    //     JSValue fn = JSValue();
+    //     auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+    //     if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
+    //         fn = object;
+    //         target = jsUndefined();
+    //     } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {
+    //         if (iterable.isCallable()) {
+    //             fn = iterable;
+    //         }
+    //     }
 
-        if (UNLIKELY(throwScope.exception())) {
-            *ptr = nullptr;
-            return -1;
-        }
+    //     if (UNLIKELY(throwScope.exception())) {
+    //         *ptr = nullptr;
+    //         return -1;
+    //     }
 
-        if (fn.isEmpty()) {
-            *ptr = nullptr;
-            return -1;
-        }
+    //     if (fn.isEmpty()) {
+    //         *ptr = nullptr;
+    //         return -1;
+    //     }
 
-        auto* createIterator = globalObject->builtinInternalFunctions().readableStreamInternals().m_readableStreamFromAsyncIteratorFunction.get();
+    //     auto* createIterator = globalObject->builtinInternalFunctions().readableStreamInternals().m_readableStreamFromAsyncIteratorFunction.get();
 
-        JSC::MarkedArgumentBuffer arguments;
-        arguments.append(target);
-        arguments.append(fn);
+    //     JSC::MarkedArgumentBuffer arguments;
+    //     arguments.append(target);
+    //     arguments.append(fn);
 
-        JSC::JSValue result = profiledCall(globalObject, JSC::ProfilingReason::API, createIterator, JSC::getCallData(createIterator), JSC::jsUndefined(), arguments);
+    //     JSC::JSValue result = profiledCall(globalObject, JSC::ProfilingReason::API, createIterator, JSC::getCallData(createIterator), JSC::jsUndefined(), arguments);
 
-        if (UNLIKELY(throwScope.exception())) {
-            return -1;
-        }
+    //     if (UNLIKELY(throwScope.exception())) {
+    //         return -1;
+    //     }
 
-        if (!result.isObject()) {
-            *ptr = nullptr;
-            return -1;
-        }
+    //     if (!result.isObject()) {
+    //         *ptr = nullptr;
+    //         return -1;
+    //     }
 
-        object = result.getObject();
+    //     object = result.getObject();
 
-        ASSERT(object->inherits<JSReadableStream>());
-        *possibleReadableStream = JSValue::encode(object);
-        *ptr = nullptr;
-        ensureStillAliveHere(object);
-        return 0;
-    }
+    //     ASSERT(object->inherits<JSReadableStream>());
+    //     *possibleReadableStream = JSValue::encode(object);
+    //     *ptr = nullptr;
+    //     ensureStillAliveHere(object);
+    //     return 0;
+    // }
 
-    auto* readableStream = jsCast<JSReadableStream*>(object);
+    // auto* readableStream = jsCast<JSReadableStream*>(object);
 
-    JSValue nativePtrHandle = readableStream->nativePtr();
-    if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
-        *ptr = nullptr;
-        return 0;
-    }
+    // JSValue nativePtrHandle = readableStream->nativePtr();
+    // if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
+    //     *ptr = nullptr;
+    //     return 0;
+    // }
 
-    JSCell* cell = nativePtrHandle.asCell();
+    // JSCell* cell = nativePtrHandle.asCell();
 
-    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 1;
-    }
+    // if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+    //     *ptr = casted->wrapped();
+    //     return 1;
+    // }
 
-    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 2;
-    }
+    // if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+    //     *ptr = casted->wrapped();
+    //     return 2;
+    // }
 
-    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 4;
-    }
+    // if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+    //     *ptr = casted->wrapped();
+    //     return 4;
+    // }
 
-    return 0;
+    // return 0;
 }
 
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)

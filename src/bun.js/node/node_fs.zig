@@ -3557,10 +3557,10 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo();
             }
 
-            const src_buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(src_buf);
-            const dest_buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(dest_buf);
+            const src_buf = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(src_buf);
+            const dest_buf = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(dest_buf);
             const src = strings.toWPathNormalizeAutoExtend(src_buf, args.src.sliceZ(&this.sync_error_buf));
             const dest = strings.toWPathNormalizeAutoExtend(dest_buf, args.dest.sliceZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
@@ -3768,8 +3768,8 @@ pub const NodeFS = struct {
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.OSPathBufferPool.get();
+        defer bun.OSPathBufferPool.put(buf);
         const path: bun.OSPathSliceZ = if (Environment.isWindows)
             strings.toNTPath(buf, args.path.slice())
         else
@@ -5676,8 +5676,8 @@ pub const NodeFS = struct {
 
     pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
-            const tmp = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(tmp);
+            const tmp = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         } else {}
@@ -6188,8 +6188,8 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
-                const wbuf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(wbuf);
+                const wbuf = bun.OSPathBufferPool.get();
+                defer bun.OSPathBufferPool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
                 if (len == 0) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;

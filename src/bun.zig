@@ -3220,6 +3220,17 @@ pub fn exitThread() noreturn {
         pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
     };
 
+    const pools_to_delete = .{
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+        JSC.WebCore.ByteListPool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
+    }
+
     if (comptime Environment.isWindows) {
         exiter.ExitThread(0);
     } else if (comptime Environment.isPosix) {
@@ -4166,28 +4177,37 @@ const StackOverflow = error{StackOverflow};
 // This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
 // This pool is a workaround to make the stack memory usage more predictable.
 // We keep up to 4 path buffers alive per thread at a time.
-pub const PathBufferPool = struct {
-    const Pool = ObjectPool(PathBuf, null, true, 4);
-    pub const PathBuf = struct {
-        bytes: OSPathBuffer,
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
 
-        pub fn deinit(this: *PathBuf) void {
-            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-            node.release();
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
         }
     };
+}
 
-    pub fn get() *OSPathBuffer {
-        // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-        return &Pool.get(bun.threadlocalAllocator()).data.bytes;
-    }
-
-    pub fn put(buffer: *OSPathBuffer) void {
-        var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-        path_buf.deinit();
-    }
-
-    pub fn deleteAll() void {
-        Pool.deleteAll();
-    }
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
 };
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;

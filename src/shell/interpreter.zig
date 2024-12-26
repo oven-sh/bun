@@ -1323,8 +1323,10 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+        // Avoid the large stack allocation on Windows.
+        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(pathbuf);
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };

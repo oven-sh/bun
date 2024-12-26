@@ -466,8 +466,8 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     buf[0] = 0;
 
     if (comptime Environment.isWindows) {
-        var wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        var wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, wbuf);
         if (Result.errnoSys(len, .getcwd)) |err| return err;
         return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
@@ -556,8 +556,8 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return chdirOSPath(@as(bun.OSPathSliceZ, destination));
         }
 
-        const wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         return chdirOSPath(bun.strings.toWDirPath(wbuf, destination));
     }
 
@@ -628,8 +628,8 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
-    const buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(buf);
+    const buf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(buf);
     return mkdiratW(dir_fd, bun.strings.toWPathNormalized(buf, file_path));
 }
 
@@ -691,8 +691,8 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
         .windows => {
-            const wbuf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(wbuf);
+            const wbuf = bun.WPathBufferPool.get();
+            defer bun.WPathBufferPool.put(wbuf);
             return Maybe(void).errnoSysP(
                 kernel32.CreateDirectoryW(bun.strings.toWPath(wbuf, file_path).ptr, null),
                 .mkdir,
@@ -724,8 +724,8 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     }
 
     if (comptime Environment.isWindows) {
-        const wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         const wpath = bun.strings.toWPath(wbuf, file_path);
         assertIsValidWindowsPath(u16, wpath);
         return Maybe(void).errnoSysP(
@@ -797,8 +797,8 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
-    const wbuf = if (T != u16) bun.PathBufferPool.get() else {};
-    defer if (T != u16) bun.PathBufferPool.put(wbuf);
+    const wbuf = if (T != u16) bun.WPathBufferPool.get() else {};
+    defer if (T != u16) bun.WPathBufferPool.put(wbuf);
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
@@ -851,8 +851,8 @@ pub fn normalizePathWindows(
         path = path[2..];
     }
 
-    const buf1 = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(buf1);
+    const buf1 = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(buf1);
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';
     @memcpy(buf1[base_path.len + 1 .. base_path.len + 1 + path.len], path);
@@ -971,8 +971,8 @@ fn openDirAtWindowsT(
     path: []const T,
     options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
-    const wbuf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(wbuf);
+    const wbuf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(wbuf);
 
     const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
         .err => |err| return .{ .err = err },
@@ -1165,8 +1165,8 @@ pub fn openFileAtWindowsT(
     disposition: w.ULONG,
     options: w.ULONG,
 ) Maybe(bun.FileDescriptor) {
-    const wbuf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(wbuf);
+    const wbuf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(wbuf);
 
     const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
         .err => |err| return .{ .err = err },
@@ -1983,11 +1983,11 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     if (Environment.isWindows) {
-        const w_buf_from = bun.PathBufferPool.get();
-        const w_buf_to = bun.PathBufferPool.get();
+        const w_buf_from = bun.WPathBufferPool.get();
+        const w_buf_to = bun.WPathBufferPool.get();
         defer {
-            bun.PathBufferPool.put(w_buf_from);
-            bun.PathBufferPool.put(w_buf_to);
+            bun.WPathBufferPool.put(w_buf_from);
+            bun.WPathBufferPool.put(w_buf_to);
         }
 
         const rc = bun.C.renameAtW(
@@ -2066,11 +2066,11 @@ pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
     if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
-        const sym16 = bun.PathBufferPool.get();
-        const target16 = bun.PathBufferPool.get();
+        const sym16 = bun.WPathBufferPool.get();
+        const target16 = bun.WPathBufferPool.get();
         defer {
-            bun.PathBufferPool.put(sym16);
-            bun.PathBufferPool.put(target16);
+            bun.WPathBufferPool.put(sym16);
+            bun.WPathBufferPool.put(target16);
         }
         const sym_path = bun.strings.toWPathNormalizeAutoExtend(sym16, dest);
         const target_path = bun.strings.toWPathNormalizeAutoExtend(target16, target);
@@ -2180,8 +2180,8 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     if (comptime Environment.isWindows) {
-        const w_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(w_buf);
+        const w_buf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(w_buf);
         return unlinkW(bun.strings.toNTPath(w_buf, from));
     }
 
@@ -2203,8 +2203,8 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
     if (Environment.isWindows) {
         if (comptime std.meta.Elem(@TypeOf(to)) == u8) {
-            const w_buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(w_buf);
+            const w_buf = bun.WPathBufferPool.get();
+            defer bun.WPathBufferPool.put(w_buf);
             return unlinkatWithFlags(dirfd, bun.strings.toNTPath(w_buf, bun.span(to)), flags);
         }
 
@@ -2618,8 +2618,8 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
         const attributes: WindowsFileAttributes = @bitCast(dword);
         return attributes;
     } else {
-        const wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         const path_to_use = bun.strings.toWPath(wbuf, path);
         return getFileAttributes(path_to_use);
     }
@@ -2698,8 +2698,8 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir_);
     if (comptime Environment.isWindows) {
-        const wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         const path = bun.strings.toNTPath(wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
@@ -2766,8 +2766,8 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        const wbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(wbuf);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
         const path = bun.strings.toNTPath(wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{

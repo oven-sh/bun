@@ -9,7 +9,7 @@ describe("Bun.inspect", () => {
           throw new Error("custom inspect");
         },
       }),
-    ).toBe("[custom formatter threw an exception]");
+    ).toThrow("custom inspect");
   });
 
   it("supports colors: false", () => {

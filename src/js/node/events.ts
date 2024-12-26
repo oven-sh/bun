@@ -23,7 +23,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_UNHANDLED_ERROR } = require("internal/errors");
 const {
   validateObject,
   validateInteger,
@@ -32,7 +32,10 @@ const {
   validateBoolean,
 } = require("internal/validators");
 
+const { inspect } = require("node:util");
+
 const SymbolFor = Symbol.for;
+const ArrayPrototypeSlice = Array.prototype.slice;
 
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
@@ -42,7 +45,6 @@ const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
 const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
-const ArrayPrototypeSlice = Array.prototype.slice;
 
 let FixedQueue;
 const kEmptyObject = Object.freeze({ __proto__: null });
@@ -83,20 +85,44 @@ Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "g
 
 function emitError(emitter, args) {
   var { _events: events } = emitter;
-  args[0] ??= new Error("Unhandled error.");
-  if (!events) throw args[0];
-  var errorMonitor = events[kErrorMonitor];
-  if (errorMonitor) {
-    for (var handler of ArrayPrototypeSlice.$call(errorMonitor)) {
-      handler.$apply(emitter, args);
+
+  if (events !== undefined) {
+    const errorMonitor = events[kErrorMonitor];
+    if (errorMonitor) {
+      for (const handler of ArrayPrototypeSlice.$call(errorMonitor)) {
+        handler.$apply(emitter, args);
+      }
+    }
+
+    const handlers = events.error;
+    if (handlers) {
+      for (var handler of ArrayPrototypeSlice.$call(handlers)) {
+        handler.$apply(emitter, args);
+      }
+      return true;
     }
   }
-  var handlers = events.error;
-  if (!handlers) throw args[0];
-  for (var handler of ArrayPrototypeSlice.$call(handlers)) {
-    handler.$apply(emitter, args);
+
+  let er;
+  if (args.length > 0) er = args[0];
+
+  if (er instanceof Error) {
+    // Note: The comments on the `throw` lines are intentional, they show
+    // up in Node's output if this results in an unhandled exception.
+    throw er; // Unhandled 'error' event
   }
-  return true;
+
+  let stringifiedEr;
+  try {
+    stringifiedEr = inspect(er);
+  } catch {
+    stringifiedEr = er;
+  }
+
+  // At least give some kind of context to the user
+  const err = ERR_UNHANDLED_ERROR(stringifiedEr);
+  err.context = er;
+  throw err; // Unhandled 'error' event
 }
 
 function addCatch(emitter, promise, type, args) {

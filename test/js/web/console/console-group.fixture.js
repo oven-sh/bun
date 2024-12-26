@@ -76,3 +76,22 @@ console.group('Tab\tNewline\nQuote"Backslash');
 console.log("Special chars");
 console.groupEnd();
 console.groupEnd();
+
+// Table inside group
+console.group("Table inside group");
+console.table([{ a: 1, b: 2 }, { a: 3, b: 4 }]);
+console.groupEnd();
+
+// Count inside group
+console.group("Count inside group");
+console.count("Count");
+console.count("Count");
+console.groupEnd();
+
+// Time inside group
+console.group("Time inside group");
+console.time("Time");
+console.timeLog("Time", 'test');
+console.timeStamp("Time");
+console.timeEnd("Time");
+console.groupEnd();

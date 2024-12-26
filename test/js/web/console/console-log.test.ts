@@ -64,6 +64,6 @@ it("console.group", async () => {
     stdio: ["inherit", "pipe", "pipe"],
   });
   expect(proc.exitCode).toBe(0);
-  expect(proc.stderr.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-error");
-  expect(proc.stdout.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-output");
+  expect(proc.stderr.toString("utf8").replaceAll("\r\n", "\n").trim().replace(/\[.+s\] /gm, "[] ")).toMatchSnapshot("console-group-error");
+  expect(proc.stdout.toString("utf8").replaceAll("\r\n", "\n").trim().replace(/\[.+s\] /gm, "[] ")).toMatchSnapshot("console-group-output");
 });

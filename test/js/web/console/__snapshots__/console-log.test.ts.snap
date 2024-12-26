@@ -2,7 +2,9 @@
 
 exports[`console.group: console-group-error 1`] = `
 "Warning log
-  Error log"
+  Error log
+  [] Time test
+  [] Time"
 `;
 
 exports[`console.group: console-group-output 1`] = `
@@ -41,5 +43,16 @@ null
   Inside unicode group
   Tab	Newline
 Quote"Backslash
-    Special chars"
+    Special chars
+Table inside group
+  ┌───┬───┬───┐
+  │   │ a │ b │
+  ├───┼───┼───┤
+  │ 0 │ 1 │ 2 │
+  │ 1 │ 3 │ 4 │
+  └───┴───┴───┘
+Count inside group
+  Count: 1
+  Count: 2
+Time inside group"
 `;

@@ -345,11 +345,13 @@ var InternalResolver = class Resolver {
   }
 
   resolve(hostname, rrtype, callback) {
-    if (typeof rrtype == "function") {
+    if (typeof rrtype === "function") {
       callback = rrtype;
-      rrtype = null;
-    } else if (typeof rrtype != "string") {
-      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+      rrtype = "A";
+    } else if (typeof rrtype === "undefined") {
+      rrtype = "A";
+    } else if (typeof rrtype !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", typeof rrtype);
     }
 
     if (typeof callback !== "function") {
@@ -762,9 +764,13 @@ const promises = {
     if (typeof hostname !== "string") {
       throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
     }
-    if (typeof rrtype !== "string") {
+
+    if (typeof rrtype === "undefined") {
+      rrtype = "A";
+    } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
+
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
@@ -847,7 +853,9 @@ const promises = {
     }
 
     resolve(hostname, rrtype) {
-      if (typeof rrtype !== "string") {
+      if (typeof rrtype === "undefined") {
+        rrtype = "A";
+      } else if (typeof rrtype !== "string") {
         rrtype = null;
       }
       switch (rrtype?.toLowerCase()) {

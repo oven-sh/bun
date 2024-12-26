@@ -1941,8 +1941,6 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 } else if (strings.eqlComptime(filter[0], "a")) {
                     const FirstLetter = AddCompletions.FirstLetter;
-                    const index = AddCompletions.index;
-                    _ = index; // autofix
 
                     outer: {
                         if (filter.len > 1 and filter[1].len > 0) {

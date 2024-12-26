@@ -2043,8 +2043,8 @@ describe("fetch Response life cycle", () => {
     const clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
     });
     expect(await clientProcess.exited).toBe(0);

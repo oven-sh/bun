@@ -1457,51 +1457,25 @@ pub const Error = enum(i32) {
         }
 
         pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
-            const error_value = globalThis.createErrorInstance("{s}", .{this.errno.label()});
+            const system_error = blk: {
+                if (this.hostname) |hostname| {
+                    break :blk JSC.SystemError{
+                        .errno = @intFromEnum(this.errno),
+                        .code = bun.String.static(this.errno.code()),
+                        .message = bun.String.createFormat("{s} {s} {s}", .{ this.syscall, @tagName(this.errno), hostname }) catch bun.outOfMemory(),
+                        .syscall = bun.String.createUTF8(this.syscall),
+                        .hostname = hostname.clone(),
+                    };
+                } else {
+                    break :blk JSC.SystemError{
+                        .errno = @intFromEnum(this.errno),
+                        .code = bun.String.static(this.errno.code()),
+                        .syscall = bun.String.createUTF8(this.syscall),
+                    };
+                }
+            };
 
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("name"),
-                bun.String.static("DNSException").toJS(globalThis),
-            );
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(this.errno.code()).toJS(globalThis),
-            );
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("errno"),
-                JSC.jsNumber(@intFromEnum(this.errno)),
-            );
-
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("syscall"),
-                JSC.ZigString.init(this.syscall).toJS(globalThis),
-            );
-
-            if (this.hostname) |hostname| {
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("hostname"),
-                    hostname.toJS(globalThis),
-                );
-
-                const utf8_hostname = hostname.toUTF8(bun.default_allocator);
-                defer utf8_hostname.deinit();
-
-                const message = std.mem.concat(bun.default_allocator, u8, &[_][]const u8{ this.syscall, " ", @tagName(this.errno), " ", utf8_hostname.slice() }) catch bun.outOfMemory();
-                defer bun.default_allocator.free(message);
-
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("message"),
-                    JSC.ZigString.init(message).toJS(globalThis),
-                );
-            }
-
-            this.promise.reject(globalThis, error_value);
+            this.promise.reject(globalThis, system_error.toErrorInstance(globalThis));
             this.deinit();
         }
 
@@ -1540,52 +1514,28 @@ pub const Error = enum(i32) {
     }
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("name"),
-            bun.String.static("DNSException").toJS(globalThis),
-        );
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("code"),
-            JSC.ZigString.init(this.code()).toJS(globalThis),
-        );
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("errno"),
-            JSC.jsNumber(@intFromEnum(this)),
-        );
-        return error_value;
+        return (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+        }).toErrorInstance(globalThis);
     }
 
     pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
-        const error_value = this.toJS(globalThis);
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("syscall"),
-            JSC.ZigString.static((syscall ++ "\x00")[0..syscall.len :0]).toJS(globalThis),
-        );
-        return error_value;
+        return (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+        }).toErrorInstance(globalThis);
     }
 
     pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
-        const error_value = this.toJSWithSyscall(globalThis, syscall);
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("hostname"),
-            JSC.ZigString.init(hostname).toJS(globalThis),
-        );
-
-        const message = std.mem.concat(bun.default_allocator, u8, &[_][]const u8{ syscall ++ " ", @tagName(this), " ", hostname }) catch bun.outOfMemory();
-        defer bun.default_allocator.free(message);
-
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("message"),
-            JSC.ZigString.init(message).toJS(globalThis),
-        );
-        return error_value;
+        return (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, @tagName(this), hostname }) catch bun.outOfMemory(),
+            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+            .hostname = bun.String.createUTF8(hostname),
+        }).toErrorInstance(globalThis);
     }
 
     pub fn initEAI(rc: i32) ?Error {

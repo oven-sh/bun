@@ -2137,12 +2137,14 @@ pub const Process = struct {
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
-        var buf1: [32768]u16 = bun.default_allocator.create([32768]u16) catch bun.outOfMemory();
-        defer bun.default_allocator.destroy(buf1);
-        var buf2: [32768]u16 = bun.default_allocator.create([32768]u16) catch bun.outOfMemory();
-        defer bun.default_allocator.destroy(buf2);
+        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
+        const allocator = fixed_stack_allocator.get();
+        var buf1 = allocator.alloc(u16, wtf1.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf1);
+        var buf2 = allocator.alloc(u16, wtf1.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf2);
         const len1: usize = switch (wtf1.is8Bit()) {
-            true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf1.latin1Slice()).written,
+            true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,
             false => b: {
                 @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
                 break :b wtf1.length();
@@ -2153,7 +2155,7 @@ pub const Process = struct {
             if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
             const wtf2 = v.value.WTFStringImpl;
             const len2: usize = switch (wtf2.is8Bit()) {
-                true => bun.strings.copyLatin1IntoUTF16([]u16, &buf2, []const u8, wtf2.latin1Slice()).written,
+                true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, []const u8, wtf2.latin1Slice()).written,
                 false => b: {
                     @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
                     break :b wtf2.length();

@@ -3220,23 +3220,25 @@ pub fn exitThread() noreturn {
         pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
     };
 
-    const pools_to_delete = .{
-        bun.WPathBufferPool,
-        bun.PathBufferPool,
-        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
-        bun.js_parser.StringVoidMap.Pool,
-        JSC.WebCore.ByteListPool,
-    };
-    inline for (pools_to_delete) |pool| {
-        pool.deleteAll();
-    }
-
     if (comptime Environment.isWindows) {
         exiter.ExitThread(0);
     } else if (comptime Environment.isPosix) {
         exiter.pthread_exit(null);
     } else {
         @compileError("Unsupported platform");
+    }
+}
+
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
     }
 }
 

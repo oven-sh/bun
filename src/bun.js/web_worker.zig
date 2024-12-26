@@ -513,6 +513,7 @@ pub const WebWorker = struct {
         if (loop) |loop_| {
             loop_.internal_loop_data.jsc_vm = null;
         }
+        bun.deleteAllPoolsForThreadExit();
         bun.uws.onThreadExit();
         this.deinit();
 

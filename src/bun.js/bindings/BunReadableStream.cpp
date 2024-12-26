@@ -19,6 +19,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Completion.h>
+#include "BunReadableStreamPipeToOperation.h"
 
 namespace Bun {
 
@@ -114,22 +115,6 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
 
     return JSPromise::resolvedPromise(globalObject, result);
 }
-
-class PipeToOperation {
-public:
-    static PipeToOperation* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
-        JSReadableStreamDefaultReader* reader, JSWritableStreamDefaultWriter* writer,
-        bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal, JSC::JSPromise* promise)
-    {
-        // Implementation needed
-        return nullptr;
-    }
-
-    void perform()
-    {
-        // Implementation needed
-    }
-};
 
 JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObject* destination, JSValue options)
 {

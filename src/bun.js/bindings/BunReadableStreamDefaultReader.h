@@ -46,7 +46,7 @@ public:
     JSReadableStream* stream() { return m_stream.get(); }
 
     JSC::JSPromise* read(JSC::VM&, JSGlobalObject*);
-
+    JSC::JSPromise* cancel(JSC::VM&, JSGlobalObject*, JSValue reason);
     bool isActive() const { return !!m_stream; }
     void detach();
 

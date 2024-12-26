@@ -4,6 +4,7 @@
 #include "BunTransformStream.h"
 #include "BunReadableStream.h"
 #include "BunWritableStream.h"
+#include "BunReadableStreamDefaultController.h"
 
 namespace Bun {
 
@@ -49,9 +50,47 @@ bool JSTransformStreamDefaultController::enqueue(JSC::JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Implementation following spec's TransformStreamDefaultControllerEnqueue
-    // This would integrate with the ReadableStream's controller to actually enqueue the chunk
-    // and handle backpressure
+    // Get the transform stream
+    auto* stream = jsDynamicCast<JSTransformStream*>(m_stream.get());
+    ASSERT(stream);
+
+    // Get the readable controller from the stream's readable side
+    auto* readable = jsDynamicCast<JSReadableStream*>(stream->readable());
+    ASSERT(readable);
+    auto* readableController = jsDynamicCast<JSReadableStreamDefaultController*>(readable->controller());
+    ASSERT(readableController);
+
+    // Check if we can enqueue to the readable controller
+    if (!readableController->canCloseOrEnqueue()) {
+        throwTypeError(globalObject, scope, "Cannot enqueue to readable side - controller cannot close or enqueue"_s);
+        return false;
+    }
+
+    // Try to enqueue the chunk to the readable controller
+    readableController->enqueue(vm, globalObject, chunk);
+
+    // If enqueuing resulted in an error
+    if (scope.exception()) {
+        // Get the error from the scope
+        JSValue error = scope.exception();
+        scope.clearException();
+
+        // Error the writable side and unblock write
+        stream->error(vm, globalObject, error);
+
+        // Throw the readable's stored error
+        throwException(globalObject, scope, error);
+        return false;
+    }
+
+    // Check if the readable controller now has backpressure
+    double desiredSize = readableController->desiredSize();
+    bool hasBackpressure = desiredSize <= 0;
+
+    // If backpressure state changed and is now true
+    if (hasBackpressure && !stream->hasBackpressure()) {
+        stream->setBackpressure(true);
+    }
 
     return true;
 }

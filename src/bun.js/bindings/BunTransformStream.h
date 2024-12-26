@@ -46,6 +46,10 @@ public:
     void error(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue error);
     void terminate(JSC::VM&, JSC::JSGlobalObject*);
 
+    // Backpressure operations
+    bool hasBackpressure() const { return m_backpressure; }
+    void setBackpressure(bool value) { m_backpressure = value; }
+
 private:
     JSTransformStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);

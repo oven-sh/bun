@@ -86,6 +86,16 @@ void JSReadableStreamDefaultReader::releaseLock()
     detach();
 }
 
+JSPromise* JSReadableStreamDefaultReader::cancel(JSC::VM& vm, JSGlobalObject* globalObject, JSValue reason)
+{
+    auto* stream = this->stream();
+    if (!stream) {
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "ReadableStreamDefaultReader.prototype.cancel called on reader with no ReadableStream"_s));
+    }
+
+    return stream->cancel(vm, globalObject, reason);
+}
+
 JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

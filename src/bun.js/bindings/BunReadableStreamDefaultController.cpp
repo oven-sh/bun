@@ -67,9 +67,8 @@ bool JSReadableStreamDefaultController::canCloseOrEnqueue() const
     return stream->state() == JSReadableStream::State::Readable;
 }
 
-JSValue JSReadableStreamDefaultController::enqueue(JSGlobalObject* globalObject, JSValue chunk)
+JSValue JSReadableStreamDefaultController::enqueue(VM& vm, JSGlobalObject* globalObject, JSValue chunk)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!canCloseOrEnqueue())
@@ -107,10 +106,8 @@ JSValue JSReadableStreamDefaultController::enqueue(JSGlobalObject* globalObject,
     return jsUndefined();
 }
 
-void JSReadableStreamDefaultController::error(JSGlobalObject* globalObject, JSValue error)
+void JSReadableStreamDefaultController::error(VM& vm, JSGlobalObject* globalObject, JSValue error)
 {
-    VM& vm = globalObject->vm();
-
     auto* stream = jsDynamicCast<JSReadableStream*>(m_stream.get());
     ASSERT(stream);
 
@@ -130,7 +127,7 @@ void JSReadableStreamDefaultController::error(JSGlobalObject* globalObject, JSVa
     stream->error(error);
 }
 
-void JSReadableStreamDefaultController::close(JSGlobalObject* globalObject)
+void JSReadableStreamDefaultController::close(VM& vm, JSGlobalObject* globalObject)
 {
     if (!canCloseOrEnqueue())
         return;

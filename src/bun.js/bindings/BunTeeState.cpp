@@ -3,15 +3,16 @@
 #include "BunTeeState.h"
 #include "JSTextEncoderStream.h"
 #include "BunStreamInlines.h"
-#include "JSReadableStream.h"
-#include "JSReadableStreamDefaultReader.h"
+#include "BunReadableStream.h"
+#include "BunReadableStreamDefaultReader.h"
+#include "BunReadableStreamDefaultController.h"
 #include "ZigGlobalObject.h"
 
 namespace Bun {
 
 using namespace JSC;
 
-const ClassInfo TeeState::s_info = { "TeeState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TeeState) };
+const ClassInfo TeeState::s_info = { "TeeState"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(TeeState) };
 
 TeeState::TeeState(VM& vm, Structure* structure)
     : Base(vm, structure)

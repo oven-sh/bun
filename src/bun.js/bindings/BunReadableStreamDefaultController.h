@@ -41,9 +41,12 @@ public:
     JSC::JSValue desiredSizeValue();
 
     // API for C++ usage
-    JSC::JSValue enqueue(JSC::JSGlobalObject*, JSC::JSValue chunk);
-    void error(JSC::JSGlobalObject*, JSC::JSValue error);
-    void close(JSC::JSGlobalObject*);
+    JSC::JSValue enqueue(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue chunk);
+    JSC::JSValue enqueue(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk) { return this->enqueue(this->vm(), globalObject, chunk); }
+    void error(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue error);
+    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue error) { this->error(this->vm(), globalObject, error); }
+    void close(JSC::VM&, JSC::JSGlobalObject*);
+    void close(JSC::JSGlobalObject* globalObject) { this->close(this->vm(), globalObject); }
     bool canCloseOrEnqueue() const;
 
     JSC::JSObject* pullAlgorithm() const { return m_pullAlgorithm.get(); }

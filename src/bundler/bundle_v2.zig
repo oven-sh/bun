@@ -6978,7 +6978,7 @@ pub const LinkerContext = struct {
         }
 
         const expr = Expr{
-            .data = stmt.data.s_lazy_export,
+            .data = stmt.data.s_lazy_export.*,
             .loc = stmt.loc,
         };
         const module_ref = this.graph.ast.items(.module_ref)[source_index];

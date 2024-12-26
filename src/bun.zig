@@ -4161,3 +4161,29 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
     return error.StackOverflow;
 }
 const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub const PathBufferPool = struct {
+    const Pool = ObjectPool(PathBuf, null, true, 4);
+    pub const PathBuf = struct {
+        bytes: OSPathBuffer,
+
+        pub fn deinit(this: *PathBuf) void {
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+            node.release();
+        }
+    };
+
+    pub fn get() *OSPathBuffer {
+        // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+        return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+    }
+
+    pub fn put(buffer: *OSPathBuffer) void {
+        var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+        path_buf.deinit();
+    }
+};

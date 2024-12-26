@@ -57,8 +57,9 @@ const id_end_range: [2]i32 = brk: {
 
 const id_end_count = id_end_range[1] - id_end_range[0] + 1;
 
-pub const IDStartType = std.bit_set.StaticBitSet(id_start_count + 1);
-pub const IDContinueType = std.bit_set.StaticBitSet(id_end_count + 1);
+// Do not use std.bit_set.
+pub const IDStartType = @import("../bit_set.zig").StaticBitSet(id_start_count + 1);
+pub const IDContinueType = @import("../bit_set.zig").StaticBitSet(id_end_count + 1);
 
 pub const id_start: IDStartType = brk: {
     var bits: IDStartType = IDStartType.initEmpty();

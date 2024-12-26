@@ -197,17 +197,6 @@ const MacroRefData = struct {
 
 const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
 
-pub const AllocatedNamesPool = ObjectPool(
-    std.ArrayList(string),
-    struct {
-        pub fn init(allocator: std.mem.Allocator) anyerror!std.ArrayList(string) {
-            return std.ArrayList(string).init(allocator);
-        }
-    }.init,
-    true,
-    4,
-);
-
 const Substitution = union(enum) {
     success: Expr,
     failure: Expr,
@@ -2611,7 +2600,7 @@ const StmtList = ListManaged(Stmt);
 // This hash table is used every time we parse function args
 // Rather than allocating a new hash table each time, we can just reuse the previous allocation
 
-const StringVoidMap = struct {
+pub const StringVoidMap = struct {
     allocator: Allocator,
     map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 
@@ -2980,7 +2969,14 @@ pub const Parser = struct {
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        _ = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+        _ = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
+            if (err == error.StackOverflow) {
+                // The lexer location won't be totally accurate, but it's kind of helpful.
+                try p.log.addError(p.source, p.lexer.loc(), "Maximum call stack size exceeded");
+                return;
+            }
+            return err;
+        };
 
         //
         if (comptime ParserType.parser_features.typescript) {
@@ -3255,7 +3251,18 @@ pub const Parser = struct {
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+        const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
+            parse_tracer.end();
+            if (err == error.StackOverflow) {
+                // The lexer location won't be totally accurate, but it's kind of helpful.
+                try p.log.addError(p.source, p.lexer.loc(), "Maximum call stack size exceeded");
+
+                // Return a SyntaxError so that we reuse existing code for handling erorrs.
+                return error.SyntaxError;
+            }
+
+            return err;
+        };
 
         parse_tracer.end();
 
@@ -4811,6 +4818,8 @@ fn NewParser_(
 
         /// Used by commonjs_at_runtime
         has_commonjs_export_names: bool = false,
+
+        stack_check: bun.StackCheck,
 
         /// When this flag is enabled, we attempt to fold all expressions that
         /// TypeScript would consider to be "constant expressions". This flag is
@@ -9495,6 +9504,10 @@ fn NewParser_(
         }
 
         fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
+            if (!p.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
+
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -13035,7 +13048,11 @@ fn NewParser_(
             return try p.parseExprCommon(level, null, flags);
         }
 
-        pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+            if (!p.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
+
             const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
             var expr = try p.parsePrefix(level, errors, flags);
 
@@ -23717,6 +23734,7 @@ fn NewParser_(
                 .named_imports = undefined,
                 .named_exports = .{},
                 .log = log,
+                .stack_check = bun.StackCheck.init(),
                 .allocator = allocator,
                 .options = opts,
                 .then_catch_chain = ThenCatchChain{ .next_target = nullExprData },

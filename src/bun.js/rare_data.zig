@@ -58,7 +58,6 @@ pub const AWSSignatureCache = struct {
     lock: bun.Lock = .{},
 
     pub fn clean(this: *@This()) void {
-        this.date = 0;
         for (this.cache.keys()) |cached_key| {
             bun.default_allocator.free(cached_key);
         }
@@ -92,6 +91,7 @@ pub const AWSSignatureCache = struct {
         this.cache.put(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
     }
     pub fn deinit(this: *@This()) void {
+        this.date = 0;
         this.clean();
         this.cache.deinit();
     }

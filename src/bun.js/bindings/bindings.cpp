@@ -1939,7 +1939,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC::JSValue options = JSC::jsUndefined();
 
     JSC::JSObject* result
-        = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
+        = JSC::ErrorInstance::create(globalObject, globalObject->errorStructureWithErrorType<JSC::ErrorType::Error>(), message, options);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -1971,6 +1971,12 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     if (err.syscall.tag != BunStringTag::Empty) {
         JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
         result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscall,
+            JSC::PropertyAttribute::DontDelete | 0);
+    }
+
+    if (err.hostname.tag != BunStringTag::Empty) {
+        JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
+        result->putDirect(vm, clientData->builtinNames().hostnamePublicName(), hostname,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 

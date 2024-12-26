@@ -124,6 +124,7 @@ typedef struct SystemError {
     BunString message;
     BunString path;
     BunString syscall;
+    BunString hostname;
     int fd;
 } SystemError;
 

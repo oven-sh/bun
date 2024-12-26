@@ -12,6 +12,33 @@ const {
 
 const { ERR_INVALID_IP_ADDRESS } = require("internal/errors");
 
+const errorCodes = {
+  NODATA: "ENODATA",
+  FORMERR: "EFORMERR",
+  SERVFAIL: "ESERVFAIL",
+  NOTFOUND: "ENOTFOUND",
+  NOTIMP: "ENOTIMP",
+  REFUSED: "EREFUSED",
+  BADQUERY: "EBADQUERY",
+  BADNAME: "EBADNAME",
+  BADFAMILY: "EBADFAMILY",
+  BADRESP: "EBADRESP",
+  CONNREFUSED: "ECONNREFUSED",
+  TIMEOUT: "ETIMEOUT",
+  EOF: "EOF",
+  FILE: "EFILE",
+  NOMEM: "ENOMEM",
+  DESTRUCTION: "EDESTRUCTION",
+  BADSTR: "EBADSTR",
+  BADFLAGS: "EBADFLAGS",
+  NONAME: "ENONAME",
+  BADHINTS: "EBADHINTS",
+  NOTINITIALIZED: "ENOTINITIALIZED",
+  LOADIPHLPAPI: "ELOADIPHLPAPI",
+  ADDRGETNETWORKPARAMS: "EADDRGETNETWORKPARAMS",
+  CANCELLED: "ECANCELLED",
+};
+
 const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
@@ -679,6 +706,8 @@ const promisifyResolveX = ttl => {
 
 // promisified versions
 const promises = {
+  ...errorCodes,
+
   lookup(hostname, options) {
     if (typeof hostname !== "string" && hostname) {
       throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
@@ -913,36 +942,12 @@ for (const [method, pMethod] of [
 }
 
 export default {
-  // these are wrong
   ADDRCONFIG: dns.ADDRCONFIG,
   ALL: dns.ALL,
   V4MAPPED: dns.V4MAPPED,
 
   // ERROR CODES
-  NODATA: "DNS_ENODATA",
-  FORMERR: "DNS_EFORMERR",
-  SERVFAIL: "DNS_ESERVFAIL",
-  NOTFOUND: "DNS_ENOTFOUND",
-  NOTIMP: "DNS_ENOTIMP",
-  REFUSED: "DNS_EREFUSED",
-  BADQUERY: "DNS_EBADQUERY",
-  BADNAME: "DNS_EBADNAME",
-  BADFAMILY: "DNS_EBADFAMILY",
-  BADRESP: "DNS_EBADRESP",
-  CONNREFUSED: "DNS_ECONNREFUSED",
-  TIMEOUT: "DNS_ETIMEOUT",
-  EOF: "DNS_EOF",
-  FILE: "DNS_EFILE",
-  NOMEM: "DNS_ENOMEM",
-  DESTRUCTION: "DNS_EDESTRUCTION",
-  BADSTR: "DNS_EBADSTR",
-  BADFLAGS: "DNS_EBADFLAGS",
-  NONAME: "DNS_ENONAME",
-  BADHINTS: "DNS_EBADHINTS",
-  NOTINITIALIZED: "DNS_ENOTINITIALIZED",
-  LOADIPHLPAPI: "DNS_ELOADIPHLPAPI",
-  ADDRGETNETWORKPARAMS: "DNS_EADDRGETNETWORKPARAMS",
-  CANCELLED: "DNS_ECANCELLED",
+  ...errorCodes,
 
   lookup,
   lookupService,

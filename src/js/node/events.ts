@@ -32,7 +32,7 @@ const {
   validateBoolean,
 } = require("internal/validators");
 
-const { inspect } = require("node:util");
+const { inspect, types } = require("node:util");
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -652,20 +652,20 @@ function getEventListeners(emitter, type) {
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/events.js#L315-L339
 function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
-  const length = eventTargets?.length;
-  if (length) {
-    for (let eventTargetOrEmitter of eventTargets) {
-      // TODO: EventTarget setMaxListeners is not implemented yet.
-      // Only EventEmitter has it.
-      if ($isCallable(eventTargetOrEmitter?.setMaxListeners)) {
-        eventTargetOrEmitter.setMaxListeners(n);
-      } else if ($isObject(eventTargetOrEmitter) && eventTargetOrEmitter instanceof EventTarget) {
-        // This is a fake number so that the number can be checked against with getMaxListeners()
-        eventTargetOrEmitter[eventTargetMaxListenersSymbol] = n;
+  if (eventTargets.length === 0) {
+    defaultMaxListeners = n;
+  } else {
+    for (let i = 0; i < eventTargets.length; i++) {
+      const target = eventTargets[i];
+      if (types.isEventTarget(target)) {
+        target[kMaxEventTargetListeners] = n;
+        target[kMaxEventTargetListenersWarned] = false;
+      } else if (typeof target.setMaxListeners === "function") {
+        target.setMaxListeners(n);
+      } else {
+        throw ERR_INVALID_ARG_TYPE("eventTargets", ["EventEmitter", "EventTarget"], target);
       }
     }
-  } else {
-    defaultMaxListeners = n;
   }
 }
 Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });

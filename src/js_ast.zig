@@ -280,6 +280,7 @@ pub const Flags = struct {
         is_static,
         was_shorthand,
         is_spread,
+        is_accessor,
 
         pub inline fn init(fields: Fields) Set {
             return Set.init(fields);
@@ -888,6 +889,7 @@ pub const G = struct {
             normal,
             get,
             set,
+            accessor,
             spread,
             declare,
             abstract,

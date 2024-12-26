@@ -36,6 +36,7 @@ const { inspect } = require("node:util");
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSplice = Array.prototype.splice;
 
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
@@ -317,30 +318,34 @@ EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, f
   return this;
 };
 
-EventEmitterPrototype.removeListener = function removeListener(type, fn) {
-  checkListener(fn);
-  var { _events: events } = this;
-  if (!events) return this;
-  var handlers = events[type];
-  if (!handlers) return this;
-  var length = handlers.length;
+EventEmitterPrototype.removeListener = function removeListener(type, listener) {
+  checkListener(listener);
+
+  const events = this._events;
+  if (events === undefined) return this;
+
+  const list = events[type];
+  if (list === undefined) return this;
+
   let position = -1;
-  for (let i = length - 1; i >= 0; i--) {
-    if (handlers[i] === fn || handlers[i].listener === fn) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] === listener || list[i].listener === listener) {
       position = i;
       break;
     }
   }
   if (position < 0) return this;
-  if (position === 0) {
-    handlers.shift();
-  } else {
-    handlers.splice(position, 1);
-  }
-  if (handlers.length === 0) {
+
+  if (position === 0) list.shift();
+  else ArrayPrototypeSplice.$call(list, position, 1);
+
+  if (list.length === 0) {
     delete events[type];
     this._eventsCount--;
   }
+
+  if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener || listener);
+
   return this;
 };
 

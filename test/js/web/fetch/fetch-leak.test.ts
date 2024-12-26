@@ -165,7 +165,7 @@ test("do not leak", async () => {
 
   let prev = Infinity;
   let count = 0;
-  const interval = setInterval(() => {
+  var interval = setInterval(() => {
     isDone = true;
     gc();
     const next = process.memoryUsage().heapUsed;

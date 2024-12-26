@@ -556,7 +556,7 @@ pub const GarbageCollectionController = struct {
         }
 
         var gc_timer_interval: i32 = 1000;
-        if (vm.bundler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+        if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
@@ -565,7 +565,7 @@ pub const GarbageCollectionController = struct {
         }
         this.gc_timer_interval = gc_timer_interval;
 
-        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+        this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
         if (!this.disabled)
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
@@ -2266,7 +2266,7 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
         };
     }
@@ -2280,14 +2280,14 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .js => this.js.virtual_machine.transpiler.fs.top_level_dir,
             .mini => this.mini.top_level_dir,
         };
     }
 
     pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env,
+            .js => this.js.virtual_machine.transpiler.env,
             .mini => this.mini.env.?,
         };
     }

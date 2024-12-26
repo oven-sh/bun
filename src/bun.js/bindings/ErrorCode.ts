@@ -95,4 +95,7 @@ export default [
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_ASYNC_CALLBACK", TypeError],
+
+  // Postgres
+  ["ERR_POSTGRES_ERROR_RESPONSE", Error, "PostgresError"],
 ] as ErrorCodeMapping;

@@ -2948,9 +2948,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     auto pid_value = callFrame->argument(0);
     int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (pid < 0) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "pid"_s, "a positive integer"_s, pid_value);
-    }
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
     if (signalValue.isNumber()) {

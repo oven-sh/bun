@@ -1630,9 +1630,27 @@ declare module "bun" {
     /**
      * **Experimental**
      *
-     * Enable CSS support.
+     * Bundle CSS files.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bunv 1.2)
      */
     experimentalCss?: boolean;
+
+    /**
+     * **Experimental**
+     *
+     * Bundle JavaScript & CSS files from HTML files. JavaScript & CSS files
+     * from non-external <script> or <link> tags will be bundled.
+     *
+     * Underneath, this works similarly to HTMLRewriter.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bun v1.2)
+     */
+    html?: boolean;
 
     /**
      * Drop function calls to matching property accesses.
@@ -3817,7 +3835,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**

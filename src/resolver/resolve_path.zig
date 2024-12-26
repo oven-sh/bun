@@ -2048,7 +2048,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     defer str.deinit();
 
     const out_slice = joinAbsStringBuf(
-        globalObject.bunVM().bundler.fs.top_level_dir,
+        globalObject.bunVM().transpiler.fs.top_level_dir,
         &join_buf,
         &.{str.slice()},
         comptime Platform.auto.resolve(),

@@ -261,25 +261,33 @@ function overflowWarning(emitter, type, handlers) {
   process.emitWarning(warn);
 }
 
-function onceWrapper(type, listener, ...args) {
-  this.removeListener(type, listener);
-  listener.$apply(this, args);
+function _onceWrap(target, type, listener) {
+  const state = { fired: false, wrapFn: undefined, target, type, listener };
+  const wrapped = onceWrapper.bind(state);
+  wrapped.listener = listener;
+  state.wrapFn = wrapped;
+  return wrapped;
+}
+
+function onceWrapper() {
+  if (!this.fired) {
+    this.target.removeListener(this.type, this.wrapFn);
+    this.fired = true;
+    if (arguments.length === 0) return this.listener.$call(this.target);
+    return this.listener.$apply(this.target, arguments);
+  }
 }
 
 EventEmitterPrototype.once = function once(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.addListener(type, bound);
+  this.on(type, _onceWrap(this, type, fn));
   return this;
 };
 Object.defineProperty(EventEmitterPrototype.once, "name", { value: "once" });
 
 EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.prependListener(type, bound);
+  this.prependListener(type, _onceWrap(this, type, fn));
   return this;
 };
 

@@ -194,6 +194,7 @@ export interface BundlerTestInput {
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
   experimentalCss?: boolean;
+  experimentalHtml?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -448,6 +449,7 @@ function expectBundled(
     minifySyntax,
     minifyWhitespace,
     experimentalCss,
+    experimentalHtml,
     onAfterBundle,
     outdir,
     dotenv,
@@ -663,7 +665,7 @@ function expectBundled(
       }
     }
 
-    // Run bun build cli. In the future we can move to using `Bun.Bundler`
+    // Run bun build cli. In the future we can move to using `Bun.Transpiler.`
     let warningReference: Record<string, ErrorMeta[]> = {};
     const expectedErrors = bundleErrors
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
@@ -695,6 +697,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
               experimentalCss && "--experimental-css",
+              experimentalHtml && "--experimental-html",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -1033,6 +1036,7 @@ function expectBundled(
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           experimentalCss,
+          html: experimentalHtml ? true : undefined,
           drop,
           define: define ?? {},
         } as BuildConfig;

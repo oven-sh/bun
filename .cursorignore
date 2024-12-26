@@ -13,3 +13,10 @@ src/bun.js/bindings/webcore/JSTransformStreamDefaultController.h
 src/bun.js/bindings/webcore/JSTransformStreamDefaultController.cpp
 src/bun.js/bindings/webcore/JSTransformStream.h
 src/bun.js/bindings/webcore/JSTransformStream.cpp
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+bench
+vendor
+*-fixture.{js,ts}
+zig-cache
+packages/bun-uws/fuzzing
+build

@@ -2137,8 +2137,10 @@ pub const Process = struct {
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
-        var buf1: [32768]u16 = undefined;
-        var buf2: [32768]u16 = undefined;
+        var buf1: [32768]u16 = bun.default_allocator.create([32768]u16) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(buf1);
+        var buf2: [32768]u16 = bun.default_allocator.create([32768]u16) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(buf2);
         const len1: usize = switch (wtf1.is8Bit()) {
             true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf1.latin1Slice()).written,
             false => b: {

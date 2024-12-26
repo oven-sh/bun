@@ -1941,7 +1941,6 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 } else if (strings.eqlComptime(filter[0], "a")) {
                     const FirstLetter = AddCompletions.FirstLetter;
-                    const index = AddCompletions.index;
 
                     outer: {
                         if (filter.len > 1 and filter[1].len > 0) {
@@ -1974,7 +1973,8 @@ pub const Command = struct {
                                 'z' => FirstLetter.z,
                                 else => break :outer,
                             };
-                            const results = index.get(first_letter);
+                            AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                            const results = AddCompletions.getPackages(first_letter);
 
                             var prefilled_i: usize = 0;
                             for (results) |cur| {

@@ -88,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {

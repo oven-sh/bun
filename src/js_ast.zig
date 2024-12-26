@@ -3044,7 +3044,7 @@ pub const Stmt = struct {
         return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         s_block,
         s_break,
         s_class,
@@ -3126,7 +3126,13 @@ pub const Stmt = struct {
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
 
-        s_lazy_export: Expr.Data,
+        s_lazy_export: *Expr.Data,
+
+        comptime {
+            if (@sizeOf(Stmt) > 24) {
+                @compileLog("Expected Stmt to be <= 24 bytes, but it is", @sizeOf(Stmt), " bytes");
+            }
+        }
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
@@ -4564,7 +4570,7 @@ pub const Expr = struct {
         };
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         e_array,
         e_unary,
         e_binary,

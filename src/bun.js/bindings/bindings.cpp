@@ -1,5 +1,7 @@
+
 #include "root.h"
 
+#include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
@@ -64,6 +66,7 @@
 
 #include "wtf/Assertions.h"
 #include "wtf/Compiler.h"
+#include "wtf/StackCheck.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "wtf/text/StringCommon.h"
@@ -125,6 +128,8 @@
 #include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
+
+#include <JavaScriptCore/VMInlines.h>
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -5362,6 +5367,12 @@ bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0)
     return JSValue::decode(JSValue0).pureToBoolean() != TriState::False;
 }
 
+extern "C" void JSGlobalObject__throwStackOverflow(JSC__JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    throwStackOverflowError(globalObject, scope);
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5372,9 +5383,15 @@ static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlob
         return;
 
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(!vm.isSafeToRecurse())) {
+        throwStackOverflowError(globalObject, throwScope);
+        return;
+    }
 
     size_t prototypeCount = 0;
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
@@ -5383,6 +5400,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlob
     if (fast) {
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
             fast = false;
+
             if (JSValue proto = object->getPrototype(vm, globalObject)) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
@@ -5434,6 +5452,7 @@ restart:
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
+            // Ignore exceptions due to getters.
             if (scope.exception())
                 scope.clearException();
 
@@ -5449,14 +5468,21 @@ restart:
                 return true;
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
+            // Propagate exceptions from callbacks.
+            if (UNLIKELY(scope.exception())) {
+                return false;
+            }
             return true;
         });
+
+        // Propagate exceptions from callbacks.
         if (scope.exception()) {
-            scope.clearException();
+            return;
         }
 
         if (anyHits) {
             if (prototypeCount++ < 5) {
+
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
@@ -5465,6 +5491,10 @@ restart:
                             goto restart;
                         }
                     }
+                }
+                // Ignore exceptions from Proxy "getPrototype" trap.
+                if (UNLIKELY(scope.exception())) {
+                    scope.clearException();
                 }
             }
             return;
@@ -5484,7 +5514,7 @@ restart:
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             }
 
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
                 if (UNLIKELY(property.isEmpty() || property.isNull()))
                     continue;
@@ -5502,6 +5532,10 @@ restart:
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
+                // Ignore exceptions from "Get" proxy traps.
+                if (scope.exception()) {
+                    scope.clearException();
+                }
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
@@ -5548,6 +5582,7 @@ restart:
                     propertyValue = slot.getValue(globalObject, property);
                 }
 
+                // Ignore exceptions from getters.
                 if (scope.exception()) {
                     scope.clearException();
                     propertyValue = jsUndefined();
@@ -5561,6 +5596,9 @@ restart:
                     continue;
 
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
+
+                // Propagate exceptions from callbacks.
+                RETURN_IF_EXCEPTION(scope, void());
             }
             if constexpr (nonIndexedOnly) {
                 break;

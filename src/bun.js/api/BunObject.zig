@@ -344,7 +344,8 @@ pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    var path_buf: bun.PathBuffer = undefined;
+    const path_buf = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(path_buf);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -397,7 +398,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     if (Which.which(
-        &path_buf,
+        path_buf,
         path_str.slice(),
         cwd_str.slice(),
         bin_str.slice(),
@@ -506,6 +507,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
@@ -523,15 +525,19 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
+    if (globalThis.hasException()) {
+        return .zero;
+    }
+
     buffered_writer.flush() catch {
-        return .undefined;
+        return globalThis.throwOutOfMemory();
     };
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.slice()).withEncoding();
     const ret = out.toJS(globalThis);
-    array.deinit();
+
     return ret;
 }
 

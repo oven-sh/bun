@@ -3039,7 +3039,10 @@ pub const JSGlobalObject = opaque {
     pub fn allocator(this: *JSGlobalObject) std.mem.Allocator {
         return this.bunVM().allocator;
     }
-
+    extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
+    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+        JSGlobalObject__throwStackOverflow(this);
+    }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwOutOfMemoryError(this);
@@ -5798,10 +5801,10 @@ pub const JSValue = enum(i64) {
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
-        if (formatter.map_node) |node| {
-            node.release();
-            formatter.map_node = null;
+        if (formatter.map_node != null) {
+            formatter.deinit();
         }
+        formatter.stack_check.update();
 
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
@@ -6809,6 +6812,21 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                     error.JSError => .zero,
                     error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
                 };
+                if (comptime bun.Environment.isDebug) {
+                    if (value != .zero) {
+                        if (globalThis.hasException()) {
+                            bun.Output.prettyErrorln(
+                                \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
+                                \\
+                                \\Did you forget to check if an exception is pending?
+                                \\
+                                \\<b>  if (globalThis.hasException()) return .zero;<r>
+                                \\
+                            , .{});
+                            Output.flush();
+                        }
+                    }
+                }
                 bun.assert((value == .zero) == globalThis.hasException());
                 return value;
             }

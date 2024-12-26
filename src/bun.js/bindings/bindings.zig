@@ -1710,6 +1710,7 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
+    hostname: String = String.empty,
     fd: bun.FileDescriptor = bun.toFD(-1),
 
     pub fn Maybe(comptime Result: type) type {
@@ -1738,6 +1739,7 @@ pub const SystemError = extern struct {
         this.code.deref();
         this.message.deref();
         this.syscall.deref();
+        this.hostname.deref();
     }
 
     pub fn ref(this: *SystemError) void {
@@ -1745,15 +1747,11 @@ pub const SystemError = extern struct {
         this.code.ref();
         this.message.ref();
         this.syscall.ref();
+        this.hostname.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
-        defer {
-            this.path.deref();
-            this.code.deref();
-            this.message.deref();
-            this.syscall.deref();
-        }
+        defer this.deref();
 
         return shim.cppFn("toErrorInstance", .{ this, global });
     }

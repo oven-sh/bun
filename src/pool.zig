@@ -241,7 +241,10 @@ pub fn ObjectPool(
             }
             dat.loaded = false;
             dat.count = 0;
-            while (dat.list.popFirst()) |node| {
+            var next = dat.list.first;
+            dat.list.first = null;
+            while (next) |node| {
+                next = node.next;
                 if (std.meta.hasFn(Type, "deinit")) node.data.deinit();
                 node.allocator.destroy(node);
             }

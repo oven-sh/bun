@@ -2040,7 +2040,7 @@ describe("fetch Response life cycle", () => {
     });
 
     const serverUrl = await deferred.promise;
-    const clientProcess = Bun.spawn({
+    await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
       stdout: "inherit",

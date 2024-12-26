@@ -322,3 +322,10 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
 
     return null;
 }
+
+pub fn FieldTypes(comptime T: type) []const type {
+    const fields = std.meta.fields(T);
+    var t: [fields.len]type = undefined;
+    for (fields, 0..) |f, i| t[i] = f.type;
+    return &t;
+}

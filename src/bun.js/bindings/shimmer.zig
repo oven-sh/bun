@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
@@ -193,22 +192,21 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }) {
             log(comptime name ++ "__" ++ typeName, .{});
             @setEvalBranchQuota(99999);
-            if (comptime is_bindgen) {
-                unreachable;
-            } else {
+            {
                 const Fn = comptime @field(headers, symbolName(typeName));
-                if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
-                    return matchNullable(
-                        comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
-                        comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                        @call(.auto, Fn, args),
-                    );
-
-                return matchNullable(
-                    comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
-                    comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    Fn(),
-                );
+                const ExpectedReturnType = @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?;
+                const ExternReturnType = @typeInfo(@TypeOf(Fn)).Fn.return_type.?;
+                if (ExpectedReturnType == bun.JSC.JSValue) {
+                    comptime bun.assert(ExpectedReturnType == ExternReturnType);
+                    // if return type is JSValue and function accepts a js global object, add JSValue exception assertion check
+                    // otherwise return. jsBoolean etc are the only prominent examples
+                    if (comptime std.mem.indexOfScalar(type, bun.meta.FieldTypes(@TypeOf(args)), *bun.JSC.JSGlobalObject)) |idx| {
+                        return bun.JSC.assertJSValue(args[idx], @call(.auto, Fn, args));
+                    }
+                }
+                // return type may be bool, *JSObject, etc.
+                // TODO: replace this whole shimmer mechanism with much better bindings
+                return matchNullable(ExpectedReturnType, ExternReturnType, @call(.auto, Fn, args));
             }
         }
     };

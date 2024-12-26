@@ -2139,9 +2139,9 @@ pub const Process = struct {
         const wtf1 = k.value.WTFStringImpl;
         var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
         const allocator = fixed_stack_allocator.get();
-        var buf1 = allocator.alloc(u16, wtf1.utf16ByteLength() + 1) catch bun.outOfMemory();
+        var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
         defer allocator.free(buf1);
-        var buf2 = allocator.alloc(u16, wtf1.utf16ByteLength() + 1) catch bun.outOfMemory();
+        var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
         defer allocator.free(buf2);
         const len1: usize = switch (wtf1.is8Bit()) {
             true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,

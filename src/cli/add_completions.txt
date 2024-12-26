@@ -2218,7 +2218,7 @@ elm-hot
 elm-hot-webpack-loader
 elm-test
 elm-webpack-loader
-elsysia
+elysia
 email-validator
 emailjs-base64
 emailjs-imap-client

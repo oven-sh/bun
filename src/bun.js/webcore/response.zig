@@ -529,7 +529,10 @@ pub const Response = struct {
                         .url = bun.String.empty,
                     };
 
-                    const result = blob.store.?.data.s3.getCredentials().signRequest(blob.store.?.data.s3.path(), .GET, null, null, .{ .expires = 15 * 60 }) catch |sign_err| {
+                    const result = blob.store.?.data.s3.getCredentials().signRequest(.{
+                        .path = blob.store.?.data.s3.path(),
+                        .method = .GET,
+                    }, .{ .expires = 15 * 60 }) catch |sign_err| {
                         return switch (sign_err) {
                             error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
                             error.InvalidMethod => unreachable,
@@ -3311,7 +3314,16 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(url.s3Path(), body.ReadableStream.get().?, globalThis, credentialsWithOptions.options, proxy_url, @ptrCast(&Wrapper.resolve), s3_stream);
+                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(
+                    url.s3Path(),
+                    body.ReadableStream.get().?,
+                    globalThis,
+                    credentialsWithOptions.options,
+                    if (headers) |h| h.getContentType() else null,
+                    proxy_url,
+                    @ptrCast(&Wrapper.resolve),
+                    s3_stream,
+                );
                 url = .{};
                 url_proxy_buffer = "";
                 return promise_value;
@@ -3320,8 +3332,11 @@ pub const Fetch = struct {
                 method = .PUT;
             }
 
-            // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
-            var result = credentialsWithOptions.credentials.signRequest(url.s3Path(), method, null, null, null) catch |sign_err| {
+            var result = credentialsWithOptions.credentials.signRequest(.{
+                .path = url.s3Path(),
+                .method = method,
+                .content_type = if (headers) |h| h.getContentType() else null,
+            }, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
                         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);
@@ -3368,16 +3383,17 @@ pub const Fetch = struct {
                 headers_.deinit();
             }
             if (range) |range_| {
+                const _headers = result.headers();
                 var headersWithRange: [5]picohttp.Header = .{
-                    result.headers[0],
-                    result.headers[1],
-                    result.headers[2],
-                    result.headers[3],
+                    _headers[0],
+                    _headers[1],
+                    _headers[2],
+                    _headers[3],
                     .{ .name = "range", .value = range_ },
                 };
                 headers = Headers.fromPicoHttpHeaders(&headersWithRange, allocator) catch bun.outOfMemory();
             } else {
-                headers = Headers.fromPicoHttpHeaders(&result.headers, allocator) catch bun.outOfMemory();
+                headers = Headers.fromPicoHttpHeaders(result.headers(), allocator) catch bun.outOfMemory();
             }
         }
 
@@ -3469,7 +3485,16 @@ pub const Headers = struct {
         this.entries.deinit(this.allocator);
         this.buf.clearAndFree(this.allocator);
     }
-
+    pub fn getContentType(this: *const Headers) ?[]const u8 {
+        const slice = this.entries.slice();
+        for (0..slice.len) |i| {
+            const entry = slice.get(i);
+            if (std.mem.eql(u8, this.asStr(entry.name), "Content-Type")) {
+                return this.asStr(entry.value);
+            }
+        }
+        return null;
+    }
     pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
         return if (ptr.offset + ptr.length <= this.buf.items.len)
             this.buf.items[ptr.offset..][0..ptr.length]
@@ -3481,7 +3506,7 @@ pub const Headers = struct {
         body: ?*const AnyBlob = null,
     };
 
-    pub fn fromPicoHttpHeaders(headers: []picohttp.Header, allocator: std.mem.Allocator) !Headers {
+    pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.Allocator) !Headers {
         const header_count = headers.len;
         var result = Headers{
             .entries = .{},

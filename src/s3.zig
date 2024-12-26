@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const picohttp = bun.picohttp;
 const std = @import("std");
 const DotEnv = @import("./env_loader.zig");
+pub const RareData = @import("./bun.js/rare_data.zig");
 
 const JSC = bun.JSC;
 const strings = bun.strings;
@@ -243,16 +244,17 @@ pub const AWSCredentials = struct {
     }
 
     const DIGESTED_HMAC_256_LEN = 32;
-    const ENABLE_SIGNATURE_CACHE = false;
-    threadlocal var SIGNATURE_CACHE: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = undefined;
-    threadlocal var SIGNATURE_CACHE_DATE: u64 = 0;
-
     pub const SignResult = struct {
         amz_date: []const u8,
         host: []const u8,
         authorization: []const u8,
         url: []const u8,
-        headers: [4]picohttp.Header,
+        _headers: [6]picohttp.Header,
+        _headers_len: u8 = 4,
+
+        pub fn headers(this: *const @This()) []const picohttp.Header {
+            return this._headers[0..this._headers_len];
+        }
 
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
@@ -276,6 +278,15 @@ pub const AWSCredentials = struct {
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
     };
+
+    pub const SignOptions = struct {
+        path: []const u8,
+        method: bun.http.Method,
+        content_hash: ?[]const u8 = null,
+        search_params: ?[]const u8 = null,
+        content_type: ?[]const u8 = null,
+        content_disposition: ?[]const u8 = null,
+    };
     fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
@@ -288,7 +299,14 @@ pub const AWSCredentials = struct {
         return "us-east-1";
     }
 
-    pub fn signRequest(this: *const @This(), request_path: []const u8, method: bun.http.Method, content_hash: ?[]const u8, searchParams: ?[]const u8, signQueryOption: ?SignQueryOptions) !SignResult {
+    pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
+        const method = signOptions.method;
+        const request_path = signOptions.path;
+        const content_hash = signOptions.content_hash;
+        const search_params = signOptions.search_params;
+        const content_type = signOptions.content_type;
+        const content_disposition = signOptions.content_disposition;
+
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
         const expires = if (signQueryOption) |options| options.expires else 0;
@@ -339,8 +357,17 @@ pub const AWSCredentials = struct {
         errdefer bun.default_allocator.free(amz_date);
 
         const amz_day = amz_date[0..8];
-        const signedHeaders = if (signQuery) "host" else "host;x-amz-content-sha256;x-amz-date";
-
+        const signed_headers = if (signQuery) "host" else brk: {
+            if (content_type != null) {
+                if (content_disposition != null) {
+                    break :brk "content-disposition;content-type;host;x-amz-content-sha256;x-amz-date";
+                } else {
+                    break :brk "content-type;host;x-amz-content-sha256;x-amz-date";
+                }
+            } else {
+                break :brk "host;x-amz-content-sha256;x-amz-date";
+            }
+        };
         // detect service name and host from region or endpoint
         const host = brk_host: {
             if (this.endpoint.len > 0) {
@@ -363,25 +390,9 @@ pub const AWSCredentials = struct {
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
-
-                if (comptime ENABLE_SIGNATURE_CACHE) {
-                    if (SIGNATURE_CACHE_DATE == date_result.numeric_day) {
-                        if (SIGNATURE_CACHE.getKey(key)) |cached| {
-                            break :brk_sign cached;
-                        }
-                    } else {
-                        if (SIGNATURE_CACHE_DATE == 0) {
-                            // first request we need a new map instance
-                            SIGNATURE_CACHE = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
-                        } else {
-                            // day changed so we clean the old cache
-                            for (SIGNATURE_CACHE.keys()) |cached_key| {
-                                bun.default_allocator.free(cached_key);
-                            }
-                            SIGNATURE_CACHE.clearRetainingCapacity();
-                        }
-                        SIGNATURE_CACHE_DATE = date_result.numeric_day;
-                    }
+                var cache = JSC.VirtualMachine.getMainThreadVM().rareData().awsCache();
+                if (cache.get(date_result.numeric_day, key)) |cached| {
+                    break :brk_sign cached;
                 }
                 // not cached yet lets generate a new one
                 const sigDate = bun.hmac.generate(try std.fmt.bufPrint(&tmp_buffer, "AWS4{s}", .{this.secretAccessKey}), amz_day, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
@@ -389,13 +400,11 @@ pub const AWSCredentials = struct {
                 const sigDateRegionService = bun.hmac.generate(sigDateRegion, service_name, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
                 const result = bun.hmac.generate(sigDateRegionService, "aws4_request", .sha256, &hmac_sig_service2) orelse return error.FailedToGenerateSignature;
 
-                if (comptime ENABLE_SIGNATURE_CACHE) {
-                    try SIGNATURE_CACHE.put(try bun.default_allocator.dupe(u8, key), hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].*);
-                }
+                cache.set(date_result.numeric_day, key, hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].*);
                 break :brk_sign result;
             };
             if (signQuery) {
-                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signedHeaders, aws_content_hash });
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
@@ -408,8 +417,17 @@ pub const AWSCredentials = struct {
                     .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             } else {
-                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (searchParams) |p| p[1..] else "", host, aws_content_hash, amz_date, signedHeaders, aws_content_hash });
-
+                const canonical = brk_canonical: {
+                    if (content_type) |ct| {
+                        if (content_disposition) |cd| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-type:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", cd, ct, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-type:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", ct, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        }
+                    } else {
+                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                    }
+                };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
@@ -420,7 +438,7 @@ pub const AWSCredentials = struct {
                 break :brk try std.fmt.allocPrint(
                     bun.default_allocator,
                     "AWS4-HMAC-SHA256 Credential={s}/{s}/{s}/{s}/aws4_request, SignedHeaders={s}, Signature={s}",
-                    .{ this.accessKeyId, amz_day, region, service_name, signedHeaders, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                    .{ this.accessKeyId, amz_day, region, service_name, signed_headers, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             }
         };
@@ -435,25 +453,66 @@ pub const AWSCredentials = struct {
                 .host = "",
                 .authorization = "",
                 .url = authorization,
-                .headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = "" },
-                    .{ .name = "x-amz-date", .value = "" },
-                    .{ .name = "Authorization", .value = "" },
-                    .{ .name = "Host", .value = "" },
+                ._headers = .{
+                    .{ .name = "", .value = "" },
+                    .{ .name = "", .value = "" },
+                    .{ .name = "", .value = "" },
+                    .{ .name = "", .value = "" },
+                    .{ .name = "", .value = "" },
+                    .{ .name = "", .value = "" },
                 },
+                ._headers_len = 0,
+            };
+        }
+
+        if (content_type) |ct| {
+            if (content_disposition) |cd| {
+                return SignResult{
+                    .amz_date = amz_date,
+                    .host = host,
+                    .authorization = authorization,
+                    .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+                    ._headers = .{
+                        .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
+                        .{ .name = "x-amz-date", .value = amz_date },
+                        .{ .name = "Authorization", .value = authorization[0..] },
+                        .{ .name = "Host", .value = host },
+                        .{ .name = "Content-Type", .value = ct },
+                        .{ .name = "Content-Disposition", .value = cd },
+                    },
+                    ._headers_len = 6,
+                };
+            }
+            return SignResult{
+                .amz_date = amz_date,
+                .host = host,
+                .authorization = authorization,
+                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+                ._headers = .{
+                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
+                    .{ .name = "x-amz-date", .value = amz_date },
+                    .{ .name = "Authorization", .value = authorization[0..] },
+                    .{ .name = "Host", .value = host },
+                    .{ .name = "Content-Type", .value = ct },
+                    .{ .name = "", .value = "" },
+                },
+                ._headers_len = 5,
             };
         }
         return SignResult{
             .amz_date = amz_date,
             .host = host,
             .authorization = authorization,
-            .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (searchParams) |s| s else "" }),
-            .headers = .{
+            .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+            ._headers = .{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = authorization[0..] },
                 .{ .name = "Host", .value = host },
+                .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
             },
+            ._headers_len = 4,
         };
     }
     pub const S3Error = struct {
@@ -942,9 +1001,34 @@ pub const AWSCredentials = struct {
         }
     };
 
-    pub fn executeSimpleS3Request(this: *const @This(), path: []const u8, method: bun.http.Method, callback: S3HttpSimpleTask.Callback, callback_context: *anyopaque, proxy_url: ?[]const u8, body: []const u8, range: ?[]const u8, searchParams: ?[]const u8) void {
-        var result = this.signRequest(path, method, null, searchParams, null) catch |sign_err| {
-            if (range) |range_| bun.default_allocator.free(range_);
+    pub const S3SimpleRequestOptions = struct {
+        // signing options
+        path: []const u8,
+        method: bun.http.Method,
+        search_params: ?[]const u8 = null,
+        content_type: ?[]const u8 = null,
+        content_disposition: ?[]const u8 = null,
+
+        // http request options
+        body: []const u8,
+        proxy_url: ?[]const u8 = null,
+        range: ?[]const u8 = null,
+    };
+
+    pub fn executeSimpleS3Request(
+        this: *const @This(),
+        options: S3SimpleRequestOptions,
+        callback: S3HttpSimpleTask.Callback,
+        callback_context: *anyopaque,
+    ) void {
+        var result = this.signRequest(.{
+            .path = options.path,
+            .method = options.method,
+            .search_params = options.search_params,
+            .content_type = options.content_type,
+            .content_disposition = options.content_disposition,
+        }, null) catch |sign_err| {
+            if (options.range) |range_| bun.default_allocator.free(range_);
 
             return switch (sign_err) {
                 error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
@@ -955,17 +1039,18 @@ pub const AWSCredentials = struct {
         };
 
         const headers = brk: {
-            if (range) |range_| {
+            if (options.range) |range_| {
+                const _headers = result.headers();
                 var headersWithRange: [5]picohttp.Header = .{
-                    result.headers[0],
-                    result.headers[1],
-                    result.headers[2],
-                    result.headers[3],
+                    _headers[0],
+                    _headers[1],
+                    _headers[2],
+                    _headers[3],
                     .{ .name = "range", .value = range_ },
                 };
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
             } else {
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
             }
         };
         const task = S3HttpSimpleTask.new(.{
@@ -973,22 +1058,22 @@ pub const AWSCredentials = struct {
             .sign_result = result,
             .callback_context = callback_context,
             .callback = callback,
-            .range = range,
+            .range = options.range,
             .headers = headers,
             .vm = JSC.VirtualMachine.get(),
         });
         task.poll_ref.ref(task.vm);
 
         const url = bun.URL.parse(result.url);
-        const proxy = proxy_url orelse "";
+        const proxy = options.proxy_url orelse "";
         task.http = bun.http.AsyncHTTP.init(
             bun.default_allocator,
-            method,
+            options.method,
             url,
             task.headers.entries,
             task.headers.buf.items,
             &task.response_buffer,
-            body,
+            options.body,
             bun.http.HTTPClientResult.Callback.New(
                 *S3HttpSimpleTask,
                 S3HttpSimpleTask.http_callback,
@@ -1008,11 +1093,21 @@ pub const AWSCredentials = struct {
     }
 
     pub fn s3Stat(this: *const @This(), path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(path, .HEAD, .{ .stat = callback }, callback_context, proxy_url, "", null, null);
+        this.executeSimpleS3Request(.{
+            .path = path,
+            .method = .HEAD,
+            .proxy_url = proxy_url,
+            .body = "",
+        }, .{ .stat = callback }, callback_context);
     }
 
     pub fn s3Download(this: *const @This(), path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", null, null);
+        this.executeSimpleS3Request(.{
+            .path = path,
+            .method = .GET,
+            .proxy_url = proxy_url,
+            .body = "",
+        }, .{ .download = callback }, callback_context);
     }
 
     pub fn s3DownloadSlice(this: *const @This(), path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
@@ -1030,7 +1125,13 @@ pub const AWSCredentials = struct {
             break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
         };
 
-        this.executeSimpleS3Request(path, .GET, .{ .download = callback }, callback_context, proxy_url, "", range, null);
+        this.executeSimpleS3Request(.{
+            .path = path,
+            .method = .GET,
+            .proxy_url = proxy_url,
+            .body = "",
+            .range = range,
+        }, .{ .download = callback }, callback_context);
     }
 
     pub fn s3StreamDownload(this: *@This(), path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void, callback_context: *anyopaque) void {
@@ -1048,7 +1149,10 @@ pub const AWSCredentials = struct {
             break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
         };
 
-        var result = this.signRequest(path, .GET, null, null, null) catch |sign_err| {
+        var result = this.signRequest(.{
+            .path = path,
+            .method = .GET,
+        }, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
 
             return switch (sign_err) {
@@ -1061,16 +1165,17 @@ pub const AWSCredentials = struct {
 
         const headers = brk: {
             if (range) |range_| {
+                const _headers = result.headers();
                 var headersWithRange: [5]picohttp.Header = .{
-                    result.headers[0],
-                    result.headers[1],
-                    result.headers[2],
-                    result.headers[3],
+                    _headers[0],
+                    _headers[1],
+                    _headers[2],
+                    _headers[3],
                     .{ .name = "range", .value = range_ },
                 };
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
             } else {
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&result.headers, bun.default_allocator) catch bun.outOfMemory();
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
             }
         };
         const proxy = proxy_url orelse "";
@@ -1198,11 +1303,22 @@ pub const AWSCredentials = struct {
     };
 
     pub fn s3Delete(this: *const @This(), path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(path, .DELETE, .{ .delete = callback }, callback_context, proxy_url, "", null, null);
+        this.executeSimpleS3Request(.{
+            .path = path,
+            .method = .DELETE,
+            .proxy_url = proxy_url,
+            .body = "",
+        }, .{ .delete = callback }, callback_context);
     }
 
-    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
-        this.executeSimpleS3Request(path, .PUT, .{ .upload = callback }, callback_context, proxy_url, content, null, null);
+    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+        this.executeSimpleS3Request(.{
+            .path = path,
+            .method = .PUT,
+            .proxy_url = proxy_url,
+            .body = content,
+            .content_type = content_type,
+        }, .{ .upload = callback }, callback_context);
     }
 
     const S3UploadStreamWrapper = struct {
@@ -1291,7 +1407,7 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
         const proxy_url = (proxy orelse "");
 
@@ -1299,6 +1415,7 @@ pub const AWSCredentials = struct {
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
+            .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
             .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
             .callback_context = undefined,
             .globalThis = globalThis,
@@ -1399,7 +1516,7 @@ pub const AWSCredentials = struct {
         return endPromise;
     }
     /// returns a writable stream that writes to the s3 path
-    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
+    pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
             pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
                 if (sink.endPromise.globalObject()) |globalObject| {
@@ -1427,6 +1544,8 @@ pub const AWSCredentials = struct {
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
+            .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+
             .callback = @ptrCast(&Wrapper.callback),
             .callback_context = undefined,
             .globalThis = globalThis,
@@ -1486,6 +1605,7 @@ pub const MultiPartUpload = struct {
 
     path: []const u8,
     proxy: []const u8,
+    content_type: ?[]const u8 = null,
     upload_id: []const u8 = "",
     uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
 
@@ -1579,11 +1699,17 @@ pub const MultiPartUpload = struct {
 
         fn perform(this: *@This()) void {
             var params_buffer: [2048]u8 = undefined;
-            const searchParams = std.fmt.bufPrint(&params_buffer, "?partNumber={}&uploadId={s}&x-id=UploadPart", .{
+            const search_params = std.fmt.bufPrint(&params_buffer, "?partNumber={}&uploadId={s}&x-id=UploadPart", .{
                 this.partNumber,
                 this.ctx.upload_id,
             }) catch unreachable;
-            this.ctx.credentials.executeSimpleS3Request(this.ctx.path, .PUT, .{ .part = @ptrCast(&onPartResponse) }, this, this.ctx.proxyUrl(), this.data, null, searchParams);
+            this.ctx.credentials.executeSimpleS3Request(.{
+                .path = this.ctx.path,
+                .method = .PUT,
+                .proxy_url = this.ctx.proxyUrl(),
+                .body = this.data,
+                .search_params = search_params,
+            }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) void {
             if (this.state != .pending) return;
@@ -1613,6 +1739,11 @@ pub const MultiPartUpload = struct {
         if (this.proxy.len > 0) {
             bun.default_allocator.free(this.proxy);
         }
+        if (this.content_type) |ct| {
+            if (ct.len > 0) {
+                bun.default_allocator.free(ct);
+            }
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -1631,7 +1762,13 @@ pub const MultiPartUpload = struct {
                 if (this.options.retry > 0) {
                     this.options.retry -= 1;
                     // retry failed
-                    this.credentials.executeSimpleS3Request(this.path, .PUT, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this, this.proxyUrl(), this.buffered.items, null, null);
+                    this.credentials.executeSimpleS3Request(.{
+                        .path = this.path,
+                        .method = .PUT,
+                        .proxy_url = this.proxyUrl(),
+                        .body = this.buffered.items,
+                        .content_type = this.content_type,
+                    }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
                 } else {
@@ -1809,15 +1946,27 @@ pub const MultiPartUpload = struct {
             this.upload_id,
         }) catch unreachable;
 
-        this.credentials.executeSimpleS3Request(this.path, .POST, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this, this.proxyUrl(), this.multipart_upload_list.slice(), null, searchParams);
+        this.credentials.executeSimpleS3Request(.{
+            .path = this.path,
+            .method = .POST,
+            .proxy_url = this.proxyUrl(),
+            .body = this.multipart_upload_list.slice(),
+            .search_params = searchParams,
+        }, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this);
     }
     fn rollbackMultiPartRequest(this: *@This()) void {
         var params_buffer: [2048]u8 = undefined;
-        const searchParams = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
+        const search_params = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
         }) catch unreachable;
 
-        this.credentials.executeSimpleS3Request(this.path, .DELETE, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this, this.proxyUrl(), "", null, searchParams);
+        this.credentials.executeSimpleS3Request(.{
+            .path = this.path,
+            .method = .DELETE,
+            .proxy_url = this.proxyUrl(),
+            .body = "",
+            .search_params = search_params,
+        }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
     fn enqueuePart(this: *@This(), chunk: []const u8, owns_data: bool) bool {
         const part = this.getCreatePart(chunk, owns_data) orelse return false;
@@ -1825,7 +1974,14 @@ pub const MultiPartUpload = struct {
         if (this.state == .not_started) {
             // will auto start later
             this.state = .multipart_started;
-            this.credentials.executeSimpleS3Request(this.path, .POST, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this, this.proxyUrl(), "", null, "?uploads=");
+            this.credentials.executeSimpleS3Request(.{
+                .path = this.path,
+                .method = .POST,
+                .proxy_url = this.proxyUrl(),
+                .body = "",
+                .search_params = "?uploads=",
+                .content_type = this.content_type,
+            }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else {
             part.start();
         }
@@ -1862,7 +2018,13 @@ pub const MultiPartUpload = struct {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
             this.state = .singlefile_started;
             // we can do only 1 request
-            this.credentials.executeSimpleS3Request(this.path, .PUT, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this, this.proxyUrl(), this.buffered.items, null, null);
+            this.credentials.executeSimpleS3Request(.{
+                .path = this.path,
+                .method = .PUT,
+                .proxy_url = this.proxyUrl(),
+                .body = this.buffered.items,
+                .content_type = this.content_type,
+            }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
         } else {
             // we need to split
             this.processMultiPart(part_size);

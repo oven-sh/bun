@@ -3117,6 +3117,61 @@ pub const DNSResolver = struct {
         return getChannelServers(try this.getChannelOrError(globalThis), globalThis, callframe);
     }
 
+    pub fn setLocalAddress(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return setChannelLocalAddresses(try this.getChannelOrError(globalThis), globalThis, callframe);
+    }
+
+    fn setChannelLocalAddresses(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len == 0) {
+            return globalThis.throwNotEnoughArguments("setLocalAddress", 1, 0);
+        }
+
+        const first_af = try setChannelLocalAddress(channel, globalThis, arguments[0]);
+
+        if (arguments.len < 2 or arguments[1].isUndefined()) {
+            return .undefined;
+        }
+
+        const second_af = try setChannelLocalAddress(channel, globalThis, arguments[1]);
+
+        if (first_af != second_af) {
+            return .undefined;
+        }
+
+        switch (first_af) {
+            c_ares.AF.INET => return globalThis.throwInvalidArguments("Cannot specify two IPv4 addresses.", .{}),
+            c_ares.AF.INET6 => return globalThis.throwInvalidArguments("Cannot specify two IPv6 addresses.", .{}),
+            else => unreachable,
+        }
+    }
+
+    fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!c_int {
+        const str = try value.toBunString2(globalThis);
+        defer str.deref();
+
+        const slice = str.toSlice(bun.default_allocator).slice();
+        var buffer = bun.default_allocator.alloc(u8, slice.len + 1) catch bun.outOfMemory();
+        defer bun.default_allocator.free(buffer);
+        _ = strings.copy(buffer[0..], slice);
+        buffer[slice.len] = 0;
+
+        var addr: [16]u8 = undefined;
+
+        if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
+            const ip = std.mem.readInt(u32, addr[0..4], std.builtin.Endian.big);
+            c_ares.ares_set_local_ip4(channel, ip);
+            return c_ares.AF.INET;
+        }
+
+        if (c_ares.ares_inet_pton(c_ares.AF.INET6, buffer.ptr, &addr) == 1) {
+            c_ares.ares_set_local_ip6(channel, &addr);
+            return c_ares.AF.INET6;
+        }
+
+        return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{slice});
+    }
+
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments();
         if (arguments.len == 0) {

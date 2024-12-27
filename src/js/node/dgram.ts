@@ -380,6 +380,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
         },
       );
     } catch (err) {
+      state.bindState = BIND_STATE_UNBOUND;
       this.emit("error", err);
     }
   });

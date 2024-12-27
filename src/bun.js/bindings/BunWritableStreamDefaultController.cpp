@@ -20,6 +20,7 @@
 #include "BunStreamInlines.h"
 #include "JSAbortSignal.h"
 #include "DOMJITIDLType.h"
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace Bun {
 

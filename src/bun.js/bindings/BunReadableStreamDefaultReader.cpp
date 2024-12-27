@@ -1,5 +1,8 @@
 #include "root.h"
 
+#include "JavaScriptCore/ArrayAllocationProfile.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include "BunReadableStreamDefaultReader.h"
 #include "BunClientData.h"
@@ -12,6 +15,8 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/WriteBarrierInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+
 namespace Bun {
 
 using namespace JSC;
@@ -32,25 +37,39 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* reader = static_cast<JSReadableStreamDefaultReader*>(cell);
     ASSERT_GC_OBJECT_INHERITS(reader, JSReadableStreamDefaultReader::info());
     Base::visitChildren(reader, visitor);
-    visitor.append(reader->m_stream);
-    reader->m_readyPromise.visit(visitor);
-    reader->m_closedPromise.visit(visitor);
-    {
-        WTF::Locker lock(reader->m_gcLock);
-        for (auto request : reader->m_readRequests) {
-            visitor.appendUnbarriered(request);
-        }
-    }
+
+    reader->visitAdditionalChildren(visitor);
+}
+
+template<typename Visitor>
+void JSReadableStreamDefaultReader::visitAdditionalChildren(Visitor& visitor)
+{
+    m_readyPromise.visit(visitor);
+    m_closedPromise.visit(visitor);
+    visitor.append(m_stream);
+    visitor.append(m_readRequests);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);
+
+template<typename Visitor>
+void JSReadableStreamDefaultReader::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSReadableStreamDefaultReader*>(cell);
+    Base::visitOutputConstraints(cell, visitor);
+
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSReadableStreamDefaultReader);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSReadableStreamDefaultReader);
 
 void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm, JSReadableStream* stream)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    m_stream.set(vm, this, stream);
+    m_readRequests.setMayBeNull(vm, this, JSC::constructEmptyArray(globalObject(), static_cast<JSC::ArrayAllocationProfile*>(nullptr), 0));
+    m_stream.setMayBeNull(vm, this, stream);
 
     m_closedPromise.initLater(
         [](const auto& init) {
@@ -66,31 +85,22 @@ void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm, JSReadableStream
         });
 }
 
-JSPromise* JSReadableStreamDefaultReader::takeFirst(JSC::VM& vm)
+JSPromise* JSReadableStreamDefaultReader::takeFirst(JSC::VM& vm, JSGlobalObject* globalObject)
 {
-    JSPromise* promise;
-    {
-        WTF::Locker lock(m_gcLock);
-        promise = jsCast<JSPromise*>(m_readRequests.takeFirst());
+    if (!m_readRequests || m_readRequests->length() == 0) {
+        return nullptr;
     }
-    vm.writeBarrier(this);
-    return promise;
+    auto* readRequests = m_readRequests.get();
+    JSValue first = readRequests->getIndex(globalObject, 0);
+    JSArray* replacement = readRequests->fastSlice(globalObject, readRequests, 1, readRequests->getArrayLength() - 1);
+    m_readRequests.set(vm, this, replacement);
+    return jsCast<JSPromise*>(first);
 }
 
 void JSReadableStreamDefaultReader::detach()
 {
     ASSERT(isActive());
     m_stream.clear();
-    if (m_readyPromise.isInitialized()) {
-        m_readyPromise.setMayBeNull(vm(), this, nullptr);
-    }
-    {
-        WTF::Locker lock(m_gcLock);
-        m_readRequests.clear();
-    }
-    if (m_closedPromise.isInitialized()) {
-        m_closedPromise.setMayBeNull(vm(), this, nullptr);
-    }
 }
 
 void JSReadableStreamDefaultReader::releaseLock()
@@ -113,13 +123,9 @@ JSPromise* JSReadableStreamDefaultReader::cancel(JSC::VM& vm, JSGlobalObject* gl
     return stream->cancel(vm, globalObject, reason);
 }
 
-void JSReadableStreamDefaultReader::addReadRequest(JSC::VM& vm, JSC::JSValue promise)
+void JSReadableStreamDefaultReader::addReadRequest(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue promise)
 {
-    {
-        WTF::Locker lock(m_gcLock);
-        m_readRequests.append(promise);
-    }
-    vm.writeBarrier(this, promise);
+    m_readRequests->push(globalObject, promise);
 }
 
 JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* globalObject)

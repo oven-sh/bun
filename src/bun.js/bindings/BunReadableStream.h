@@ -38,6 +38,10 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    template<typename Visitor>
+    void visitAdditionalChildren(Visitor& visitor);
 
     // Public API for C++ usage
     bool isLocked() const;
@@ -59,7 +63,6 @@ public:
     void setController(JSC::VM& vm, JSReadableStreamDefaultController*);
     State state() const { return m_state; }
     JSValue storedError() const { return m_storedError.get(); }
-    bool disturbed() const { return m_disturbed; }
 
 private:
     JSReadableStream(VM&, Structure*);

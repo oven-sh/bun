@@ -84,7 +84,7 @@ public:
     void setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm);
     void setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm);
 
-    void resetQueue() { m_queue.resetQueue(); }
+    void resetQueue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner) { m_queue.resetQueue(vm, globalObject, owner); }
     Bun::StreamQueue& queue() { return m_queue; }
     const Bun::StreamQueue& queue() const { return m_queue; }
 

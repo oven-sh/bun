@@ -1,5 +1,6 @@
 #pragma once
 
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 
 #include "JavaScriptCore/JSDestructibleObject.h"
@@ -38,6 +39,9 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+    template<typename Visitor>
+    void visitAdditionalChildren(Visitor& visitor);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -60,14 +64,15 @@ public:
 
     bool isEmpty()
     {
-        WTF::Locker lock(m_gcLock);
-        return m_readRequests.isEmpty();
+        if (!m_readRequests)
+            return true;
+        return m_readRequests->length() == 0;
     }
 
     // Implements ReadableStreamDefaultReader
     void releaseLock();
-    JSC::JSPromise* takeFirst(JSC::VM&);
-    void addReadRequest(JSC::VM&, JSC::JSValue promise);
+    JSC::JSPromise* takeFirst(JSC::VM&, JSC::JSGlobalObject*);
+    void addReadRequest(JSC::VM&, JSC::JSGlobalObject* globalObject, JSC::JSValue promise);
 
 private:
     JSReadableStreamDefaultReader(JSC::VM& vm, JSC::Structure* structure)
@@ -77,8 +82,7 @@ private:
 
     void finishCreation(JSC::VM&, JSReadableStream* stream);
 
-    WTF::Lock m_gcLock {};
-    WTF::Deque<JSC::JSValue> m_readRequests WTF_GUARDED_BY_LOCK(m_gcLock) = {};
+    mutable WriteBarrier<JSC::JSArray> m_readRequests;
 
     // Internal slots defined by the spec
     mutable JSC::WriteBarrier<JSObject> m_stream;

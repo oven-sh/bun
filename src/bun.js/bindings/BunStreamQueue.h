@@ -26,13 +26,10 @@ public:
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
-        visitor.append(m_userDefinedStrategy);
-
-        WTF::Locker locker { gcLock };
-        for (const JSC::JSValue value : this->queue()) {
-            if (value && value.isCell())
-                visitor.appendUnbarriered(value);
-        }
+        if (m_userDefinedStrategy)
+            visitor.append(m_userDefinedStrategy);
+        if (m_queue)
+            visitor.append(m_queue);
     }
 
     void setUserDefinedStrategy(JSC::JSObject* strategy);
@@ -42,7 +39,7 @@ public:
     // 1. Assert: container has [[queue]] and [[queueTotalSize]] internal slots.
     // 2. Set container.[[queue]] to a new empty list.
     // 3. Set container.[[queueTotalSize]] to 0.
-    void resetQueue();
+    void resetQueue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner);
     JSC::JSValue peekQueueValue(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void enqueueValueWithSize(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner, JSC::JSValue value, double size);
     JSC::JSValue dequeueValue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner);
@@ -51,8 +48,6 @@ public:
 
     void clearAlgorithms();
 
-    WTF::Lock gcLock = {};
-
     mutable JSC::WriteBarrier<JSC::JSObject> m_userDefinedStrategy;
     WTF::Deque<double, 0> m_userDefinedQueueSizes = {};
 
@@ -60,10 +55,6 @@ public:
     {
         const bool isEmpty = queueTotalSize == 0;
 #if ASSERT_ENABLED
-        {
-            WTF::Locker locker { gcLock };
-            ASSERT(m_queue.isEmpty() == isEmpty);
-        }
         ASSERT(type == StreamQueueType::UserDefined ? m_userDefinedQueueSizes.isEmpty() == isEmpty : true);
 #endif
         return isEmpty;
@@ -75,9 +66,9 @@ public:
     }
 
 private:
-    WTF::Deque<JSC::JSValue>& queue() WTF_REQUIRES_LOCK(gcLock) { return m_queue; }
-    const WTF::Deque<JSC::JSValue>& queue() const WTF_REQUIRES_LOCK(gcLock) { return m_queue; }
+    JSC::JSArray* queue() { return m_queue.get(); }
+    const JSC::JSArray* queue() const { return m_queue.get(); }
 
-    WTF::Deque<JSC::JSValue> m_queue WTF_GUARDED_BY_LOCK(gcLock) = {};
+    mutable JSC::WriteBarrier<JSC::JSArray> m_queue;
 };
 }

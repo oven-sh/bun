@@ -42,6 +42,8 @@
 #include "BunTransformStreamDefaultControllerPrototype.h"
 #include "BunTransformStreamDefaultControllerConstructor.h"
 
+#include <JavaScriptCore/VMTrapsInlines.h>
+
 namespace Bun {
 
 void StreamStructures::initialize(VM& vm, JSC::JSGlobalObject* _globalObject)

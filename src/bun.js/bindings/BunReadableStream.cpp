@@ -25,6 +25,7 @@
 #include "BunReadableStreamDefaultController.h"
 
 #include "BunPromiseInlines.h"
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace Bun {
 
@@ -113,6 +114,8 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     auto* controller = this->controller();
     JSObject* cancelAlgorithm = controller->cancelAlgorithm();
     m_controller.clear();
+    if (!cancelAlgorithm)
+        return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     JSC::CallData callData = JSC::getCallData(cancelAlgorithm);
 
@@ -288,12 +291,29 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_storedError);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template<typename Visitor>
+void JSReadableStream::visitAdditionalChildren(Visitor& visitor)
+{
+    visitor.append(m_reader);
+    visitor.append(m_controller);
+    visitor.append(m_storedError);
+}
+
+template<typename Visitor>
+void JSReadableStream::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSReadableStream*>(cell);
+    Base::visitOutputConstraints(cell, visitor);
+
+    thisObject->visitAdditionalChildren(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStream);
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSReadableStream);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSReadableStream);
 
 bool JSReadableStream::isLocked() const
 {
@@ -317,6 +337,9 @@ void JSReadableStream::finishCreation(VM& vm)
     Base::finishCreation(vm);
     m_state = State::Readable;
     m_disturbed = false;
+    m_reader.clear();
+    m_controller.clear();
+    m_storedError.clear();
 }
 
 void JSReadableStream::setController(JSC::VM& vm, JSReadableStreamDefaultController* controller)
@@ -333,7 +356,7 @@ void JSReadableStream::close(JSGlobalObject* globalObject)
 {
     m_state = State::Closed;
     if (auto* reader = this->reader())
-        reader->closedPromise()->resolve(globalObject, jsUndefined());
+        reader->closedPromise()->fulfill(globalObject, jsUndefined());
 }
 
 void JSReadableStream::error(JSGlobalObject* globalObject, JSValue error)

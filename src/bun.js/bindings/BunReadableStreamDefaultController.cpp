@@ -1,4 +1,5 @@
 
+#include "JavaScriptCore/SlotVisitorMacros.h"
 #include "root.h"
 
 #include "JavaScriptCore/IteratorOperations.h"
@@ -44,14 +45,32 @@ void JSReadableStreamDefaultController::visitChildrenImpl(JSC::JSCell* cell, Vis
 {
     auto* thisObject = static_cast<JSReadableStreamDefaultController*>(cell);
     Base::visitChildren(cell, visitor);
-    visitor.append(thisObject->m_underlyingSource);
-    visitor.append(thisObject->m_pullAlgorithm);
-    visitor.append(thisObject->m_cancelAlgorithm);
-    visitor.append(thisObject->m_stream);
-    thisObject->m_queue.visit<Visitor>(visitor);
+
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template<typename Visitor>
+void JSReadableStreamDefaultController::visitAdditionalChildren(Visitor& visitor)
+{
+    visitor.append(m_underlyingSource);
+    visitor.append(m_pullAlgorithm);
+    visitor.append(m_cancelAlgorithm);
+    visitor.append(m_stream);
+    m_queue.visit<Visitor>(visitor);
+}
+
+template<typename Visitor>
+void JSReadableStreamDefaultController::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSReadableStreamDefaultController*>(cell);
+    Base::visitOutputConstraints(cell, visitor);
+
+    thisObject->visitAdditionalChildren(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultController);
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSReadableStreamDefaultController);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSReadableStreamDefaultController);
 
 JSReadableStreamDefaultController* JSReadableStreamDefaultController::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSReadableStream* stream)
 {
@@ -99,6 +118,7 @@ void JSReadableStreamDefaultController::performPullSteps(VM& vm, JSGlobalObject*
 {
     auto* stream = this->stream();
     ASSERT(stream);
+    vm.writeBarrier(readRequest);
 
     if (!this->queue().isEmpty()) {
         // Let chunk be ! DequeueValue(this).
@@ -120,7 +140,7 @@ void JSReadableStreamDefaultController::performPullSteps(VM& vm, JSGlobalObject*
         return;
     }
 
-    stream->reader()->addReadRequest(vm, readRequest);
+    stream->reader()->addReadRequest(vm, globalObject, readRequest);
 
     // Otherwise, perform ! ReadableStreamDefaultControllerCallPullIfNeeded(this).
     this->callPullIfNeeded(globalObject);
@@ -139,7 +159,7 @@ JSValue JSReadableStreamDefaultController::enqueue(VM& vm, JSGlobalObject* globa
             // 1. Let reader be stream.[[reader]].
             // 2. Assert: reader.[[readRequests]] is not empty.
             // 3. Let readRequest be reader.[[readRequests]][0].
-            JSPromise* readRequest = reader->takeFirst(vm);
+            JSPromise* readRequest = reader->takeFirst(vm, globalObject);
             JSObject* result = JSC::createIteratorResultObject(globalObject, chunk, false);
             readRequest->fulfill(globalObject, result);
             callPullIfNeeded(globalObject);
@@ -162,7 +182,7 @@ void JSReadableStreamDefaultController::error(VM& vm, JSGlobalObject* globalObje
         return;
 
     // Reset queue
-    queue().resetQueue();
+    queue().resetQueue(vm, globalObject, this);
 
     // Clear our algorithms so we stop executing them
     clearAlgorithms();
@@ -361,17 +381,21 @@ bool JSReadableStreamDefaultController::shouldCallPull() const
 
 void JSReadableStreamDefaultController::clearAlgorithms()
 {
-    m_pullAlgorithm.clear();
-    m_cancelAlgorithm.clear();
-    m_underlyingSource.clear();
+    // m_pullAlgorithm.clear();
+    // m_cancelAlgorithm.clear();
+    // m_underlyingSource.clear();
 
-    queue().clearAlgorithms();
+    // queue().clearAlgorithms();
 }
 
 void JSReadableStreamDefaultController::finishCreation(VM& vm, JSReadableStream* stream)
 {
     Base::finishCreation(vm);
     m_stream.set(vm, this, stream);
+    m_pullAlgorithm.clear();
+    m_cancelAlgorithm.clear();
+    m_underlyingSource.clear();
+    queue().resetQueue(vm, globalObject(), this);
 }
 
 const ClassInfo JSReadableStreamDefaultController::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultController) };

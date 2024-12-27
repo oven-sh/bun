@@ -11,6 +11,8 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include "BunPromiseInlines.h"
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+
 namespace Bun {
 
 using namespace JSC;

@@ -38,7 +38,7 @@ void StreamQueue::initialize(JSC::VM& vm, JSC::JSGlobalObject* globalObject, dou
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     this->highWaterMark = highWaterMark;
-    m_queue.clear();
+    m_queue.setMayBeNull(vm, owner, JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 0));
     this->queueTotalSize = 0;
 
     if (sizeAlgorithm) {
@@ -62,12 +62,9 @@ void StreamQueue::initialize(JSC::VM& vm, JSC::JSGlobalObject* globalObject, dou
     }
 }
 
-void StreamQueue::resetQueue()
+void StreamQueue::resetQueue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
 {
-    {
-        WTF::Locker locker { gcLock };
-        m_queue.clear();
-    }
+    m_queue.set(vm, owner, JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 0));
     this->queueTotalSize = 0;
     m_userDefinedQueueSizes.clear();
 }
@@ -79,23 +76,23 @@ void StreamQueue::clearAlgorithms()
 
 void StreamQueue::enqueueValueWithSize(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSObject* owner, JSValue value, double size)
 {
-    {
-        WTF::Locker locker { gcLock };
-        m_queue.append(value);
-    }
-    vm.heap.writeBarrier(owner, value);
+    m_queue->push(globalObject, value);
 
     this->queueTotalSize += size;
 
     if (type == StreamQueueType::UserDefined) {
         m_userDefinedQueueSizes.append(size);
     }
+
+    vm.writeBarrier(owner);
 }
 
 JSValue StreamQueue::peekQueueValue(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    WTF::Locker locker { gcLock };
-    return queue().first();
+    if (m_queue) {
+        return m_queue.get()->getIndex(globalObject, 0);
+    }
+    return {};
 }
 
 void StreamQueue::enqueueValueAndGetSize(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner, JSC::JSValue value)
@@ -136,14 +133,65 @@ void StreamQueue::enqueueValueAndGetSize(JSC::VM& vm, JSC::JSGlobalObject* globa
     this->enqueueValueWithSize(vm, globalObject, owner, value, size);
 }
 
+template<JSArray::ShiftCountMode shiftCountMode>
+static void shift(JSGlobalObject* globalObject, JSObject* thisObj, uint64_t header, uint64_t currentCount, uint64_t resultCount, uint64_t length)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RELEASE_ASSERT(currentCount > resultCount);
+    uint64_t count = currentCount - resultCount;
+
+    RELEASE_ASSERT(header <= length);
+    RELEASE_ASSERT(currentCount <= (length - header));
+
+    if (isJSArray(thisObj)) {
+        JSArray* array = asArray(thisObj);
+        uint32_t header32 = static_cast<uint32_t>(header);
+        ASSERT(header32 == header);
+        if (array->length() == length && array->shiftCount<shiftCountMode>(globalObject, header32, static_cast<uint32_t>(count)))
+            return;
+        header = header32;
+    }
+
+    for (uint64_t k = header; k < length - currentCount; ++k) {
+        uint64_t from = k + currentCount;
+        uint64_t to = k + resultCount;
+        JSValue value = getProperty(globalObject, thisObj, from);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (value) {
+            thisObj->putByIndexInline(globalObject, to, value, true);
+            RETURN_IF_EXCEPTION(scope, void());
+        } else {
+            bool success = thisObj->deleteProperty(globalObject, to);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!success) {
+                throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+                return;
+            }
+        }
+    }
+    for (uint64_t k = length; k > length - count; --k) {
+        bool success = thisObj->deleteProperty(globalObject, k - 1);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!success) {
+            throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+            return;
+        }
+    }
+}
+
 JSValue StreamQueue::dequeueValue(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
 {
-    JSValue result = {};
-    {
-        WTF::Locker locker { gcLock };
-        result = queue().takeFirst();
+    if (!m_queue) {
+        return {};
     }
-    vm.heap.writeBarrier(owner, result);
+
+    JSValue result = m_queue.get()->getIndex(globalObject, 0);
+    unsigned index = 0;
+    uint64_t length = m_queue->getArrayLength();
+    shift<JSC::JSArray::ShiftCountMode::ShiftCountForShift>(globalObject, m_queue.get(), index, 1, 0, length);
+    m_queue->setLength(globalObject, length > 0 ? length - 1 : 0);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 

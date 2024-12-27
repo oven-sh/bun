@@ -2323,37 +2323,11 @@ static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
     PropertyOffset offset;
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "rss"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "heapTotal"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "heapUsed"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "external"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "arrayBuffers"_s),
-        0,
-        offset);
-
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "rss"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "heapTotal"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "heapUsed"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "external"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "arrayBuffers"_s), 0, offset);
     return structure;
 }
 
@@ -2674,11 +2648,9 @@ static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0,
-        String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
+    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0, String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
 
-    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
-        String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
+    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0, String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
 
     memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, 0);
     return memoryUsage;

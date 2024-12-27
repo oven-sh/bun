@@ -129,7 +129,7 @@ void JSReadableStreamDefaultController::error(VM& vm, JSGlobalObject* globalObje
     m_cancelAlgorithm.clear();
     m_strategySizeAlgorithm.clear();
 
-    stream->error(error);
+    stream->error(globalObject, error);
 }
 
 void JSReadableStreamDefaultController::close(VM& vm, JSGlobalObject* globalObject)

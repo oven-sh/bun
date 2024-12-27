@@ -150,10 +150,10 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
         return nullptr;
     }
 
-    bool preventClose = false;
-    bool preventAbort = false;
-    bool preventCancel = false;
-    JSObject* signal = nullptr;
+    bool preventClose [[maybe_unused]] = false;
+    bool preventAbort [[maybe_unused]] = false;
+    bool preventCancel [[maybe_unused]] = false;
+    JSObject* signal [[maybe_unused]] = nullptr;
 
     if (!options.isUndefined()) {
         JSObject* optionsObject = options.toObject(globalObject);
@@ -192,11 +192,12 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
     auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, streams.structure<JSReadableStreamDefaultReader>(domGlobalObject), this);
     m_reader.set(vm, this, reader);
 
-    auto* writer = JSWritableStreamDefaultWriter::create(vm, streams.structure<JSWritableStreamDefaultWriter>(domGlobalObject), writableStream);
+    auto* writer [[maybe_unused]] = JSWritableStreamDefaultWriter::create(vm, streams.structure<JSWritableStreamDefaultWriter>(domGlobalObject), writableStream);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
-    auto* pipeToOperation = PipeToOperation::create(vm, globalObject, reader, writer, preventClose, preventAbort, preventCancel, signal, promise);
-    pipeToOperation->perform(vm, globalObject);
+    // auto* pipeToOperation = PipeToOperation::create(vm, globalObject, reader, writer, preventClose, preventAbort, preventCancel, signal, promise);
+    // pipeToOperation->perform(vm, globalObject);
+    // promise->reject(globalObject, )
 
     return promise;
 }
@@ -254,8 +255,8 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSValue& firstS
         Structure* streamStructure = streams.structure<JSReadableStream>(domGlobalObject);
         auto* stream1 = JSReadableStream::create(vm, globalObject, streamStructure);
         auto* stream2 = JSReadableStream::create(vm, globalObject, streamStructure);
-        stream1->error(error);
-        stream2->error(error);
+        stream1->error(globalObject, error);
+        stream2->error(globalObject, error);
         firstStream = stream1;
         secondStream = stream2;
         return;
@@ -292,5 +293,60 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStream);
+
+bool JSReadableStream::isLocked() const
+{
+    return locked();
+}
+
+JSReadableStream* JSReadableStream::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+{
+    JSReadableStream* stream = new (NotNull, allocateCell<JSReadableStream>(vm)) JSReadableStream(vm, structure);
+    stream->finishCreation(vm);
+    return stream;
+}
+
+JSReadableStream::JSReadableStream(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+void JSReadableStream::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    m_state = State::Readable;
+    m_disturbed = false;
+}
+
+Structure* JSReadableStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+}
+
+void JSReadableStream::close(JSGlobalObject* globalObject)
+{
+    m_state = State::Closed;
+    if (auto* reader = this->reader())
+        reader->closedPromise()->resolve(globalObject, jsUndefined());
+}
+
+void JSReadableStream::error(JSGlobalObject* globalObject, JSValue error)
+{
+    VM& vm = globalObject->vm();
+    m_state = State::Errored;
+    m_storedError.set(vm, this, error.toObject(globalObject));
+    if (auto* reader = this->reader())
+        reader->closedPromise()->reject(globalObject, error);
+}
+
+void JSReadableStream::setReader(JSReadableStreamDefaultReader* reader)
+{
+    if (reader) {
+        VM& vm = reader->vm();
+        m_reader.set(vm, this, reader);
+    } else {
+        m_reader.clear();
+    }
+}
 
 }

@@ -54,7 +54,7 @@ public:
     JSC::JSValue pipeThrough(VM&, JSGlobalObject*, JSObject* transform, JSValue options = jsUndefined());
     void tee(VM&, JSGlobalObject*, JSValue& firstStream, JSValue& secondStream);
 
-    void error(JSValue);
+    void error(JSGlobalObject*, JSValue);
     void close(JSGlobalObject*);
     void setReader(JSReadableStreamDefaultReader*);
 

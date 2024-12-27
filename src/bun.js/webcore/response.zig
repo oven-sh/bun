@@ -3335,7 +3335,6 @@ pub const Fetch = struct {
             var result = credentialsWithOptions.credentials.signRequest(.{
                 .path = url.s3Path(),
                 .method = method,
-                .content_type = if (headers) |h| h.getContentType() else null,
             }, null) catch |sign_err| {
                 switch (sign_err) {
                     error.MissingCredentials => {
@@ -3382,6 +3381,8 @@ pub const Fetch = struct {
             if (headers) |*headers_| {
                 headers_.deinit();
             }
+            const content_type = if (headers) |h| h.getContentType() else null;
+
             if (range) |range_| {
                 const _headers = result.headers();
                 var headersWithRange: [5]picohttp.Header = .{
@@ -3392,6 +3393,32 @@ pub const Fetch = struct {
                     .{ .name = "range", .value = range_ },
                 };
                 headers = Headers.fromPicoHttpHeaders(&headersWithRange, allocator) catch bun.outOfMemory();
+            } else if (content_type) |ct| {
+                if (ct.len > 0) {
+                    const _headers = result.headers();
+                    if (_headers.len > 4) {
+                        var headersWithContentType: [6]picohttp.Header = .{
+                            _headers[0],
+                            _headers[1],
+                            _headers[2],
+                            _headers[3],
+                            _headers[4],
+                            .{ .name = "Content-Type", .value = ct },
+                        };
+                        headers = Headers.fromPicoHttpHeaders(&headersWithContentType, allocator) catch bun.outOfMemory();
+                    } else {
+                        var headersWithContentType: [5]picohttp.Header = .{
+                            _headers[0],
+                            _headers[1],
+                            _headers[2],
+                            _headers[3],
+                            .{ .name = "Content-Type", .value = ct },
+                        };
+                        headers = Headers.fromPicoHttpHeaders(&headersWithContentType, allocator) catch bun.outOfMemory();
+                    }
+                } else {
+                    headers = Headers.fromPicoHttpHeaders(result.headers(), allocator) catch bun.outOfMemory();
+                }
             } else {
                 headers = Headers.fromPicoHttpHeaders(result.headers(), allocator) catch bun.outOfMemory();
             }

@@ -250,9 +250,8 @@ pub const AWSCredentials = struct {
         authorization: []const u8,
         url: []const u8,
 
-        content_type: []const u8,
         content_disposition: []const u8,
-        _headers: [6]picohttp.Header,
+        _headers: [5]picohttp.Header,
         _headers_len: u8 = 4,
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
@@ -262,10 +261,6 @@ pub const AWSCredentials = struct {
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
                 bun.default_allocator.free(this.amz_date);
-            }
-
-            if (this.content_type.len > 0) {
-                bun.default_allocator.free(this.content_type);
             }
 
             if (this.content_disposition.len > 0) {
@@ -295,7 +290,6 @@ pub const AWSCredentials = struct {
         method: bun.http.Method,
         content_hash: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
-        content_type: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
     };
     fn guessRegion(endpoint: []const u8) []const u8 {
@@ -348,10 +342,7 @@ pub const AWSCredentials = struct {
         const request_path = signOptions.path;
         const content_hash = signOptions.content_hash;
         const search_params = signOptions.search_params;
-        var content_type = signOptions.content_type;
-        if (content_type != null and content_type.?.len == 0) {
-            content_type = null;
-        }
+
         var content_disposition = signOptions.content_disposition;
         if (content_disposition != null and content_disposition.?.len == 0) {
             content_disposition = null;
@@ -474,7 +465,6 @@ pub const AWSCredentials = struct {
                     } else {
                         break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
                     }
-                    if (content_type != null) {} else {}
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -501,10 +491,8 @@ pub const AWSCredentials = struct {
                 .host = "",
                 .authorization = "",
                 .url = authorization,
-                .content_type = "",
                 .content_disposition = "",
                 ._headers = .{
-                    .{ .name = "", .value = "" },
                     .{ .name = "", .value = "" },
                     .{ .name = "", .value = "" },
                     .{ .name = "", .value = "" },
@@ -515,47 +503,6 @@ pub const AWSCredentials = struct {
             };
         }
 
-        if (content_type) |ct| {
-            // we need to dupe the content_type and content_disposition because we dont own them and can be used in unknown li
-            const content_type_value = bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory();
-            if (content_disposition) |cd| {
-                const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
-                return SignResult{
-                    .amz_date = amz_date,
-                    .host = host,
-                    .authorization = authorization,
-                    .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-                    .content_type = content_type_value,
-                    .content_disposition = content_disposition_value,
-                    ._headers = .{
-                        .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                        .{ .name = "x-amz-date", .value = amz_date },
-                        .{ .name = "Authorization", .value = authorization[0..] },
-                        .{ .name = "Host", .value = host },
-                        .{ .name = "Content-Type", .value = content_type_value },
-                        .{ .name = "Content-Disposition", .value = content_disposition_value },
-                    },
-                    ._headers_len = 6,
-                };
-            }
-            return SignResult{
-                .amz_date = amz_date,
-                .host = host,
-                .authorization = authorization,
-                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-                .content_type = content_type_value,
-                .content_disposition = "",
-                ._headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                    .{ .name = "x-amz-date", .value = amz_date },
-                    .{ .name = "Authorization", .value = authorization[0..] },
-                    .{ .name = "Host", .value = host },
-                    .{ .name = "Content-Type", .value = content_type_value },
-                    .{ .name = "", .value = "" },
-                },
-                ._headers_len = 5,
-            };
-        }
         if (content_disposition) |cd| {
             const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
             return SignResult{
@@ -563,7 +510,6 @@ pub const AWSCredentials = struct {
                 .host = host,
                 .authorization = authorization,
                 .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-                .content_type = "",
                 .content_disposition = content_disposition_value,
                 ._headers = .{
                     .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
@@ -571,7 +517,6 @@ pub const AWSCredentials = struct {
                     .{ .name = "Authorization", .value = authorization[0..] },
                     .{ .name = "Host", .value = host },
                     .{ .name = "Content-Disposition", .value = content_disposition_value },
-                    .{ .name = "", .value = "" },
                 },
                 ._headers_len = 5,
             };
@@ -581,14 +526,12 @@ pub const AWSCredentials = struct {
             .host = host,
             .authorization = authorization,
             .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-            .content_type = "",
             .content_disposition = "",
             ._headers = .{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = authorization[0..] },
                 .{ .name = "Host", .value = host },
-                .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
             },
             ._headers_len = 4,
@@ -1104,7 +1047,6 @@ pub const AWSCredentials = struct {
             .path = options.path,
             .method = options.method,
             .search_params = options.search_params,
-            .content_type = options.content_type,
             .content_disposition = options.content_disposition,
         }, null) catch |sign_err| {
             if (options.range) |range_| bun.default_allocator.free(range_);
@@ -1129,6 +1071,32 @@ pub const AWSCredentials = struct {
                 };
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
             } else {
+                if (options.content_type) |content_type| {
+                    if (content_type.len > 0) {
+                        const _headers = result.headers();
+                        if (_headers.len > 4) {
+                            var headersWithContentType: [6]picohttp.Header = .{
+                                _headers[0],
+                                _headers[1],
+                                _headers[2],
+                                _headers[3],
+                                _headers[4],
+                                .{ .name = "Content-Type", .value = content_type },
+                            };
+                            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
+                        }
+
+                        var headersWithContentType: [5]picohttp.Header = .{
+                            _headers[0],
+                            _headers[1],
+                            _headers[2],
+                            _headers[3],
+                            .{ .name = "Content-Type", .value = content_type },
+                        };
+                        break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
+                    }
+                }
+
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
             }
         };

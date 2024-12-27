@@ -860,7 +860,7 @@ endif()
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
-    /STACK:0x1200000,0x100000
+    /STACK:0x1200000,0x200000
     /errorlimit:0
   )
   if(RELEASE)

@@ -498,6 +498,7 @@ pub const Blob = struct {
                         const blob = Blob.new(Blob.findOrCreateFileFromPath(
                             &path_or_fd,
                             globalThis,
+                            true,
                         ));
 
                         break :file blob;
@@ -514,6 +515,7 @@ pub const Blob = struct {
                         const blob = Blob.new(Blob.findOrCreateFileFromPath(
                             &dest,
                             globalThis,
+                            true,
                         ));
 
                         break :file blob;
@@ -1246,7 +1248,7 @@ pub const Blob = struct {
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path) brk: {
-            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis);
+            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis, true);
         } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
@@ -1284,6 +1286,7 @@ pub const Blob = struct {
                                 }
                                 const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
+
                                 return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), readable, globalThis, aws_options.options, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
                             }
                             destination_blob.detach();
@@ -1833,18 +1836,18 @@ pub const Blob = struct {
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
-        const path = (JSC.Node.PathLike.fromJS(globalThis, &args)) catch |err| switch (err) {
+        const path_or_fd = (JSC.Node.PathLike.fromJS(globalThis, &args)) catch |err| switch (err) {
             error.JSError => null,
             error.OutOfMemory => {
                 globalThis.throwOutOfMemory() catch {};
                 return null;
             },
         };
-        if (path == null) {
+        if (path_or_fd == null) {
             globalThis.throwInvalidArguments("Expected file path string", .{}) catch return null;
             return null;
         }
-        return constructS3FileInternal(globalThis, path.?, args.nextEat()) catch |err| switch (err) {
+        return constructS3FileInternal(globalThis, path_or_fd.?, args.nextEat()) catch |err| switch (err) {
             error.JSError => null,
             error.OutOfMemory => {
                 globalThis.throwOutOfMemory() catch {};
@@ -1992,10 +1995,12 @@ pub const Blob = struct {
         path: JSC.Node.PathLike,
         options: ?JSC.JSValue,
     ) bun.JSError!Blob {
+
         // get ENV config
         var aws_options = try AWS.getCredentialsWithOptions(globalObject.bunVM().bundler.env.getAWSCredentials(), options, globalObject);
         defer aws_options.deinit();
         const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
+        errdefer store.deinit();
         store.data.s3.options = aws_options.options;
 
         var blob = Blob.initWithStore(store, globalObject);
@@ -2054,14 +2059,16 @@ pub const Blob = struct {
         var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
             return globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
         };
-        defer path.deinitAndUnprotect();
         const options = if (arguments.len >= 2) arguments[1] else null;
+
         if (path == .path) {
             if (strings.startsWith(path.path.slice(), "s3://")) {
-                return constructS3FileInternalJS(globalObject, path.path, options);
+                return try constructS3FileInternalJS(globalObject, path.path, options);
             }
         }
-        var blob = Blob.findOrCreateFileFromPath(&path, globalObject);
+        defer path.deinitAndUnprotect();
+
+        var blob = Blob.findOrCreateFileFromPath(&path, globalObject, false);
 
         if (options) |opts| {
             if (opts.isObject()) {
@@ -2112,10 +2119,19 @@ pub const Blob = struct {
         return constructS3FileInternalJS(globalObject, path, args.nextEat());
     }
 
-    pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject, comptime check_s3: bool) Blob {
         var vm = globalThis.bunVM();
         const allocator = bun.default_allocator;
-
+        if (check_s3) {
+            if (path_or_fd.* == .path) {
+                if (strings.startsWith(path_or_fd.path.slice(), "s3://")) {
+                    const credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
+                    const path = path_or_fd.*.path;
+                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    return Blob.initWithStore(Blob.Store.initS3(path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+                }
+            }
+        }
         const path: JSC.Node.PathOrFileDescriptor = brk: {
             switch (path_or_fd.*) {
                 .path => {
@@ -2169,13 +2185,6 @@ pub const Blob = struct {
                 },
             }
         };
-
-        if (path == .path) {
-            if (strings.startsWith(path.path.slice(), "s3://")) {
-                const credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
-                return Blob.initWithStore(Blob.Store.initS3(path.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
-            }
-        }
 
         return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
     }
@@ -2240,12 +2249,16 @@ pub const Blob = struct {
         }
 
         pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials, allocator: std.mem.Allocator) !*Store {
+            var path = pathlike;
+            // this actually protects/refs the pathlike
+            path.toThreadSafe();
+
             const store = Blob.Store.new(.{
                 .data = .{
                     .s3 = S3Store.init(
-                        pathlike,
+                        path,
                         mime_type orelse brk: {
-                            const sliced = pathlike.slice();
+                            const sliced = path.slice();
                             if (sliced.len > 0) {
                                 var extname = std.fs.path.extension(sliced);
                                 extname = std.mem.trim(u8, extname, ".");
@@ -2332,7 +2345,7 @@ pub const Blob = struct {
                         }
                     }
                 },
-                .s3 => |s3| {
+                .s3 => |*s3| {
                     s3.deinit(allocator);
                 },
             }
@@ -3756,14 +3769,15 @@ pub const Blob = struct {
     pub const S3Store = struct {
         pathlike: JSC.Node.PathLike,
         mime_type: http.MimeType = http.MimeType.other,
-        credentials: *AWSCredentials,
+        credentials: ?*AWSCredentials,
         options: S3MultiPartUpload.MultiPartUploadOptions = .{},
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;
         }
 
         pub fn getCredentials(this: *const @This()) *AWSCredentials {
-            return this.credentials;
+            bun.assert(this.credentials != null);
+            return this.credentials.?;
         }
 
         pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWS.AWSCredentialsWithOptions {
@@ -3832,16 +3846,22 @@ pub const Blob = struct {
             };
         }
         pub fn estimatedSize(this: *const @This()) usize {
-            return this.pathlike.estimatedSize() + this.credentials.estimatedSize();
+            return this.pathlike.estimatedSize() + if (this.credentials) |credentials| credentials.estimatedSize() else 0;
         }
 
-        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
             if (this.pathlike == .string) {
                 allocator.free(@constCast(this.pathlike.slice()));
             } else {
                 this.pathlike.deinit();
             }
-            this.credentials.deref();
+            this.pathlike = .{
+                .string = bun.PathString.empty,
+            };
+            if (this.credentials) |credentials| {
+                credentials.deref();
+                this.credentials = null;
+            }
         }
     };
 
@@ -4280,6 +4300,29 @@ pub const Blob = struct {
                     }
                     mkdirp_if_not_exists = create_directory.toBoolean();
                 }
+                if (try options_object.getTruthy(globalThis, "type")) |content_type| {
+                    //override the content type
+                    if (!content_type.isString()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.type", "string");
+                    }
+                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                    defer content_type_str.deinit();
+                    const slice = content_type_str.slice();
+                    if (strings.isAllASCII(slice)) {
+                        if (this.content_type_allocated) {
+                            bun.default_allocator.free(this.content_type);
+                        }
+                        this.content_type_was_set = true;
+
+                        if (globalThis.bunVM().mimeType(slice)) |mime| {
+                            this.content_type = mime.value;
+                        } else {
+                            const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                            this.content_type = strings.copyLowercase(slice, content_type_buf);
+                            this.content_type_allocated = true;
+                        }
+                    }
+                }
             } else if (!options_object.isEmptyOrUndefinedOrNull()) {
                 return globalThis.throwInvalidArgumentType("write", "options", "object");
             }
@@ -4631,9 +4674,32 @@ pub const Blob = struct {
             const path = s3.path();
             const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
-            if (arguments.len > 1) {
-                const options = arguments.ptr[1];
+            if (arguments.len > 0) {
+                const options = arguments.ptr[0];
                 if (options.isObject()) {
+                    if (try options.getTruthy(globalThis, "type")) |content_type| {
+                        //override the content type
+                        if (!content_type.isString()) {
+                            return globalThis.throwInvalidArgumentType("write", "options.type", "string");
+                        }
+                        var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                        defer content_type_str.deinit();
+                        const slice = content_type_str.slice();
+                        if (strings.isAllASCII(slice)) {
+                            if (this.content_type_allocated) {
+                                bun.default_allocator.free(this.content_type);
+                            }
+                            this.content_type_was_set = true;
+
+                            if (globalThis.bunVM().mimeType(slice)) |mime| {
+                                this.content_type = mime.value;
+                            } else {
+                                const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                                this.content_type = strings.copyLowercase(slice, content_type_buf);
+                                this.content_type_allocated = true;
+                            }
+                        }
+                    }
                     const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                     return try credentialsWithOptions.credentials.dupe().s3WritableStream(path, globalThis, credentialsWithOptions.options, this.contentTypeOrMimeType(), proxy_url);
                 }

@@ -529,7 +529,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | Bun.PathLike,
+    destination: BunFile | S3File | Bun.PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
@@ -1217,7 +1217,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 

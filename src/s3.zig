@@ -1128,7 +1128,7 @@ pub const AWSCredentials = struct {
             .follow,
             .{
                 .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
-                .verbose = .headers,
+                .verbose = .none,
                 .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
             },
         );

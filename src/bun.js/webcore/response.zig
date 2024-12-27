@@ -734,7 +734,14 @@ pub const Response = struct {
 };
 
 const null_fd = bun.invalid_fd;
+fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocator: std.mem.Allocator) void {
+    var old = headers.*;
+    headers.* = Headers.fromPicoHttpHeaders(new_headers, allocator) catch bun.outOfMemory();
 
+    if (old) |*headers_| {
+        headers_.deinit();
+    }
+}
 pub const Fetch = struct {
     const headers_string = "headers";
     const method_string = "method";
@@ -3097,6 +3104,7 @@ pub const Fetch = struct {
                 break :blob Blob.findOrCreateFileFromPath(
                     &pathlike,
                     globalThis,
+                    true,
                 );
             };
 
@@ -3378,9 +3386,7 @@ pub const Fetch = struct {
                 url = ZigURL.parse(result.url);
                 result.url = ""; // fetch now owns this
             }
-            if (headers) |*headers_| {
-                headers_.deinit();
-            }
+
             const content_type = if (headers) |h| h.getContentType() else null;
 
             if (range) |range_| {
@@ -3392,7 +3398,8 @@ pub const Fetch = struct {
                     _headers[3],
                     .{ .name = "range", .value = range_ },
                 };
-                headers = Headers.fromPicoHttpHeaders(&headersWithRange, allocator) catch bun.outOfMemory();
+
+                setHeaders(&headers, &headersWithRange, allocator);
             } else if (content_type) |ct| {
                 if (ct.len > 0) {
                     const _headers = result.headers();
@@ -3405,7 +3412,7 @@ pub const Fetch = struct {
                             _headers[4],
                             .{ .name = "Content-Type", .value = ct },
                         };
-                        headers = Headers.fromPicoHttpHeaders(&headersWithContentType, allocator) catch bun.outOfMemory();
+                        setHeaders(&headers, &headersWithContentType, allocator);
                     } else {
                         var headersWithContentType: [5]picohttp.Header = .{
                             _headers[0],
@@ -3414,13 +3421,14 @@ pub const Fetch = struct {
                             _headers[3],
                             .{ .name = "Content-Type", .value = ct },
                         };
-                        headers = Headers.fromPicoHttpHeaders(&headersWithContentType, allocator) catch bun.outOfMemory();
+
+                        setHeaders(&headers, &headersWithContentType, allocator);
                     }
                 } else {
-                    headers = Headers.fromPicoHttpHeaders(result.headers(), allocator) catch bun.outOfMemory();
+                    setHeaders(&headers, result.headers(), allocator);
                 }
             } else {
-                headers = Headers.fromPicoHttpHeaders(result.headers(), allocator) catch bun.outOfMemory();
+                setHeaders(&headers, result.headers(), allocator);
             }
         }
 
@@ -3513,11 +3521,16 @@ pub const Headers = struct {
         this.buf.clearAndFree(this.allocator);
     }
     pub fn getContentType(this: *const Headers) ?[]const u8 {
-        const slice = this.entries.slice();
-        for (0..slice.len) |i| {
-            const entry = slice.get(i);
-            if (std.mem.eql(u8, this.asStr(entry.name), "Content-Type")) {
-                return this.asStr(entry.value);
+        if (this.entries.len == 0 or this.buf.items.len == 0) {
+            return null;
+        }
+        const header_entries = this.entries.slice();
+        const header_names = header_entries.items(.name);
+        const header_values = header_entries.items(.value);
+
+        for (header_names, 0..header_names.len) |name, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+                return this.asStr(header_values[i]);
             }
         }
         return null;

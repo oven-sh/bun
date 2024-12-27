@@ -20,38 +20,36 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
-if (common.isWindows) return; // TODO BUN
+require('../common');
+
+// This test ensures `dns.resolveNs()` does not raise a C++-land assertion error
+// and throw a JavaScript TypeError instead.
+// Issue https://github.com/nodejs/node-v0.x-archive/issues/7070
+
 const assert = require('assert');
+const dns = require('dns');
+const dnsPromises = dns.promises;
 
-// setImmediate should run clear its queued cbs once per event loop turn
-// but immediates queued while processing the current queue should happen
-// on the next turn of the event loop.
-
-// hit should be the exact same size of QUEUE, if we're letting things
-// recursively add to the immediate QUEUE hit will be > QUEUE
-
-let ticked = false;
-
-let hit = 0;
-const QUEUE = 10;
-
-function run() {
-  if (hit === 0) {
-    setTimeout(() => { ticked = true; }, 1);
-    const now = Date.now();
-    while (Date.now() - now < 2);
+assert.throws(
+  () => dnsPromises.resolveNs([]), // bad name
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
   }
-
-  if (ticked) return;
-
-  hit += 1;
-  setImmediate(run);
-}
-
-for (let i = 0; i < QUEUE; i++)
-  setImmediate(run);
-
-process.on('exit', function() {
-  assert.strictEqual(hit, QUEUE);
-});
+);
+assert.throws(
+  () => dns.resolveNs([]), // bad name
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
+  }
+);
+assert.throws(
+  () => dns.resolveNs(''), // bad callback
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError'
+  }
+);

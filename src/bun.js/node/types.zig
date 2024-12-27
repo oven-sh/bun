@@ -1726,7 +1726,7 @@ pub fn StatType(comptime Big: bool) type {
             }
 
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
-            var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
+            var args = callFrame.arguments();
 
             const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
             const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;

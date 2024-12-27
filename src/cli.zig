@@ -21,6 +21,7 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -230,7 +231,8 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs is completely unsupported.") catch unreachable,
+        clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -739,6 +741,10 @@ pub const Arguments = struct {
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+
+            if (args.option("--dns-result-order")) |order| {
+                ctx.runtime_options.dns_result_order = order;
+            }
 
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -1428,6 +1434,7 @@ pub const Command = struct {
             eval_and_print: bool = false,
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
+        dns_result_order: []const u8 = "verbatim",
     };
 
     var global_cli_ctx: Context = undefined;
@@ -2133,7 +2140,15 @@ pub const Command = struct {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
-                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                var path_buf: bun.PathBuffer = undefined;
+                                @memcpy(path_buf[0..ctx.args.entry_points[0].len], ctx.args.entry_points[0]);
+                                path_buf[ctx.args.entry_points[0].len] = 0;
+                                const lockfile_path = path_buf[0..ctx.args.entry_points[0].len :0];
+                                const file = File.open(lockfile_path, bun.O.RDONLY, 0).unwrap() catch |err| {
+                                    Output.err(err, "failed to open lockfile", .{});
+                                    Global.crash();
+                                };
+                                try PackageManagerCommand.printHash(ctx, file);
                                 return;
                             }
                         }

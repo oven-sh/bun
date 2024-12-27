@@ -192,4 +192,13 @@ URLSearchParams::Iterator::Iterator(URLSearchParams& params)
 {
 }
 
+size_t URLSearchParams::memoryCost() const
+{
+    size_t cost = sizeof(URLSearchParams);
+    for (const auto& pair : m_pairs) {
+        cost += pair.key.sizeInBytes();
+        cost += pair.value.sizeInBytes();
+    }
+    return cost;
+}
 }

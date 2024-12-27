@@ -116,6 +116,13 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFetchHeadersPrototype, JSFetchHeadersProto
 
 using JSFetchHeadersDOMConstructor = JSDOMConstructor<JSFetchHeaders>;
 
+size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -335,8 +342,12 @@ void JSFetchHeaders::finishCreation(VM& vm)
 
 void JSFetchHeaders::computeMemoryCost()
 {
+    size_t previousCost = m_memoryCost;
     m_memoryCost = wrapped().memoryCost();
-    globalObject()->vm().heap.reportExtraMemoryAllocated(this, m_memoryCost);
+    int64_t diff = static_cast<int64_t>(m_memoryCost) - static_cast<int64_t>(previousCost);
+    if (diff > 0) {
+        globalObject()->vm().heap.reportExtraMemoryAllocated(this, static_cast<uint64_t>(diff));
+    }
 }
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

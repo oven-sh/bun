@@ -3,6 +3,12 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
+const netdb = if (bun.Environment.isWindows) .{
+    .AI_V4MAPPED = @as(c_int, 2048),
+    .AI_ADDRCONFIG = @as(c_int, 1024),
+    .AI_ALL = @as(c_int, 256),
+} else @cImport(@cInclude("netdb.h"));
+
 pub const GetAddrInfo = struct {
     name: []const u8 = "",
     port: u16 = 0,
@@ -95,6 +101,9 @@ pub const GetAddrInfo = struct {
                         return error.InvalidFlags;
 
                     options.flags = flags.coerce(i32, globalObject);
+
+                    if (options.flags & ~(netdb.AI_ALL | netdb.AI_ADDRCONFIG | netdb.AI_V4MAPPED) != 0)
+                        return error.InvalidFlags;
                 }
 
                 return options;

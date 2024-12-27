@@ -1997,8 +1997,7 @@ pub const Formatter = struct {
         if (this.failed)
             return;
         if (this.globalThis.hasException()) {
-            this.failed = true;
-            return;
+            return error.JSError;
         }
 
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
@@ -2045,10 +2044,7 @@ pub const Formatter = struct {
             },
             .String => {
                 // This is called from the '%s' formatter, so it can actually be any value
-                const str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
-                    writer.failed = true;
-                    return;
-                };
+                const str: bun.String = try bun.String.fromJS2(value, this.globalThis);
                 defer str.deref();
                 this.addForNewLine(str.length());
 
@@ -2187,8 +2183,7 @@ pub const Formatter = struct {
                     &is_exception,
                 );
                 if (is_exception) {
-                    this.failed = true;
-                    return;
+                    return error.JSError;
                 }
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
@@ -2460,7 +2455,7 @@ pub const Formatter = struct {
                         };
                         value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
                         if (this.globalThis.hasException()) {
-                            this.failed = true;
+                            return error.JSError;
                         }
                         if (this.failed) return;
                     }
@@ -3223,7 +3218,7 @@ pub const Formatter = struct {
                 }
 
                 if (this.globalThis.hasException()) {
-                    this.failed = true;
+                    return error.JSError;
                 }
                 if (this.failed) return;
 

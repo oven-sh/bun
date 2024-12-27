@@ -4025,7 +4025,7 @@ pub const VirtualMachine = struct {
                             value,
                             this.global,
                             allow_ansi_color,
-                        );
+                        ) catch {};
 
                         if (allow_side_effects) {
                             // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
@@ -4051,7 +4051,7 @@ pub const VirtualMachine = struct {
                     .{ .disable_inspect_custom = true, .hide_global = true },
                 );
                 if (tag.tag != .NativeCode) {
-                    formatter.format(
+                    try formatter.format(
                         tag,
                         Writer,
                         writer,

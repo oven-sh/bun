@@ -278,8 +278,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 };
 
 function overflowWarning(emitter, type, handlers) {
-  if (emitter[kMaxEventTargetListenersWarned]) return;
-  emitter[kMaxEventTargetListenersWarned] = true;
+  handlers.warned = true;
   const warn = new Error(
     `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
   );

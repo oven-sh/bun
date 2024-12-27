@@ -6,6 +6,7 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
+const debug = bun.Output.scoped(.zlib, true);
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
@@ -71,6 +72,8 @@ pub fn CompressionStream(comptime T: type) type {
             var in: ?[]const u8 = null;
             var out: ?[]u8 = null;
 
+            const this_value = callframe.this();
+
             bun.assert(!arguments[0].isUndefined()); // must provide flush value
             flush = arguments[0].toU32();
             _ = std.meta.intToEnum(bun.zlib.FlushValue, flush) catch bun.assert(false); // Invalid flush value
@@ -102,7 +105,9 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.setBuffers(in, out);
             this.stream.setFlush(@intCast(flush));
 
-            //
+            // Only create the strong handle when we have a pending write
+            // And make sure to clear it when we are done.
+            this.this_value.set(globalThis, this_value);
 
             const vm = globalThis.bunVM();
             this.task = .{ .callback = &AsyncJob.runTask };
@@ -136,13 +141,23 @@ pub fn CompressionStream(comptime T: type) type {
 
             this.write_in_progress = false;
 
-            if (!(this.checkError(globalThis) catch return globalThis.reportActiveExceptionAsUnhandled(error.JSError))) {
+            // Clear the strong handle before we call any callbacks.
+            const this_value = this.this_value.trySwap() orelse {
+                debug("this_value is null in runFromJSThread", .{});
+                return;
+            };
+
+            this_value.ensureStillAlive();
+
+            if (!(this.checkError(globalThis, this_value) catch return globalThis.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
+            this_value.ensureStillAlive();
 
-            _ = this.write_callback.get().?.call(globalThis, this.this_value.get().?, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+            const write_callback: JSC.JSValue = T.writeCallbackGetCached(this_value).?;
+            _ = write_callback.call(globalThis, this_value, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
 
             if (this.pending_close) _ = this._close();
         }
@@ -192,11 +207,10 @@ pub fn CompressionStream(comptime T: type) type {
 
             this.stream.setBuffers(in, out);
             this.stream.setFlush(@intCast(flush));
-
-            //
+            const this_value = callframe.this();
 
             this.stream.doWork();
-            if (try this.checkError(globalThis)) {
+            if (try this.checkError(globalThis, this_value)) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
                 this.write_in_progress = false;
             }
@@ -206,11 +220,9 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            _ = callframe;
-
             const err = this.stream.reset();
             if (err.isError()) {
-                try this.emitError(globalThis, err);
+                try this.emitError(globalThis, callframe.this(), err);
             }
             return .undefined;
         }
@@ -233,34 +245,34 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.close();
         }
 
-        pub fn setOnError(this: *T, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+        pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
             if (value.isFunction()) {
-                this.onerror_value.set(globalThis, value);
+                T.errorCallbackSetCached(this_value, globalObject, value);
             }
             return true;
         }
 
-        pub fn getOnError(this: *T, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-            _ = globalThis;
-            return this.onerror_value.get() orelse .undefined;
+        pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+            return T.errorCallbackGetCached(this_value) orelse .undefined;
         }
 
         /// returns true if no error was detected/emitted
-        fn checkError(this: *T, globalThis: *JSC.JSGlobalObject) !bool {
+        fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) !bool {
             const err = this.stream.getErrorInfo();
             if (!err.isError()) return true;
-            try this.emitError(globalThis, err);
+            try this.emitError(globalThis, this_value, err);
             return false;
         }
 
-        fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, err_: Error) !void {
+        fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) !void {
             var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
             const msg_value = msg_str.transferToJS(globalThis);
             const err_value = JSC.jsNumber(err_.err);
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            _ = try this.onerror_value.get().?.call(globalThis, this.this_value.get().?, &.{ msg_value, err_value, code_value });
+            const callback: JSC.JSValue = T.errorCallbackGetCached(this_value) orelse Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
+            _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
             if (this.pending_close) _ = this._close();
@@ -307,8 +319,6 @@ pub const SNativeZlib = struct {
     globalThis: *JSC.JSGlobalObject,
     stream: ZlibContext = .{},
     write_result: ?[*]u32 = null,
-    write_callback: JSC.Strong = .{},
-    onerror_value: JSC.Strong = .{},
     poll_ref: CountedKeepAlive = .{},
     this_value: JSC.Strong = .{},
     write_in_progress: bool = false,
@@ -341,14 +351,14 @@ pub const SNativeZlib = struct {
     }
 
     //// adding this didnt help much but leaving it here to compare the number with later
-    // pub fn estimatedSize(this: *const SNativeZlib) usize {
-    //     _ = this;
-    //     const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
-    //     return @sizeOf(SNativeZlib) + internal_state_size;
-    // }
+    pub fn estimatedSize(_: *const SNativeZlib) usize {
+        const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
+        return @sizeOf(SNativeZlib) + internal_state_size;
+    }
 
     pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(7).slice();
+        const this_value = callframe.this();
 
         if (arguments.len != 7) {
             return globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
@@ -364,7 +374,12 @@ pub const SNativeZlib = struct {
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
-        this.write_callback.set(globalThis, writeCallback);
+        SNativeZlib.writeCallbackSetCached(this_value, globalThis, writeCallback);
+
+        // Keep the dictionary alive by keeping a reference to it in the JS object.
+        if (dictionary != null) {
+            SNativeZlib.dictionarySetCached(this_value, globalThis, arguments[6]);
+        }
 
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
@@ -383,15 +398,15 @@ pub const SNativeZlib = struct {
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {
-            try this.emitError(globalThis, err);
+            try this.emitError(globalThis, callframe.this(), err);
         }
         return .undefined;
     }
 
     pub fn deinit(this: *@This()) void {
-        this.write_callback.deinit();
-        this.onerror_value.deinit();
+        this.this_value.deinit();
         this.poll_ref.deinit();
+        this.stream.close();
         this.destroy();
     }
 };
@@ -662,7 +677,7 @@ pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
-    pub usingnamespace JSC.Codegen.JSNativeZlib;
+    pub usingnamespace JSC.Codegen.JSNativeBrotli;
     pub usingnamespace CompressionStream(@This());
 
     ref_count: u32 = 1,
@@ -670,8 +685,6 @@ pub const SNativeBrotli = struct {
     globalThis: *JSC.JSGlobalObject,
     stream: BrotliContext = .{},
     write_result: ?[*]u32 = null,
-    write_callback: JSC.Strong = .{},
-    onerror_value: JSC.Strong = .{},
     poll_ref: CountedKeepAlive = .{},
     this_value: JSC.Strong = .{},
     write_in_progress: bool = false,
@@ -716,8 +729,9 @@ pub const SNativeBrotli = struct {
         };
     }
 
-    pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn init(this: *SNativeBrotli, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
+        const this_value = callframe.this();
         if (arguments.len != 3) {
             return globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
         }
@@ -725,12 +739,14 @@ pub const SNativeBrotli = struct {
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[1].asArrayBuffer(globalThis).?.asU32().ptr;
         const writeCallback = try validators.validateFunction(globalThis, arguments[2], "writeCallback", .{});
+
         this.write_result = writeResult;
-        this.write_callback.set(globalThis, writeCallback);
+
+        SNativeBrotli.writeCallbackSetCached(this_value, globalThis, writeCallback);
 
         var err = this.stream.init();
         if (err.isError()) {
-            try this.emitError(globalThis, err);
+            try this.emitError(globalThis, this_value, err);
             return JSC.jsBoolean(false);
         }
 
@@ -759,9 +775,12 @@ pub const SNativeBrotli = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.write_callback.deinit();
-        this.onerror_value.deinit();
+        this.this_value.deinit();
         this.poll_ref.deinit();
+        switch (this.stream.mode) {
+            .BROTLI_ENCODE, .BROTLI_DECODE => this.stream.close(),
+            else => {},
+        }
         this.destroy();
     }
 };

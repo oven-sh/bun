@@ -1,6 +1,7 @@
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -693,7 +694,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    JSValue returnValue = JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
+    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, JSC::jsUndefined(), args);
 
     if (returnValue.isEmpty() || throwScope.exception()) {
         return JSValue::encode(reportFailure(vm));
@@ -976,7 +977,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
-    
+
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);
     putNativeFn(Identifier::fromString(vm, "describeArray"_s), functionDescribeArray);

@@ -342,16 +342,13 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     unsigned length = expected_types.size();
     if (length == 1) {
         result.append(expected_types.at(0).toWTFString(globalObject));
-    } else if (length == 2) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
-        result.append(", or "_s);
-        result.append(expected_types.at(1).toWTFString(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
             result.append(expected_type.toWTFString(globalObject));
+            result.append(", "_s);
         }
-        result.append(", or "_s);
+        result.append("or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 

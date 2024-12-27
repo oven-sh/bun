@@ -361,12 +361,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
   }
 
-  if (obj.wantsThis) {
-    externs += `
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue);
-`;
-  }
-
   if (obj.structuredClone) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${symbolName(
@@ -652,13 +646,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
   }
 
     auto value = JSValue::encode(instance);
-${
-  obj.wantsThis
-    ? `
-    ${classSymbolName(typeName, "_setThis")}(globalObject, ptr, value);
-`
-    : ""
-}
     RELEASE_AND_RETURN(scope, value);
 }
 
@@ -1661,7 +1648,6 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
-    wantsThis = false,
     overridesToJS = false,
     estimatedSize,
     call = false,
@@ -1790,16 +1776,6 @@ const JavaScriptCoreBindings = struct {
               return null;
             },
           });
-        }
-      `;
-    }
-
-    if (construct && !noConstructor && wantsThis) {
-      exports.set("_setThis", classSymbolName(typeName, "_setThis"));
-      output += `
-        pub fn ${classSymbolName(typeName, "_setThis")}(globalObject: *JSC.JSGlobalObject, ptr: *anyopaque, this: JSC.JSValue) callconv(JSC.conv) void {
-          const real: *${typeName} = @ptrCast(@alignCast(ptr));
-          real.this_value.set(globalObject, this);
         }
       `;
     }

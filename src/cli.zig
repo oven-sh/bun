@@ -32,7 +32,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
@@ -243,6 +243,7 @@ pub const Arguments = struct {
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
@@ -250,6 +251,7 @@ pub const Arguments = struct {
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -284,8 +286,9 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
+        clap.parseParam("--experimental-css               Enable experimental CSS bundling") catch unreachable,
         clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--experimental-html              Use .html files as entry points for JavaScript & CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -501,6 +504,15 @@ pub const Arguments = struct {
 
         if (cmd == .RunCommand or cmd == .AutoCommand) {
             ctx.filters = args.options("--filter");
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         if (cmd == .TestCommand) {
@@ -830,7 +842,9 @@ pub const Arguments = struct {
             }
 
             const experimental_css = args.flag("--experimental-css");
-            ctx.bundler_options.experimental_css = experimental_css;
+            const experimental_html = args.flag("--experimental-html");
+            ctx.bundler_options.experimental.css = experimental_css;
+            ctx.bundler_options.experimental.html = experimental_html;
             ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
 
             const minify_flag = args.flag("--minify");
@@ -1104,6 +1118,15 @@ pub const Arguments = struct {
             // "run.silent" in bunfig.toml
             if (args.flag("--silent")) {
                 ctx.debug.silent = true;
+            }
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
             }
 
             if (opts.define) |define| {
@@ -1504,7 +1527,7 @@ pub const Command = struct {
             bytecode: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",
-            experimental_css: bool = false,
+            experimental: options.Loader.Experimental = .{},
             css_chunking: bool = false,
 
             bake: bool = false,
@@ -1513,7 +1536,7 @@ pub const Command = struct {
 
             env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
-
+            elide_lines: ?usize = null,
             // Compile options
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
@@ -1918,7 +1941,6 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 } else if (strings.eqlComptime(filter[0], "a")) {
                     const FirstLetter = AddCompletions.FirstLetter;
-                    const index = AddCompletions.index;
 
                     outer: {
                         if (filter.len > 1 and filter[1].len > 0) {
@@ -1951,7 +1973,8 @@ pub const Command = struct {
                                 'z' => FirstLetter.z,
                                 else => break :outer,
                             };
-                            const results = index.get(first_letter);
+                            AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                            const results = AddCompletions.getPackages(first_letter);
 
                             var prefilled_i: usize = 0;
                             for (results) |cur| {

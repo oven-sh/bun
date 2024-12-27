@@ -24,7 +24,6 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;

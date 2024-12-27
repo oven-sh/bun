@@ -3039,7 +3039,10 @@ pub const JSGlobalObject = opaque {
     pub fn allocator(this: *JSGlobalObject) std.mem.Allocator {
         return this.bunVM().allocator;
     }
-
+    extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
+    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+        JSGlobalObject__throwStackOverflow(this);
+    }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwOutOfMemoryError(this);
@@ -4481,33 +4484,6 @@ pub const JSValue = enum(i64) {
         try buffered_writer.flush();
     }
 
-    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
-        var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        const writer = buffered_writer.writer();
-        const Writer = @TypeOf(writer);
-
-        const fmt_options = JSC.ConsoleObject.FormatOptions{
-            .enable_colors = false,
-            .add_newline = false,
-            .flush = false,
-            .ordered_properties = true,
-            .quote_strings = true,
-        };
-
-        JSC.ConsoleObject.format2(
-            .Debug,
-            globalObject,
-            @as([*]const JSValue, @ptrCast(&this)),
-            1,
-            Writer,
-            Writer,
-            writer,
-            fmt_options,
-        );
-
-        try buffered_writer.flush();
-    }
-
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
@@ -5800,10 +5776,10 @@ pub const JSValue = enum(i64) {
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
-        if (formatter.map_node) |node| {
-            node.release();
-            formatter.map_node = null;
+        if (formatter.map_node != null) {
+            formatter.deinit();
         }
+        formatter.stack_check.update();
 
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
@@ -6802,15 +6778,30 @@ pub const JSHostZigFunction = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSVal
 
 pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunctionType {
     return struct {
-        pub fn function(
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        pub fn function(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             if (bun.Environment.allow_assert and bun.Environment.is_canary) {
                 const value = Function(globalThis, callframe) catch |err| switch (err) {
                     error.JSError => .zero,
                     error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
                 };
+                if (comptime bun.Environment.isDebug) {
+                    if (value != .zero) {
+                        if (globalThis.hasException()) {
+                            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                            bun.Output.prettyErrorln(
+                                \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
+                                \\
+                                \\    fn: {s}
+                                \\ value: {}
+                                \\
+                            , .{
+                                &Function, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
+                                value.toFmt(&formatter),
+                            });
+                            Output.flush();
+                        }
+                    }
+                }
                 bun.assert((value == .zero) == globalThis.hasException());
                 return value;
             }

@@ -54,6 +54,7 @@ export default [
   ["ERR_INVALID_URI", URIError],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error],
+  ["ERR_UNHANDLED_ERROR", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -98,4 +99,7 @@ export default [
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_ASYNC_CALLBACK", TypeError],
+
+  // Postgres
+  ["ERR_POSTGRES_ERROR_RESPONSE", Error, "PostgresError"],
 ] as ErrorCodeMapping;

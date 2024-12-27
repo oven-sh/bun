@@ -10,4 +10,5 @@ export default {
   ERR_BUFFER_TOO_LARGE: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_BUFFER_TOO_LARGE", 0),
   ERR_ZLIB_INITIALIZATION_FAILED: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_ZLIB_INITIALIZATION_FAILED", 0),
   ERR_BUFFER_OUT_OF_BOUNDS: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_BUFFER_OUT_OF_BOUNDS", 0),
+  ERR_UNHANDLED_ERROR: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_UNHANDLED_ERROR", 0),
 };

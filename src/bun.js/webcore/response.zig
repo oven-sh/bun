@@ -143,7 +143,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -156,7 +156,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+            try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -168,13 +168,13 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -1889,10 +1889,10 @@ pub const Fetch = struct {
             var proxy: ?ZigURL = null;
             if (fetch_options.proxy) |proxy_opt| {
                 if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                    proxy = fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                    proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxy(fetch_options.url);
                 }
             } else {
-                proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                proxy = jsc_vm.transpiler.env.getHttpProxy(fetch_options.url);
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -3008,7 +3008,7 @@ pub const Fetch = struct {
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         return globalThis.throwError(err, "Failed to resolve file url");
-                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                    }) else globalThis.bunVM().transpiler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
                         cwd,

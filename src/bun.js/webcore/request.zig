@@ -227,7 +227,7 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
             if (this.body.value == .Blob) {
                 try writer.writeAll("\n");
@@ -247,7 +247,7 @@ pub const Request = struct {
                 if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
-                    formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                    try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
                 }
             }
         }

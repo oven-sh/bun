@@ -597,6 +597,14 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (run_expr.get("elide-lines")) |elide_lines| {
+                        if (elide_lines.data == .e_number) {
+                            this.ctx.bundler_options.elide_lines = @intFromFloat(elide_lines.data.e_number.value);
+                        } else {
+                            try this.addError(elide_lines.loc, "Expected number");
+                        }
+                    }
+
                     if (run_expr.get("shell")) |shell| {
                         if (shell.asString(allocator)) |value| {
                             if (strings.eqlComptime(value, "bun")) {

@@ -111,7 +111,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
 
             buffered_writer_.context = &expected_buf;
@@ -125,7 +125,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
         }
 

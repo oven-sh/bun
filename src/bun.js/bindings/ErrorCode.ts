@@ -51,6 +51,7 @@ export default [
   ["ERR_INVALID_URI", URIError, "URIError"],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
+  ["ERR_UNHANDLED_ERROR", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

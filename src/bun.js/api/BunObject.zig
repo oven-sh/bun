@@ -515,7 +515,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format2(
+    try ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -525,13 +525,8 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
-    if (globalThis.hasException()) {
-        return .zero;
-    }
-
-    buffered_writer.flush() catch {
-        return globalThis.throwOutOfMemory();
-    };
+    if (globalThis.hasException()) return error.JSError;
+    buffered_writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
@@ -539,6 +534,19 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const ret = out.toJS(globalThis);
 
     return ret;
+}
+
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {

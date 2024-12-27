@@ -4482,33 +4482,6 @@ pub const JSValue = enum(i64) {
         try buffered_writer.flush();
     }
 
-    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
-        var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        const writer = buffered_writer.writer();
-        const Writer = @TypeOf(writer);
-
-        const fmt_options = JSC.ConsoleObject.FormatOptions{
-            .enable_colors = false,
-            .add_newline = false,
-            .flush = false,
-            .ordered_properties = true,
-            .quote_strings = true,
-        };
-
-        JSC.ConsoleObject.format2(
-            .Debug,
-            globalObject,
-            @as([*]const JSValue, @ptrCast(&this)),
-            1,
-            Writer,
-            Writer,
-            writer,
-            fmt_options,
-        );
-
-        try buffered_writer.flush();
-    }
-
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
@@ -6803,10 +6776,7 @@ pub const JSHostZigFunction = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSVal
 
 pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunctionType {
     return struct {
-        pub fn function(
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        pub fn function(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             if (bun.Environment.allow_assert and bun.Environment.is_canary) {
                 const value = Function(globalThis, callframe) catch |err| switch (err) {
                     error.JSError => .zero,
@@ -6815,14 +6785,17 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                 if (comptime bun.Environment.isDebug) {
                     if (value != .zero) {
                         if (globalThis.hasException()) {
+                            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
                             bun.Output.prettyErrorln(
                                 \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
                                 \\
-                                \\Did you forget to check if an exception is pending?
+                                \\    fn: {s}
+                                \\ value: {}
                                 \\
-                                \\<b>  if (globalThis.hasException()) return .zero;<r>
-                                \\
-                            , .{});
+                            , .{
+                                &Function, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
+                                value.toFmt(&formatter),
+                            });
                             Output.flush();
                         }
                     }

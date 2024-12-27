@@ -53,23 +53,14 @@ public:
     void initialize(VM& vm, JSC::JSGlobalObject* globalObject);
 };
 
-#define DEFINE_STREAM_MEMBERS(ClassName)                                                   \
-    template<>                                                                             \
-    JSObject* StreamStructures::constructor<ClassName>(const JSGlobalObject* globalObject) \
-    {                                                                                      \
-        return m_##ClassName.constructor(globalObject);                                    \
-    }                                                                                      \
-    template<>                                                                             \
-    Structure* StreamStructures::structure<ClassName>(const JSGlobalObject* globalObject)  \
-    {                                                                                      \
-        return m_##ClassName.get(globalObject);                                            \
-    }                                                                                      \
-    template<>                                                                             \
-    JSObject* StreamStructures::prototype<ClassName>(const JSGlobalObject* globalObject)   \
-    {                                                                                      \
-        return m_##ClassName.prototype(globalObject);                                      \
-    }
-FOR_EACH_WHATWG_STREAM_CLASS_TYPE(DEFINE_STREAM_MEMBERS)
-#undef DEFINE_STREAM_MEMBERS
+#define DECLARE_STREAM_TEMPLATE_METHODS(ClassName)                                          \
+    template<>                                                                              \
+    JSObject* StreamStructures::constructor<ClassName>(const JSGlobalObject* globalObject); \
+    template<>                                                                              \
+    Structure* StreamStructures::structure<ClassName>(const JSGlobalObject* globalObject);  \
+    template<>                                                                              \
+    JSObject* StreamStructures::prototype<ClassName>(const JSGlobalObject* globalObject);
+
+FOR_EACH_WHATWG_STREAM_CLASS_TYPE(DECLARE_STREAM_TEMPLATE_METHODS)
 
 }

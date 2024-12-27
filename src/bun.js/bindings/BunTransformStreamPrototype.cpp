@@ -101,4 +101,9 @@ void JSTransformStreamPrototype::finishCreation(VM& vm, JSGlobalObject* globalOb
 
 const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
 
+Structure* JSTransformStreamPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(JSC::JSType::ObjectType, StructureFlags), info());
+}
+
 } // namespace Bun

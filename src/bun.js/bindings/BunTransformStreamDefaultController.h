@@ -47,7 +47,10 @@ public:
     JSTransformStream* stream() const;
 
 private:
-    JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure);
+    JSTransformStreamDefaultController(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSTransformStream* transformStream);
 
     JSC::WriteBarrier<JSObject> m_stream;

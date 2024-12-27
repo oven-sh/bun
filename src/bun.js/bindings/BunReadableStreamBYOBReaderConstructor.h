@@ -22,8 +22,6 @@ public:
 
     DECLARE_INFO;
 
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
 private:
     JSReadableStreamBYOBReaderConstructor(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);

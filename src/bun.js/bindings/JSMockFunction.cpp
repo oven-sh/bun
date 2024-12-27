@@ -27,6 +27,7 @@
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "BunPromiseInlines.h"
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
@@ -1180,7 +1181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, Bun::createFulfilledPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1193,7 +1194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, Bun::createFulfilledPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }

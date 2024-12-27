@@ -124,4 +124,14 @@ JSValue JSReadableStreamBYOBReader::cancel(VM& vm, JSGlobalObject* globalObject,
     return stream()->cancel(vm, globalObject, reason);
 }
 
+JSC::GCClient::IsoSubspace* JSReadableStreamBYOBReader::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBReader, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBReader = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBReader = std::forward<decltype(space)>(space); });
+}
+
 } // namespace Bun

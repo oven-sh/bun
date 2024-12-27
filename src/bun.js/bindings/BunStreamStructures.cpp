@@ -64,4 +64,23 @@ void StreamStructures::initialize(VM& vm, JSC::JSGlobalObject* _globalObject)
 #undef INIT_WHATWG_STREAM_CONSTRUCTOR
 }
 
+#define DEFINE_STREAM_MEMBERS(ClassName)                                                   \
+    template<>                                                                             \
+    JSObject* StreamStructures::constructor<ClassName>(const JSGlobalObject* globalObject) \
+    {                                                                                      \
+        return m_##ClassName.constructor(globalObject);                                    \
+    }                                                                                      \
+    template<>                                                                             \
+    Structure* StreamStructures::structure<ClassName>(const JSGlobalObject* globalObject)  \
+    {                                                                                      \
+        return m_##ClassName.get(globalObject);                                            \
+    }                                                                                      \
+    template<>                                                                             \
+    JSObject* StreamStructures::prototype<ClassName>(const JSGlobalObject* globalObject)   \
+    {                                                                                      \
+        return m_##ClassName.prototype(globalObject);                                      \
+    }
+FOR_EACH_WHATWG_STREAM_CLASS_TYPE(DEFINE_STREAM_MEMBERS)
+#undef DEFINE_STREAM_MEMBERS
+
 }

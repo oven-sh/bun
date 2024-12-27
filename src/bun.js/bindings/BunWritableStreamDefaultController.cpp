@@ -161,9 +161,76 @@ JSC::JSValue JSWritableStreamDefaultController::error(JSC::VM& vm, JSC::JSGlobal
     m_abortAlgorithm.clear();
     m_strategySizeAlgorithm.clear();
 
-    stream->error(globalObject, reason);
+    stream->error(vm, globalObject, reason);
 
     return jsUndefined();
+}
+
+static JSValue callSizeAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* sizeAlgorithm, JSC::JSValue undefined, JSC::JSValue chunk)
+{
+    MarkedArgumentBuffer args;
+    args.append(chunk);
+    JSValue chunkSize = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, sizeAlgorithm, JSC::getCallData(sizeAlgorithm), jsUndefined(), args);
+    return chunkSize;
+}
+
+void JSWritableStreamDefaultController::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue chunk)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // 1. Let stream be this.[[stream]].
+    JSWritableStream* stream = this->stream();
+    ASSERT(stream);
+
+    // 2. If ! WritableStreamCloseQueuedOrInFlight(stream) is true, return a promise rejected with a TypeError.
+    if (stream->isCloseQueuedOrInFlight()) {
+        throwTypeError(globalObject, scope, "Cannot write to a stream that is closed or closing"_s);
+        return;
+    }
+
+    // 3. If stream.[[state]] is not "writable", return a promise rejected with a TypeError.
+    if (stream->state() != JSWritableStream::State::Writable) {
+        throwTypeError(globalObject, scope, "Cannot write to a stream that is not writable"_s);
+        return;
+    }
+
+    // 4. Let sizeAlgorithm be this.[[strategySizeAlgorithm]].
+
+    // 5. Let chunkSize be ? Call(sizeAlgorithm, undefined, « chunk »).
+    JSValue chunkSize = m_strategySizeAlgorithm ? callSizeAlgorithm(vm, globalObject, m_strategySizeAlgorithm.get(), jsUndefined(), chunk) : jsNumber(1);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // 6. Let enqueueResult be EnqueueValueWithSize(this, chunk, chunkSize).
+    if (!m_queue) {
+        m_queue.set(vm, this, constructEmptyArray(globalObject, nullptr));
+    }
+    m_queue->push(globalObject, chunk);
+    m_queueTotalSize += chunkSize.toNumber(globalObject);
+
+    // 7. If ! WritableStreamCloseQueuedOrInFlight(stream) is false and stream.[[state]] is "writable",
+    if (!stream->isCloseQueuedOrInFlight() && stream->state() == JSWritableStream::State::Writable) {
+        // Let backpressure be ! WritableStreamDefaultControllerGetBackpressure(this).
+        bool backpressure = getDesiredSize() <= 0;
+
+        // Perform ! WritableStreamUpdateBackpressure(stream, backpressure).
+        stream->updateBackpressure(vm, globalObject, backpressure);
+    }
+
+    // 8. Perform ! WritableStreamDefaultControllerAdvanceQueueIfNeeded(this).
+    if (shouldCallWrite()) {
+        m_writing = true;
+        m_inFlightWriteRequest = true;
+        MarkedArgumentBuffer args;
+        args.append(chunk);
+        JSObject* writeAlgorithm = m_writeAlgorithm.get();
+        auto callData = JSC::getCallData(writeAlgorithm);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, writeAlgorithm, callData, jsUndefined(), args);
+        if (UNLIKELY(scope.exception())) {
+            m_writing = false;
+            m_inFlightWriteRequest = false;
+            return;
+        }
+    }
 }
 
 bool JSWritableStreamDefaultController::shouldCallWrite() const

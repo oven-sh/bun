@@ -130,6 +130,7 @@
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
+#include "BunPromiseInlines.h"
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -3268,7 +3269,7 @@ JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, 
         return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
     }
 
-    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+    return JSValue::encode(Bun::createFulfilledPromise(globalObject, result));
 }
 
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,

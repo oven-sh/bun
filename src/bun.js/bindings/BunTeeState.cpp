@@ -14,6 +14,8 @@
 #include "StructuredClone.h"
 
 #include "JavaScriptCore/IteratorOperations.h"
+#include "BunPromiseInlines.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -46,7 +48,7 @@ JSC::JSPromise* TeeState::cancel(VM& vm, JSGlobalObject* globalObject, Bun::JSRe
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (m_closedOrErrored)
-        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+        return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     if (canceledBranch == m_branch1.get()) {
         m_canceled1 = true;
@@ -187,5 +189,17 @@ void TeeState::pullAlgorithm(VM& vm, JSGlobalObject* globalObject)
         Bun::then(globalObject, promise, jsTeeStatePullAlgorithmFulfill, jsTeeStatePullAlgorithmReject, this);
     }
 }
+
+template<typename Visitor>
+void TeeState::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<TeeState*>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_reader);
+    visitor.append(thisObject->m_branch1);
+    visitor.append(thisObject->m_branch2);
+}
+
+DEFINE_VISIT_CHILDREN(TeeState);
 
 } // namespace Bun

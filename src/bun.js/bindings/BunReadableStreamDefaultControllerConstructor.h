@@ -26,8 +26,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
 private:
     JSReadableStreamDefaultControllerConstructor(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);

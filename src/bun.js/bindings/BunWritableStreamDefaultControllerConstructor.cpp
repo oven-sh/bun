@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/InternalFunction.h"
@@ -30,12 +29,12 @@ void JSWritableStreamDefaultControllerConstructor::finishCreation(JSC::VM& vm, J
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructJSWritableStreamDefaultController, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(constructJSWritableStreamDefaultController, (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    return throwVMTypeError(globalObject, scope, "WritableStreamDefaultController constructor cannot be called as a function"_s);
+    return throwVMTypeError(globalObject, scope, "WritableStreamDefaultController constructor cannot be called directly"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callJSWritableStreamDefaultController, (JSGlobalObject * globalObject, CallFrame*))

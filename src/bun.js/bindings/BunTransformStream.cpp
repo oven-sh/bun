@@ -150,4 +150,19 @@ void JSTransformStream::setBackpressure(JSC::VM& vm, JSC::JSGlobalObject* global
     m_backpressure = true;
 }
 
+JSTransformStreamDefaultController* JSTransformStream::controller()
+{
+    return jsCast<JSTransformStreamDefaultController*>(m_controller.get());
+}
+
+JSC::GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSTransformStream, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = std::forward<decltype(space)>(space); });
+}
+
 } // namespace Bun

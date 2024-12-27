@@ -56,7 +56,8 @@ public:
     JSC::JSValue error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason) { return error(this->vm(), globalObject, reason); }
 
     JSC::JSValue close(JSC::JSGlobalObject* globalObject);
-    void write(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
+    void write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue chunk);
+    void write(JSC::JSGlobalObject* globalObject, JSC::JSValue chunk) { this->write(this->vm(), globalObject, chunk); }
 
     // C++-facing methods
     bool shouldCallWrite() const;
@@ -101,7 +102,7 @@ private:
 
     double m_strategyHWM { 1.0 };
     JSC::WriteBarrier<JSC::JSObject> m_strategySizeAlgorithm;
-    JSC::WriteBarrier<JSC::JSObject> m_queue;
+    JSC::WriteBarrier<JSC::JSArray> m_queue;
     double m_queueTotalSize { 0.0 };
     bool m_started { false };
     bool m_writing { false };

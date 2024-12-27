@@ -235,4 +235,96 @@ void JSWritableStreamConstructor::finishCreation(VM& vm, JSGlobalObject* globalO
     this->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, 0);
 }
 
+JSC_DEFINE_HOST_FUNCTION(JSWritableStreamConstructor::call, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    return throwVMTypeError(globalObject, scope, "Cannot call WritableStream"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(JSWritableStreamConstructor::construct, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobalObject))
+        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
+
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    Structure* structure = zigGlobalObject->streams().structure<JSWritableStream>(zigGlobalObject);
+    auto* constructor = zigGlobalObject->streams().constructor<JSWritableStream>(zigGlobalObject);
+
+    if (!(!newTarget || newTarget != constructor)) {
+        if (newTarget) {
+            structure = JSC::InternalFunction::createSubclassStructure(getFunctionRealm(globalObject, newTarget), newTarget, structure);
+        } else {
+            structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
+        }
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Extract constructor arguments per spec:
+    // new WritableStream(underlyingSink = {}, strategy = {})
+    JSValue underlyingSinkArg = callFrame->argument(0);
+    JSValue strategyArg = callFrame->argument(1);
+
+    // Create the underlying writable stream
+    JSWritableStream* writableStream = JSWritableStream::create(vm, globalObject, structure);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Extract sink algorithms and strategy
+    JSObject* writeAlgorithm = nullptr;
+    JSObject* closeAlgorithm = nullptr;
+    JSObject* abortAlgorithm = nullptr;
+    JSObject* sizeAlgorithm = nullptr;
+    double highWaterMark = 1;
+
+    if (!underlyingSinkArg.isUndefined()) {
+        JSObject* sink = underlyingSinkArg.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        writeAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "write"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+
+        closeAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "close"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+
+        abortAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "abort"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!strategyArg.isUndefined()) {
+        JSObject* strategy = strategyArg.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        sizeAlgorithm = strategy->get(globalObject, Identifier::fromString(vm, "size"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue hwm = strategy->get(globalObject, Identifier::fromString(vm, "highWaterMark"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hwm.isUndefined())
+            highWaterMark = hwm.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Set up the controller
+    Structure* controllerStructure = zigGlobalObject->streams().structure<JSWritableStreamDefaultController>(zigGlobalObject);
+    auto* controller = JSWritableStreamDefaultController::create(
+        vm,
+        controllerStructure,
+        writableStream,
+        highWaterMark,
+        abortAlgorithm,
+        closeAlgorithm,
+        writeAlgorithm,
+        sizeAlgorithm);
+    RETURN_IF_EXCEPTION(scope, {});
+    writableStream->setController(controller);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(writableStream));
+}
+
 } // namespace Bun

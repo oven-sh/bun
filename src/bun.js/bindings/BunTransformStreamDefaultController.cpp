@@ -1,3 +1,4 @@
+#include "BunClientData.h"
 #include "root.h"
 
 #include "BunTransformStreamDefaultController.h"
@@ -20,6 +21,16 @@ JSTransformStreamDefaultController* JSTransformStreamDefaultController::create(
         JSTransformStreamDefaultController(vm, structure);
     controller->finishCreation(vm, globalObject, transformStream);
     return controller;
+}
+
+JSC::GCClient::IsoSubspace* JSTransformStreamDefaultController::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSTransformStreamDefaultController, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); });
 }
 
 void JSTransformStreamDefaultController::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStream* transformStream)

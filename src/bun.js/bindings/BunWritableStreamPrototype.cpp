@@ -111,4 +111,9 @@ void JSWritableStreamPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+Structure* JSWritableStreamPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+}
+
 } // namespace Bun

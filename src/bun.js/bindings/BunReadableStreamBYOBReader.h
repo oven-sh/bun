@@ -15,7 +15,7 @@ class JSReadableStream;
 class JSReadableStreamBYOBReader : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr bool needsDestruction = true;
+    static constexpr bool needsDestruction = false;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -34,7 +34,7 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     JSReadableStream* stream() const { return m_stream.get(); }
     JSC::JSPromise* closedPromise() const { return m_closedPromise.get(); }

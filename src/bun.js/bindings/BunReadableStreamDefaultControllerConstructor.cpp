@@ -1,6 +1,7 @@
 #include "root.h"
 #include "BunReadableStreamDefaultControllerConstructor.h"
 #include <JavaScriptCore/JSObjectInlines.h>
+#include "JSDOMConstructorBase.h"
 
 namespace Bun {
 
@@ -17,7 +18,7 @@ JSReadableStreamDefaultControllerConstructor* JSReadableStreamDefaultControllerC
 }
 
 JSReadableStreamDefaultControllerConstructor::JSReadableStreamDefaultControllerConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, nullptr, construct)
+    : Base(vm, structure, WebCore::callThrowTypeErrorForJSDOMConstructorNotCallableOrConstructable, WebCore::callThrowTypeErrorForJSDOMConstructorNotCallableOrConstructable)
 {
 }
 

@@ -9,6 +9,9 @@ using namespace JSC;
 
 class JSWritableStreamDefaultControllerPrototype;
 
+JSC_DECLARE_HOST_FUNCTION(callJSWritableStreamDefaultController);
+JSC_DECLARE_HOST_FUNCTION(constructJSWritableStreamDefaultController);
+
 class JSWritableStreamDefaultControllerConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -19,9 +22,6 @@ public:
         JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSWritableStreamDefaultControllerPrototype* prototype);
-
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSGlobalObject*, CallFrame*);
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSGlobalObject*, CallFrame*);
 
     DECLARE_INFO;
     template<typename, JSC::SubspaceAccess mode>
@@ -40,7 +40,7 @@ public:
 
 private:
     JSWritableStreamDefaultControllerConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, call, construct)
+        : Base(vm, structure, callJSWritableStreamDefaultController, constructJSWritableStreamDefaultController)
     {
     }
 

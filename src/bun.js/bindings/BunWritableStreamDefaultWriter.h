@@ -38,9 +38,11 @@ public:
 
     void resolveClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
     void rejectClosedPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue error);
-    void rejectWriteRequests(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    void rejectWriteRequests(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
     void setReady(JSC::VM& vm, JSC::JSPromise* promise);
-    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    void setClosed(JSC::VM& vm, JSC::JSPromise* promise);
+    void error(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue reason);
+    void error(JSC::JSGlobalObject* globalObject, JSC::JSValue reason) { this->error(this->vm(), globalObject, reason); }
 
     // Internal APIs for C++ use
     JSWritableStream* stream() const { return m_stream.get(); }
@@ -48,6 +50,9 @@ public:
     void write(JSC::JSGlobalObject*, JSC::JSValue chunk);
     void abort(JSC::JSGlobalObject*, JSC::JSValue reason = JSC::jsUndefined());
     void close(JSC::JSGlobalObject*);
+    void resetReadyPromise();
+    void resetClosedPromise();
+    void resolveReadyPromise();
 
 protected:
     JSWritableStreamDefaultWriter(JSC::VM&, JSC::Structure*, JSWritableStream*);

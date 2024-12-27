@@ -24,6 +24,8 @@
 #include "BunReadableStream.h"
 #include "BunReadableStreamDefaultController.h"
 
+#include "BunPromiseInlines.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -97,7 +99,7 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     }
 
     if (m_state == State::Closed)
-        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+        return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     if (m_state == State::Errored) {
         return JSPromise::rejectedPromise(globalObject, storedError());
@@ -106,7 +108,7 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     m_disturbed = true;
 
     if (!m_controller)
-        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+        return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     auto* controller = jsCast<JSReadableStreamDefaultController*>(m_controller.get());
     JSObject* cancelAlgorithm = controller->cancelAlgorithm();
@@ -116,7 +118,7 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     JSC::CallData callData = JSC::getCallData(function);
 
     if (callData.type == JSC::CallData::Type::None)
-        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+        return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     MarkedArgumentBuffer args;
     args.append(reason);
@@ -127,7 +129,7 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     if (auto* promise = jsDynamicCast<JSPromise*>(result))
         return promise;
 
-    return JSPromise::resolvedPromise(globalObject, result);
+    return Bun::createFulfilledPromise(globalObject, result);
 }
 
 JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObject* destination, JSValue options)

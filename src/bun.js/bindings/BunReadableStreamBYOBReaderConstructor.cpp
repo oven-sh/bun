@@ -8,6 +8,9 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/Error.h>
 
+#include "JSDOMConstructorBase.h"
+#include "JSDOMConstructorNotConstructable.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -15,7 +18,7 @@ using namespace JSC;
 const ClassInfo JSReadableStreamBYOBReaderConstructor::s_info = { "ReadableStreamBYOBReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBReaderConstructor) };
 
 JSReadableStreamBYOBReaderConstructor::JSReadableStreamBYOBReaderConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, nullptr, construct)
+    : Base(vm, structure, WebCore::callThrowTypeErrorForJSDOMConstructorNotCallableOrConstructable, WebCore::callThrowTypeErrorForJSDOMConstructorNotCallableOrConstructable)
 {
 }
 

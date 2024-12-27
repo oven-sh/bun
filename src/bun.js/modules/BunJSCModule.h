@@ -34,7 +34,7 @@
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
-
+#include "BunPromiseInlines.h"
 #include "BunProcess.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
@@ -706,7 +706,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         JSNativeStdFunction* resolve = JSNativeStdFunction::create(
             vm, globalObject, 0, "resolve"_s,
             [report](JSGlobalObject* globalObject, CallFrame* callFrame) {
-                return JSValue::encode(JSPromise::resolvedPromise(
+                return JSValue::encode(Bun::createFulfilledPromise(
                     globalObject, report(globalObject->vm(), globalObject)));
             });
         JSNativeStdFunction* reject = JSNativeStdFunction::create(

@@ -141,7 +141,7 @@ pub const Blob = struct {
     }
 
     pub fn contentTypeOrMimeType(this: *const Blob) ?[]const u8 {
-        if (this.hasContentTypeFromUser()) {
+        if (this.content_type.len > 0) {
             return this.content_type;
         }
         if (this.store) |store| {

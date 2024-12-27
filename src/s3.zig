@@ -100,7 +100,7 @@ pub const AWSCredentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
-                                const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).hostname;
+                                const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).host;
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
                                 }
@@ -249,6 +249,9 @@ pub const AWSCredentials = struct {
         host: []const u8,
         authorization: []const u8,
         url: []const u8,
+
+        content_type: []const u8,
+        content_disposition: []const u8,
         _headers: [6]picohttp.Header,
         _headers_len: u8 = 4,
 
@@ -259,6 +262,14 @@ pub const AWSCredentials = struct {
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
                 bun.default_allocator.free(this.amz_date);
+            }
+
+            if (this.content_type.len > 0) {
+                bun.default_allocator.free(this.content_type);
+            }
+
+            if (this.content_disposition.len > 0) {
+                bun.default_allocator.free(this.content_disposition);
             }
 
             if (this.host.len > 0) {
@@ -298,14 +309,53 @@ pub const AWSCredentials = struct {
         }
         return "us-east-1";
     }
+    fn toHexChar(value: u8) !u8 {
+        return switch (value) {
+            0...9 => value + '0',
+            10...15 => (value - 10) + 'A',
+            else => error.InvalidHexChar,
+        };
+    }
+    fn encodeURIComponent(input: []const u8, buffer: []u8) ![]const u8 {
+        var written: usize = 0;
 
+        for (input) |c| {
+            switch (c) {
+                // RFC 3986 Unreserved Characters (do not encode)
+                'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.', '~' => {
+                    if (written >= buffer.len) return error.BufferTooSmall;
+                    buffer[written] = c;
+                    written += 1;
+                },
+                // All other characters need to be percent-encoded
+                else => {
+                    if (written + 3 > buffer.len) return error.BufferTooSmall;
+                    buffer[written] = '%';
+                    // Convert byte to hex
+                    const high_nibble: u8 = (c >> 4) & 0xF;
+                    const low_nibble: u8 = c & 0xF;
+                    buffer[written + 1] = try toHexChar(high_nibble);
+                    buffer[written + 2] = try toHexChar(low_nibble);
+                    written += 3;
+                },
+            }
+        }
+
+        return buffer[0..written];
+    }
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
         const content_hash = signOptions.content_hash;
         const search_params = signOptions.search_params;
-        const content_type = signOptions.content_type;
-        const content_disposition = signOptions.content_disposition;
+        var content_type = signOptions.content_type;
+        if (content_type != null and content_type.?.len == 0) {
+            content_type = null;
+        }
+        var content_disposition = signOptions.content_disposition;
+        if (content_disposition != null and content_disposition.?.len == 0) {
+            content_disposition = null;
+        }
 
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -358,19 +408,18 @@ pub const AWSCredentials = struct {
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
-            if (content_type != null) {
-                if (content_disposition != null) {
-                    break :brk "content-disposition;content-type;host;x-amz-content-sha256;x-amz-date";
-                } else {
-                    break :brk "content-type;host;x-amz-content-sha256;x-amz-date";
-                }
+            if (content_disposition != null) {
+                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
             } else {
                 break :brk "host;x-amz-content-sha256;x-amz-date";
             }
         };
         // detect service name and host from region or endpoint
+        var encoded_host_buffer: [512]u8 = undefined;
+        var encoded_host: []const u8 = "";
         const host = brk_host: {
             if (this.endpoint.len > 0) {
+                encoded_host = encodeURIComponent(this.endpoint, &encoded_host_buffer) catch return error.InvalidEndpoint;
                 break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
             } else {
                 break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
@@ -404,7 +453,7 @@ pub const AWSCredentials = struct {
                 break :brk_sign result;
             };
             if (signQuery) {
-                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
@@ -417,16 +466,15 @@ pub const AWSCredentials = struct {
                     .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             } else {
+                var encoded_content_disposition_buffer: [255]u8 = undefined;
+                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
-                    if (content_type) |ct| {
-                        if (content_disposition) |cd| {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-type:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", cd, ct, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                        } else {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-type:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", ct, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                        }
+                    if (content_disposition != null) {
+                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
                     } else {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
                     }
+                    if (content_type != null) {} else {}
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -453,6 +501,8 @@ pub const AWSCredentials = struct {
                 .host = "",
                 .authorization = "",
                 .url = authorization,
+                .content_type = "",
+                .content_disposition = "",
                 ._headers = .{
                     .{ .name = "", .value = "" },
                     .{ .name = "", .value = "" },
@@ -466,19 +516,24 @@ pub const AWSCredentials = struct {
         }
 
         if (content_type) |ct| {
+            // we need to dupe the content_type and content_disposition because we dont own them and can be used in unknown li
+            const content_type_value = bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory();
             if (content_disposition) |cd| {
+                const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
                 return SignResult{
                     .amz_date = amz_date,
                     .host = host,
                     .authorization = authorization,
                     .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+                    .content_type = content_type_value,
+                    .content_disposition = content_disposition_value,
                     ._headers = .{
                         .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                         .{ .name = "x-amz-date", .value = amz_date },
                         .{ .name = "Authorization", .value = authorization[0..] },
                         .{ .name = "Host", .value = host },
-                        .{ .name = "Content-Type", .value = ct },
-                        .{ .name = "Content-Disposition", .value = cd },
+                        .{ .name = "Content-Type", .value = content_type_value },
+                        .{ .name = "Content-Disposition", .value = content_disposition_value },
                     },
                     ._headers_len = 6,
                 };
@@ -488,12 +543,34 @@ pub const AWSCredentials = struct {
                 .host = host,
                 .authorization = authorization,
                 .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+                .content_type = content_type_value,
+                .content_disposition = "",
                 ._headers = .{
                     .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                     .{ .name = "x-amz-date", .value = amz_date },
                     .{ .name = "Authorization", .value = authorization[0..] },
                     .{ .name = "Host", .value = host },
-                    .{ .name = "Content-Type", .value = ct },
+                    .{ .name = "Content-Type", .value = content_type_value },
+                    .{ .name = "", .value = "" },
+                },
+                ._headers_len = 5,
+            };
+        }
+        if (content_disposition) |cd| {
+            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            return SignResult{
+                .amz_date = amz_date,
+                .host = host,
+                .authorization = authorization,
+                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+                .content_type = "",
+                .content_disposition = content_disposition_value,
+                ._headers = .{
+                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
+                    .{ .name = "x-amz-date", .value = amz_date },
+                    .{ .name = "Authorization", .value = authorization[0..] },
+                    .{ .name = "Host", .value = host },
+                    .{ .name = "Content-Disposition", .value = content_disposition_value },
                     .{ .name = "", .value = "" },
                 },
                 ._headers_len = 5,
@@ -504,6 +581,8 @@ pub const AWSCredentials = struct {
             .host = host,
             .authorization = authorization,
             .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
+            .content_type = "",
+            .content_disposition = "",
             ._headers = .{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
@@ -1081,7 +1160,7 @@ pub const AWSCredentials = struct {
             .follow,
             .{
                 .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
-                .verbose = .none,
+                .verbose = .headers,
                 .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
             },
         );

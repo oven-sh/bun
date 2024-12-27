@@ -120,8 +120,8 @@ if (process.argv.length === 2 &&
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--expose-gc" && process.versions.bun) {
-        globalThis.gc ??= Bun.gc;
-        continue;
+        globalThis.gc ??= () => Bun.gc(true);
+        break;
       }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
@@ -134,7 +134,9 @@ if (process.argv.length === 2 &&
       if (result.signal) {
         process.kill(0, result.signal);
       } else {
-        process.exit(result.status);
+        // Ensure we don't call the "exit" callbacks, as that will cause the
+        // test to fail when it may have passed in the child process.
+        process.kill(process.pid, result.status);
       }
     }
   }
@@ -1216,3 +1218,5 @@ module.exports = new Proxy(common, {
     return obj[prop];
   },
 });
+
+

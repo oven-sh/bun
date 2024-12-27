@@ -49,6 +49,9 @@ export default [
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError, "TypeError"],
   ["ERR_INVALID_URI", URIError, "URIError"],
+  ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
+  ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
+  ["ERR_UNHANDLED_ERROR", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -93,4 +96,7 @@ export default [
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_ASYNC_CALLBACK", TypeError],
+
+  // Postgres
+  ["ERR_POSTGRES_ERROR_RESPONSE", Error, "PostgresError"],
 ] as ErrorCodeMapping;

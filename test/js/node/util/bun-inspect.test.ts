@@ -3,13 +3,13 @@ import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
-    expect(
+    expect(() =>
       Bun.inspect({
         [Symbol.for("nodejs.util.inspect.custom")]() {
           throw new Error("custom inspect");
         },
       }),
-    ).toBe("[custom formatter threw an exception]");
+    ).toThrow("custom inspect");
   });
 
   it("supports colors: false", () => {
@@ -47,18 +47,46 @@ describe("Bun.inspect", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();
   });
-  it("depth = Infinity works", () => {
-    function createRecursiveObject(n: number): any {
-      if (n === 0) return { hi: true };
-      return { a: createRecursiveObject(n - 1) };
+  for (let base of [new Error("hi"), { a: "hi" }]) {
+    it(`depth = Infinity works for ${base.constructor.name}`, () => {
+      function createRecursiveObject(n: number): any {
+        if (n === 0) {
+          return { a: base };
+        }
+        return { a: createRecursiveObject(n - 1) };
+      }
+
+      const obj = createRecursiveObject(512);
+      expect(Bun.inspect(obj, { depth: Infinity })).toContain("hi");
+      // this gets converted to u16, which if just truncating, will turn into 0
+      expect(Bun.inspect(obj, { depth: 0x0fff0000 })).toContain("hi");
+    });
+  }
+
+  it("stack overflow is thrown when it should be for objects", () => {
+    var object = { a: { b: { c: { d: 1 } } } };
+    for (let i = 0; i < 16 * 1024; i++) {
+      object = { a: object };
     }
 
-    const obj = createRecursiveObject(1000);
-
-    expect(Bun.inspect(obj, { depth: Infinity })).toContain("hi");
-    // this gets converted to u16, which if just truncating, will turn into 0
-    expect(Bun.inspect(obj, { depth: 0x0fff0000 })).toContain("hi");
+    expect(() => Bun.inspect(object, { depth: Infinity })).toThrowErrorMatchingInlineSnapshot(
+      `"Maximum call stack size exceeded."`,
+    );
   });
+
+  it("stack overflow is thrown when it should be for Error", () => {
+    var object = { a: { b: { c: { d: 1 } } } };
+    for (let i = 0; i < 16 * 1024; i++) {
+      const err = new Error("hello");
+      err.object = object;
+      object = err;
+    }
+
+    expect(() => Bun.inspect(object, { depth: Infinity })).toThrowErrorMatchingInlineSnapshot(
+      `"Maximum call stack size exceeded."`,
+    );
+  });
+
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });

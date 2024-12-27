@@ -2008,7 +2008,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
 // TODO: make this JSGlobalObject local
 // for better security
-const ByteListPool = ObjectPool(
+pub const ByteListPool = ObjectPool(
     bun.ByteList,
     null,
     true,
@@ -2600,7 +2600,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.pooled_buffer) |pooled| {
                 this.buffer.len = 0;
+                if (this.buffer.cap > 64 * 1024) {
+                    this.buffer.deinitWithAllocator(bun.default_allocator);
+                    this.buffer = bun.ByteList.init("");
+                }
                 pooled.data = this.buffer;
+
                 this.buffer = bun.ByteList.init("");
                 this.pooled_buffer = null;
                 pooled.release();

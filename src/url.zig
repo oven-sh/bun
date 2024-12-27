@@ -498,7 +498,7 @@ pub const QueryStringMap = struct {
     pub const Iterator = struct {
         // Assume no query string param map will exceed 2048 keys
         // Browsers typically limit URL lengths to around 64k
-        const VisitedMap = std.bit_set.ArrayBitSet(usize, 2048);
+        const VisitedMap = bun.bit_set.ArrayBitSet(usize, 2048);
 
         i: usize = 0,
         map: *const QueryStringMap,

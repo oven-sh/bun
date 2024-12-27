@@ -372,7 +372,7 @@ it("should allow large amounts of data to be sent and received", async () => {
 
 it("it should not crash when getting a ReferenceError on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
@@ -413,7 +413,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
 
 it("it should not crash when returning a Error on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");

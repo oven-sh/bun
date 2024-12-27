@@ -459,7 +459,7 @@ WTF::String Bun::formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
+                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -601,8 +601,8 @@ WTF::String Bun::formatStackTrace(
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     }
                 }
             }
@@ -1141,8 +1141,9 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
     &Zig::deriveShadowRealmGlobalObject,
-    nullptr, // codeForEval
-    nullptr, // canCompileStrings
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
 };
 
 const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
@@ -1166,8 +1167,9 @@ const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable =
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
     &Zig::deriveShadowRealmGlobalObject,
-    nullptr, // codeForEval
-    nullptr, // canCompileStrings
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
 };
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
@@ -1885,7 +1887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCallback, (JSC::JSGlobalObject * globalObject, 
 {
     JSFunction* callback = jsCast<JSFunction*>(callFrame->uncheckedArgument(0));
     JSC::CallData callData = JSC::getCallData(callback);
-    return JSC::JSValue::encode(JSC::call(globalObject, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
+    return JSC::JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
@@ -2563,7 +2565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
         break;
     }
 
-    JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, jsUndefined(), arguments, exceptionPtr);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -2615,7 +2617,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
         asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
-    JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, thisValue, arguments, exceptionPtr);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -2895,7 +2897,7 @@ void GlobalObject::finishCreation(VM& vm)
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(importMetaObjectCreateRequireCacheCodeGenerator(vm)), globalObject);
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::call(globalObject, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
             init.set(result.toObject(globalObject));
         });
 
@@ -3021,7 +3023,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::CallData callData = JSC::getCallData(getStylize);
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::call(init.owner, getStylize, callData, jsNull(), args, returnedException);
+            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
             // RETURN_IF_EXCEPTION(scope, {});
 
             if (returnedException) {
@@ -3120,11 +3122,6 @@ void GlobalObject::finishCreation(VM& vm)
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
-
-    m_cachedNodeVMGlobalObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
-        });
 
     m_cachedGlobalProxyStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
@@ -3391,18 +3388,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_NodeVMScriptClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
-            auto* structure = NodeVMScript::createStructure(init.vm, init.global, prototype);
-            auto* constructorStructure = NodeVMScriptConstructor::createStructure(
-                init.vm, init.global, init.global->m_functionPrototype.get());
-            auto* constructor = NodeVMScriptConstructor::create(
-                init.vm, init.global, constructorStructure, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
+    configureNodeVM(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);
@@ -3490,7 +3476,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, createConsoleConstructor, callData, console, args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, createConsoleConstructor, callData, console, args, returnedException);
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());

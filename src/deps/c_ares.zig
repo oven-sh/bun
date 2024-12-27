@@ -1694,37 +1694,16 @@ pub const Error = enum(i32) {
         }
 
         pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
-            const syscall = bun.String.createUTF8(this.syscall);
-            defer syscall.deref();
-
-            var clonedHostname: ?bun.String = null;
-            defer if (clonedHostname) |cloned| cloned.deref();
-
-            var message: ?bun.String = null;
-            defer if (message) |msg| msg.deref();
-
-            const system_error = blk: {
-                if (this.hostname) |hostname| {
-                    clonedHostname = hostname.clone();
-                    message = bun.String.createFormat("{s} {s} {s}", .{ this.syscall, @tagName(this.errno), hostname }) catch bun.outOfMemory();
-
-                    break :blk JSC.SystemError{
-                        .errno = @intFromEnum(this.errno),
-                        .code = bun.String.static(this.errno.code()),
-                        .message = message.?,
-                        .syscall = syscall,
-                        .hostname = clonedHostname.?,
-                    };
-                } else {
-                    break :blk JSC.SystemError{
-                        .errno = @intFromEnum(this.errno),
-                        .code = bun.String.static(this.errno.code()),
-                        .syscall = syscall,
-                    };
-                }
+            const system_error = JSC.SystemError{
+                .errno = @intFromEnum(this.errno),
+                .code = bun.String.static(this.errno.code()),
+                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code(), hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .syscall = bun.String.createUTF8(this.syscall),
+                .hostname = this.hostname orelse bun.String.empty,
             };
 
             this.promise.reject(globalThis, system_error.toErrorInstance(globalThis));
+            this.hostname = null;
             this.deinit();
         }
 

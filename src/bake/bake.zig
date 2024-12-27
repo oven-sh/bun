@@ -223,7 +223,7 @@ pub const Framework = struct {
     pub const FileSystemRouterType = struct {
         root: []const u8,
         prefix: []const u8,
-        entry_server: []const u8,
+        entry_server: ?[]const u8,
         entry_client: ?[]const u8,
         ignore_underscores: bool,
         ignore_dirs: []const []const u8,
@@ -281,7 +281,7 @@ pub const Framework = struct {
         for (clone.file_system_router_types) |*fsr| {
             fsr.root = try arena.dupe(u8, bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root));
             if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
-            f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
+            if (fsr.entry_server) |*entry_server| f.resolveHelper(client, entry_server, &had_errors, "server side entrypoint");
         }
 
         if (had_errors) return error.ModuleNotFound;
@@ -443,9 +443,7 @@ pub const Framework = struct {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };
-                const server_entry_point = try getOptionalString(fsr_opts, global, "serverEntryPoint", refs, arena) orelse {
-                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'serverEntryPoint'", .{i});
-                };
+                const server_entry_point = try getOptionalString(fsr_opts, global, "serverEntryPoint", refs, arena);
                 const client_entry_point = try getOptionalString(fsr_opts, global, "clientEntryPoint", refs, arena);
                 const prefix = try getOptionalString(fsr_opts, global, "prefix", refs, arena) orelse "/";
                 const ignore_underscores = try fsr_opts.getBooleanStrict(global, "ignoreUnderscores") orelse false;

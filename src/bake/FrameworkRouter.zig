@@ -89,7 +89,7 @@ pub const Type = struct {
     /// `FrameworkRouter` itself does not use this value.
     client_file: OpaqueFileId.Optional,
     /// `FrameworkRouter` itself does not use this value.
-    server_file: OpaqueFileId,
+    server_file: OpaqueFileId.Optional,
     /// `FrameworkRouter` itself does not use this value.
     server_file_string: JSC.Strong,
 

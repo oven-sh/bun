@@ -338,7 +338,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         for (dev.framework.file_system_router_types) |fsr| {
             bun.writeAnyToHasher(&hash, fsr.allow_layouts);
             bun.writeAnyToHasher(&hash, fsr.ignore_underscores);
-            hash.update(fsr.entry_server);
+            hash.update(fsr.entry_server orelse "");
             hash.update(&.{0});
             hash.update(fsr.entry_client orelse "");
             hash.update(&.{0});
@@ -402,17 +402,19 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     dev.initServerRuntime();
 
+    var has_client_routes = false;
+    var has_server_routes = false;
+
     // Initialize FrameworkRouter
     dev.router = router: {
         var types = try std.ArrayListUnmanaged(FrameworkRouter.Type).initCapacity(allocator, options.framework.file_system_router_types.len);
         errdefer types.deinit(allocator);
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
+            _ = i; // autofix
             const joined_root = bun.path.joinAbs(dev.root, .auto, fsr.root);
             const entry = dev.server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
-
-            const server_file = try dev.server_graph.insertStaleExtra(fsr.entry_server, false, true);
 
             try types.append(allocator, .{
                 .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
@@ -422,17 +424,28 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
                 .extensions = fsr.extensions,
                 .style = fsr.style,
                 .allow_layouts = fsr.allow_layouts,
-                .server_file = toOpaqueFileId(.server, server_file),
-                .client_file = if (fsr.entry_client) |client|
-                    toOpaqueFileId(.client, try dev.client_graph.insertStale(client, false)).toOptional()
-                else
-                    .none,
-                .server_file_string = .{},
-            });
+                .server_file = brk: {
+                    if (fsr.entry_server) |server| {
+                        const server_entry = try dev.server_graph.insertStaleExtra(server, false, true);
+                        const server_file = toOpaqueFileId(.server, server_entry).toOptional();
+                        has_server_routes = true;
+                        break :brk server_file;
+                    }
 
-            try dev.route_lookup.put(allocator, server_file, .{
-                .route_index = FrameworkRouter.Route.Index.init(@intCast(i)),
-                .should_recurse_when_visiting = true,
+                    break :brk .none;
+                },
+                .client_file = brk: {
+                    const is_route = fsr.entry_server == null;
+                    if (fsr.entry_client) |client| {
+                        const client_entry = try dev.client_graph.insertStaleExtra(client, false, is_route);
+                        const client_file = toOpaqueFileId(.client, client_entry).toOptional();
+                        has_client_routes = true;
+                        break :brk client_file;
+                    }
+
+                    break :brk .none;
+                },
+                .server_file_string = .{},
             });
         }
 
@@ -442,7 +455,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     // TODO: move scanning to be one tick after server startup. this way the
     // line saying the server is ready shows quicker, and route errors show up
     // after that line.
-    try dev.scanInitialRoutes();
+    try dev.scanInitialRoutes(if (has_server_routes) .server else .client);
 
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
@@ -476,10 +489,13 @@ fn initServerRuntime(dev: *DevServer) void {
 }
 
 /// Deferred one tick so that the server can be up faster
-fn scanInitialRoutes(dev: *DevServer) !void {
+fn scanInitialRoutes(dev: *DevServer, side: bake.Side) !void {
     try dev.router.scanAll(
         dev.allocator,
-        &dev.server_bundler.resolver,
+        switch (side) {
+            .server => &dev.server_bundler.resolver,
+            .client => &dev.client_bundler.resolver,
+        },
         FrameworkRouter.InsertionContext.wrap(DevServer, dev),
     );
 
@@ -760,12 +776,15 @@ fn onRequestWithBundle(
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
-                const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8(dev.relativePath(name));
-                defer str.deref();
-                const js = str.toJS(dev.vm.global);
-                router_type.server_file_string = JSC.Strong.create(js, dev.vm.global);
-                break :str js;
+                if (router_type.server_file.unwrap()) |id| {
+                    const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, id).get()];
+                    const str = bun.String.createUTF8(dev.relativePath(name));
+                    defer str.deref();
+                    const js = str.toJS(dev.vm.global);
+                    router_type.server_file_string = JSC.Strong.create(js, dev.vm.global);
+                    break :str js;
+                }
+                break :str bun.String.empty.toJS(dev.vm.global);
             },
             // routeModules
             route_bundle.cached_module_list.get() orelse arr: {
@@ -1064,7 +1083,10 @@ fn traceAllRouteImports(dev: *DevServer, route_bundle: *RouteBundle, gts: *Graph
     const router_type = dev.router.typePtr(route.type);
 
     // Both framework entry points are considered
-    try dev.server_graph.traceImports(fromOpaqueFileId(.server, router_type.server_file), gts, .{ .find_css = true });
+    if (router_type.server_file.unwrap()) |id| {
+        try dev.server_graph.traceImports(fromOpaqueFileId(.server, id), gts, .{ .find_css = true });
+    }
+
     if (router_type.client_file.unwrap()) |id| {
         try dev.client_graph.traceImports(fromOpaqueFileId(.client, id), gts, goal);
     }
@@ -1950,6 +1972,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 fn fileKind(file: @This()) FileKind {
                     return file.kind;
                 }
+
+                pub fn isRoute(file: @This()) bool {
+                    return file.is_route;
+                }
             },
             .client => struct {
                 /// Allocated by default_allocator. Access with `.code()`
@@ -1959,7 +1985,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 code_len: u32,
                 flags: Flags,
 
-                const Flags = struct {
+                const Flags = packed struct {
                     /// If the file has an error, the failure can be looked up
                     /// in the `.failures` map.
                     failed: bool,
@@ -1971,6 +1997,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     is_special_framework_file: bool,
                     /// CSS and Asset files get special handling
                     kind: FileKind,
+
+                    /// If this file is a route root, the route can be looked up in
+                    /// the route list. This also stops dependency propagation.
+                    is_route: bool,
                 };
 
                 comptime {
@@ -1984,6 +2014,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .code_len = @intCast(code_slice.len),
                         .flags = flags,
                     };
+                }
+
+                pub fn isRoute(file: *const @This()) bool {
+                    return file.flags.is_route;
                 }
 
                 fn code(file: @This()) []const u8 {
@@ -2123,6 +2157,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
                         .kind = kind,
+                        .is_route = false,
                     };
                     if (kind == .css) {
                         if (!gop.found_existing or gop.value_ptr.code_len == 0) {
@@ -2397,7 +2432,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (side) {
                 .server => {
                     const dev = g.owner();
-                    if (file.is_route) {
+                    if (file.isRoute()) {
                         const route_index = dev.route_lookup.get(file_index) orelse
                             Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
                         igLog("\\<- Route", .{});
@@ -2409,7 +2444,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                 },
                 .client => {
-                    if (file.flags.is_hmr_root or (file.flags.kind == .css and trace_kind == .css_to_route)) {
+                    if (file.isRoute()) {
+                        const dev = g.owner();
+                        const key = g.bundled_files.keys()[file_index.get()];
+                        const index = dev.client_graph.getFileIndex(key) orelse
+                            Output.panic("Client Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
+                        try dev.client_graph.traceDependencies(index, gts, trace_kind);
+                    } else if (file.flags.is_hmr_root or (file.flags.kind == .css and trace_kind == .css_to_route)) {
                         const dev = g.owner();
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
@@ -2517,6 +2558,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             } else {
                 if (side == .server) {
                     if (is_route) gop.value_ptr.*.is_route = is_route;
+                } else if (side == .client) {
+                    if (is_route) {
+                        gop.value_ptr.*.flags.is_route = true;
+                    }
                 }
             }
 
@@ -2531,6 +2576,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .kind = .unknown,
+                        .is_route = is_route,
                     });
                 },
                 .server => {
@@ -2614,6 +2660,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .kind = .unknown,
+                        .is_route = false,
                     });
                 },
                 .server => {

@@ -36,17 +36,12 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         .smol = ctx.runtime_options.smol,
     });
     defer vm.deinit();
-    // A special global object is used to allow registering virtual modules
-    // that bypass Bun's normal module resolver and plugin system.
-    vm.global = BakeCreateProdGlobal(vm.console);
-    vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    vm.event_loop.ensureWaker();
-    const b = &vm.transpiler;
     vm.preload = ctx.preloads;
     vm.argv = ctx.passthrough;
     vm.arena = &arena;
     vm.allocator = arena.allocator();
+    const b = &vm.transpiler;
+
     b.options.install = ctx.install;
     b.resolver.opts.install = ctx.install;
     b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -62,7 +57,24 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
     b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
     b.options.env.behavior = .load_all_without_inlining;
+    b.configureDefines() catch {
+        bun.bun_js.failWithBuildError(vm);
+    };
+    JSC.VirtualMachine.is_main_thread_vm = true;
+
     vm.event_loop.ensureWaker();
+
+    bun.http.AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+    vm.loadExtraEnvAndSourceCodePrinter();
+    vm.is_main_thread = true;
+
+    // A special global object is used to allow registering virtual modules
+    // that bypass Bun's normal module resolver and plugin system.
+    vm.global = BakeCreateProdGlobal(vm.console);
+    vm.regular_event_loop.global = vm.global;
+    vm.jsc = vm.global.vm();
+    vm.event_loop.ensureWaker();
+
     switch (ctx.debug.macros) {
         .disable => {
             b.options.no_macros = true;
@@ -72,13 +84,6 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         },
         .unspecified => {},
     }
-    b.configureDefines() catch {
-        bun.bun_js.failWithBuildError(vm);
-    };
-    bun.http.AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
-    vm.loadExtraEnvAndSourceCodePrinter();
-    vm.is_main_thread = true;
-    JSC.VirtualMachine.is_main_thread_vm = true;
 
     const api_lock = vm.jsc.getAPILock();
     defer api_lock.release();
@@ -232,7 +237,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .extensions = fsr.extensions,
             .style = fsr.style,
             .allow_layouts = fsr.allow_layouts,
-            .server_file = try entry_points.getOrPutEntryPoint(fsr.entry_server, .server),
+            .server_file = if (fsr.entry_server) |server|
+                (try entry_points.getOrPutEntryPoint(server, .server)).toOptional()
+            else
+                .none,
             .client_file = if (fsr.entry_client) |client|
                 (try entry_points.getOrPutEntryPoint(client, .client)).toOptional()
             else
@@ -371,25 +379,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             client_entry_urls.putIndex(global, @intCast(i), .null);
         }
 
-        const server_entry_point = try pt.loadBundledModule(router_type.server_file);
-        const server_render_func = brk: {
-            const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
-                break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
-                break :brk null;
-            }
-            break :brk raw;
-        } orelse {
-            Output.errGeneric("Framework does not support static site generation", .{});
-            Output.note("The file {s} is missing the \"prerender\" export, which defines how to generate static files.", .{
-                bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
-            });
-            bun.Global.crash();
-        };
-
-        const server_param_func = if (router.dynamic_routes.count() > 0)
-            brk: {
-                const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
+        if (router_type.server_file.unwrap()) |server_file| {
+            const server_entry_point = try pt.loadBundledModule(server_file);
+            const server_render_func = brk: {
+                const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
                     break :brk null;
                 if (!raw.isCallable(vm.jsc)) {
                     break :brk null;
@@ -397,15 +390,32 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 break :brk raw;
             } orelse {
                 Output.errGeneric("Framework does not support static site generation", .{});
-                Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
-                    bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
+                Output.note("The file {s} is missing the \"prerender\" export, which defines how to generate static files.", .{
+                    bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[server_file.get()].absPath())),
                 });
                 bun.Global.crash();
-            }
-        else
-            JSValue.null;
-        server_render_funcs.putIndex(global, @intCast(i), server_render_func);
-        server_param_funcs.putIndex(global, @intCast(i), server_param_func);
+            };
+
+            const server_param_func = if (router.dynamic_routes.count() > 0)
+                brk: {
+                    const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
+                        break :brk null;
+                    if (!raw.isCallable(vm.jsc)) {
+                        break :brk null;
+                    }
+                    break :brk raw;
+                } orelse {
+                    Output.errGeneric("Framework does not support static site generation", .{});
+                    Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
+                        bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[server_file.get()].absPath())),
+                    });
+                    bun.Global.crash();
+                }
+            else
+                JSValue.null;
+            server_render_funcs.putIndex(global, @intCast(i), server_render_func);
+            server_param_funcs.putIndex(global, @intCast(i), server_param_func);
+        }
     }
 
     var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);

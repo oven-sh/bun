@@ -11,7 +11,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSObjectInlines.h>
-
+#include <JavaScriptCore/WriteBarrierInlines.h>
 namespace Bun {
 
 using namespace JSC;
@@ -21,25 +21,8 @@ const ClassInfo JSReadableStreamDefaultReader::s_info = { "ReadableStreamDefault
 JSReadableStreamDefaultReader* JSReadableStreamDefaultReader::create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStream* stream)
 {
     JSReadableStreamDefaultReader* reader = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReader>(vm)) JSReadableStreamDefaultReader(vm, structure);
-    reader->finishCreation(vm);
-    reader->m_stream.set(vm, reader, stream);
-    reader->m_readRequests.initLater(
-        [](const auto& init) {
-            auto* globalObject = init.owner->globalObject();
-            init.set(JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0));
-        });
-    reader->m_closedPromise.initLater(
-        [](const auto& init) {
-            auto& vm = init.vm;
-            auto* globalObject = init.owner->globalObject();
-            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
-        });
-    reader->m_readyPromise.initLater(
-        [](const auto& init) {
-            auto& vm = init.vm;
-            auto* globalObject = init.owner->globalObject();
-            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
-        });
+    reader->finishCreation(vm, stream);
+
     return reader;
 }
 
@@ -52,27 +35,62 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
     visitor.append(reader->m_stream);
     reader->m_readyPromise.visit(visitor);
     reader->m_closedPromise.visit(visitor);
-    reader->m_readRequests.visit(visitor);
+    {
+        WTF::Locker lock(reader->m_gcLock);
+        for (auto request : reader->m_readRequests) {
+            visitor.appendUnbarriered(request);
+        }
+    }
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);
 
-void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm)
+void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm, JSReadableStream* stream)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    m_stream.set(vm, this, stream);
+
+    m_closedPromise.initLater(
+        [](const auto& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
+            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+        });
+    m_readyPromise.initLater(
+        [](const auto& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
+            init.set(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+        });
+}
+
+JSPromise* JSReadableStreamDefaultReader::takeFirst(JSC::VM& vm)
+{
+    JSPromise* promise;
+    {
+        WTF::Locker lock(m_gcLock);
+        promise = jsCast<JSPromise*>(m_readRequests.takeFirst());
+    }
+    vm.writeBarrier(this);
+    return promise;
 }
 
 void JSReadableStreamDefaultReader::detach()
 {
     ASSERT(isActive());
     m_stream.clear();
-    if (m_readyPromise.isInitialized())
+    if (m_readyPromise.isInitialized()) {
         m_readyPromise.setMayBeNull(vm(), this, nullptr);
-    if (m_readRequests.isInitialized())
-        m_readRequests.setMayBeNull(vm(), this, nullptr);
-    if (m_closedPromise.isInitialized())
+    }
+    {
+        WTF::Locker lock(m_gcLock);
+        m_readRequests.clear();
+    }
+    if (m_closedPromise.isInitialized()) {
         m_closedPromise.setMayBeNull(vm(), this, nullptr);
+    }
 }
 
 void JSReadableStreamDefaultReader::releaseLock()
@@ -81,7 +99,7 @@ void JSReadableStreamDefaultReader::releaseLock()
         return;
 
     // Release the stream's reader reference
-    stream()->setReader(nullptr);
+    stream()->setReader(vm(), nullptr);
     detach();
 }
 
@@ -95,6 +113,15 @@ JSPromise* JSReadableStreamDefaultReader::cancel(JSC::VM& vm, JSGlobalObject* gl
     return stream->cancel(vm, globalObject, reason);
 }
 
+void JSReadableStreamDefaultReader::addReadRequest(JSC::VM& vm, JSC::JSValue promise)
+{
+    {
+        WTF::Locker lock(m_gcLock);
+        m_readRequests.append(promise);
+    }
+    vm.writeBarrier(this, promise);
+}
+
 JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -105,12 +132,7 @@ JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* glob
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
-    // Add read request to the queue
-    JSArray* readRequests = m_readRequests.get(this);
-    readRequests->push(globalObject, promise);
-
-    // Attempt to fulfill read request immediately if possible
-    stream()->controller()->callPullIfNeeded(globalObject);
+    stream()->controller()->performPullSteps(vm, globalObject, promise);
 
     return promise;
 }

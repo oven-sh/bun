@@ -226,7 +226,7 @@ fn messageWithTypeAndLevel_(
     }
 
     if (print_length > 0)
-        format2(
+        try format2(
             level,
             global,
             vals,
@@ -344,7 +344,7 @@ pub const TablePrinter = struct {
             value,
             this.globalObject,
             false,
-        );
+        ) catch {}; // TODO:
 
         return @truncate(width);
     }
@@ -492,7 +492,7 @@ pub const TablePrinter = struct {
                         node.release();
                     }
                 }
-                value_formatter.format(
+                try value_formatter.format(
                     tag,
                     Writer,
                     writer,
@@ -772,7 +772,7 @@ pub fn format2(
     comptime Writer: type,
     writer: Writer,
     options: FormatOptions,
-) void {
+) bun.JSError!void {
     if (len == 1) {
         // initialized later in this function.
         var fmt = ConsoleObject.Formatter{
@@ -795,7 +795,7 @@ pub fn format2(
                 if (level == .Error) {
                     writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
                 }
-                fmt.format(
+                try fmt.format(
                     tag,
                     Writer,
                     writer,
@@ -807,7 +807,7 @@ pub fn format2(
                     writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
                 }
             } else {
-                fmt.format(
+                try fmt.format(
                     tag,
                     Writer,
                     writer,
@@ -828,7 +828,7 @@ pub fn format2(
                 }
             }
             if (options.enable_colors) {
-                fmt.format(
+                try fmt.format(
                     tag,
                     Writer,
                     writer,
@@ -837,7 +837,7 @@ pub fn format2(
                     true,
                 );
             } else {
-                fmt.format(
+                try fmt.format(
                     tag,
                     Writer,
                     writer,
@@ -890,7 +890,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            fmt.format(tag, Writer, writer, this_value, global, true);
+            try fmt.format(tag, Writer, writer, this_value, global, true);
             if (fmt.remaining_values.len == 0) {
                 break;
             }
@@ -912,7 +912,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            fmt.format(tag, Writer, writer, this_value, global, false);
+            try fmt.format(tag, Writer, writer, this_value, global, false);
             if (fmt.remaining_values.len == 0)
                 break;
 
@@ -988,7 +988,7 @@ pub const Formatter = struct {
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
-            self.formatter.format(
+            try self.formatter.format(
                 Tag.get(self.value, self.formatter.globalThis),
                 @TypeOf(writer),
                 writer,
@@ -1367,7 +1367,7 @@ pub const Formatter = struct {
         slice_: Slice,
         global: *JSGlobalObject,
         comptime enable_ansi_colors: bool,
-    ) void {
+    ) bun.JSError!void {
         var writer = WrappedWriter(Writer){
             .ctx = writer_,
             .estimated_line_length = &this.estimated_line_length,
@@ -1425,7 +1425,7 @@ pub const Formatter = struct {
                     const max_before_e_notation = 1000000000000000000000;
                     const min_before_e_notation = 0.000001;
                     switch (token) {
-                        .s => this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                        .s => try this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
                         .i => {
                             // 1. If Type(current) is Symbol, let converted be NaN
                             // 2. Otherwise, let converted be the result of Call(%parseInt%, undefined, current, 10)
@@ -1551,7 +1551,7 @@ pub const Formatter = struct {
                                 // > implementation-specific, potentially-interactive representation
                                 // > of an object judged to be maximally useful and informative.
                             }
-                            this.format(Tag.get(next_value, global), Writer, writer_, next_value, global, enable_ansi_colors);
+                            try this.format(Tag.get(next_value, global), Writer, writer_, next_value, global, enable_ansi_colors);
                         },
 
                         .c => {
@@ -1722,7 +1722,7 @@ pub const Formatter = struct {
                         key,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    );
+                    ) catch {}; // TODO:
                     this.writer.writeAll(": ") catch unreachable;
                     const value_tag = Tag.getAdvanced(value, globalObject, .{
                         .hide_global = true,
@@ -1735,7 +1735,7 @@ pub const Formatter = struct {
                         value,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    );
+                    ) catch {}; // TODO:
                 } else {
                     if (!single_line) {
                         this.writer.writeAll("\n") catch unreachable;
@@ -1752,7 +1752,7 @@ pub const Formatter = struct {
                         nextValue,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    );
+                    ) catch {}; // TODO:
                 }
                 this.count += 1;
                 if (!single_line) {
@@ -1793,7 +1793,7 @@ pub const Formatter = struct {
                     nextValue,
                     this.formatter.globalThis,
                     enable_ansi_colors,
-                );
+                ) catch {}; // TODO:
 
                 if (!single_line) {
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
@@ -1953,7 +1953,7 @@ pub const Formatter = struct {
                     }
                 }
 
-                this.format(tag, Writer, ctx.writer, value, globalThis, enable_ansi_colors);
+                this.format(tag, Writer, ctx.writer, value, globalThis, enable_ansi_colors) catch {}; // TODO:
 
                 if (tag.cell.isStringLike()) {
                     if (comptime enable_ansi_colors) {
@@ -1977,7 +1977,6 @@ pub const Formatter = struct {
 
     extern fn JSC__JSValue__callCustomInspectFunction(
         *JSC.JSGlobalObject,
-        *JSC.JSGlobalObject,
         JSValue,
         JSValue,
         depth: u32,
@@ -1994,12 +1993,11 @@ pub const Formatter = struct {
         value: JSValue,
         jsType: JSValue.JSType,
         comptime enable_ansi_colors: bool,
-    ) void {
+    ) bun.JSError!void {
         if (this.failed)
             return;
         if (this.globalThis.hasException()) {
-            this.failed = true;
-            return;
+            return error.JSError;
         }
 
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
@@ -2042,14 +2040,11 @@ pub const Formatter = struct {
                 defer str.deinit();
                 this.addForNewLine(str.len);
                 const slice = str.slice();
-                this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
+                try this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
             },
             .String => {
                 // This is called from the '%s' formatter, so it can actually be any value
-                const str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
-                    writer.failed = true;
-                    return;
-                };
+                const str: bun.String = try bun.String.fromJS2(value, this.globalThis);
                 defer str.deref();
                 this.addForNewLine(str.length());
 
@@ -2067,7 +2062,7 @@ pub const Formatter = struct {
                         writer.writeAll(Output.prettyFmt("<r>", true));
 
                     if (str.isUTF16()) {
-                        this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                         return;
                     }
 
@@ -2179,7 +2174,6 @@ pub const Formatter = struct {
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
                 const result = JSC__JSValue__callCustomInspectFunction(
-                    JSC.VirtualMachine.get().global,
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
@@ -2189,16 +2183,13 @@ pub const Formatter = struct {
                     &is_exception,
                 );
                 if (is_exception) {
-                    // Previously, this printed [native code]
-                    // TODO: in the future, should this throw when in Bun.inspect?
-                    writer.print("[custom formatter threw an exception]", .{});
-                    return;
+                    return error.JSError;
                 }
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
-                    this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    try this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }
             },
             .Symbol => {
@@ -2355,11 +2346,7 @@ pub const Formatter = struct {
                             break :first;
                         }
 
-                        this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
-                        if (this.globalThis.hasException()) {
-                            this.failed = true;
-                        }
-                        if (this.failed) return;
+                        try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
                         if (tag.cell.isStringLike()) {
                             if (comptime enable_ansi_colors) {
@@ -2424,8 +2411,7 @@ pub const Formatter = struct {
                             .disable_inspect_custom = this.disable_inspect_custom,
                         });
 
-                        this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
-                        if (this.failed) return;
+                        try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
                         if (tag.cell.isStringLike()) {
                             if (comptime enable_ansi_colors) {
@@ -2469,7 +2455,7 @@ pub const Formatter = struct {
                         };
                         value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
                         if (this.globalThis.hasException()) {
-                            this.failed = true;
+                            return error.JSError;
                         }
                         if (this.failed) return;
                     }
@@ -2508,7 +2494,7 @@ pub const Formatter = struct {
                         this.quote_keys = true;
                         defer this.quote_keys = prev_quote_keys;
 
-                        return this.printAs(
+                        return try this.printAs(
                             .Object,
                             Writer,
                             writer_,
@@ -2524,7 +2510,7 @@ pub const Formatter = struct {
                         this.quote_keys = true;
                         defer this.quote_keys = prev_quote_keys;
 
-                        return this.printAs(
+                        return try this.printAs(
                             .Object,
                             Writer,
                             writer_,
@@ -2536,7 +2522,7 @@ pub const Formatter = struct {
                     }
 
                     // this case should never happen
-                    return this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
+                    return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                 } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                     if (timer.kind == .setInterval) {
@@ -2561,12 +2547,12 @@ pub const Formatter = struct {
                     return;
                 } else if (jsType != .DOMWrapper) {
                     if (value.isCallable(this.globalThis.vm())) {
-                        return this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
+                        return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
-                    return this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
+                    return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
                 }
-                return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
                 if (value.getClassInfoName()) |class_name| {
@@ -2786,7 +2772,7 @@ pub const Formatter = struct {
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                    try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
                     return;
                 }
 
@@ -2829,7 +2815,7 @@ pub const Formatter = struct {
                 const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
-                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                        return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },
                 };
 
@@ -2875,7 +2861,7 @@ pub const Formatter = struct {
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
-                            this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                            try this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
                             if (this.failed) return;
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (!this.single_line) {
@@ -2899,7 +2885,7 @@ pub const Formatter = struct {
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
-                            this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                             if (this.failed) return;
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (!this.single_line) {
@@ -2921,7 +2907,7 @@ pub const Formatter = struct {
                                     .hide_global = true,
                                     .disable_inspect_custom = this.disable_inspect_custom,
                                 });
-                                this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                try this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
                                 if (this.failed) return;
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                                 if (!this.single_line) {
@@ -2995,7 +2981,7 @@ pub const Formatter = struct {
                         this.quote_strings = true;
                         defer this.quote_strings = old_quote_strings;
 
-                        this.format(Tag.getAdvanced(key_value, this.globalThis, .{
+                        try this.format(Tag.getAdvanced(key_value, this.globalThis, .{
                             .hide_global = true,
                             .disable_inspect_custom = this.disable_inspect_custom,
                         }), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
@@ -3049,7 +3035,7 @@ pub const Formatter = struct {
                                     }
                                 }
 
-                                this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
+                                try this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
 
                                 if (tag.cell.isStringLike()) {
                                     if (comptime enable_ansi_colors) {
@@ -3112,7 +3098,7 @@ pub const Formatter = struct {
                                                 this.indent += 1;
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                                 defer this.indent -|= 1;
-                                                this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
+                                                try this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
                                             }
 
                                             writer.writeAll("\n");
@@ -3135,7 +3121,7 @@ pub const Formatter = struct {
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
                                                     const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
-                                                    this.format(Tag.getAdvanced(child, this.globalThis, .{
+                                                    try this.format(Tag.getAdvanced(child, this.globalThis, .{
                                                         .hide_global = true,
                                                         .disable_inspect_custom = this.disable_inspect_custom,
                                                     }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
@@ -3231,15 +3217,15 @@ pub const Formatter = struct {
                 }
 
                 if (this.globalThis.hasException()) {
-                    this.failed = true;
+                    return error.JSError;
                 }
                 if (this.failed) return;
 
                 if (iter.i == 0) {
                     if (value.isClass(this.globalThis))
-                        this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
+                        try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                     else if (value.isCallable(this.globalThis.vm()))
-                        this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
+                        try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
                         if (getObjectName(this.globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
@@ -3369,7 +3355,7 @@ pub const Formatter = struct {
                 }
                 // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
                 // this is default off so it is not used.
-                this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
+                try this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
             },
         }
     }
@@ -3404,7 +3390,7 @@ pub const Formatter = struct {
         }
     }
 
-    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
+    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
         const prevGlobalThis = this.globalThis;
         defer this.globalThis = prevGlobalThis;
         this.globalThis = globalThis;
@@ -3414,11 +3400,11 @@ pub const Formatter = struct {
         // it _should_ limit the stack usage because each version of the
         // function will be relatively small
         switch (result.tag.tag()) {
-            inline else => |tag| this.printAs(tag, Writer, writer, value, result.cell, enable_ansi_colors),
+            inline else => |tag| try this.printAs(tag, Writer, writer, value, result.cell, enable_ansi_colors),
 
             .CustomFormattedObject => {
                 this.custom_formatted_object = result.tag.CustomFormattedObject;
-                this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
+                try this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
             },
         }
     }
@@ -3562,9 +3548,9 @@ pub fn timeLog(
         const tag = ConsoleObject.Formatter.Tag.get(arg, global);
         _ = writer.write(" ") catch 0;
         if (Output.enable_ansi_colors_stderr) {
-            fmt.format(tag, Writer, writer, arg, global, true);
+            fmt.format(tag, Writer, writer, arg, global, true) catch {}; // TODO:
         } else {
-            fmt.format(tag, Writer, writer, arg, global, false);
+            fmt.format(tag, Writer, writer, arg, global, false) catch {}; // TODO:
         }
     }
     _ = writer.write("\n") catch 0;

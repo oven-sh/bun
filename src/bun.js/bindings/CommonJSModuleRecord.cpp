@@ -31,6 +31,7 @@
 
 #include "headers.h"
 
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Synchronousness.h"
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSMapInlines.h>
@@ -199,7 +200,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
-    JSC::call(globalObject, fn, callData, moduleObject, args, exception);
+    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args, exception);
 
     return exception.get() == nullptr;
 }

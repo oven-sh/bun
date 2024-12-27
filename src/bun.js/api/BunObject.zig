@@ -525,6 +525,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
+    if (globalThis.hasException()) return error.JSError;
     buffered_writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now

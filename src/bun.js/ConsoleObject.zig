@@ -2866,6 +2866,7 @@ pub const Formatter = struct {
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
                             try this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                            if (this.failed) return;
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (!this.single_line) {
                                 writer.writeAll("\n");
@@ -2889,6 +2890,7 @@ pub const Formatter = struct {
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
                             try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            if (this.failed) return;
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (!this.single_line) {
                                 writer.writeAll("\n");
@@ -2910,6 +2912,7 @@ pub const Formatter = struct {
                                     .disable_inspect_custom = this.disable_inspect_custom,
                                 });
                                 try this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                if (this.failed) return;
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                                 if (!this.single_line) {
                                     writer.writeAll("\n");

@@ -3,7 +3,7 @@ import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
-    expect(
+    expect(() =>
       Bun.inspect({
         [Symbol.for("nodejs.util.inspect.custom")]() {
           throw new Error("custom inspect");

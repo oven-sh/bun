@@ -1,6 +1,8 @@
 #pragma once
 
 #include "BunClientData.h"
+#include "JSDOMWrapper.h"
+#include "JSEventTarget.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "_NativeModule.h"
 
@@ -457,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSDOMWrapper<WebCore::EventTarget>>()));
+    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>()));
 }
 
 namespace Zig {

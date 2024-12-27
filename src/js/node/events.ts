@@ -82,7 +82,7 @@ Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "s
 EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
-  return this?._maxListeners ?? defaultMaxListeners;
+  return _getMaxListeners(this);
 };
 Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
@@ -110,8 +110,6 @@ function emitError(emitter, args) {
   if (args.length > 0) er = args[0];
 
   if (er instanceof Error) {
-    // Note: The comments on the `throw` lines are intentional, they show
-    // up in Node's output if this results in an unhandled exception.
     throw er; // Unhandled 'error' event
   }
 
@@ -244,7 +242,7 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.push(fn);
-    var m = this._maxListeners ?? defaultMaxListeners;
+    var m = _getMaxListeners(this);
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
     }
@@ -269,7 +267,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.unshift(fn);
-    var m = this._maxListeners ?? defaultMaxListeners;
+    var m = _getMaxListeners(this);
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
     }
@@ -730,11 +728,20 @@ function checkListener(listener) {
   validateFunction(listener, "listener");
 }
 
+function _getMaxListeners(emitter) {
+  return emitter?._maxListeners ?? defaultMaxListeners;
+}
+
 let AsyncResource = null;
 
-const eventTargetMaxListenersSymbol = Symbol("EventTarget.maxListeners");
 function getMaxListeners(emitterOrTarget) {
-  return emitterOrTarget?.[eventTargetMaxListenersSymbol] ?? emitterOrTarget?._maxListeners ?? defaultMaxListeners;
+  if (typeof emitterOrTarget?.getMaxListeners === "function") {
+    return _getMaxListeners(emitterOrTarget);
+  } else if (types.isEventTarget(emitterOrTarget)) {
+    emitterOrTarget[kMaxEventTargetListeners] ??= defaultMaxListeners;
+    return emitterOrTarget[kMaxEventTargetListeners];
+  }
+  throw ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitterOrTarget);
 }
 Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
 

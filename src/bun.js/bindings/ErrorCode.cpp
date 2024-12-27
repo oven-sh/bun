@@ -219,10 +219,9 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    // ZigString zstring = Bun__inspect(globalObject, arg);
-    // BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
-    // return bstring.toWTFString();
-    return arg.toWTFString(globalObject); // this threw an exception on `{ __proto__: null }`
+    ZigString zstring = Bun__inspect(globalObject, arg);
+    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
+    return bstring.toWTFString();
 }
 
 WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)

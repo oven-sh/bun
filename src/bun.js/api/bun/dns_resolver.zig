@@ -3002,11 +3002,14 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
+                const syscall = bun.String.createAtomASCII(query.name);
+                defer syscall.deref();
+
                 const system_error = JSC.SystemError{
                     .errno = -1,
                     .code = bun.String.static(err.code()),
                     .message = bun.String.static(err.label()),
-                    .syscall = bun.String.ascii(query.name),
+                    .syscall = syscall,
                 };
 
                 return globalThis.throwValue(system_error.toErrorInstance(globalThis)) catch .zero;

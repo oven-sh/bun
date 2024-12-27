@@ -910,6 +910,7 @@ const promises = {
   },
 
   setDefaultResultOrder,
+  setServers,
 };
 
 // Compatibility with util.promisify(dns[method])

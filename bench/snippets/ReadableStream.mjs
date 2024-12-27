@@ -1,6 +1,6 @@
-import { bench, run } from "../runner.mjs";
 import React from "react";
 import { renderToReadableStream } from "react-dom/server.browser";
+import { bench, run } from "../runner.mjs";
 
 const reactElement = React.createElement(
   "body",

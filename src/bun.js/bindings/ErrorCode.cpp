@@ -178,6 +178,7 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
 extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
+//
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
     ASSERT(!arg.isEmpty());
@@ -711,7 +712,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * 
         auto err_str = err.getString(globalObject);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
     }
-    auto err_str = JSValueToStringSafe(globalObject, err);
+    if (err.isCell()) {
+        auto cell = err.asCell();
+        if (cell->inherits<JSC::Exception>()) {
+            return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
+        }
+    }
+    auto err_str = err.toWTFString(globalObject);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
 }
 

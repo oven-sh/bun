@@ -891,6 +891,8 @@ const promises = {
       return setServersOn(servers, Resolver.#getResolver(this));
     }
   },
+
+  setDefaultResultOrder,
 };
 
 // Compatibility with util.promisify(dns[method])

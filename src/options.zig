@@ -644,6 +644,14 @@ pub const Loader = enum(u8) {
     bunsh,
     sqlite,
     sqlite_embedded,
+    html,
+
+    pub fn disableHTML(this: Loader) Loader {
+        return switch (this) {
+            .html => .file,
+            else => this,
+        };
+    }
 
     pub inline fn isSQLite(this: Loader) bool {
         return switch (this) {
@@ -652,28 +660,22 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
-        if (experimental_css) {
-            return switch (this) {
-                .file,
-                .napi,
-                .sqlite,
-                .sqlite_embedded,
-                // TODO: loader for reading bytes and creating module or instance
-                .wasm,
-                => true,
-                else => false,
-            };
-        }
+    pub const Experimental = struct {
+        css: bool = bun.FeatureFlags.breaking_changes_1_2,
+        html: bool = bun.FeatureFlags.breaking_changes_1_2,
+    };
+
+    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
         return switch (this) {
             .file,
-            .css,
             .napi,
             .sqlite,
             .sqlite_embedded,
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
+            .css => !experimental.css,
+            .html => !experimental.html,
             else => false,
         };
     }
@@ -684,6 +686,7 @@ pub const Loader = enum(u8) {
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
+            .html => bun.http.MimeType.html,
             else => bun.http.MimeType.other,
         };
     }
@@ -719,6 +722,7 @@ pub const Loader = enum(u8) {
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
+        map.set(.html, "input.html");
         break :brk map;
     };
 
@@ -764,6 +768,7 @@ pub const Loader = enum(u8) {
         .{ "sh", .bunsh },
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
+        .{ "html", .html },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -787,6 +792,7 @@ pub const Loader = enum(u8) {
         .{ "text", .text },
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
+        .{ "html", .html },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -812,6 +818,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .html => .html,
             .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
@@ -840,6 +847,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .html => .html,
             .sqlite => .sqlite,
             _ => .file,
         };
@@ -899,6 +907,7 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+    .{ ".html", .html },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1289,6 +1298,11 @@ const default_loader_ext = [_]string{
     ".txt",  ".text",
 };
 
+// Only set it for browsers by default.
+const default_loader_ext_browser = [_]string{
+    ".html",
+};
+
 const node_modules_default_loader_ext_bun = [_]string{".node"};
 const node_modules_default_loader_ext = [_]string{
     ".jsx",
@@ -1305,6 +1319,7 @@ const node_modules_default_loader_ext = [_]string{
     ".cts",
     ".wasm",
     ".text",
+    ".html",
 };
 
 pub const ResolveFileExtensions = struct {
@@ -1355,6 +1370,12 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (target == .browser) {
+        inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
@@ -1513,7 +1534,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
-    experimental_css: bool,
+    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1698,7 +1719,7 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental_css = false,
+            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };

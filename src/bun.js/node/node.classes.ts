@@ -61,6 +61,10 @@ export default [
         fn: "resolveAny",
         length: 1,
       },
+      setLocalAddress: {
+        fn: "setLocalAddress",
+        length: 1,
+      },
       cancel: {
         fn: "cancel",
         length: 0,

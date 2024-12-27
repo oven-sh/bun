@@ -199,6 +199,13 @@ function validateResolve(hostname, callback) {
   }
 }
 
+function validateLocalAddresses(first, second) {
+  validateString(first);
+  if (typeof second !== "undefined") {
+    validateString(second);
+  }
+}
+
 function invalidHostname(hostname) {
   if (invalidHostname.warned) {
     return;
@@ -598,6 +605,11 @@ var InternalResolver = class Resolver {
       );
   }
 
+  setLocalAddress(first, second) {
+    validateLocalAddresses(first, second);
+    Resolver.#getResolver(this).setLocalAddress(first, second);
+  }
+
   setServers(servers) {
     return setServersOn(servers, Resolver.#getResolver(this));
   }
@@ -885,6 +897,11 @@ const promises = {
 
     reverse(ip) {
       return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+    }
+
+    setLocalAddress(first, second) {
+      validateLocalAddresses(first, second);
+      Resolver.#getResolver(this).setLocalAddress(first, second);
     }
 
     setServers(servers) {

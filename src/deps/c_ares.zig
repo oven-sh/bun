@@ -305,11 +305,11 @@ pub const struct_hostent = extern struct {
     }
 };
 
-pub const hostent_with_ttl = struct {
+pub const hostent_with_ttls = struct {
     hostent: *struct_hostent,
-    ttl: ?c_int,
+    ttls: [256]c_int = [_]c_int{-1} ** 256,
 
-    pub fn toJSResponse(this: *hostent_with_ttl, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *hostent_with_ttls, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
         if (comptime strings.eqlComptime(lookup_name, "a") or strings.eqlComptime(lookup_name, "aaaa")) {
             if (this.hostent.h_addr_list == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
@@ -323,27 +323,28 @@ pub const hostent_with_ttl = struct {
             const array = JSC.JSValue.createEmptyArray(globalThis, count);
             count = 0;
 
-            const address_key = JSC.ZigString.init("address").withEncoding();
-            const ttl_key = JSC.ZigString.init("ttl").withEncoding();
+            const addressKey = JSC.ZigString.static("address").withEncoding();
+            const ttlKey = JSC.ZigString.static("ttl").withEncoding();
 
             while (this.hostent.h_addr_list[count]) |addr| : (count += 1) {
-                const addr_string = (if (this.hostent.h_addrtype == std.posix.AF.INET6)
+                const addrString = (if (this.hostent.h_addrtype == AF.INET6)
                     bun.dns.addressToJS(&std.net.Address.initIp6(addr[0..16].*, 0, 0, 0), globalThis)
                 else
                     bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
 
-                const result_object = JSC.JSValue.createObject2(globalThis, &address_key, &ttl_key, addr_string, JSC.jsNumber(this.ttl orelse 0));
-                array.putIndex(globalThis, count, result_object);
+                const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
+                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .undefined);
+                array.putIndex(globalThis, count, resultObject);
             }
 
             return array;
         } else {
-            @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttl record type: {s}", .{lookup_name}));
+            @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttls record type: {s}", .{lookup_name}));
         }
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttl) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttls) void;
     }
 
     pub fn hostCallbackWrapper(
@@ -351,7 +352,7 @@ pub const hostent_with_ttl = struct {
         comptime function: Callback(Type),
     ) ares_host_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttl) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -375,41 +376,53 @@ pub const hostent_with_ttl = struct {
                     return;
                 }
 
-                var start: [*c]struct_hostent = undefined;
-                if (comptime strings.eqlComptime(lookup_name, "a")) {
-                    var addrttls: [256]struct_ares_addrttl = undefined;
-                    var naddrttls: c_int = 256;
-
-                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
-                    if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
-                    }
-                    var with_ttl = bun.default_allocator.create(hostent_with_ttl) catch bun.outOfMemory();
-                    with_ttl.hostent = start;
-                    with_ttl.ttl = if (naddrttls > 0) addrttls[0].ttl else null;
-                    function(this, null, timeouts, with_ttl);
-                } else if (comptime strings.eqlComptime(lookup_name, "aaaa")) {
-                    var addr6ttls: [256]struct_ares_addr6ttl = undefined;
-                    var naddr6ttls: c_int = 256;
-
-                    const result = ares_parse_aaaa_reply(buffer, buffer_length, &start, &addr6ttls, &naddr6ttls);
-                    if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
-                    }
-                    var with_ttl = bun.default_allocator.create(hostent_with_ttl) catch bun.outOfMemory();
-                    with_ttl.hostent = start;
-                    with_ttl.ttl = if (naddr6ttls > 0) addr6ttls[0].ttl else null;
-                    function(this, null, timeouts, with_ttl);
-                } else {
-                    @compileError(std.fmt.comptimePrint("Unsupported struct_hostent record type: {s}", .{lookup_name}));
+                switch (parse(lookup_name, buffer, buffer_length)) {
+                    .result => |result| function(this, null, timeouts, result),
+                    .err => |err| function(this, err, timeouts, null),
                 }
             }
         }.handle;
     }
 
-    pub fn deinit(this: *hostent_with_ttl) void {
+    pub fn parse(comptime lookup_name: []const u8, buffer: [*c]u8, buffer_length: c_int) JSC.Node.Maybe(*hostent_with_ttls, Error) {
+        var start: ?*struct_hostent = null;
+
+        if (comptime strings.eqlComptime(lookup_name, "a")) {
+            var addrttls: [256]struct_ares_addrttl = undefined;
+            var naddrttls: c_int = 256;
+
+            const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+            if (result != ARES_SUCCESS) {
+                return .{ .err = Error.get(result).? };
+            }
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            with_ttls.hostent = start.?;
+            for (addrttls[0..@intCast(naddrttls)], 0..) |ttl, i| {
+                with_ttls.ttls[i] = ttl.ttl;
+            }
+            return .{ .result = with_ttls };
+        }
+
+        if (comptime strings.eqlComptime(lookup_name, "aaaa")) {
+            var addr6ttls: [256]struct_ares_addr6ttl = undefined;
+            var naddr6ttls: c_int = 256;
+
+            const result = ares_parse_aaaa_reply(buffer, buffer_length, &start, &addr6ttls, &naddr6ttls);
+            if (result != ARES_SUCCESS) {
+                return .{ .err = Error.get(result).? };
+            }
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            with_ttls.hostent = start.?;
+            for (addr6ttls[0..@intCast(naddr6ttls)], 0..) |ttl, i| {
+                with_ttls.ttls[i] = ttl.ttl;
+            }
+            return .{ .result = with_ttls };
+        }
+
+        @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttls record type: {s}", .{lookup_name}));
+    }
+
+    pub fn deinit(this: *hostent_with_ttls) void {
         this.hostent.deinit();
         bun.default_allocator.destroy(this);
     }
@@ -1130,6 +1143,28 @@ pub const struct_ares_txt_reply = extern struct {
         return array;
     }
 
+    pub fn toJSForAny(this: *struct_ares_txt_reply, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+        var count: usize = 0;
+        var txt: ?*struct_ares_txt_reply = this;
+        while (txt != null) : (txt = txt.?.next) {
+            count += 1;
+        }
+
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        txt = this;
+        var i: u32 = 0;
+        while (txt != null) : (txt = txt.?.next) {
+            var node = txt.?;
+            array.putIndex(globalThis, i, JSC.ZigString.fromUTF8(node.txt[0..node.length]).toJS(globalThis));
+            i += 1;
+        }
+
+        return JSC.JSObject.create(.{
+            .entries = array,
+        }, globalThis).toJS();
+    }
+
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) void;
     }
@@ -1338,6 +1373,207 @@ pub const struct_ares_uri_reply = extern struct {
     weight: c_ushort,
     uri: [*c]u8,
     ttl: c_int,
+};
+
+pub const struct_any_reply = struct {
+    a_reply: ?*hostent_with_ttls = null,
+    aaaa_reply: ?*hostent_with_ttls = null,
+    mx_reply: ?*struct_ares_mx_reply = null,
+    ns_reply: ?*struct_hostent = null,
+    txt_reply: ?*struct_ares_txt_reply = null,
+    srv_reply: ?*struct_ares_srv_reply = null,
+    ptr_reply: ?*struct_hostent = null,
+    naptr_reply: ?*struct_ares_naptr_reply = null,
+    soa_reply: ?*struct_ares_soa_reply = null,
+    caa_reply: ?*struct_ares_caa_reply = null,
+
+    pub fn toJSResponse(this: *struct_any_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = bun.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        const allocator = arena.allocator();
+
+        return this.toJS(globalThis, allocator);
+    }
+
+    fn append(globalThis: *JSC.JSGlobalObject, array: JSC.JSValue, i: *u32, response: JSC.JSValue, comptime lookup_name: []const u8) void {
+        const transformed = if (response.isString())
+            JSC.JSObject.create(.{
+                .value = response,
+            }, globalThis).toJS()
+        else blk: {
+            bun.assert(response.isObject());
+            break :blk response;
+        };
+
+        var upper = comptime lookup_name[0..lookup_name.len].*;
+        inline for (&upper) |*char| {
+            char.* = std.ascii.toUpper(char.*);
+        }
+
+        transformed.put(globalThis, "type", bun.String.ascii(&upper).toJS(globalThis));
+        array.putIndex(globalThis, i.*, transformed);
+        i.* += 1;
+    }
+
+    fn appendAll(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, array: JSC.JSValue, i: *u32, reply: anytype, comptime lookup_name: []const u8) void {
+        const response: JSC.JSValue = if (comptime @hasDecl(@TypeOf(reply.*), "toJSForAny"))
+            reply.toJSForAny(allocator, globalThis, lookup_name)
+        else
+            reply.toJSResponse(allocator, globalThis, lookup_name);
+
+        if (response.isArray()) {
+            var iterator = response.arrayIterator(globalThis);
+            while (iterator.next()) |item| {
+                append(globalThis, array, i, item, lookup_name);
+            }
+        } else {
+            append(globalThis, array, i, response, lookup_name);
+        }
+    }
+
+    pub fn toJS(this: *struct_any_reply, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, blk: {
+            var len: usize = 0;
+            inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+                if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                    len += @intFromBool(@field(this, field.name) != null);
+                }
+            }
+            break :blk len;
+        });
+
+        var i: u32 = 0;
+
+        inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+            if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                if (@field(this, field.name)) |reply| {
+                    const lookup_name = comptime field.name[0 .. field.name.len - "_reply".len];
+                    appendAll(globalThis, allocator, array, &i, reply, lookup_name);
+                }
+            }
+        }
+
+        return array;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_any_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime _: []const u8,
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var any_success = false;
+                var last_error: ?c_int = null;
+                var reply = bun.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
+                reply.* = .{};
+
+                switch (hostent_with_ttls.parse("a", buffer, buffer_length)) {
+                    .result => |result| {
+                        reply.a_reply = result;
+                        any_success = true;
+                    },
+                    .err => |err| last_error = @intFromEnum(err),
+                }
+
+                switch (hostent_with_ttls.parse("aaaa", buffer, buffer_length)) {
+                    .result => |result| {
+                        reply.aaaa_reply = result;
+                        any_success = true;
+                    },
+                    .err => |err| last_error = @intFromEnum(err),
+                }
+
+                var result = ares_parse_mx_reply(buffer, buffer_length, &reply.mx_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_ns_reply(buffer, buffer_length, &reply.ns_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_txt_reply(buffer, buffer_length, &reply.txt_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_srv_reply(buffer, buffer_length, &reply.srv_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, AF.INET, &reply.ptr_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_naptr_reply(buffer, buffer_length, &reply.naptr_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_soa_reply(buffer, buffer_length, &reply.soa_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_caa_reply(buffer, buffer_length, &reply.caa_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                if (!any_success) {
+                    reply.deinit();
+                    function(this, Error.get(last_error.?), timeouts, null);
+                    return;
+                }
+
+                function(this, null, timeouts, reply);
+            }
+        }.handleAny;
+    }
+
+    pub fn deinit(this: *struct_any_reply) void {
+        inline for (@typeInfo(struct_any_reply).Struct.fields) |field| {
+            if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                if (@field(this, field.name)) |reply| {
+                    reply.deinit();
+                }
+            }
+        }
+
+        bun.default_allocator.destroy(this);
+    }
 };
 pub extern fn ares_parse_a_reply(abuf: [*c]const u8, alen: c_int, host: [*c]?*struct_hostent, addrttls: [*c]struct_ares_addrttl, naddrttls: [*c]c_int) c_int;
 pub extern fn ares_parse_aaaa_reply(abuf: [*c]const u8, alen: c_int, host: [*c]?*struct_hostent, addrttls: [*c]struct_ares_addr6ttl, naddrttls: [*c]c_int) c_int;

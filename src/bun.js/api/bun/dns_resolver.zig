@@ -1790,6 +1790,7 @@ pub const DNSResolver = struct {
     pending_cname_cache_cares: CnamePendingCache = CnamePendingCache.init(),
     pending_a_cache_cares: APendingCache = APendingCache.init(),
     pending_aaaa_cache_cares: AAAAPendingCache = AAAAPendingCache.init(),
+    pending_any_cache_cares: AnyPendingCache = AnyPendingCache.init(),
     pending_addr_cache_cares: AddrPendingCache = AddrPendingCache.init(),
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
@@ -1879,8 +1880,9 @@ pub const DNSResolver = struct {
     const NSPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ns").PendingCacheKey, 32);
     const PtrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ptr").PendingCacheKey, 32);
     const CnamePendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "cname").PendingCacheKey, 32);
-    const APendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttl, "a").PendingCacheKey, 32);
-    const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttl, "aaaa").PendingCacheKey, 32);
+    const APendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttls, "a").PendingCacheKey, 32);
+    const AAAAPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.hostent_with_ttls, "aaaa").PendingCacheKey, 32);
+    const AnyPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_any_reply, "any").PendingCacheKey, 32);
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
@@ -2411,12 +2413,14 @@ pub const DNSResolver = struct {
         SOA = 6,
         SRV = 33,
         TXT = 16,
+        ANY = 255,
 
         pub const default = RecordType.A;
 
         pub const map = bun.ComptimeStringMap(RecordType, .{
             .{ "A", .A },
             .{ "AAAA", .AAAA },
+            .{ "ANY", .ANY },
             .{ "CAA", .CAA },
             .{ "CNAME", .CNAME },
             .{ "MX", .MX },
@@ -2427,6 +2431,7 @@ pub const DNSResolver = struct {
             .{ "TXT", .TXT },
             .{ "a", .A },
             .{ "aaaa", .AAAA },
+            .{ "any", .ANY },
             .{ "caa", .CAA },
             .{ "cname", .CNAME },
             .{ "mx", .MX },
@@ -2489,10 +2494,13 @@ pub const DNSResolver = struct {
 
         switch (record_type) {
             RecordType.A => {
-                return this.doResolveCAres(c_ares.hostent_with_ttl, "a", name.slice(), globalThis);
+                return this.doResolveCAres(c_ares.hostent_with_ttls, "a", name.slice(), globalThis);
             },
             RecordType.AAAA => {
-                return this.doResolveCAres(c_ares.hostent_with_ttl, "aaaa", name.slice(), globalThis);
+                return this.doResolveCAres(c_ares.hostent_with_ttls, "aaaa", name.slice(), globalThis);
+            },
+            RecordType.ANY => {
+                return this.doResolveCAres(c_ares.struct_any_reply, "any", name.slice(), globalThis);
             },
             RecordType.CAA => {
                 return this.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
@@ -2530,7 +2538,7 @@ pub const DNSResolver = struct {
     pub fn reverse(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("reverse", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("reverse", 1, arguments.len);
         }
 
         const ip_value = arguments.ptr[0];
@@ -2666,7 +2674,7 @@ pub const DNSResolver = struct {
     pub fn resolveSrv(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveSrv", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveSrv", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2696,7 +2704,7 @@ pub const DNSResolver = struct {
     pub fn resolveSoa(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveSoa", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2722,7 +2730,7 @@ pub const DNSResolver = struct {
     pub fn resolveCaa(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveCaa", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2752,7 +2760,7 @@ pub const DNSResolver = struct {
     pub fn resolveNs(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveNs", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2778,7 +2786,7 @@ pub const DNSResolver = struct {
     pub fn resolvePtr(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolvePtr", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2808,7 +2816,7 @@ pub const DNSResolver = struct {
     pub fn resolveCname(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveCname", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2838,7 +2846,7 @@ pub const DNSResolver = struct {
     pub fn resolveMx(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveMx", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2868,7 +2876,7 @@ pub const DNSResolver = struct {
     pub fn resolveNaptr(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveNaptr", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2896,9 +2904,9 @@ pub const DNSResolver = struct {
     }
 
     pub fn resolveTxt(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments_old(1);
         if (arguments.len < 1) {
-            return globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
+            return globalThis.throwNotEnoughArguments("resolveTxt", 1, arguments.len);
         }
 
         const name_value = arguments.ptr[0];
@@ -2917,6 +2925,36 @@ pub const DNSResolver = struct {
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
+    }
+
+    pub fn globalResolveAny(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const vm = globalThis.bunVM();
+        const resolver = vm.rareData().globalDNSResolver(vm);
+        return resolver.resolveAny(globalThis, callframe);
+    }
+
+    pub fn resolveAny(this: *DNSResolver, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(1);
+        if (arguments.len < 1) {
+            return globalThis.throwNotEnoughArguments("resolveAny", 1, arguments.len);
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "string");
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
+        }
+
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        return this.doResolveCAres(c_ares.struct_any_reply, "any", name.slice(), globalThis);
     }
 
     pub fn doResolveCAres(this: *DNSResolver, comptime cares_type: type, comptime type_name: []const u8, name: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
@@ -3310,6 +3348,8 @@ pub const DNSResolver = struct {
         @export(js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
         const js_resolveCname = JSC.toJSHostFunction(globalResolveCname);
         @export(js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
+        const js_resolveAny = JSC.toJSHostFunction(globalResolveAny);
+        @export(js_resolveAny, .{ .name = "Bun__DNS__resolveAny" });
         const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
         @export(js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
         const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);

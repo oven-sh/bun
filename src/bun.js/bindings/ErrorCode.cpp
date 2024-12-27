@@ -229,16 +229,13 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
     auto& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
+    ASSERT(!value.isEmpty());
+
     if (value.isNull()) {
         return String("null"_s);
     }
     if (value.isUndefined()) {
         return String("undefined"_s);
-    }
-    if (value.isBigInt()) {
-        auto str = value.toStringOrNull(globalObject);
-        if (!str) return {};
-        return makeString("type bigint ("_s, str->getString(globalObject), "n)"_s);
     }
     if (value.isNumber()) {
         double d = value.asNumber();
@@ -254,17 +251,22 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
     if (value.isBoolean()) {
         return value.asBoolean() ? String("type boolean (true)"_s) : String("type boolean (false)"_s);
     }
-    if (value.isSymbol()) {
-        auto cell = value.asCell();
+    if (value.isBigInt()) {
+        auto str = value.toString(globalObject);
+        if (!str) return {};
+        return makeString("type bigint ("_s, str->getString(globalObject), "n)"_s);
+    }
+
+    ASSERT(value.isCell());
+    auto cell = value.asCell();
+
+    if (cell->isSymbol()) {
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
         auto description = result.has_value() ? result.value() : String("Symbol()"_s);
         return makeString("type symbol ("_s, description, ")"_s);
     }
-    if (value.isCallable()) {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_CATCH_SCOPE(vm);
-        auto cell = value.asCell();
+    if (cell->isCallable()) {
         auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
         if (scope.exception()) {
             scope.clearException();
@@ -275,7 +277,21 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
         }
         return String("function"_s);
     }
-    if (value.isObject()) {
+    if (cell->isString()) {
+        auto str = value.toString(globalObject)->getString(globalObject);
+        if (str.length() > 28) {
+            str = str.substring(0, 25);
+            str = makeString(str, "..."_s);
+            if (!str.contains('\'')) {
+                return makeString("type string ('"_s, str, "')"_s);
+            }
+        }
+        //       return `type string (${JSONStringify(value)})`;
+        str = value.toWTFStringForConsole(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return makeString("type string ("_s, str, ")"_s);
+    }
+    if (cell->isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, {});
         if (constructor.toBoolean(globalObject)) {
@@ -289,20 +305,6 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
         auto str = JSValueToStringSafe(globalObject, value);
         RETURN_IF_EXCEPTION(scope, {});
         return str;
-    }
-    if (value.isString()) {
-        auto str = value.toString(globalObject)->getString(globalObject);
-        if (str.length() > 28) {
-            str = str.substring(0, 25);
-            str = makeString(str, "..."_s);
-            if (!str.contains('\'')) {
-                return makeString("type string ('"_s, str, "')"_s);
-            }
-        }
-        //       return `type string (${JSONStringify(value)})`;
-        str = JSValueToStringSafe(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, {});
-        return makeString("type string ("_s, str, ")"_s);
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });

@@ -1,5 +1,6 @@
 #include "BunPlugin.h"
 
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
@@ -465,7 +466,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     }
 
     JSObject* callback = callbackValue.getObject();
-    JSC::JSValue result = JSC::call(lexicalGlobalObject, callback, JSC::getCallData(callback), JSC::jsUndefined(), ArgList());
+    JSC::JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, JSC::getCallData(callback), JSC::jsUndefined(), ArgList());
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!result.isObject()) {

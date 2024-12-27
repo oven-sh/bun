@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -1905,7 +1906,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
@@ -1958,7 +1959,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject, args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
@@ -2028,7 +2029,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         JSC::CallData callData = JSC::getCallData(getControl);
 
         NakedPtr<JSC::Exception> returnedException = nullptr;
-        auto result = JSC::call(globalObject, getControl, callData, globalObject->globalThis(), args, returnedException);
+        auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args, returnedException);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (auto* exception = returnedException.get()) {
@@ -2195,7 +2196,7 @@ inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
     auto callData = JSC::getCallData(fn);
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, String("util/types"_s)));
-    return JSC::call(globalObject, fn, callData, globalObject, args);
+    return JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, globalObject, args);
 }
 
 inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)
@@ -2639,7 +2640,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
             auto callData = getCallData(resumeFunction);
 
             MarkedArgumentBuffer args;
-            JSC::call(globalObject, resumeFunction, callData, stdinValue, args);
+            JSC::profiledCall(globalObject, ProfilingReason::API, resumeFunction, callData, stdinValue, args);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
@@ -2758,7 +2759,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    JSValue nextTickFunction = JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -2981,7 +2982,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     JSC::CallData callData = JSC::getCallData(_killFn);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, _killFn, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {

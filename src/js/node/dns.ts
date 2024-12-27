@@ -734,10 +734,17 @@ const promises = {
 
     validateString(address);
 
-    return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
-      hostname,
-      service,
-    }));
+    try {
+      return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
+        hostname,
+        service,
+      }));
+    } catch (err) {
+      if (err.name === "TypeError" || err.name === "RangeError") {
+        throw err;
+      }
+      return Promise.reject(withTranslatedError(err));
+    }
   },
 
   resolve(hostname, rrtype) {

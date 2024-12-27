@@ -10,7 +10,7 @@ class JSTransformStreamConstructor final : public JSC::InternalFunction {
     using Base = JSC::InternalFunction;
 
 public:
-    static JSTransformStreamConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStreamPrototype* prototype);
+    static JSTransformStreamConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamPrototype* prototype);
 
     DECLARE_INFO;
     template<typename CellType, JSC::SubspaceAccess>

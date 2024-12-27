@@ -1,7 +1,9 @@
 #include "root.h"
+
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JSDOMGuardedObject.h"
 #include "JavaScriptCore/JSImmutableButterfly.h"
 #include "wtf/text/Base64.h"
 #include "JavaScriptCore/BuiltinNames.h"
@@ -14,6 +16,7 @@
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/Exception.h"
+#include "JSDOMConvert.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/FunctionConstructor.h"
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -78,6 +81,7 @@
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
 #include "JSCountQueuingStrategy.h"
+
 #include "JSCustomEvent.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertUnion.h"
@@ -103,12 +107,12 @@
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
-#include "JSReadableByteStreamController.h"
-#include "JSReadableStream.h"
-#include "JSReadableStreamBYOBReader.h"
-#include "JSReadableStreamBYOBRequest.h"
-#include "JSReadableStreamDefaultController.h"
-#include "JSReadableStreamDefaultReader.h"
+// #include "JSReadableByteStreamController.h"
+#include "BunReadableStream.h"
+#include "BunReadableStreamBYOBReader.h"
+// #include "BunReadableStreamBYOBRequest.h"
+#include "BunReadableStreamDefaultController.h"
+#include "BunReadableStreamDefaultReader.h"
 #include "JSSink.h"
 #include "JSSocketAddress.h"
 #include "JSSQLStatement.h"
@@ -116,14 +120,14 @@
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
 #include "JSTextDecoderStream.h"
-#include "JSTransformStream.h"
-#include "JSTransformStreamDefaultController.h"
+#include "BunTransformStream.h"
+#include "BunTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
 #include "JSWebSocket.h"
 #include "JSWorker.h"
-#include "JSWritableStream.h"
-#include "JSWritableStreamDefaultController.h"
-#include "JSWritableStreamDefaultWriter.h"
+#include "BunWritableStream.h"
+#include "BunWritableStreamDefaultController.h"
+#include "BunWritableStreamDefaultWriter.h"
 #include "libusockets.h"
 #include "ModuleLoader.h"
 #include "napi_external.h"
@@ -136,7 +140,6 @@
 #include "ProcessBindingConstants.h"
 #include "ProcessBindingTTYWrap.h"
 #include "ProcessIdentifier.h"
-#include "ReadableStream.h"
 #include "SerializedScriptValue.h"
 #include "StructuredClone.h"
 #include "WebCoreJSBuiltins.h"
@@ -155,6 +158,7 @@
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
+#include "IDLTypes.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -1385,24 +1389,30 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceResourceTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceServerTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceTiming)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBRequest)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultController)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultReader)
+// WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
+
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(SubtleCrypto);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoder);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
+
+#define WHATWG_STREAM_CONSTRUCTOR_GETTER(ConstructorName)                                                                                          \
+    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                                            \
+    {                                                                                                                                              \
+        auto* thisObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);                                                                        \
+        return thisObject->streams().constructor<ConstructorName>(jsCast<JSC::JSGlobalObject*>(lexicalGlobalObject));                              \
+    }                                                                                                                                              \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                             \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                 \
+            JSC::PropertyName))                                                                                                                    \
+    {                                                                                                                                              \
+        return JSC::JSValue::encode(jsCast<Zig::GlobalObject*>(lexicalGlobalObject)->streams().constructor<ConstructorName>(lexicalGlobalObject)); \
+    }
+FOR_EACH_WHATWG_STREAM_CLASS_TYPE(WHATWG_STREAM_CONSTRUCTOR_GETTER)
+#undef WHATWG_STREAM_CONSTRUCTOR_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2077,9 +2087,10 @@ JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject * glo
     ASSERT(callFrame->argumentCount() == 1);
     ASSERT(callFrame->uncheckedArgument(0).isObject());
 
-    auto* jsDOMGlobalObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    auto internalWritableStream = InternalWritableStream::fromObject(*jsDOMGlobalObject, *callFrame->uncheckedArgument(0).toObject(globalObject));
-    return JSValue::encode(toJSNewlyCreated(globalObject, jsDOMGlobalObject, WritableStream::create(WTFMove(internalWritableStream))));
+    return JSValue::encode(jsUndefined());
+    // auto* jsDOMGlobalObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
+    // auto internalWritableStream = InternalWritableStream::fromObject(*jsDOMGlobalObject, *callFrame->uncheckedArgument(0).toObject(globalObject));
+    // return JSValue::encode(toJSNewlyCreated(globalObject, jsDOMGlobalObject, WritableStream::create(WTFMove(internalWritableStream))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -2194,15 +2205,17 @@ extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream,
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
-    return ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
+    // return ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
+    return false;
 }
 
 extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
-    WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
-    return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
+    // WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
+    // return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
+    return false;
 }
 
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, void** ptr)
@@ -2296,17 +2309,18 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    //     auto& vm = globalObject->vm();
+    //     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto& builtinNames = WebCore::builtinNames(vm);
+    //     auto& builtinNames = WebCore::builtinNames(vm);
 
-    auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativePtr));
+    //     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
+    //     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    //     arguments.append(JSValue::decode(nativePtr));
 
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    //     auto callData = JSC::getCallData(function);
+    //     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" JSC__JSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
@@ -2819,6 +2833,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+    m_streamStructures.initialize(vm, this);
 
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
@@ -3523,26 +3538,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
-    JSC::VM& vm = this->vm();
-    JSC::JSFunction* function = this->m_assignToStream.get();
-    if (!function) {
-        function = JSFunction::create(vm, this, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignToStreamCodeGenerator(vm)), this);
-        this->m_assignToStream.set(vm, this, function);
-    }
+    // JSC::VM& vm = this->vm();
+    // JSC::JSFunction* function = this->m_assignToStream.get();
+    // if (!function) {
+    //     function = JSFunction::create(vm, this, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignToStreamCodeGenerator(vm)), this);
+    //     this->m_assignToStream.set(vm, this, function);
+    // }
 
-    auto callData = JSC::getCallData(function);
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(stream);
-    arguments.append(controller);
+    // auto callData = JSC::getCallData(function);
+    // JSC::MarkedArgumentBuffer arguments;
+    // arguments.append(stream);
+    // arguments.append(controller);
 
-    WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
+    // WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
 
-    auto result = JSC::profiledCall(this, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
-    if (auto* exception = returnedException.get()) {
-        return JSC::JSValue::encode(exception);
-    }
+    // auto result = JSC::profiledCall(this, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
+    // if (auto* exception = returnedException.get()) {
+    //     return JSC::JSValue::encode(exception);
+    // }
 
-    return JSC::JSValue::encode(result);
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 JSC::JSObject* GlobalObject::navigatorObject()
@@ -3612,8 +3627,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.cloneArrayBufferPrivateName(), JSFunction::create(vm, this, 3, String(), jsFunctionCloneArrayBuffer, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.structuredCloneForStreamPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionStructuredCloneForStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        // GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        // GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), PropertyAttribute::DontDelete | 0),
@@ -3630,9 +3645,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -3660,18 +3675,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, TransformStream_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, TransformStreamDefaultController_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPrivateName(), CustomGetterSetter::create(vm, ReadableByteStreamController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamPrivateName(), CustomGetterSetter::create(vm, ReadableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBRequest_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamPrivateName(), CustomGetterSetter::create(vm, WritableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultWriter_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, TransformStream_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, TransformStreamDefaultController_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPrivateName(), CustomGetterSetter::create(vm, ReadableByteStreamController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableStreamPrivateName(), CustomGetterSetter::create(vm, ReadableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBRequest_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.WritableStreamPrivateName(), CustomGetterSetter::create(vm, WritableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
+    // putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultWriter_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.AbortSignalPrivateName(), CustomGetterSetter::create(vm, AbortSignal_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     // ----- Public Properties -----
@@ -3866,6 +3881,11 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildren<Visitor>(visitor);
+
+#define VISIT_STREAM_CLASS(ClassName) \
+    thisObject->streams().m_##ClassName.visit(visitor);
+    FOR_EACH_WHATWG_STREAM_CLASS_TYPE(VISIT_STREAM_CLASS)
+#undef VISIT_STREAM_CLASS
 }
 
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)

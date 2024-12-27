@@ -5,14 +5,17 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+
 namespace Bun {
 
 using namespace JSC;
 
 const ClassInfo JSReadableStreamConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamConstructor) };
 
-JSReadableStreamConstructor* JSReadableStreamConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+JSReadableStreamConstructor* JSReadableStreamConstructor::create(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, prototype);
     auto* constructor = new (NotNull, allocateCell<JSReadableStreamConstructor>(vm)) JSReadableStreamConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);
     return constructor;
@@ -42,9 +45,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstructor::constr
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
 
     JSObject* newTarget = asObject(callFrame->newTarget());
-    Structure* structure = zigGlobalObject->streams().getReadableStreamStructure(globalObject);
+    auto& streams = zigGlobalObject->streams();
+    Structure* structure = streams.structure<JSReadableStream>(globalObject);
 
-    auto* constructor = zigGlobalObject->streams().getReadableStreamConstructor(globalObject);
+    auto* constructor = streams.constructor<JSReadableStream>(globalObject);
 
     if (!(!newTarget || newTarget != constructor)) {
         if (newTarget) {

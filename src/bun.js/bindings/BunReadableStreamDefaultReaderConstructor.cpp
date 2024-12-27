@@ -16,8 +16,9 @@ using namespace JSC;
 
 const ClassInfo JSReadableStreamDefaultReaderConstructor::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderConstructor) };
 
-JSReadableStreamDefaultReaderConstructor* JSReadableStreamDefaultReaderConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStreamDefaultReaderPrototype* prototype)
+JSReadableStreamDefaultReaderConstructor* JSReadableStreamDefaultReaderConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultReaderPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, prototype);
     JSReadableStreamDefaultReaderConstructor* constructor = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReaderConstructor>(vm)) JSReadableStreamDefaultReaderConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);
     return constructor;
@@ -60,8 +61,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstr
 
     JSC::JSObject* newTarget = callFrame->newTarget().getObject();
     JSC::JSObject* constructor = callFrame->jsCallee();
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
 
-    auto* structure = defaultGlobalObject(globalObject)->readableStreamDefaultReaderStructure();
+    auto* structure = streams.structure<JSReadableStreamDefaultReader>(domGlobalObject);
 
     // TODO: double-check this.
     if (!(!newTarget || newTarget == constructor)) {

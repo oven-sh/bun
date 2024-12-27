@@ -3,6 +3,7 @@
 #include "ErrorCode.h"
 #include "BunTransformStreamDefaultControllerConstructor.h"
 #include "BunTransformStreamDefaultControllerPrototype.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 
 namespace Bun {
 
@@ -13,8 +14,9 @@ JSTransformStreamDefaultControllerConstructor::JSTransformStreamDefaultControlle
 {
 }
 
-JSTransformStreamDefaultControllerConstructor* JSTransformStreamDefaultControllerConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStreamDefaultControllerPrototype* prototype)
+JSTransformStreamDefaultControllerConstructor* JSTransformStreamDefaultControllerConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamDefaultControllerPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     JSTransformStreamDefaultControllerConstructor* constructor = new (NotNull, JSC::allocateCell<JSTransformStreamDefaultControllerConstructor>(vm))
         JSTransformStreamDefaultControllerConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);

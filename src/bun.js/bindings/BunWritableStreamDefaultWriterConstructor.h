@@ -11,7 +11,7 @@ class JSWritableStreamDefaultWriterConstructor final : public JSC::InternalFunct
 public:
     using Base = JSC::InternalFunction;
 
-    static JSWritableStreamDefaultWriterConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSWritableStreamDefaultWriterPrototype* prototype);
+    static JSWritableStreamDefaultWriterConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultWriterPrototype* prototype);
 
     DECLARE_INFO;
     template<typename, JSC::SubspaceAccess mode>

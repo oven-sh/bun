@@ -13,7 +13,7 @@ public:
     using Base = InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSWritableStreamConstructor* create(VM&, JSGlobalObject*, Structure*, JSWritableStreamPrototype*);
+    static JSWritableStreamConstructor* create(VM&, JSGlobalObject*, JSWritableStreamPrototype*);
     DECLARE_INFO;
 
     template<typename CellType, SubspaceAccess mode>

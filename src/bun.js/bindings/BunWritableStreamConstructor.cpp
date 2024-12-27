@@ -3,6 +3,7 @@
 #include "BunWritableStream.h"
 #include "BunWritableStreamDefaultController.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 
 namespace Bun {
 
@@ -16,8 +17,9 @@ JSWritableStreamConstructor::JSWritableStreamConstructor(VM& vm, Structure* stru
 {
 }
 
-JSWritableStreamConstructor* JSWritableStreamConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSWritableStreamPrototype* prototype)
+JSWritableStreamConstructor* JSWritableStreamConstructor::create(VM& vm, JSGlobalObject* globalObject, JSWritableStreamPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     JSWritableStreamConstructor* constructor = new (NotNull, allocateCell<JSWritableStreamConstructor>(vm)) JSWritableStreamConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);
     return constructor;
@@ -164,8 +166,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalG
 
     JSObject* underlyingSink = callFrame->argument(0).getObject();
     JSValue strategy = callFrame->argument(1);
-    auto* constructor = globalObject->writableStreamConstructor();
-    auto* structure = globalObject->writableStreamStructure();
+    auto& streams = globalObject->streams();
+    auto* constructor = streams.constructor<JSWritableStream>(globalObject);
+    auto* structure = streams.structure<JSWritableStream>(globalObject);
 
     if (!(!newTarget || newTarget != constructor)) {
         if (newTarget) {
@@ -194,7 +197,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalG
 
     JSWritableStream* stream = JSWritableStream::create(vm, lexicalGlobalObject, structure);
 
-    Structure* controllerStructure = globalObject->streams().getWritableStreamDefaultControllerStructure(globalObject);
+    Structure* controllerStructure = streams.structure<JSWritableStreamDefaultController>(globalObject);
 
     JSWritableStreamDefaultController* controller = JSWritableStreamDefaultController::create(
         vm,
@@ -217,7 +220,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrivateConstructor, (JSGlobalObject * g
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Structure* structure = defaultGlobalObject(globalObject)->writableStreamStructure();
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
+    Structure* structure = streams.structure<JSWritableStream>(domGlobalObject);
     JSWritableStream* stream = JSWritableStream::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, {});
 

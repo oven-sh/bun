@@ -50,6 +50,7 @@ void JSReadableStreamBYOBReaderPrototype::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     reifyStaticProperties(vm, info(), JSReadableStreamBYOBReaderPrototypeTableValues, *this);
+    this->structure()->setMayBePrototype(true);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderClosedGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -161,6 +162,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderConstructor, (JSGlobalObject 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return JSValue::encode(defaultGlobalObject(globalObject)->streams().getReadableStreamBYOBReaderStructure(globalObject));
+    return JSValue::encode(defaultGlobalObject(globalObject)->streams().constructor<JSReadableStreamBYOBReader>(globalObject));
 }
 }

@@ -62,15 +62,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * globalO
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* prototype = jsDynamicCast<JSTransformStreamPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
-        return throwVMTypeError(globalObject, scope, "Cannot get constructor for TransformStream"_s);
-
     auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobalObject))
         return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
 
-    return JSValue::encode(zigGlobalObject->transformStreamConstructor());
+    return JSValue::encode(zigGlobalObject->streams().constructor<JSTransformStream>(zigGlobalObject));
 }
 
 JSTransformStreamPrototype* JSTransformStreamPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)

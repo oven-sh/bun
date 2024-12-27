@@ -18,7 +18,6 @@ public:
     static JSWritableStreamDefaultControllerConstructor* create(
         JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
-        JSC::Structure* structure,
         JSWritableStreamDefaultControllerPrototype* prototype);
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSGlobalObject*, CallFrame*);

@@ -46,11 +46,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalO
     if (stream->isLocked())
         return throwVMTypeError(globalObject, scope, "Cannot get writer for locked WritableStream"_s);
 
-    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
-    if (!zigGlobalObject)
-        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
 
-    Structure* writerStructure = zigGlobalObject->writableStreamDefaultWriterStructure();
+    Structure* writerStructure = streams.structure<JSWritableStreamDefaultWriter>(domGlobalObject);
     auto* writer = JSWritableStreamDefaultWriter::create(vm, writerStructure, stream);
     RETURN_IF_EXCEPTION(scope, {});
 

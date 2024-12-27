@@ -4,6 +4,7 @@
 #include "BunWritableStream.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 
 namespace Bun {
 
@@ -29,8 +30,9 @@ void JSWritableStreamDefaultWriterConstructor::finishCreation(VM& vm, JSGlobalOb
     ASSERT(inherits(info()));
 }
 
-JSWritableStreamDefaultWriterConstructor* JSWritableStreamDefaultWriterConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSWritableStreamDefaultWriterPrototype* prototype)
+JSWritableStreamDefaultWriterConstructor* JSWritableStreamDefaultWriterConstructor::create(VM& vm, JSGlobalObject* globalObject, JSWritableStreamDefaultWriterPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     JSWritableStreamDefaultWriterConstructor* constructor = new (NotNull, allocateCell<JSWritableStreamDefaultWriterConstructor>(vm)) JSWritableStreamDefaultWriterConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);
     return constructor;
@@ -60,15 +62,15 @@ EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDefaultWriterConstructor
         return encodedJSValue();
     }
 
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    Structure* structure = globalObject->streams().getWritableStreamStructure(globalObject);
+    auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& streams = domGlobalObject->streams();
+    Structure* structure = streams.structure<JSWritableStreamDefaultWriter>(domGlobalObject);
     JSValue newTarget = callFrame->newTarget();
 
-    if (UNLIKELY(globalObject->streams().getWritableStreamConstructor(globalObject) != newTarget)) {
-        auto* functionGlobalObject = getFunctionRealm(lexicalGlobalObject, newTarget.getObject());
+    if (UNLIKELY(streams.constructor<JSWritableStream>(lexicalGlobalObject) != newTarget)) {
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(
-            lexicalGlobalObject, newTarget.getObject(), globalObject->streams().getWritableStreamStructure(functionGlobalObject));
+            lexicalGlobalObject, newTarget.getObject(), structure);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -13,7 +13,7 @@ class JSReadableStreamDefaultReaderConstructor final : public JSC::InternalFunct
 public:
     using Base = JSC::InternalFunction;
 
-    static JSReadableStreamDefaultReaderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStreamDefaultReaderPrototype* prototype);
+    static JSReadableStreamDefaultReaderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultReaderPrototype* prototype);
 
     DECLARE_INFO;
 

@@ -8,8 +8,9 @@ using namespace JSC;
 
 const ClassInfo JSReadableStreamDefaultControllerConstructor::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerConstructor) };
 
-JSReadableStreamDefaultControllerConstructor* JSReadableStreamDefaultControllerConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+JSReadableStreamDefaultControllerConstructor* JSReadableStreamDefaultControllerConstructor::create(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, prototype);
     JSReadableStreamDefaultControllerConstructor* ptr = new (NotNull, allocateCell<JSReadableStreamDefaultControllerConstructor>(vm)) JSReadableStreamDefaultControllerConstructor(vm, structure);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;

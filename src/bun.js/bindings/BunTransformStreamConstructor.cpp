@@ -10,7 +10,7 @@
 #include "BunTransformStreamConstructor.h"
 #include "BunTransformStreamPrototype.h"
 #include "BunBuiltinNames.h"
-
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "ErrorCode.h"
 
 namespace Bun {
@@ -25,8 +25,9 @@ const ClassInfo JSTransformStreamConstructor::s_info = {
     CREATE_METHOD_TABLE(JSTransformStreamConstructor)
 };
 
-JSTransformStreamConstructor* JSTransformStreamConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTransformStreamPrototype* prototype)
+JSTransformStreamConstructor* JSTransformStreamConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     JSTransformStreamConstructor* constructor = new (NotNull, JSC::allocateCell<JSTransformStreamConstructor>(vm)) JSTransformStreamConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject, prototype);
     return constructor;
@@ -54,9 +55,8 @@ JSC_DEFINE_HOST_FUNCTION(JSTransformStreamConstructor::construct, (JSGlobalObjec
         return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
 
     JSObject* newTarget = asObject(callFrame->newTarget());
-    Structure* structure = zigGlobalObject->transformStreamStructure();
-
-    auto* constructor = zigGlobalObject->transformStreamConstructor();
+    Structure* structure = zigGlobalObject->streams().structure<JSTransformStream>(zigGlobalObject);
+    auto* constructor = zigGlobalObject->streams().constructor<JSTransformStream>(zigGlobalObject);
 
     if (!(!newTarget || newTarget != constructor)) {
         if (newTarget) {

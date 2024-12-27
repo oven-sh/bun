@@ -15,7 +15,7 @@ public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSReadableStreamConstructor* create(VM&, JSGlobalObject*, Structure*, JSObject*);
+    static JSReadableStreamConstructor* create(VM&, JSGlobalObject*, JSObject*);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
 
     DECLARE_INFO;

@@ -7,15 +7,16 @@
 #include "BunWritableStreamDefaultController.h"
 #include "BunWritableStreamDefaultControllerPrototype.h"
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 
 namespace Bun {
 
 JSWritableStreamDefaultControllerConstructor* JSWritableStreamDefaultControllerConstructor::create(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject,
-    JSC::Structure* structure,
     JSWritableStreamDefaultControllerPrototype* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     JSWritableStreamDefaultControllerConstructor* constructor = new (
         NotNull, JSC::allocateCell<JSWritableStreamDefaultControllerConstructor>(vm))
         JSWritableStreamDefaultControllerConstructor(vm, structure);

@@ -11,7 +11,7 @@ class JSReadableStreamDefaultControllerConstructor final : public JSC::InternalF
 public:
     using Base = JSC::InternalFunction;
 
-    static JSReadableStreamDefaultControllerConstructor* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSC::JSObject* prototype);
+    static JSReadableStreamDefaultControllerConstructor* create(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
 
     DECLARE_INFO;
 

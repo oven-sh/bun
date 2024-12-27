@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Canon Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +10,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY CANON INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL CANON INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -23,31 +23,20 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+$getter;
+export function highWaterMark(this: any) {
+  const highWaterMark = $getByIdDirectPrivate(this, "highWaterMark");
 
-#include "ExceptionOr.h"
-#include "JSDOMGuardedObject.h"
-#include <JavaScriptCore/JSObject.h>
+  if (highWaterMark === undefined)
+    throw new TypeError("CountQueuingStrategy.highWaterMark getter called on incompatible |this| value.");
 
-namespace WebCore {
-class InternalWritableStream final : public DOMGuarded<JSC::JSObject> {
-public:
-    static ExceptionOr<Ref<InternalWritableStream>> createFromUnderlyingSink(JSDOMGlobalObject&, JSC::JSValue underlyingSink, JSC::JSValue strategy);
-    static Ref<InternalWritableStream> fromObject(JSDOMGlobalObject&, JSC::JSObject&);
+  return highWaterMark;
+}
 
-    operator JSC::JSValue() const { return guarded(); }
+export function size() {
+  return 1;
+}
 
-    bool locked() const;
-    void lock();
-    JSC::JSValue abort(JSC::JSGlobalObject&, JSC::JSValue);
-    JSC::JSValue close(JSC::JSGlobalObject&);
-    JSC::JSValue getWriter(JSC::JSGlobalObject&);
-
-private:
-    InternalWritableStream(JSDOMGlobalObject& globalObject, JSC::JSObject& jsObject)
-        : DOMGuarded<JSC::JSObject>(globalObject, jsObject)
-    {
-    }
-};
-
+export function initializeCountQueuingStrategy(this: any, parameters: any) {
+  $putByIdDirectPrivate(this, "highWaterMark", $extractHighWaterMarkFromQueuingStrategyInit(parameters));
 }

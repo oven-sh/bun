@@ -25,8 +25,9 @@ void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-JSReadableStreamBYOBReaderConstructor* JSReadableStreamBYOBReaderConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+JSReadableStreamBYOBReaderConstructor* JSReadableStreamBYOBReaderConstructor::create(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
+    auto* structure = createStructure(vm, globalObject, prototype);
     JSReadableStreamBYOBReaderConstructor* constructor = new (NotNull, allocateCell<JSReadableStreamBYOBReaderConstructor>(vm)) JSReadableStreamBYOBReaderConstructor(vm, structure);
     constructor->finishCreation(vm);
     return constructor;

@@ -35,11 +35,9 @@ void JSWritableStream::finishCreation(VM& vm)
 
 JSWritableStream* JSWritableStream::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
-    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
-    if (!zigGlobalObject)
-        return nullptr;
-
-    Structure* streamStructure = zigGlobalObject->writableStreamStructure();
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
+    Structure* streamStructure = streams.structure<JSWritableStream>(domGlobalObject);
     JSWritableStream* stream = new (NotNull, allocateCell<JSWritableStream>(vm))
         JSWritableStream(vm, streamStructure ? streamStructure : structure);
     stream->finishCreation(vm);

@@ -59,7 +59,7 @@ void JSTransformStream::finishCreation(VM& vm, JSGlobalObject* globalObject)
     m_backpressureChangePromise.set(vm, this, JSPromise::create(vm, zigGlobalObject->promiseStructure()));
 
     // Set up the controller
-    m_controller.set(vm, this, JSTransformStreamDefaultController::create(vm, globalObject, zigGlobalObject->transformStreamDefaultControllerStructure(), this));
+    m_controller.set(vm, this, JSTransformStreamDefaultController::create(vm, globalObject, zigGlobalObject->streams().structure<JSTransformStreamDefaultController>(zigGlobalObject), this));
 
     RETURN_IF_EXCEPTION(scope, void());
 }

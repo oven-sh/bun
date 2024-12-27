@@ -14,11 +14,10 @@ class JSReadableStreamConstructor;
 
 using namespace JSC;
 
-class JSReadableStream final : public JSC::JSDestructibleObject {
+class JSReadableStream final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = true;
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -62,13 +61,6 @@ public:
     State state() const { return m_state; }
     JSValue storedError() const { return m_storedError.get(); }
     bool disturbed() const { return m_disturbed; }
-
-    ~JSReadableStream();
-
-    static void destroy(JSCell* cell)
-    {
-        static_cast<JSReadableStream*>(cell)->~JSReadableStream();
-    }
 
 private:
     JSReadableStream(VM&, Structure*);

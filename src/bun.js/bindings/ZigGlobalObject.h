@@ -483,16 +483,6 @@ public:
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
 
-    JSC::Structure* transformStreamStructure() const { return m_streamStructures.getTransformStreamStructure(this); }
-    JSC::Structure* transformStreamDefaultControllerStructure() const { return m_streamStructures.getTransformStreamDefaultControllerStructure(this); }
-    JSC::JSObject* transformStreamConstructor() const { return m_streamStructures.getTransformStreamConstructor(this); }
-
-    JSC::Structure* readableStreamStructure() const { return m_streamStructures.getReadableStreamStructure(this); }
-    JSC::Structure* readableStreamDefaultReaderStructure() const { return m_streamStructures.getReadableStreamDefaultReaderStructure(this); }
-    JSC::Structure* readableStreamBYOBReaderStructure() const { return m_streamStructures.getReadableStreamBYOBReaderStructure(this); }
-    JSC::Structure* writableStreamDefaultWriterStructure() const { return m_streamStructures.getWritableStreamDefaultWriterStructure(this); }
-    JSC::Structure* writableStreamStructure() const { return m_streamStructures.getWritableStreamStructure(this); }
-    JSC::JSObject* writableStreamConstructor() const { return m_streamStructures.getWritableStreamConstructor(this); }
     Bun::StreamStructures& streams() { return m_streamStructures; }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"

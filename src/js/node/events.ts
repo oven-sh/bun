@@ -30,6 +30,7 @@ const {
   validateAbortSignal,
   validateNumber,
   validateBoolean,
+  validateFunction,
 } = require("internal/validators");
 
 const { inspect, types } = require("node:util");
@@ -727,9 +728,7 @@ function ERR_OUT_OF_RANGE(name, range, value) {
 }
 
 function checkListener(listener) {
-  if (typeof listener !== "function") {
-    throw new TypeError("The listener must be a function");
-  }
+  validateFunction(listener, "listener");
 }
 
 let AsyncResource = null;

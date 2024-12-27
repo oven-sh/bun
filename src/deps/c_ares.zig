@@ -1697,7 +1697,7 @@ pub const Error = enum(i32) {
             const system_error = JSC.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
-                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code(), hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
                 .syscall = bun.String.createUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };

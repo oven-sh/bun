@@ -24,7 +24,7 @@ const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
-const bundler = bun.transpiler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
@@ -94,7 +94,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.experimental_css = ctx.bundler_options.experimental_css;
+        b.options.experimental = ctx.bundler_options.experimental;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 

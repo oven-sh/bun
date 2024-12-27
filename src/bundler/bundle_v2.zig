@@ -59,6 +59,7 @@ const lex = @import("../js_lexer.zig");
 const Logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
+const Part = js_ast.Part;
 const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
@@ -89,6 +90,7 @@ const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
 const OOM = bun.OOM;
 
+const HTMLScanner = @import("../HTMLScanner.zig");
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Lock = @import("../lock.zig").Lock;
@@ -127,7 +129,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
-
+const lol = bun.LOLHTML;
 const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -768,7 +770,7 @@ pub const BundleV2 = struct {
         const entry = this.pathToSourceIndexMap(target).getOrPut(this.graph.allocator, path.hashKey()) catch bun.outOfMemory();
         if (!entry.found_existing) {
             path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-            const loader = brk: {
+            const loader: Loader = (brk: {
                 if (import_record.importer_source_index) |importer| {
                     var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
                     if (record.loader()) |out_loader| {
@@ -777,7 +779,8 @@ pub const BundleV2 = struct {
                 }
 
                 break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
-            };
+                // HTML is only allowed at the entry point.
+            }).disableHTML();
             const idx = this.enqueueParseTask(
                 &resolve_result,
                 .{
@@ -832,7 +835,15 @@ pub const BundleV2 = struct {
         }
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
-        const loader = this.transpiler.options.loaders.get(path.name.ext) orelse .file;
+        const loader = brk: {
+            const default = path.loader(&this.transpiler.options.loaders) orelse .file;
+
+            if (!this.transpiler.options.experimental.html) {
+                break :brk default.disableHTML();
+            }
+
+            break :brk default;
+        };
 
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
@@ -859,7 +870,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -953,7 +964,7 @@ pub const BundleV2 = struct {
         this.linker.options.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
-        this.linker.options.experimental_css = transpiler.options.experimental_css;
+        this.linker.options.experimental = transpiler.options.experimental;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
@@ -1065,6 +1076,7 @@ pub const BundleV2 = struct {
                     for (data) |entry_point| {
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
+
                         _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
                     }
                 },
@@ -1260,11 +1272,13 @@ pub const BundleV2 = struct {
         this: *BundleV2,
         resolve_result: *const _resolver.Result,
         source: Logger.Source,
-        loader: Loader,
+        loader_: Loader,
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+        // Only enable HTML loader when it's an entry point.
+        const loader = loader_.disableHTML();
 
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
@@ -1286,7 +1300,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1342,7 +1356,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1681,7 +1695,7 @@ pub const BundleV2 = struct {
             transpiler.options.code_splitting = config.code_splitting;
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-            transpiler.options.experimental_css = config.experimental_css;
+            transpiler.options.experimental = config.experimental;
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
@@ -1892,7 +1906,7 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
-                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.transpiler.options.experimental_css);
+                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.transpiler.options.experimental);
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -2045,7 +2059,7 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-                            if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+                            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2382,7 +2396,7 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
-                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.transpiler.options.experimental)) {
                     parse.defer_copy_for_bundling = true;
                 }
                 // This is where onLoad plugins are enqueued
@@ -2753,13 +2767,21 @@ pub const BundleV2 = struct {
             resolve_task.jsx = resolve_result.jsx;
             resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
 
-            if (import_record.tag.loader()) |loader| {
-                resolve_task.loader = loader;
-            }
+            // Figure out the loader.
+            {
+                if (import_record.tag.loader()) |loader| {
+                    resolve_task.loader = loader;
+                }
 
-            if (resolve_task.loader == null) {
-                resolve_task.loader = path.loader(&this.transpiler.options.loaders);
-                resolve_task.tree_shaking = this.transpiler.options.tree_shaking;
+                if (resolve_task.loader == null) {
+                    resolve_task.loader = path.loader(&this.transpiler.options.loaders);
+                    resolve_task.tree_shaking = this.transpiler.options.tree_shaking;
+                }
+
+                // HTML must be an entry point.
+                if (resolve_task.loader) |*loader| {
+                    loader.* = loader.disableHTML();
+                }
             }
 
             resolve_entry.value_ptr.* = resolve_task;
@@ -2803,7 +2825,7 @@ pub const BundleV2 = struct {
                 .success => |val| val.source.index.get(),
             };
             const loader: Loader = this.graph.input_files.items(.loader)[source];
-            if (!loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+            if (!loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                 this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
             } else {
                 this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
@@ -2877,6 +2899,9 @@ pub const BundleV2 = struct {
                 graph.input_files.items(.unique_key_for_additional_file)[result.source.index.get()] = result.unique_key_for_additional_file;
                 graph.input_files.items(.content_hash_for_additional_file)[result.source.index.get()] = result.content_hash_for_additional_file;
 
+                // Record which loader we used for this file
+                graph.input_files.items(.loader)[result.source.index.get()] = result.loader;
+
                 debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                     result.source.index.get(),
                     result.source.path.text,
@@ -2930,7 +2955,7 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2940,8 +2965,11 @@ pub const BundleV2 = struct {
                         // schedule as early as possible
                         graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
-                        const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
-                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental_css)) {
+                        const loader = value.loader orelse
+                            graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
+                            options.Loader.file;
+
+                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
                             graph.estimated_file_loader_count += 1;
@@ -3384,6 +3412,8 @@ pub const ParseTask = struct {
             unique_key_for_additional_file: []const u8 = "",
             /// Used by "file" loader files.
             content_hash_for_additional_file: u64 = 0,
+
+            loader: Loader,
         };
 
         pub const Error = struct {
@@ -3642,7 +3672,7 @@ pub const ParseTask = struct {
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, "text/plain", null);
+                ast.addUrlForCss(allocator, transpiler.options.experimental, &source, "text/plain", null);
                 return ast;
             },
 
@@ -3740,10 +3770,60 @@ pub const ParseTask = struct {
                 unique_key_for_additional_file.* = unique_key;
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
+            .html => {
+                if (transpiler.options.experimental.html) {
+                    var scanner = HTMLScanner.init(allocator, log, &source);
+                    try scanner.scan(source.contents);
+
+                    // Reuse existing code for creating the AST
+                    // because it handles the various Ref and other structs we
+                    // need in order to print code later.
+                    var ast = (try js_parser.newLazyExportAST(
+                        allocator,
+                        transpiler.options.define,
+                        opts,
+                        log,
+                        Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
+                        &source,
+                        "",
+                    )).?;
+                    ast.import_records = scanner.import_records;
+
+                    // We're banning import default of html loader files for now.
+                    //
+                    // TLDR: it kept including:
+                    //
+                    //   var name_default = ...;
+                    //
+                    // in the bundle because of the exports AST, and
+                    // gave up on figuring out how to fix it so that
+                    // this feature could ship.
+                    ast.has_lazy_export = false;
+                    ast.parts.ptr[1] = .{
+                        .stmts = &.{},
+                        .is_live = true,
+                        .import_record_indices = brk2: {
+                            // Generate a single part that depends on all the import records.
+                            // This is to ensure that we generate a JavaScript bundle containing all the user's code.
+                            var import_record_indices = try Part.ImportRecordIndices.initCapacity(allocator, scanner.import_records.len);
+                            import_record_indices.len = @truncate(scanner.import_records.len);
+                            for (import_record_indices.slice(), 0..) |*import_record, index| {
+                                import_record.* = @intCast(index);
+                            }
+                            break :brk2 import_record_indices;
+                        },
+                    };
+
+                    // Try to avoid generating unnecessary ESM <> CJS wrapper code.
+                    if (opts.output_format == .esm or opts.output_format == .iife) {
+                        ast.exports_kind = .esm;
+                    }
+
+                    return JSAst.init(ast);
+                }
+            },
             .css => {
-                if (transpiler.options.experimental_css) {
-                    // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-                    // unique_key_for_additional_file.* = unique_key;
+                if (transpiler.options.experimental.css) {
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
@@ -3782,7 +3862,7 @@ pub const ParseTask = struct {
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
         ast.url_for_css = unique_key;
-        ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, null, unique_key);
+        ast.addUrlForCss(allocator, transpiler.options.experimental, &source, null, unique_key);
         return ast;
     }
 
@@ -3794,7 +3874,7 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: Loader,
-        experimental_css: bool,
+        experimental: Loader.Experimental,
     ) !CacheEntry {
         return switch (task.contents_or_fd) {
             .fd => |contents| brk: {
@@ -3820,7 +3900,7 @@ pub const ParseTask = struct {
                 }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
-                    if (loader.shouldCopyForBundling(experimental_css))
+                    if (loader.shouldCopyForBundling(experimental))
                         // The OutputFile will own the memory for the contents
                         bun.default_allocator
                     else
@@ -3874,7 +3954,7 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: *Loader,
-        experimental_css: bool,
+        experimental: Loader.Experimental,
         from_plugin: *bool,
     ) !CacheEntry {
         const might_have_on_parse_plugins = brk: {
@@ -3889,7 +3969,7 @@ pub const ParseTask = struct {
         };
 
         if (!might_have_on_parse_plugins) {
-            return getCodeForParseTaskWithoutPlugins(task, log, transpiler, resolver, allocator, file_path, loader.*, experimental_css);
+            return getCodeForParseTaskWithoutPlugins(task, log, transpiler, resolver, allocator, file_path, loader.*, experimental);
         }
 
         var should_continue_running: i32 = 1;
@@ -3902,7 +3982,7 @@ pub const ParseTask = struct {
             .allocator = allocator,
             .file_path = file_path,
             .loader = loader,
-            .experimental_css = experimental_css,
+            .experimental = experimental,
             .deferred_error = null,
             .should_continue_running = &should_continue_running,
         };
@@ -3918,7 +3998,7 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: *Loader,
-        experimental_css: bool,
+        experimental: Loader.Experimental,
         deferred_error: ?anyerror = null,
         should_continue_running: *i32,
 
@@ -4081,7 +4161,7 @@ pub const ParseTask = struct {
 
                 result.loader,
 
-                this.experimental_css,
+                this.experimental,
             ) catch |err| {
                 this.deferred_error = err;
                 this.should_continue_running.* = 0;
@@ -4207,7 +4287,7 @@ pub const ParseTask = struct {
                 }
             }
 
-            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.transpiler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental_css);
+            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.transpiler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental);
         }
     };
 
@@ -4227,8 +4307,19 @@ pub const ParseTask = struct {
         step.* = .read_file;
         var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
+        // Do not process files as HTML if any of the following are true:
+        // - building for node or bun.js
+        // - the experimental.html flag is not enabled.
+        //
+        //   We allow non-entrypoints to import HTML so that people could
+        //   potentially use an onLoad plugin that returns HTML.
+        if (!transpiler.options.experimental.html or task.known_target != .browser) {
+            loader = loader.disableHTML();
+            task.loader = loader;
+        }
+
         var contents_came_from_plugin: bool = false;
-        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, this.ctx.transpiler.options.experimental_css, &contents_came_from_plugin);
+        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, this.ctx.transpiler.options.experimental, &contents_came_from_plugin);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4368,7 +4459,7 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css and this.ctx.transpiler.options.experimental_css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader == .css and this.ctx.transpiler.options.experimental.css) try getEmptyCSSAST(
                 log,
                 transpiler,
                 opts,
@@ -4385,7 +4476,7 @@ pub const ParseTask = struct {
         };
 
         ast.target = target;
-        if (ast.parts.len <= 1 and ast.css == null) {
+        if (ast.parts.len <= 1 and ast.css == null and (task.loader == null or task.loader.? != .html)) {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
@@ -4398,9 +4489,10 @@ pub const ParseTask = struct {
             .use_directive = use_directive,
             .unique_key_for_additional_file = unique_key_for_additional_file,
             .side_effects = task.side_effects,
+            .loader = loader,
 
             // Hash the files in here so that we do it in parallel.
-            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.transpiler.options.experimental_css))
+            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.transpiler.options.experimental))
                 ContentHasher.run(source.contents)
             else
                 0,
@@ -4568,6 +4660,7 @@ pub const ServerComponentParseTask = struct {
                 .client_entry_wrapper => .browser,
             }),
             .source = task.source,
+            .loader = .js,
             .log = log.*,
             .use_directive = .none,
             .side_effects = .no_side_effects__pure_data,
@@ -4989,6 +5082,7 @@ const EntryPoint = struct {
         none,
         user_specified,
         dynamic_import,
+        html,
 
         pub fn outputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
             return switch (this) {
@@ -5111,9 +5205,9 @@ const LinkerGraph = struct {
     pub fn addPartToFile(
         graph: *LinkerGraph,
         id: u32,
-        part: js_ast.Part,
+        part: Part,
     ) !u32 {
-        var parts: *js_ast.Part.List = &graph.ast.items(.parts)[id];
+        var parts: *Part.List = &graph.ast.items(.parts)[id];
         const part_id = @as(u32, @truncate(parts.len));
         try parts.push(graph.allocator, part);
         var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
@@ -5183,7 +5277,7 @@ const LinkerGraph = struct {
         if (use_count == 0) return;
 
         var parts_list = g.ast.items(.parts)[source_index].slice();
-        var part: *js_ast.Part = &parts_list[part_index];
+        var part: *Part = &parts_list[part_index];
 
         // Mark this symbol as used by this part
 
@@ -5523,7 +5617,7 @@ pub const LinkerContext = struct {
         minify_identifiers: bool = false,
         banner: []const u8 = "",
         footer: []const u8 = "",
-        experimental_css: bool = false,
+        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
@@ -5621,7 +5715,7 @@ pub const LinkerContext = struct {
         return format != .cjs;
     }
 
-    pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: js_ast.Part) bool {
+    pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: Part) bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
         // performance hit to spin up a goroutine only to discover this later.
@@ -5805,6 +5899,15 @@ pub const LinkerContext = struct {
         this.parse_graph.heap.gc(true);
     }
 
+    const JSChunkKeyFormatter = struct {
+        has_html: bool,
+        entry_bits: []const u8,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+            try writer.writeAll(&[_]u8{@intFromBool(!this.has_html)});
+            try writer.writeAll(this.entry_bits);
+        }
+    };
     pub noinline fn computeChunks(
         this: *LinkerContext,
         unique_key: u64,
@@ -5829,6 +5932,13 @@ pub const LinkerContext = struct {
 
         const entry_source_indices = this.graph.entry_points.items(.source_index);
         const css_asts = this.graph.ast.items(.css);
+        const experimental_css = this.options.experimental.css;
+        const experimental_html = this.options.experimental.html;
+        const css_chunking = this.options.css_chunking;
+        var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
+        const loaders = this.parse_graph.input_files.items(.loader);
+
+        const code_splitting = this.graph.code_splitting;
 
         // Create chunks for entry points
         for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -5837,7 +5947,41 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            if (this.options.experimental_css and css_asts[source_index] != null) {
+            const has_html_chunk = experimental_html and loaders[source_index] == .html;
+            const js_chunk_key = brk: {
+                if (code_splitting) {
+                    break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                } else {
+                    // Force HTML chunks to always be generated, even if there's an identical JS file.
+                    break :brk try std.fmt.allocPrint(temp_allocator, "{}", .{JSChunkKeyFormatter{
+                        .has_html = has_html_chunk,
+                        .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
+                    }});
+                }
+            };
+
+            // Put this early on in this loop so that CSS-only entry points work.
+            if (has_html_chunk) {
+                const html_chunk_entry = try html_chunks.getOrPut(
+                    js_chunk_key,
+                );
+                if (!html_chunk_entry.found_existing) {
+                    html_chunk_entry.value_ptr.* = .{
+                        .entry_point = .{
+                            .entry_point_id = entry_bit,
+                            .source_index = source_index,
+                            .is_entry_point = true,
+                        },
+                        .entry_bits = entry_bits.*,
+                        .content = .{
+                            .html = .{},
+                        },
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    };
+                }
+            }
+
+            if (experimental_css and css_asts[source_index] != null) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
                 // Create a chunk for the entry point here to ensure that the chunk is
                 // always generated even if the resulting file is empty
@@ -5866,14 +6010,16 @@ pub const LinkerContext = struct {
                             },
                         },
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        .has_html_chunk = has_html_chunk,
                     };
                 }
 
                 continue;
             }
+
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
-            const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+            const js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
             js_chunk_entry.value_ptr.* = .{
                 .entry_point = .{
                     .entry_point_id = entry_bit,
@@ -5884,10 +6030,11 @@ pub const LinkerContext = struct {
                 .content = .{
                     .javascript = .{},
                 },
+                .has_html_chunk = has_html_chunk,
                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
 
-            if (this.options.experimental_css) {
+            if (experimental_css) {
                 // If this JS entry point has an associated CSS entry point, generate it
                 // now. This is essentially done by generating a virtual CSS file that
                 // only contains "@import" statements in the order that the files were
@@ -5898,7 +6045,7 @@ pub const LinkerContext = struct {
                 if (css_source_indices.len > 0) {
                     const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
 
-                    const hash_to_use = if (!this.options.css_chunking)
+                    const hash_to_use = if (!css_chunking)
                         bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
                     else brk: {
                         var hasher = std.hash.Wyhash.init(5);
@@ -5936,6 +6083,7 @@ pub const LinkerContext = struct {
                             },
                             .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
                             .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                            .has_html_chunk = has_html_chunk,
                         };
                     }
                 }
@@ -5964,9 +6112,8 @@ pub const LinkerContext = struct {
                         if (css_reprs[source_index.get()] != null) continue;
 
                         if (this.graph.code_splitting) {
-                            var js_chunk_entry = try js_chunks.getOrPut(
-                                try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
-                            );
+                            const js_chunk_key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                            var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
 
                             if (!js_chunk_entry.found_existing) {
                                 js_chunk_entry.value_ptr.* = .{
@@ -5998,7 +6145,7 @@ pub const LinkerContext = struct {
         // Sort the chunks for determinism. This matters because we use chunk indices
         // as sorting keys in a few places.
         const chunks: []Chunk = sort_chunks: {
-            var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count());
+            var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count() + html_chunks.count());
 
             var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
@@ -6006,12 +6153,20 @@ pub const LinkerContext = struct {
             sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
             sorted_keys.sortAsc();
             var js_chunk_indices_with_css = try BabyList(u32).initCapacity(temp_allocator, js_chunks_with_css);
-            for (sorted_keys.slice(), 0..) |key, i| {
+            for (sorted_keys.slice()) |key| {
                 const chunk = js_chunks.get(key) orelse unreachable;
-                sorted_chunks.appendAssumeCapacity(chunk);
 
                 if (chunk.content.javascript.css_chunks.len > 0)
-                    js_chunk_indices_with_css.appendAssumeCapacity(@intCast(i));
+                    js_chunk_indices_with_css.appendAssumeCapacity(sorted_chunks.len);
+
+                sorted_chunks.appendAssumeCapacity(chunk);
+
+                // Attempt to order the JS HTML chunk immediately after the non-html one.
+                if (chunk.has_html_chunk and experimental_html) {
+                    if (html_chunks.fetchSwapRemove(key)) |html_chunk| {
+                        sorted_chunks.appendAssumeCapacity(html_chunk.value);
+                    }
+                }
             }
 
             if (css_chunks.count() > 0) {
@@ -6036,6 +6191,12 @@ pub const LinkerContext = struct {
                 }
             }
 
+            // We don't care about the order of the HTML chunks that have
+            // no JS chunks.
+            if (experimental_html) {
+                try sorted_chunks.append(this.allocator, html_chunks.values());
+            }
+
             break :sort_chunks sorted_chunks.slice();
         };
 
@@ -6045,7 +6206,7 @@ pub const LinkerContext = struct {
         // to look up the path for this chunk to use with the import.
         for (chunks, 0..) |*chunk, chunk_id| {
             if (chunk.entry_point.is_entry_point) {
-                entry_point_chunk_indices[chunk.entry_point.source_index] = @as(u32, @truncate(chunk_id));
+                entry_point_chunk_indices[chunk.entry_point.source_index] = @intCast(chunk_id);
             }
         }
 
@@ -6072,7 +6233,7 @@ pub const LinkerContext = struct {
                 this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{}", .{bun.fmt.hexIntLower(unique_key)})];
 
             if (chunk.entry_point.is_entry_point and
-                kinds[chunk.entry_point.source_index] == .user_specified)
+                (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
             {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
@@ -6125,6 +6286,7 @@ pub const LinkerContext = struct {
                     );
                 },
                 .css => {}, // handled in `findImportedCSSFilesInJSOrder`
+                .html => {},
             }
         }
     }
@@ -6154,7 +6316,7 @@ pub const LinkerContext = struct {
         const FindImportedPartsVisitor = struct {
             entry_bits: *const AutoBitSet,
             flags: []const JSMeta.Flags,
-            parts: []BabyList(js_ast.Part),
+            parts: []BabyList(Part),
             import_records: []BabyList(ImportRecord),
             files: std.ArrayList(Index.Int),
             part_ranges: std.ArrayList(PartRange),
@@ -6804,7 +6966,7 @@ pub const LinkerContext = struct {
             @panic("Internal error: expected at least one part for lazy export");
         }
 
-        var part: *js_ast.Part = &parts.ptr[1];
+        var part: *Part = &parts.ptr[1];
 
         if (part.stmts.len == 0) {
             @panic("Internal error: expected at least one statement in the lazy export");
@@ -6816,7 +6978,7 @@ pub const LinkerContext = struct {
         }
 
         const expr = Expr{
-            .data = stmt.data.s_lazy_export,
+            .data = stmt.data.s_lazy_export.*,
             .loc = stmt.loc,
         };
         const module_ref = this.graph.ast.items(.module_ref)[source_index];
@@ -6948,7 +7110,7 @@ pub const LinkerContext = struct {
         {
             var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
 
-            // var parts_list: [][]js_ast.Part = this.graph.ast.items(.parts);
+            // var parts_list: [][]Part = this.graph.ast.items(.parts);
             var exports_kind: []js_ast.ExportsKind = this.graph.ast.items(.exports_kind);
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
             var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
@@ -6981,15 +7143,14 @@ pub const LinkerContext = struct {
                 const import_records: []ImportRecord = import_records_list[id].slice();
 
                 // Is it CSS?
-                if (css_asts[id]) |css| {
-                    _ = css; // autofix
+                if (css_asts[id] != null) {
                     // Inline URLs for non-CSS files into the CSS file
-                    for (import_records, 0..) |*record, import_record_idx| {
-                        _ = import_record_idx; // autofix
+                    for (import_records) |*record| {
                         if (record.source_index.isValid()) {
                             // Other file is not CSS
                             if (css_asts[record.source_index.get()] == null) {
-                                if (urls_for_css[record.source_index.get()]) |url| {
+                                const url = urls_for_css[record.source_index.get()];
+                                if (url.len > 0) {
                                     record.path.text = url;
                                 }
                             }
@@ -7439,9 +7600,9 @@ pub const LinkerContext = struct {
                     ) catch unreachable;
                 }
                 var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
-                var parts_list: []js_ast.Part.List = ast_fields.items(.parts);
+                var parts_list: []Part.List = ast_fields.items(.parts);
 
-                var parts: []js_ast.Part = parts_list[id].slice();
+                var parts: []Part = parts_list[id].slice();
 
                 const imports_to_bind = &imports_to_bind_list[id];
                 for (imports_to_bind.keys(), imports_to_bind.values()) |ref_untyped, import_untyped| {
@@ -7452,7 +7613,7 @@ pub const LinkerContext = struct {
 
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
-                            var part: *js_ast.Part = &parts[part_index];
+                            var part: *Part = &parts[part_index];
                             const parts_declaring_symbol: []const u32 = this.graph.topLevelSymbolToParts(import_source_index, import.data.import_ref);
 
                             const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
@@ -7804,7 +7965,7 @@ pub const LinkerContext = struct {
         var properties = std.ArrayList(js_ast.G.Property)
             .initCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
-        var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
+        var ns_export_symbol_uses = Part.SymbolUseMap{};
         ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
         const initial_flags = c.graph.meta.items(.flags)[id];
@@ -8126,7 +8287,7 @@ pub const LinkerContext = struct {
         var local_dependencies = std.AutoHashMap(u32, u32).init(allocator);
         defer local_dependencies.deinit();
 
-        const parts_slice: []js_ast.Part = c.graph.ast.items(.parts)[id].slice();
+        const parts_slice: []Part = c.graph.ast.items(.parts)[id].slice();
         const named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
 
         const our_imports_to_bind = imports_to_bind[id];
@@ -8362,7 +8523,7 @@ pub const LinkerContext = struct {
     const CrossChunkDependencies = struct {
         chunk_meta: []ChunkMeta,
         chunks: []Chunk,
-        parts: []BabyList(js_ast.Part),
+        parts: []BabyList(Part),
         import_records: []BabyList(bun.ImportRecord),
         flags: []const JSMeta.Flags,
         entry_point_chunk_indices: []Index.Int,
@@ -8793,6 +8954,7 @@ pub const LinkerContext = struct {
         switch (chunk.content) {
             .javascript => postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
             .css => postProcessCSSChunk(ctx, worker, chunk) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
+            .html => postProcessHTMLChunk(ctx, worker, chunk) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
         }
     }
 
@@ -8808,7 +8970,7 @@ pub const LinkerContext = struct {
         defer trace.end();
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
-        const all_parts: []const js_ast.Part.List = c.graph.ast.items(.parts);
+        const all_parts: []const Part.List = c.graph.ast.items(.parts);
         const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
@@ -8945,7 +9107,7 @@ pub const LinkerContext = struct {
 
         for (files_in_order) |source_index| {
             const wrap = all_flags[source_index].wrap;
-            const parts: []const js_ast.Part = all_parts[source_index].slice();
+            const parts: []const Part = all_parts[source_index].slice();
 
             switch (wrap) {
                 // Modules wrapped in a CommonJS closure look like this:
@@ -9057,6 +9219,7 @@ pub const LinkerContext = struct {
         switch (chunk.content) {
             .javascript => generateJSRenamer_(ctx, worker, chunk, chunk_index),
             .css => {},
+            .html => {},
         }
     }
 
@@ -9087,6 +9250,16 @@ pub const LinkerContext = struct {
         } };
 
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForCssChunkImpl(worker, ctx.c, ctx.chunk, part_range.i);
+    }
+
+    fn generateCompileResultForHtmlChunk(task: *ThreadPoolLib.Task) void {
+        const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
+        const ctx = part_range.ctx;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
+        defer worker.unget();
+
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForHTMLChunkImpl(worker, ctx.c, ctx.chunk, ctx.chunks);
     }
 
     fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, imports_in_chunk_index: u32) CompileResult {
@@ -9389,6 +9562,161 @@ pub const LinkerContext = struct {
         }
     }
 
+    fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, chunks: []Chunk) CompileResult {
+        const parse_graph = c.parse_graph;
+        const input_files = parse_graph.input_files.slice();
+        const sources = input_files.items(.source);
+        const import_records = c.graph.ast.items(.import_records);
+
+        // We want to rewrite the HTML with the following transforms:
+        // 1. Remove all <script> and <link> tags which were not marked as
+        //    external. This is defined by the source_index on the ImportRecord,
+        //    when it's not Index.invalid then we update it accordingly. This will
+        //    need to be a reference to the chunk or asset.
+        // 2. For all other non-external URLs, update the "src" or "href"
+        //    attribute to point to the asset's unique key. Later, when joining
+        //    chunks, we will rewrite these to their final URL or pathname,
+        //    including the public_path.
+        // 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
+        //    the JavaScript for the entry point which uses the "src" attribute
+        //    to point to the JavaScript chunk's unique key.
+        // 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
+        //    the CSS for the entry point which uses the "href" attribute to point to the
+        //    CSS chunk's unique key.
+        // 5. For each imported module or chunk within the JavaScript code, add
+        //    a <link rel="modulepreload" href="..." crossorigin> tag that
+        //    points to the module or chunk's unique key so that we tell the
+        //    browser to preload the user's code.
+        // We might also want to force <!DOCTYPE html> at the top of the file, but I'm not sure about that yet.
+
+        const HTMLLoader = struct {
+            linker: *LinkerContext,
+            source_index: Index.Int,
+            import_records: []const ImportRecord,
+            log: *Logger.Log,
+            allocator: std.mem.Allocator,
+            current_import_record_index: u32 = 0,
+            chunk: *Chunk,
+            chunks: []Chunk,
+            minify_whitespace: bool,
+            output: std.ArrayList(u8),
+
+            pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
+                this.output.appendSlice(bytes) catch bun.outOfMemory();
+            }
+
+            pub fn onHTMLParseError(this: *@This(), message: []const u8) void {
+                this.log.addError(
+                    &this.linker.parse_graph.input_files.items(.source)[this.source_index],
+                    Logger.Loc.Empty,
+                    message,
+                ) catch bun.outOfMemory();
+            }
+
+            pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
+                if (this.current_import_record_index >= this.import_records.len) {
+                    Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
+                }
+
+                const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
+                this.current_import_record_index += 1;
+                if (import_record.is_external_without_side_effects or import_record.source_index.isInvalid()) {
+                    debug("Leaving external import {s}", .{import_record.path.text});
+                    return;
+                }
+
+                const loader: Loader = this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()];
+                const unique_key_for_additional_files = this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()];
+                if (loader.isJavaScriptLike() or loader == .css) {
+                    // Remove the original non-external tags
+                    element.remove();
+                } else if (unique_key_for_additional_files.len > 0) {
+                    // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
+                    element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                }
+            }
+
+            pub fn onHEADTag(this: *@This(), element: *lol.Element) void {
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+
+                if (this.minify_whitespace)
+                    // Clear whitespace and anything else in the head
+                    element.setInnerContent("", false) catch bun.outOfMemory();
+
+                // Put CSS before JS to reduce changes of flash of unstyled content
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                    defer allocator.free(link_tag);
+                    element.append(link_tag, true) catch bun.outOfMemory();
+                }
+
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                    defer allocator.free(script);
+                    element.append(script, true) catch bun.outOfMemory();
+                }
+            }
+
+            const processor = HTMLScanner.HTMLProcessor(@This(), true);
+
+            pub fn run(this: *@This(), input: []const u8) !void {
+                processor.run(this, input) catch bun.outOfMemory();
+            }
+        };
+
+        var html_loader = HTMLLoader{
+            .linker = c,
+            .source_index = chunk.entry_point.source_index,
+            .import_records = import_records[chunk.entry_point.source_index].slice(),
+            .log = c.log,
+            .allocator = worker.allocator,
+            .minify_whitespace = c.options.minify_whitespace,
+            .chunk = chunk,
+            .chunks = chunks,
+            .output = std.ArrayList(u8).init(worker.allocator),
+            .current_import_record_index = 0,
+        };
+
+        html_loader.run(sources[chunk.entry_point.source_index].contents) catch bun.outOfMemory();
+
+        return .{
+            .html = .{
+                .code = html_loader.output.items,
+                .source_index = chunk.entry_point.source_index,
+            },
+        };
+    }
+
+    fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
+
+        // This is where we split output into pieces
+
+        const c = ctx.c;
+        var j = StringJoiner{
+            .allocator = worker.allocator,
+            .watcher = .{
+                .input = chunk.unique_key,
+            },
+        };
+
+        const compile_results = chunk.compile_results_for_chunk;
+
+        for (compile_results) |compile_result| {
+            j.push(compile_result.code(), bun.default_allocator);
+        }
+
+        j.ensureNewlineAtEnd();
+
+        chunk.intermediate_output = c.breakOutputIntoPieces(
+            worker.allocator,
+            &j,
+            @as(u32, @truncate(ctx.chunks.len)),
+        ) catch bun.outOfMemory();
+
+        chunk.isolated_hash = c.generateIsolatedHash(chunk);
+    }
+
     // This runs after we've already populated the compile results
     fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
         const c = ctx.c;
@@ -9565,7 +9893,7 @@ pub const LinkerContext = struct {
                 c.source_(chunk.entry_point.source_index),
                 print_options,
                 cross_chunk_import_records.slice(),
-                &[_]js_ast.Part{
+                &[_]Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_prefix_stmts.slice() },
                 },
                 chunk.renamer,
@@ -9578,7 +9906,7 @@ pub const LinkerContext = struct {
                 c.source_(chunk.entry_point.source_index),
                 print_options,
                 &.{},
-                &[_]js_ast.Part{
+                &[_]Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_suffix_stmts.slice() },
                 },
                 chunk.renamer,
@@ -10688,7 +11016,7 @@ pub const LinkerContext = struct {
                     c.source_(source_index),
                     print_options,
                     ast.import_records.slice(),
-                    &[_]js_ast.Part{
+                    &[_]Part{
                         .{
                             .stmts = stmts.items,
                         },
@@ -11583,7 +11911,7 @@ pub const LinkerContext = struct {
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,
     ) js_printer.PrintResult {
-        const parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
+        const parts: []Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const flags = all_flags[part_range.source_index.get()];
         const wrapper_part_index = if (flags.wrap != .none)
@@ -12180,8 +12508,8 @@ pub const LinkerContext = struct {
         runtime_require_ref: ?Ref,
         source_index: Index,
     ) js_printer.PrintResult {
-        const parts_to_print = &[_]js_ast.Part{
-            js_ast.Part{ .stmts = out_stmts },
+        const parts_to_print = &[_]Part{
+            Part{ .stmts = out_stmts },
         };
 
         const print_options = js_printer.Options{
@@ -12283,7 +12611,7 @@ pub const LinkerContext = struct {
 
         var has_js_chunk = false;
         var has_css_chunk = false;
-
+        var has_html_chunk = false;
         bun.assert(chunks.len > 0);
 
         {
@@ -12309,7 +12637,7 @@ pub const LinkerContext = struct {
             c.source_maps.line_offset_tasks.len = 0;
         }
 
-        if (c.options.experimental_css) {
+        if (c.options.experimental.css) {
             // Per CSS chunk:
             // Remove duplicate rules across files. This must be done in serial, not
             // in parallel, and must be done from the last rule to the first rule.
@@ -12365,6 +12693,7 @@ pub const LinkerContext = struct {
             defer c.allocator.free(chunk_contexts);
             var wait_group = try c.allocator.create(sync.WaitGroup);
             wait_group.init();
+
             defer {
                 wait_group.deinit();
                 c.allocator.destroy(wait_group);
@@ -12385,6 +12714,13 @@ pub const LinkerContext = struct {
                             chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                             total_count += chunk.content.css.imports_in_chunk_in_order.len;
                             chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
+                        },
+                        .html => {
+                            has_html_chunk = true;
+                            // HTML gets only one chunk.
+                            chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                            total_count += 1;
+                            chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, 1) catch bun.outOfMemory();
                         },
                     }
                 }
@@ -12425,8 +12761,7 @@ pub const LinkerContext = struct {
                             }
                         },
                         .css => {
-                            for (chunk.content.css.imports_in_chunk_in_order.slice(), 0..) |css_import, i| {
-                                _ = css_import; // autofix
+                            for (0..chunk.content.css.imports_in_chunk_in_order.len) |i| {
                                 remaining_part_ranges[0] = .{
                                     .part_range = .{},
                                     .i = @as(u32, @truncate(i)),
@@ -12439,6 +12774,19 @@ pub const LinkerContext = struct {
 
                                 remaining_part_ranges = remaining_part_ranges[1..];
                             }
+                        },
+                        .html => {
+                            remaining_part_ranges[0] = .{
+                                .part_range = .{},
+                                .i = 0,
+                                .task = ThreadPoolLib.Task{
+                                    .callback = &generateCompileResultForHtmlChunk,
+                                },
+                                .ctx = chunk_ctx,
+                            };
+
+                            batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                            remaining_part_ranges = remaining_part_ranges[1..];
                         },
                     }
                 }
@@ -12591,7 +12939,7 @@ pub const LinkerContext = struct {
         ) catch unreachable;
 
         const root_path = c.resolver.opts.output_dir;
-        const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk);
+        const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
 
         if (!c.resolver.opts.compile and more_than_one_output and !c.resolver.opts.supports_multiple_outputs) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
@@ -12792,6 +13140,7 @@ pub const LinkerContext = struct {
                     .referenced_css_files = switch (chunk.content) {
                         .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                         .css => &.{},
+                        .html => &.{},
                     },
                 }));
                 if (sourcemap_output_file) |sourcemap_file| {
@@ -13203,6 +13552,7 @@ pub const LinkerContext = struct {
                 .referenced_css_files = switch (chunk.content) {
                     .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                     .css => &.{},
+                    .html => &.{},
                 },
             }));
 
@@ -13313,7 +13663,7 @@ pub const LinkerContext = struct {
         entry_points_count: usize,
         distances: []u32,
         distance: u32,
-        parts: []bun.BabyList(js_ast.Part),
+        parts: []bun.BabyList(Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         file_entry_bits: []AutoBitSet,
         css_reprs: []?*bun.css.BundlerStyleSheet,
@@ -13403,7 +13753,7 @@ pub const LinkerContext = struct {
         c: *LinkerContext,
         source_index: Index.Int,
         side_effects: []_resolver.SideEffects,
-        parts: []bun.BabyList(js_ast.Part),
+        parts: []bun.BabyList(Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
         css_reprs: []?*bun.css.BundlerStyleSheet,
@@ -13519,12 +13869,12 @@ pub const LinkerContext = struct {
         part_index: Index.Int,
         source_index: Index.Int,
         side_effects: []_resolver.SideEffects,
-        parts: []bun.BabyList(js_ast.Part),
+        parts: []bun.BabyList(Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
         css_reprs: []?*bun.css.BundlerStyleSheet,
     ) void {
-        const part: *js_ast.Part = &parts[source_index].slice()[part_index];
+        const part: *Part = &parts[source_index].slice()[part_index];
 
         // only once
         if (part.is_live) {
@@ -13899,7 +14249,7 @@ pub const LinkerContext = struct {
 
                 for (common_js_parts) |part_id| {
                     const runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
-                    const part: *js_ast.Part = &runtime_parts[part_id];
+                    const part: *Part = &runtime_parts[part_id];
                     const symbol_refs = part.symbol_uses.keys();
                     for (symbol_refs) |ref| {
                         if (ref.eql(c.cjs_runtime_ref)) continue;
@@ -13922,7 +14272,7 @@ pub const LinkerContext = struct {
                     .{
                         .stmts = &.{},
                         .symbol_uses = bun.from(
-                            js_ast.Part.SymbolUseMap,
+                            Part.SymbolUseMap,
                             c.allocator,
                             .{
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
@@ -13983,7 +14333,7 @@ pub const LinkerContext = struct {
                     source_index,
                     .{
                         .symbol_uses = bun.from(
-                            js_ast.Part.SymbolUseMap,
+                            Part.SymbolUseMap,
                             c.allocator,
                             .{
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
@@ -14615,6 +14965,7 @@ pub const Chunk = struct {
     entry_point: Chunk.EntryPoint = .{},
 
     is_executable: bool = false,
+    has_html_chunk: bool = false,
 
     output_source_map: sourcemap.SourceMapPieces,
 
@@ -14627,6 +14978,30 @@ pub const Chunk = struct {
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;
+    }
+
+    pub fn getJSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        const entry_point_id = this.entry_point.entry_point_id;
+        for (chunks) |*other| {
+            if (other.content == .javascript) {
+                if (other.entry_point.entry_point_id == entry_point_id) {
+                    return other;
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn getCSSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        const entry_point_id = this.entry_point.entry_point_id;
+        for (chunks) |*other| {
+            if (other.content == .css) {
+                if (other.entry_point.entry_point_id == entry_point_id) {
+                    return other;
+                }
+            }
+        }
+        return null;
     }
 
     pub inline fn entryBits(this: *const Chunk) *const AutoBitSet {
@@ -14980,11 +15355,12 @@ pub const Chunk = struct {
     pub const EntryPoint = packed struct(u64) {
         /// Index into `Graph.input_files`
         source_index: u32 = 0,
-        entry_point_id: u31 = 0,
+        entry_point_id: ID = 0,
         is_entry_point: bool = false,
+        is_html: bool = false,
 
         /// so `EntryPoint` can be a u64
-        pub const ID = u31;
+        pub const ID = u30;
     };
 
     pub const JavaScriptChunk = struct {
@@ -15078,16 +15454,20 @@ pub const Chunk = struct {
     pub const ContentKind = enum {
         javascript,
         css,
+        html,
     };
+
+    pub const HtmlChunk = struct {};
 
     pub const Content = union(ContentKind) {
         javascript: JavaScriptChunk,
         css: CssChunk,
-
+        html: HtmlChunk,
         pub fn loader(this: *const Content) Loader {
             return switch (this.*) {
                 .javascript => .js,
                 .css => .css,
+                .html => .html,
             };
         }
 
@@ -15095,6 +15475,7 @@ pub const Chunk = struct {
             return switch (this.*) {
                 .javascript => "js",
                 .css => "css",
+                .html => "html",
             };
         }
     };
@@ -15174,6 +15555,10 @@ pub const CompileResult = union(enum) {
         // TODO: we need to do this
         source_map: ?bun.sourcemap.Chunk = null,
     },
+    html: struct {
+        source_index: Index.Int,
+        code: []const u8,
+    },
 
     pub const empty = CompileResult{
         .javascript = .{
@@ -15192,7 +15577,7 @@ pub const CompileResult = union(enum) {
                 .result => |r2| r2.code,
                 else => "",
             },
-            .css => |*c| c.code,
+            inline .html, .css => |*c| c.code,
         };
     }
 
@@ -15203,14 +15588,13 @@ pub const CompileResult = union(enum) {
                 else => null,
             },
             .css => |*c| c.source_map,
+            .html => null,
         };
     }
 
     pub fn sourceIndex(this: *const CompileResult) Index.Int {
         return switch (this.*) {
-            .javascript => |r| r.source_index,
-            .css => |*c| c.source_index,
-            // else => 0,
+            inline else => |*r| r.source_index,
         };
     }
 };
@@ -15503,7 +15887,7 @@ pub const AstBuilder = struct {
         bun.assert(p.scopes.items.len == 0);
         const module_scope = p.current_scope;
 
-        var parts = try js_ast.Part.List.initCapacity(p.allocator, 2);
+        var parts = try Part.List.initCapacity(p.allocator, 2);
         parts.len = 2;
         parts.mut(0).* = .{};
         parts.mut(1).* = .{
@@ -15512,7 +15896,7 @@ pub const AstBuilder = struct {
 
             // pretend that every symbol was used
             .symbol_uses = uses: {
-                var map: js_ast.Part.SymbolUseMap = .{};
+                var map: Part.SymbolUseMap = .{};
                 try map.ensureTotalCapacity(p.allocator, p.symbols.items.len);
                 for (0..p.symbols.items.len) |i| {
                     map.putAssumeCapacity(Ref{

@@ -110,19 +110,18 @@ JSPromise* JSReadableStream::cancel(VM& vm, JSGlobalObject* globalObject, JSValu
     if (!m_controller)
         return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
-    auto* controller = jsCast<JSReadableStreamDefaultController*>(m_controller.get());
+    auto* controller = this->controller();
     JSObject* cancelAlgorithm = controller->cancelAlgorithm();
     m_controller.clear();
 
-    JSC::JSObject* function = jsCast<JSC::JSObject*>(cancelAlgorithm);
-    JSC::CallData callData = JSC::getCallData(function);
+    JSC::CallData callData = JSC::getCallData(cancelAlgorithm);
 
     if (callData.type == JSC::CallData::Type::None)
         return Bun::createFulfilledPromise(globalObject, jsUndefined());
 
     MarkedArgumentBuffer args;
     args.append(reason);
-    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, jsUndefined(), args);
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, cancelAlgorithm, callData, controller->underlyingSource(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -320,6 +319,11 @@ void JSReadableStream::finishCreation(VM& vm)
     m_disturbed = false;
 }
 
+void JSReadableStream::setController(JSC::VM& vm, JSReadableStreamDefaultController* controller)
+{
+    m_controller.set(vm, this, controller);
+}
+
 Structure* JSReadableStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
@@ -341,10 +345,9 @@ void JSReadableStream::error(JSGlobalObject* globalObject, JSValue error)
         reader->closedPromise()->reject(globalObject, error);
 }
 
-void JSReadableStream::setReader(JSReadableStreamDefaultReader* reader)
+void JSReadableStream::setReader(JSC::VM& vm, JSReadableStreamDefaultReader* reader)
 {
     if (reader) {
-        VM& vm = reader->vm();
         m_reader.set(vm, this, reader);
     } else {
         m_reader.clear();

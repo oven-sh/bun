@@ -1,5 +1,7 @@
+
 #include "root.h"
 
+#include "JavaScriptCore/IteratorOperations.h"
 #include "BunReadableStreamDefaultController.h"
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -16,6 +18,7 @@
 #include <JavaScriptCore/JSPromise.h>
 
 #include "BunStreamInlines.h"
+#include "wtf/Assertions.h"
 namespace Bun {
 
 using namespace JSC;
@@ -30,6 +33,26 @@ JSC::GCClient::IsoSubspace* JSReadableStreamDefaultController::subspaceFor(JSC::
         [](auto& spaces) { return spaces.m_subspaceForJSReadableStreamDefaultController.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSReadableStreamDefaultController = std::forward<decltype(space)>(space); });
 }
+
+JSReadableStreamDefaultController::JSReadableStreamDefaultController(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+template<typename Visitor>
+void JSReadableStreamDefaultController::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = static_cast<JSReadableStreamDefaultController*>(cell);
+    Base::visitChildren(cell, visitor);
+    visitor.append(thisObject->m_underlyingSource);
+    visitor.append(thisObject->m_pullAlgorithm);
+    visitor.append(thisObject->m_cancelAlgorithm);
+    visitor.append(thisObject->m_stream);
+    thisObject->m_queue.visit<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultController);
+
 JSReadableStreamDefaultController* JSReadableStreamDefaultController::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSReadableStream* stream)
 {
     JSReadableStreamDefaultController* controller = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultController>(vm)) JSReadableStreamDefaultController(vm, structure);
@@ -48,7 +71,7 @@ JSValue JSReadableStreamDefaultController::desiredSizeValue()
         return jsNull();
 
     // According to spec, desiredSize = highWaterMark - queueTotalSize
-    return jsNumber(m_strategyHWM - m_queueTotalSize);
+    return jsNumber(queue().desiredSize());
 }
 
 double JSReadableStreamDefaultController::desiredSize() const
@@ -56,7 +79,7 @@ double JSReadableStreamDefaultController::desiredSize() const
     if (!canCloseOrEnqueue())
         return PNaN;
 
-    return m_strategyHWM - m_queueTotalSize;
+    return queue().desiredSize();
 }
 
 bool JSReadableStreamDefaultController::canCloseOrEnqueue() const
@@ -72,6 +95,37 @@ bool JSReadableStreamDefaultController::canCloseOrEnqueue() const
     return stream->state() == JSReadableStream::State::Readable;
 }
 
+void JSReadableStreamDefaultController::performPullSteps(VM& vm, JSGlobalObject* globalObject, JSPromise* readRequest)
+{
+    auto* stream = this->stream();
+    ASSERT(stream);
+
+    if (!this->queue().isEmpty()) {
+        // Let chunk be ! DequeueValue(this).
+        JSValue chunk = this->queue().dequeueValue(vm, globalObject, this);
+
+        // Perform readRequest’s chunk steps, given chunk.
+        readRequest->fulfill(globalObject, JSC::createIteratorResultObject(globalObject, chunk, false));
+        return;
+    }
+
+    if (m_closeRequested) {
+        // Perform ! ReadableStreamDefaultControllerClearAlgorithms(this).
+        this->clearAlgorithms();
+
+        // Perform ! ReadableStreamClose(stream).
+        stream->close(globalObject);
+
+        readRequest->fulfill(globalObject, createIteratorResultObject(globalObject, jsUndefined(), true));
+        return;
+    }
+
+    stream->reader()->addReadRequest(vm, readRequest);
+
+    // Otherwise, perform ! ReadableStreamDefaultControllerCallPullIfNeeded(this).
+    this->callPullIfNeeded(globalObject);
+}
+
 JSValue JSReadableStreamDefaultController::enqueue(VM& vm, JSGlobalObject* globalObject, JSValue chunk)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -79,34 +133,22 @@ JSValue JSReadableStreamDefaultController::enqueue(VM& vm, JSGlobalObject* globa
     if (!canCloseOrEnqueue())
         return throwTypeError(globalObject, scope, "Cannot enqueue chunk to closed stream"_s);
 
-    auto* stream = this->stream();
-    ASSERT(stream);
-
-    // If we have a size algorithm, use it to calculate chunk size
-    double chunkSize = 1;
-    JSObject* sizeAlgorithm = m_strategySizeAlgorithm ? m_strategySizeAlgorithm.get() : nullptr;
-
-    if (sizeAlgorithm) {
-        MarkedArgumentBuffer args;
-        args.append(chunk);
-        ASSERT(!args.hasOverflowed());
-        JSValue sizeResult = JSC::profiledCall(globalObject, ProfilingReason::API, sizeAlgorithm, JSC::getCallData(sizeAlgorithm), jsUndefined(), args);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        chunkSize = sizeResult.toNumber(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!std::isfinite(chunkSize) || chunkSize < 0)
-            return throwTypeError(globalObject, scope, "Chunk size must be a finite, non-negative number"_s);
+    if (auto* reader = stream()->reader()) {
+        if (!reader->isEmpty()) {
+            // Assert: ! ReadableStreamHasDefaultReader(stream) is true.
+            // 1. Let reader be stream.[[reader]].
+            // 2. Assert: reader.[[readRequests]] is not empty.
+            // 3. Let readRequest be reader.[[readRequests]][0].
+            JSPromise* readRequest = reader->takeFirst(vm);
+            JSObject* result = JSC::createIteratorResultObject(globalObject, chunk, false);
+            readRequest->fulfill(globalObject, result);
+            callPullIfNeeded(globalObject);
+            return jsUndefined();
+        }
     }
 
-    // Enqueue the chunk
-    JSArray* queue = m_queue.getInitializedOnMainThread(globalObject);
-    scope.release();
-    queue->push(globalObject, chunk);
-
-    m_queueTotalSize += chunkSize;
-
+    queue().enqueueValueAndGetSize(vm, globalObject, this, chunk);
+    RETURN_IF_EXCEPTION(scope, {});
     callPullIfNeeded(globalObject);
     return jsUndefined();
 }
@@ -120,14 +162,10 @@ void JSReadableStreamDefaultController::error(VM& vm, JSGlobalObject* globalObje
         return;
 
     // Reset queue
-    if (m_queue.isInitialized())
-        m_queue.setMayBeNull(vm, this, nullptr);
-    m_queueTotalSize = 0;
+    queue().resetQueue();
 
     // Clear our algorithms so we stop executing them
-    m_pullAlgorithm.clear();
-    m_cancelAlgorithm.clear();
-    m_strategySizeAlgorithm.clear();
+    clearAlgorithms();
 
     stream->error(globalObject, error);
 }
@@ -143,12 +181,8 @@ void JSReadableStreamDefaultController::close(VM& vm, JSGlobalObject* globalObje
     m_closeRequested = true;
 
     // If queue is empty, we can close immediately
-    if (!m_queueTotalSize) {
-        // Clear algorithms before closing
-        m_pullAlgorithm.clear();
-        m_cancelAlgorithm.clear();
-        m_strategySizeAlgorithm.clear();
-
+    if (queue().isEmpty()) {
+        clearAlgorithms();
         stream->close(globalObject);
     }
 }
@@ -194,6 +228,70 @@ void JSReadableStreamDefaultController::rejectPull(JSGlobalObject* globalObject,
     this->error(globalObject, error);
 }
 
+void JSReadableStreamDefaultController::setup(
+    JSC::VM& vm,
+    JSC::JSGlobalObject* globalObject,
+    Bun::JSReadableStream* stream,
+    JSC::JSObject* underlyingSource,
+    JSC::JSObject* startAlgorithm,
+    JSC::JSObject* pullAlgorithm,
+    JSC::JSObject* cancelAlgorithm,
+    double highWaterMark,
+    JSC::JSObject* sizeAlgorithm)
+{
+    queue().initialize(vm, globalObject, highWaterMark, this, sizeAlgorithm);
+
+    if (pullAlgorithm) setPullAlgorithm(pullAlgorithm);
+    if (cancelAlgorithm) setCancelAlgorithm(cancelAlgorithm);
+    if (underlyingSource) setUnderlyingSource(underlyingSource);
+
+    // 4. Set controller.[[started]], controller.[[closeRequested]], controller.[[pullAgain]], and controller.[[pulling]] to false.
+    m_started = false;
+    m_closeRequested = false;
+    m_pullAgain = false;
+    m_pulling = false;
+
+    // Set stream's controller to this
+    stream->setController(vm, this);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Call start algorithm if provided
+    if (startAlgorithm) {
+        MarkedArgumentBuffer args;
+        args.append(this);
+
+        auto callData = JSC::getCallData(startAlgorithm);
+        if (callData.type == JSC::CallData::Type::None) {
+            throwTypeError(globalObject, scope, "Start function is not callable"_s);
+            return;
+        }
+
+        JSValue startResult = JSC::profiledCall(globalObject, ProfilingReason::API, startAlgorithm, callData, underlyingSource, args);
+        RETURN_IF_EXCEPTION(scope, );
+
+        // Handle promise fulfillment/rejection
+        if (startResult && !startResult.isUndefined()) {
+            if (JSPromise* promise = jsDynamicCast<JSPromise*>(startResult)) {
+                switch (promise->status(vm)) {
+                case JSPromise::Status::Fulfilled:
+                    break;
+                case JSPromise::Status::Rejected:
+                    this->error(globalObject, promise->result(vm));
+                    return;
+                case JSPromise::Status::Pending:
+                    // We need to wait for the promise to resolve
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: handle pending start promise");
+                    return;
+                }
+            }
+        }
+    }
+
+    m_started = true;
+    callPullIfNeeded(globalObject);
+}
+
 void JSReadableStreamDefaultController::callPullIfNeeded(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -223,7 +321,7 @@ void JSReadableStreamDefaultController::callPullIfNeeded(JSGlobalObject* globalO
     args.append(this);
 
     EnsureStillAliveScope ensureStillAliveScope(this);
-    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, pullAlgorithm, JSC::getCallData(pullAlgorithm), jsUndefined(), args);
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, pullAlgorithm, JSC::getCallData(pullAlgorithm), m_underlyingSource.get(), args);
     if (scope.exception()) {
         m_pulling = false;
         // TODO: is there more we should do here?
@@ -254,18 +352,20 @@ bool JSReadableStreamDefaultController::shouldCallPull() const
         return false;
 
     auto* reader = stream->reader();
-    if (!reader)
-        return false;
-
-    // Only pull if we need more chunks
-    if (reader->length() == 0)
-        return false;
-
-    double desiredSize = m_strategyHWM - m_queueTotalSize;
-    if (desiredSize <= 0)
+    // If ! IsReadableStreamLocked(stream) is true and ! ReadableStreamGetNumReadRequests(stream) > 0, return true.
+    if ((!stream->isLocked() || reader->isEmpty()) && desiredSize() <= 0)
         return false;
 
     return true;
+}
+
+void JSReadableStreamDefaultController::clearAlgorithms()
+{
+    m_pullAlgorithm.clear();
+    m_cancelAlgorithm.clear();
+    m_underlyingSource.clear();
+
+    queue().clearAlgorithms();
 }
 
 void JSReadableStreamDefaultController::finishCreation(VM& vm, JSReadableStream* stream)

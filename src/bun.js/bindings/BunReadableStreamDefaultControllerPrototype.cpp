@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeEnqueue, (JSG
         return throwVMTypeError(globalObject, scope, "ReadableStreamDefaultController.prototype.enqueue called on incompatible object"_s);
 
     JSValue chunk = callFrame->argument(0);
-    return JSValue::encode(controller->enqueue(globalObject, chunk));
+    return JSValue::encode(controller->enqueue(vm, globalObject, chunk));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeError, (JSGlobalObject * globalObject, CallFrame* callFrame))

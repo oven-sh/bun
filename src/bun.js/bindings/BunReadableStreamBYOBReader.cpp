@@ -108,7 +108,7 @@ void JSReadableStreamBYOBReader::releaseLock(VM& vm, JSGlobalObject* globalObjec
     }
 
     if (stream()) {
-        stream()->setReader(nullptr);
+        stream()->setReader(vm, nullptr);
         clearStream();
     }
     closedPromise()->reject(globalObject, createTypeError(globalObject, "Reader was released"_s));

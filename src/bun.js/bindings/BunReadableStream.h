@@ -56,8 +56,8 @@ public:
 
     void error(JSGlobalObject*, JSValue);
     void close(JSGlobalObject*);
-    void setReader(JSReadableStreamDefaultReader*);
-
+    void setReader(JSC::VM& vm, JSReadableStreamDefaultReader*);
+    void setController(JSC::VM& vm, JSReadableStreamDefaultController*);
     State state() const { return m_state; }
     JSValue storedError() const { return m_storedError.get(); }
     bool disturbed() const { return m_disturbed; }

@@ -61,7 +61,7 @@ static void underlyingSinkFromJS(
         // Get highWaterMark
         highWaterMarkValue = strategyObj->getIfPropertyExists(globalObject, propertyNames.highWaterMarkPublicName());
         RETURN_IF_EXCEPTION(scope, void());
-        if (!highWaterMarkValue) {
+        if (!highWaterMarkValue || highWaterMarkValue.isUndefined()) {
             highWaterMarkValue = jsNumber(1);
         }
 
@@ -77,6 +77,7 @@ static void underlyingSinkFromJS(
             throwVMTypeError(globalObject, scope, "WritableStream strategy size must be callable"_s);
             return;
         }
+        strategyValue = sizeAlgorithmValue;
     } else {
         highWaterMarkValue = jsNumber(1);
         sizeAlgorithmValue = jsUndefined();
@@ -154,66 +155,6 @@ static void underlyingSinkFromJS(
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue newTarget = callFrame->newTarget();
-    if (newTarget.isUndefined())
-        return throwVMTypeError(globalObject, scope, "WritableStream constructor must be called with 'new'"_s);
-
-    JSObject* underlyingSink = callFrame->argument(0).getObject();
-    JSValue strategy = callFrame->argument(1);
-    auto& streams = globalObject->streams();
-    auto* constructor = streams.constructor<JSWritableStream>(globalObject);
-    auto* structure = streams.structure<JSWritableStream>(globalObject);
-
-    if (!(!newTarget || newTarget != constructor)) {
-        if (newTarget) {
-            structure = JSC::InternalFunction::createSubclassStructure(getFunctionRealm(globalObject, newTarget.getObject()), newTarget.getObject(), structure);
-        } else {
-            structure = JSC::InternalFunction::createSubclassStructure(globalObject, constructor, structure);
-        }
-
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (!underlyingSink) {
-        return JSValue::encode(JSWritableStream::create(vm, lexicalGlobalObject, structure));
-    }
-
-    // Initialize with underlying sink if provided
-
-    JSC::JSValue highWaterMarkValue;
-    JSC::JSValue sizeAlgorithmValue;
-    JSC::JSValue closeAlgorithmValue;
-    JSC::JSValue abortAlgorithmValue;
-    JSC::JSValue writeAlgorithmValue;
-    JSC::JSValue startAlgorithmValue;
-    underlyingSinkFromJS(vm, lexicalGlobalObject, underlyingSink, strategy, highWaterMarkValue, sizeAlgorithmValue, closeAlgorithmValue, abortAlgorithmValue, writeAlgorithmValue, startAlgorithmValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSWritableStream* stream = JSWritableStream::create(vm, lexicalGlobalObject, structure);
-
-    Structure* controllerStructure = streams.structure<JSWritableStreamDefaultController>(globalObject);
-
-    JSWritableStreamDefaultController* controller = JSWritableStreamDefaultController::create(
-        vm,
-        controllerStructure,
-        stream,
-        highWaterMarkValue.toNumber(globalObject),
-        abortAlgorithmValue.getObject(),
-        closeAlgorithmValue.getObject(),
-        writeAlgorithmValue.getObject(),
-        sizeAlgorithmValue.getObject());
-    RETURN_IF_EXCEPTION(scope, {});
-    stream->setController(controller);
-
-    return JSValue::encode(stream);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrivateConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     // Similar to above but for internal usage
@@ -275,52 +216,29 @@ JSC_DEFINE_HOST_FUNCTION(JSWritableStreamConstructor::construct, (JSGlobalObject
     JSWritableStream* writableStream = JSWritableStream::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Extract sink algorithms and strategy
-    JSObject* writeAlgorithm = nullptr;
-    JSObject* closeAlgorithm = nullptr;
-    JSObject* abortAlgorithm = nullptr;
-    JSObject* sizeAlgorithm = nullptr;
     double highWaterMark = 1;
 
-    if (!underlyingSinkArg.isUndefined()) {
-        JSObject* sink = underlyingSinkArg.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        writeAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "write"_s)).getObject();
-        RETURN_IF_EXCEPTION(scope, {});
-
-        closeAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "close"_s)).getObject();
-        RETURN_IF_EXCEPTION(scope, {});
-
-        abortAlgorithm = sink->get(globalObject, Identifier::fromString(vm, "abort"_s)).getObject();
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (!strategyArg.isUndefined()) {
-        JSObject* strategy = strategyArg.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        sizeAlgorithm = strategy->get(globalObject, Identifier::fromString(vm, "size"_s)).getObject();
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue hwm = strategy->get(globalObject, Identifier::fromString(vm, "highWaterMark"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!hwm.isUndefined())
-            highWaterMark = hwm.toNumber(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    JSC::JSValue highWaterMarkValue;
+    JSC::JSValue sizeAlgorithmValue;
+    JSC::JSValue closeAlgorithmValue;
+    JSC::JSValue abortAlgorithmValue;
+    JSC::JSValue writeAlgorithmValue;
+    JSC::JSValue startAlgorithmValue;
+    underlyingSinkFromJS(vm, globalObject, underlyingSinkArg, strategyArg, highWaterMarkValue, sizeAlgorithmValue, closeAlgorithmValue, abortAlgorithmValue, writeAlgorithmValue, startAlgorithmValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Set up the controller
     Structure* controllerStructure = zigGlobalObject->streams().structure<JSWritableStreamDefaultController>(zigGlobalObject);
     auto* controller = JSWritableStreamDefaultController::create(
         vm,
+        globalObject,
         controllerStructure,
         writableStream,
         highWaterMark,
-        abortAlgorithm,
-        closeAlgorithm,
-        writeAlgorithm,
-        sizeAlgorithm);
+        abortAlgorithmValue.getObject(),
+        closeAlgorithmValue.getObject(),
+        writeAlgorithmValue.getObject(),
+        sizeAlgorithmValue.getObject());
     RETURN_IF_EXCEPTION(scope, {});
     writableStream->setController(controller);
 

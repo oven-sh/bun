@@ -80,7 +80,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstr
     RETURN_IF_EXCEPTION(scope, {});
 
     // Lock the stream to this reader
-    stream->setReader(reader);
+    stream->setReader(vm, reader);
 
     // Set up initial ready state
     if (stream->isDisturbed() || stream->state() == JSReadableStream::State::Errored) {

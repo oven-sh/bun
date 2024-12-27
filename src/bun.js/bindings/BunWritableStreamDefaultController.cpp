@@ -71,6 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerCloseReject, (JSGlobal
 
 JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
     JSC::VM& vm,
+    JSC::JSGlobalObject* globalObject,
     JSC::Structure* structure,
     JSWritableStream* stream,
     double highWaterMark,
@@ -96,16 +97,13 @@ JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
         controller->m_writeAlgorithm.setMayBeNull(vm, controller, writeAlgorithm);
     else
         controller->m_writeAlgorithm.clear();
-    if (sizeAlgorithm)
-        controller->m_strategySizeAlgorithm.set(vm, controller, sizeAlgorithm);
-    else
-        controller->m_strategySizeAlgorithm.clear();
 
     if (stream)
         controller->m_stream.set(vm, controller, stream);
     else
         controller->m_stream.clear();
-    controller->m_strategyHWM = highWaterMark;
+
+    controller->queue().initialize(vm, globalObject, highWaterMark, controller, sizeAlgorithm);
 
     return controller;
 }
@@ -113,7 +111,6 @@ JSWritableStreamDefaultController* JSWritableStreamDefaultController::create(
 void JSWritableStreamDefaultController::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    m_queue.set(vm, this, JSC::constructEmptyArray(globalObject(), nullptr, 0));
     m_abortController.initLater([](const JSC::LazyProperty<JSObject, WebCore::JSAbortController>::Initializer& init) {
         auto* lexicalGlobalObject = init.owner->globalObject();
         Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -159,19 +156,11 @@ JSC::JSValue JSWritableStreamDefaultController::error(JSC::VM& vm, JSC::JSGlobal
     m_writeAlgorithm.clear();
     m_closeAlgorithm.clear();
     m_abortAlgorithm.clear();
-    m_strategySizeAlgorithm.clear();
+    m_queue.clearAlgorithms();
 
     stream->error(vm, globalObject, reason);
 
     return jsUndefined();
-}
-
-static JSValue callSizeAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* sizeAlgorithm, JSC::JSValue undefined, JSC::JSValue chunk)
-{
-    MarkedArgumentBuffer args;
-    args.append(chunk);
-    JSValue chunkSize = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, sizeAlgorithm, JSC::getCallData(sizeAlgorithm), jsUndefined(), args);
-    return chunkSize;
 }
 
 void JSWritableStreamDefaultController::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue chunk)
@@ -195,17 +184,10 @@ void JSWritableStreamDefaultController::write(JSC::VM& vm, JSC::JSGlobalObject* 
     }
 
     // 4. Let sizeAlgorithm be this.[[strategySizeAlgorithm]].
-
     // 5. Let chunkSize be ? Call(sizeAlgorithm, undefined, « chunk »).
-    JSValue chunkSize = m_strategySizeAlgorithm ? callSizeAlgorithm(vm, globalObject, m_strategySizeAlgorithm.get(), jsUndefined(), chunk) : jsNumber(1);
-    RETURN_IF_EXCEPTION(scope, void());
-
     // 6. Let enqueueResult be EnqueueValueWithSize(this, chunk, chunkSize).
-    if (!m_queue) {
-        m_queue.set(vm, this, constructEmptyArray(globalObject, nullptr));
-    }
-    m_queue->push(globalObject, chunk);
-    m_queueTotalSize += chunkSize.toNumber(globalObject);
+    m_queue.enqueueValueAndGetSize(vm, globalObject, this, chunk);
+    RETURN_IF_EXCEPTION(scope, void());
 
     // 7. If ! WritableStreamCloseQueuedOrInFlight(stream) is false and stream.[[state]] is "writable",
     if (!stream->isCloseQueuedOrInFlight() && stream->state() == JSWritableStream::State::Writable) {
@@ -250,11 +232,6 @@ bool JSWritableStreamDefaultController::shouldCallWrite() const
     return true;
 }
 
-double JSWritableStreamDefaultController::getDesiredSize() const
-{
-    return m_strategyHWM - m_queueTotalSize;
-}
-
 template<typename Visitor>
 void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -266,9 +243,9 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     visitor.append(thisObject->m_abortAlgorithm);
     visitor.append(thisObject->m_closeAlgorithm);
     visitor.append(thisObject->m_writeAlgorithm);
-    visitor.append(thisObject->m_strategySizeAlgorithm);
-    visitor.append(thisObject->m_queue);
     thisObject->m_abortController.visit(visitor);
+
+    thisObject->m_queue.visit<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);
@@ -308,7 +285,7 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     m_writeAlgorithm.clear();
     m_closeAlgorithm.clear();
     m_abortAlgorithm.clear();
-    m_strategySizeAlgorithm.clear();
+    m_queue.clearAlgorithms();
 
     // 8. Let sinkClosePromise be the result of performing this.[[closeAlgorithm]].
     JSValue sinkClosePromise;
@@ -337,11 +314,6 @@ JSValue JSWritableStreamDefaultController::close(JSGlobalObject* globalObject)
     }
 
     return jsUndefined();
-}
-
-bool JSWritableStreamDefaultController::started() const
-{
-    return m_started;
 }
 
 void JSWritableStreamDefaultController::errorSteps()

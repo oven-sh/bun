@@ -5,6 +5,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSArray.h>
+#include "BunStreamQueue.h"
 
 namespace WebCore {
 class JSAbortController;
@@ -23,6 +24,7 @@ public:
 
     static JSWritableStreamDefaultController* create(
         JSC::VM& vm,
+        JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
         JSWritableStream* stream,
         double highWaterMark,
@@ -61,8 +63,8 @@ public:
 
     // C++-facing methods
     bool shouldCallWrite() const;
-    double getDesiredSize() const;
-    bool started() const;
+    double getDesiredSize() const { return m_queue.desiredSize(); }
+    bool started() const { return m_started; }
     void errorSteps();
     JSC::JSValue performAbortAlgorithm(JSC::JSValue reason);
 
@@ -82,7 +84,9 @@ public:
     void setCloseAlgorithm(JSC::VM& vm, JSC::JSObject* closeAlgorithm);
     void setWriteAlgorithm(JSC::VM& vm, JSC::JSObject* writeAlgorithm);
 
-    void clearQueue() { m_queue.clear(); }
+    void resetQueue() { m_queue.resetQueue(); }
+    Bun::StreamQueue& queue() { return m_queue; }
+    const Bun::StreamQueue& queue() const { return m_queue; }
 
 private:
     JSWritableStreamDefaultController(JSC::VM& vm, JSC::Structure* structure)
@@ -94,16 +98,13 @@ private:
 
     // Internal slots per spec
     JSC::WriteBarrier<JSObject> m_stream;
+    Bun::StreamQueue m_queue;
 
     // Functions for us to call.
     JSC::WriteBarrier<JSC::JSObject> m_abortAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_closeAlgorithm;
     JSC::WriteBarrier<JSC::JSObject> m_writeAlgorithm;
 
-    double m_strategyHWM { 1.0 };
-    JSC::WriteBarrier<JSC::JSObject> m_strategySizeAlgorithm;
-    JSC::WriteBarrier<JSC::JSArray> m_queue;
-    double m_queueTotalSize { 0.0 };
     bool m_started { false };
     bool m_writing { false };
     bool m_inFlightWriteRequest { false };

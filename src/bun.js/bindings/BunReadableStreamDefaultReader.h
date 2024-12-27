@@ -1,6 +1,8 @@
 #pragma once
 
 #include "root.h"
+
+#include "JavaScriptCore/JSDestructibleObject.h"
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -13,10 +15,17 @@ using namespace JSC;
 
 class JSReadableStream;
 
-class JSReadableStreamDefaultReader final : public JSC::JSNonFinalObject {
+class JSReadableStreamDefaultReader final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr bool needsDestruction = false;
+    using Base = JSC::JSDestructibleObject;
+    static constexpr bool needsDestruction = true;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSReadableStreamDefaultReader*>(cell)->~JSReadableStreamDefaultReader();
+    }
+    ~JSReadableStreamDefaultReader()
+    {
+    }
 
     static JSReadableStreamDefaultReader* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStream* stream);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -49,10 +58,16 @@ public:
     bool isActive() const { return !!m_stream; }
     void detach();
 
-    unsigned length() const { return m_readRequests.isInitialized() ? m_readRequests.get(this)->length() : 0; }
+    bool isEmpty()
+    {
+        WTF::Locker lock(m_gcLock);
+        return m_readRequests.isEmpty();
+    }
 
     // Implements ReadableStreamDefaultReader
     void releaseLock();
+    JSC::JSPromise* takeFirst(JSC::VM&);
+    void addReadRequest(JSC::VM&, JSC::JSValue promise);
 
 private:
     JSReadableStreamDefaultReader(JSC::VM& vm, JSC::Structure* structure)
@@ -60,13 +75,15 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSReadableStream* stream);
+
+    WTF::Lock m_gcLock {};
+    WTF::Deque<JSC::JSValue> m_readRequests WTF_GUARDED_BY_LOCK(m_gcLock) = {};
 
     // Internal slots defined by the spec
     mutable JSC::WriteBarrier<JSObject> m_stream;
     JSC::LazyProperty<JSObject, JSC::JSPromise> m_readyPromise;
     JSC::LazyProperty<JSObject, JSC::JSPromise> m_closedPromise;
-    JSC::LazyProperty<JSObject, JSC::JSArray> m_readRequests;
 };
 
 } // namespace Bun

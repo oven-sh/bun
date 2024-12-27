@@ -423,38 +423,20 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
-    const resolver = Resolver.#getResolver(this);
-    let results = undefined;
-    let error = null;
-    const methods = [
-      ["resolve", "A", "A"],
-      ["resolve", "AAAA", "AAAA"],
-      ["resolveCaa", "CAA"],
-      ["resolveCname", "CNAME"],
-      ["resolveMx", "MX"],
-      ["resolveNs", "NS"],
-      ["resolvePtr", "PTR"],
-      ["resolveSoa", "SOA"],
-      ["resolveSrv", "SRV"],
-      ["resolveTxt", "TXT"],
-    ];
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+    }
 
-    Promise.all(
-      methods.map(([method, type, ...args]) =>
-        resolver[method](hostname, ...args)
-          .then(records => {
-            results = (results || []).concat(
-              (Array.isArray(records) ? records : [records]).map(record => Object.assign(record, { type })),
-            );
-          })
-          .catch(err => (error = err)),
-      ),
-    ).finally(() => {
-      if (error) {
-        error.syscall = "queryAny";
-      }
-      callback(results ? null : error, results);
-    });
+    Resolver.#getResolver(this)
+      .resolveAny(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
   }
 
   resolveCname(hostname, callback) {
@@ -789,17 +771,7 @@ const promises = {
   },
 
   resolveAny(hostname) {
-    return translateErrorCode(
-      new Promise((resolve, reject) => {
-        InternalResolver.prototype.resolveAny(hostname, (err, results) => {
-          if (results) {
-            resolve(results);
-          } else {
-            reject(err);
-          }
-        });
-      }),
-    );
+    return translateErrorCode(dns.resolveAny(hostname));
   },
   resolveSrv(hostname) {
     return translateErrorCode(dns.resolveSrv(hostname));
@@ -879,6 +851,10 @@ const promises = {
       return translateErrorCode(
         Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
       );
+    }
+
+    resolveAny(hostname) {
+      return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
     }
 
     resolveCname(hostname) {

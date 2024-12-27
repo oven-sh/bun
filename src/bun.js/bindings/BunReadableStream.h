@@ -3,7 +3,6 @@
 #include "root.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSValue.h>
 #include <JavaScriptCore/JSCell.h>
 
 namespace Bun {

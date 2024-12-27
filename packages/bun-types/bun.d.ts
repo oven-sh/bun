@@ -1400,17 +1400,17 @@ declare module "bun" {
     /**
      * Deletes the file from S3.
      */
-    function unlink(path: string | S3File): Promise<void>;
+    function unlink(path: string | S3File, options?: S3FileOptions): Promise<void>;
 
     /**
      * The size of the file in bytes.
      */
-    function size(path: string | S3File): Promise<number>;
+    function size(path: string | S3File, options?: S3FileOptions): Promise<number>;
 
     /**
      * The size of the file in bytes.
      */
-    function exists(path: string | S3File): Promise<boolean>;
+    function exists(path: string | S3File, options?: S3FileOptions): Promise<boolean>;
   }
 
   /**

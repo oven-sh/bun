@@ -2813,6 +2813,8 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 extern "C" JSC::EncodedJSValue JSS3File__upload(JSGlobalObject*, JSC::CallFrame*);
 extern "C" JSC::EncodedJSValue JSS3File__presign(JSGlobalObject*, JSC::CallFrame*);
 extern "C" JSC::EncodedJSValue JSS3File__unlink(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__exists(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__size(JSGlobalObject*, JSC::CallFrame*);
 
 JSC_DEFINE_HOST_FUNCTION(jsS3Upload, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -2827,6 +2829,16 @@ JSC_DEFINE_HOST_FUNCTION(jsS3Presign, (JSC::JSGlobalObject * lexicalGlobalObject
 JSC_DEFINE_HOST_FUNCTION(jsS3Unlink, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     return JSS3File__unlink(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Exists, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__exists(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Size, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__size(lexicalGlobalObject, callFrame);
 }
 
 void GlobalObject::finishCreation(VM& vm)
@@ -2856,6 +2868,8 @@ void GlobalObject::finishCreation(VM& vm)
             s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "upload"_s), 3, jsS3Upload, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
             s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "unlink"_s), 3, jsS3Unlink, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
             s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "presign"_s), 3, jsS3Presign, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "exists"_s), 3, jsS3Exists, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "size"_s), 3, jsS3Size, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
 
             init.set(s3Constructor);
         });

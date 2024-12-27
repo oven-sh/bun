@@ -1,63 +1,91 @@
 import { bench, run } from "../runner.mjs";
+import React from "react";
+import { renderToReadableStream } from "react-dom/server.browser";
 
-bench("new ReadableStream({})", () => {
-  return new ReadableStream({});
-});
+const reactElement = React.createElement(
+  "body",
+  null,
+  React.createElement("div", null, React.createElement("address", null, "hi")),
+);
 
-const buffer = new Uint8Array(1);
-
-bench("new ReadableStream() x 1 byte", () => {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(buffer);
-      controller.close();
-    },
-  });
-});
-
-bench("new ReadableStream(), enqueue 1024 x 1 byte, read 1024 x 1 byte", async () => {
-  const stream = new ReadableStream({
-    pull(controller) {
-      for (let i = 0; i < 1024; i++) {
-        controller.enqueue(buffer);
-      }
-      controller.close();
-    },
-  });
+bench("ReactDOM.renderToReadableStream", async () => {
+  const stream = await renderToReadableStream(reactElement);
+  await stream.allReady;
 
   const reader = stream.getReader();
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
   }
 });
 
-bench("new ReadableStream(), (enqueue 1 byte, read 1 byte) x 1024", async () => {
-  let resume = Promise.withResolvers();
-  let promise = Promise.withResolvers();
+bench("ReadableStream (3 reads)", async () => {
   const stream = new ReadableStream({
-    cancel(reason) {},
-    async pull(controller) {
-      for (let i = 0; i < 1024; i++) {
-        controller.enqueue(buffer);
-        await resume.promise;
-        resume = Promise.withResolvers();
-      }
+    start(controller) {
+      controller.enqueue("Hello");
+    },
+    pull(controller) {
+      controller.enqueue("World");
+
       controller.close();
-      promise.resolve();
     },
   });
 
   const reader = stream.getReader();
-  async function run() {
-    while (true) {
-      const { done, value } = await reader.read();
-      resume.resolve();
-      if (done) break;
-    }
+
+  var { value, done } = await reader.read();
+  ({ value, done } = await reader.read());
+  ({ value, done } = await reader.read());
+
+  if (!done) {
+    throw new Error("failed");
   }
-  await run();
-  await promise.promise;
 });
 
+bench("ReadableStream (1 read -> 1 pull) x 32 * 1024  ", async () => {
+  let next = Promise.withResolvers();
+  let remaining = 32 * 1024;
+  const stream = new ReadableStream({
+    pull(controller) {
+      next = Promise.withResolvers();
+      controller.enqueue("Hello");
+      next.resolve();
+      if (remaining-- === 0) {
+        controller.close();
+      }
+    },
+  });
+
+  const reader = stream.getReader();
+
+  while (true) {
+    var { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    await next.promise;
+  }
+});
+{
+  let next = Promise.withResolvers();
+
+  const stream = new ReadableStream({
+    pull(controller) {
+      next = Promise.withResolvers();
+      next.resolve();
+      controller.enqueue("Hello");
+    },
+  });
+
+  const reader = stream.getReader();
+  bench("ReadableStream (1 read -> 1 pull) same instance x 10 times ", async () => {
+    for (let i = 0; i < 10; i++) {
+      var { value, done } = await reader.read();
+      await next.promise;
+    }
+  });
+}
 await run();

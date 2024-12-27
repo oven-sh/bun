@@ -27,8 +27,9 @@ JSReadableStreamDefaultReaderConstructor* JSReadableStreamDefaultReaderConstruct
 void JSReadableStreamDefaultReaderConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultReaderPrototype* prototype)
 {
     Base::finishCreation(vm, 1, "ReadableStreamDefaultReader"_s, PropertyAdditionMode::WithStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
+
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstructor::call(JSC::JSGlobalObject* globalObject, JSC::CallFrame*)

@@ -40,8 +40,8 @@ JSTransformStreamConstructor::JSTransformStreamConstructor(JSC::VM& vm, JSC::Str
 
 void JSTransformStreamConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamPrototype* prototype)
 {
-    Base::finishCreation(vm, 3, "TransformStream"_s, PropertyAdditionMode::WithoutStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype,
+    Base::finishCreation(vm, 3, "TransformStream"_s, PropertyAdditionMode::WithStructureTransition);
+    putDirect(vm, vm.propertyNames->prototype, prototype,
         PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 

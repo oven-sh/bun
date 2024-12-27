@@ -34,8 +34,8 @@ JSReadableStreamConstructor::JSReadableStreamConstructor(VM& vm, Structure* stru
 
 void JSReadableStreamConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
-    Base::finishCreation(vm, 1, "ReadableStream"_s, PropertyAdditionMode::WithoutStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    Base::finishCreation(vm, 1, "ReadableStream"_s, PropertyAdditionMode::WithStructureTransition);
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstructor::construct(JSGlobalObject* globalObject, CallFrame* callFrame)

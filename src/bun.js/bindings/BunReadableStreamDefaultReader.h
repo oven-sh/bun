@@ -64,9 +64,7 @@ public:
 
     bool isEmpty()
     {
-        if (!m_readRequests)
-            return true;
-        return m_readRequests->length() == 0;
+        return m_readRequests.isEmpty();
     }
 
     // Implements ReadableStreamDefaultReader
@@ -82,7 +80,7 @@ private:
 
     void finishCreation(JSC::VM&, JSReadableStream* stream);
 
-    mutable WriteBarrier<JSC::JSArray> m_readRequests;
+    WTF::Deque<JSC::JSValue> m_readRequests;
 
     // Internal slots defined by the spec
     mutable JSC::WriteBarrier<JSObject> m_stream;

@@ -25,8 +25,8 @@ JSWritableStreamDefaultControllerConstructor* JSWritableStreamDefaultControllerC
 
 void JSWritableStreamDefaultControllerConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultControllerPrototype* prototype)
 {
-    Base::finishCreation(vm, 1, "WritableStreamDefaultController"_s, JSC::InternalFunction::PropertyAdditionMode::WithoutStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    Base::finishCreation(vm, 1, "WritableStreamDefaultController"_s, JSC::InternalFunction::PropertyAdditionMode::WithStructureTransition);
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructJSWritableStreamDefaultController, (JSGlobalObject * globalObject, CallFrame*))

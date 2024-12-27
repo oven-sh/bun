@@ -56,7 +56,7 @@ void JSReadableStreamDefaultController::visitAdditionalChildren(Visitor& visitor
     visitor.append(m_pullAlgorithm);
     visitor.append(m_cancelAlgorithm);
     visitor.append(m_stream);
-    m_queue.visit<Visitor>(visitor);
+    m_queue.visit<Visitor>(this, visitor);
 }
 
 template<typename Visitor>
@@ -118,11 +118,11 @@ void JSReadableStreamDefaultController::performPullSteps(VM& vm, JSGlobalObject*
 {
     auto* stream = this->stream();
     ASSERT(stream);
-    vm.writeBarrier(readRequest);
 
     if (!this->queue().isEmpty()) {
         // Let chunk be ! DequeueValue(this).
         JSValue chunk = this->queue().dequeueValue(vm, globalObject, this);
+        ASSERT(!chunk.isEmpty());
 
         // Perform readRequest’s chunk steps, given chunk.
         readRequest->fulfill(globalObject, JSC::createIteratorResultObject(globalObject, chunk, false));

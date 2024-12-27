@@ -23,8 +23,6 @@ public:
 
     ~JSReadableStreamDefaultController()
     {
-        // We want the queue destructor with the WTF::Vector to be called.
-        m_queue.~StreamQueue();
     }
 
     static JSReadableStreamDefaultController* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSReadableStream*);

@@ -24,7 +24,7 @@ public:
 
 private:
     JSReadableStreamBYOBReaderConstructor(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSObject* prototype);
 };
 
 } // namespace Bun

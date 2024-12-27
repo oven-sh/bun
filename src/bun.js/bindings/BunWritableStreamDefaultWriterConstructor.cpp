@@ -25,8 +25,8 @@ JSWritableStreamDefaultWriterConstructor::JSWritableStreamDefaultWriterConstruct
 
 void JSWritableStreamDefaultWriterConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSWritableStreamDefaultWriterPrototype* prototype)
 {
-    Base::finishCreation(vm, 1, "WritableStreamDefaultWriter"_s, PropertyAdditionMode::WithoutStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    Base::finishCreation(vm, 1, "WritableStreamDefaultWriter"_s, PropertyAdditionMode::WithStructureTransition);
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 

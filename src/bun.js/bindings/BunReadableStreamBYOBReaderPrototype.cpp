@@ -18,7 +18,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBReaderCancel);
 /* Hash table for prototype */
 
 static const HashTableValue JSReadableStreamBYOBReaderPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamBYOBReaderConstructor, 0 } },
     { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamBYOBReaderClosedGetter, 0 } },
     { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamBYOBReaderRead, 0 } },
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamBYOBReaderCancel, 0 } },

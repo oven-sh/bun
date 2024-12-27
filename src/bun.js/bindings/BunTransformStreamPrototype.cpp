@@ -23,10 +23,6 @@ static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
         static_cast<unsigned>(PropertyAttribute::ReadOnly),
         NoIntrinsic,
         { HashTableValue::GetterSetterType, jsTransformStreamWritableGetter, nullptr } },
-    { "constructor"_s,
-        static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly),
-        NoIntrinsic,
-        { HashTableValue::GetterSetterType, jsTransformStreamConstructor, nullptr } }
 };
 
 JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamReadableGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -55,18 +51,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamWritableGetter, (JSGlobalObject * glob
 
     ASSERT(thisObject->writable());
     return JSValue::encode(thisObject->writable());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
-    if (UNLIKELY(!zigGlobalObject))
-        return throwVMTypeError(globalObject, scope, "Invalid global object"_s);
-
-    return JSValue::encode(zigGlobalObject->streams().constructor<JSTransformStream>(zigGlobalObject));
 }
 
 JSTransformStreamPrototype* JSTransformStreamPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)

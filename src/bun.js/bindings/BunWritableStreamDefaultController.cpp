@@ -246,7 +246,7 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     visitor.append(thisObject->m_writeAlgorithm);
     thisObject->m_abortController.visit(visitor);
 
-    thisObject->m_queue.visit<Visitor>(visitor);
+    thisObject->m_queue.visit<Visitor>(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);

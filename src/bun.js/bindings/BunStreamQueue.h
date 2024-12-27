@@ -24,12 +24,17 @@ public:
     double queueTotalSize { 0 };
 
     template<typename Visitor>
-    void visit(Visitor& visitor)
+    void visit(JSCell* owner, Visitor& visitor)
     {
         if (m_userDefinedStrategy)
             visitor.append(m_userDefinedStrategy);
-        if (m_queue)
-            visitor.append(m_queue);
+        {
+            WTF::Locker lock(owner->cellLock());
+            for (auto value : m_queue) {
+                if (value.isCell())
+                    visitor.appendUnbarriered(value);
+            }
+        }
     }
 
     void setUserDefinedStrategy(JSC::JSObject* strategy);
@@ -66,9 +71,9 @@ public:
     }
 
 private:
-    JSC::JSArray* queue() { return m_queue.get(); }
-    const JSC::JSArray* queue() const { return m_queue.get(); }
+    WTF::Deque<JSC::JSValue, 3>& queue() { return m_queue; }
+    const WTF::Deque<JSC::JSValue, 3>& queue() const { return m_queue; }
 
-    mutable JSC::WriteBarrier<JSC::JSArray> m_queue;
+    WTF::Deque<JSC::JSValue, 3> m_queue = {};
 };
 }

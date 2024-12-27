@@ -173,7 +173,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrivateConstructor, (JSGlobalObject * g
 void JSWritableStreamConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSWritableStreamPrototype* prototype)
 {
     Base::finishCreation(vm, 1, "WritableStream"_s, PropertyAdditionMode::WithStructureTransition);
-    this->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, 0);
+
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
 JSC_DEFINE_HOST_FUNCTION(JSWritableStreamConstructor::call, (JSGlobalObject * globalObject, CallFrame*))

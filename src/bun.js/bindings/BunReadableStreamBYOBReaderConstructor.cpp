@@ -22,17 +22,19 @@ JSReadableStreamBYOBReaderConstructor::JSReadableStreamBYOBReaderConstructor(VM&
 {
 }
 
-void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm)
+void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm, JSObject* prototype)
 {
-    Base::finishCreation(vm, 1, "ReadableStreamBYOBReader"_s, InternalFunction::PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 1, "ReadableStreamBYOBReader"_s, InternalFunction::PropertyAdditionMode::WithStructureTransition);
     ASSERT(inherits(info()));
+
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
 JSReadableStreamBYOBReaderConstructor* JSReadableStreamBYOBReaderConstructor::create(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
     auto* structure = createStructure(vm, globalObject, prototype);
     JSReadableStreamBYOBReaderConstructor* constructor = new (NotNull, allocateCell<JSReadableStreamBYOBReaderConstructor>(vm)) JSReadableStreamBYOBReaderConstructor(vm, structure);
-    constructor->finishCreation(vm);
+    constructor->finishCreation(vm, prototype);
     return constructor;
 }
 

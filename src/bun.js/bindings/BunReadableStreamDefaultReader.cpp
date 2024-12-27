@@ -47,7 +47,14 @@ void JSReadableStreamDefaultReader::visitAdditionalChildren(Visitor& visitor)
     m_readyPromise.visit(visitor);
     m_closedPromise.visit(visitor);
     visitor.append(m_stream);
-    visitor.append(m_readRequests);
+
+    {
+        WTF::Locker lock(cellLock());
+        for (auto request : m_readRequests) {
+            if (request.isCell())
+                visitor.appendUnbarriered(request);
+        }
+    }
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);
@@ -68,7 +75,6 @@ void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm, JSReadableStream
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_readRequests.setMayBeNull(vm, this, JSC::constructEmptyArray(globalObject(), static_cast<JSC::ArrayAllocationProfile*>(nullptr), 0));
     m_stream.setMayBeNull(vm, this, stream);
 
     m_closedPromise.initLater(
@@ -87,13 +93,14 @@ void JSReadableStreamDefaultReader::finishCreation(JSC::VM& vm, JSReadableStream
 
 JSPromise* JSReadableStreamDefaultReader::takeFirst(JSC::VM& vm, JSGlobalObject* globalObject)
 {
-    if (!m_readRequests || m_readRequests->length() == 0) {
+    if (m_readRequests.isEmpty()) {
         return nullptr;
     }
-    auto* readRequests = m_readRequests.get();
-    JSValue first = readRequests->getIndex(globalObject, 0);
-    JSArray* replacement = readRequests->fastSlice(globalObject, readRequests, 1, readRequests->getArrayLength() - 1);
-    m_readRequests.set(vm, this, replacement);
+    JSValue first;
+    {
+        WTF::Locker lock(cellLock());
+        first = m_readRequests.takeFirst();
+    }
     return jsCast<JSPromise*>(first);
 }
 
@@ -125,7 +132,8 @@ JSPromise* JSReadableStreamDefaultReader::cancel(JSC::VM& vm, JSGlobalObject* gl
 
 void JSReadableStreamDefaultReader::addReadRequest(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue promise)
 {
-    m_readRequests->push(globalObject, promise);
+    WTF::Locker lock(cellLock());
+    m_readRequests.append(promise);
 }
 
 JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* globalObject)
@@ -137,6 +145,7 @@ JSPromise* JSReadableStreamDefaultReader::read(JSC::VM& vm, JSGlobalObject* glob
     }
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    EnsureStillAliveScope ensureStillAlive(promise);
 
     stream()->controller()->performPullSteps(vm, globalObject, promise);
 

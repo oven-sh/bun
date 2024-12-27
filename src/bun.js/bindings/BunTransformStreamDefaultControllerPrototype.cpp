@@ -33,6 +33,7 @@ JSTransformStreamDefaultControllerPrototype::JSTransformStreamDefaultControllerP
 
 JSTransformStreamDefaultControllerPrototype* JSTransformStreamDefaultControllerPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
+    structure->setMayBePrototype(true);
     JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSTransformStreamDefaultControllerPrototype>(vm))
         JSTransformStreamDefaultControllerPrototype(vm, structure);
     ptr->finishCreation(vm, globalObject);

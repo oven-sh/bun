@@ -25,10 +25,10 @@ JSTransformStreamDefaultControllerConstructor* JSTransformStreamDefaultControlle
 
 void JSTransformStreamDefaultControllerConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTransformStreamDefaultControllerPrototype* prototype)
 {
-    Base::finishCreation(vm, 2, "TransformStreamDefaultController"_s, PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 2, "TransformStreamDefaultController"_s, PropertyAdditionMode::WithStructureTransition);
     ASSERT(inherits(info()));
 
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTransformStreamDefaultControllerConstructor::call(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

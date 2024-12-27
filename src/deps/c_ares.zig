@@ -853,6 +853,7 @@ pub extern fn ares_create_query(name: [*c]const u8, dnsclass: c_int, @"type": c_
 pub extern fn ares_mkquery(name: [*c]const u8, dnsclass: c_int, @"type": c_int, id: c_ushort, rd: c_int, buf: [*c][*c]u8, buflen: [*c]c_int) c_int;
 pub extern fn ares_expand_name(encoded: [*c]const u8, abuf: [*c]const u8, alen: c_int, s: [*c][*c]u8, enclen: [*c]c_long) c_int;
 pub extern fn ares_expand_string(encoded: [*c]const u8, abuf: [*c]const u8, alen: c_int, s: [*c][*c]u8, enclen: [*c]c_long) c_int;
+pub extern fn ares_queue_active_queries(channel: *const Channel) usize;
 const union_unnamed_2 = extern union {
     _S6_u8: [16]u8,
 };

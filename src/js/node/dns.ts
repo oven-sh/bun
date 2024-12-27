@@ -189,6 +189,16 @@ function validateOrderOption(options) {
   }
 }
 
+function validateResolve(hostname, callback) {
+  if (typeof hostname !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+  }
+
+  if (typeof callback !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+  }
+}
+
 function invalidHostname(hostname) {
   if (invalidHostname.warned) {
     return;
@@ -354,9 +364,7 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", typeof rrtype);
     }
 
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname)
@@ -384,9 +392,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "A")
@@ -406,9 +412,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "AAAA")
@@ -423,9 +427,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveAny(hostname)
@@ -440,9 +442,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCname(hostname)
@@ -457,9 +457,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveMx(hostname)
@@ -474,9 +472,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNaptr(hostname)
@@ -491,9 +487,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNs(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNs(hostname)
@@ -508,9 +502,7 @@ var InternalResolver = class Resolver {
   }
 
   resolvePtr(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolvePtr(hostname)
@@ -525,9 +517,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
-    }
+    validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSrv(hostname)

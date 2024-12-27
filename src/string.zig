@@ -197,6 +197,14 @@ pub const WTFStringImplStruct = extern struct {
         return this.is8Bit() and bun.strings.isAllASCII(this.latin1Slice());
     }
 
+    pub fn utf16ByteLength(this: WTFStringImpl) usize {
+        if (this.is8Bit()) {
+            return this.length() * 2;
+        } else {
+            return this.length();
+        }
+    }
+
     pub fn utf8ByteLength(this: WTFStringImpl) usize {
         if (this.is8Bit()) {
             const input = this.latin1Slice();
@@ -205,11 +213,6 @@ pub const WTFStringImplStruct = extern struct {
             const input = this.utf16Slice();
             return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU16(input.ptr, input.len, .utf8) else 0;
         }
-    }
-
-    pub fn utf16ByteLength(this: WTFStringImpl) usize {
-        // All latin1 characters fit in a single UTF-16 code unit.
-        return this.length() * 2;
     }
 
     pub fn latin1ByteLength(this: WTFStringImpl) usize {

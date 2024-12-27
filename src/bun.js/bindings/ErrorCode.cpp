@@ -711,7 +711,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * 
         auto err_str = err.getString(globalObject);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
     }
-    auto err_str = err.toWTFString(globalObject);
+    auto err_str = JSValueToStringSafe(globalObject, err);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
 }
 

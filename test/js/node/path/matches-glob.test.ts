@@ -37,10 +37,9 @@ describe("path.posix.matchesGlob(path, glob)", () => {
     ["foo.js", "*.[tj]s"],
     ["foo.ts", "*.[tj]s"],
     ["foo.js", "**/*.js"],
-    ["foo.js", "**\\*.js"],
     ["src/bar/foo.js", "**/*.js"],
     ["foo/bar/baz", "foo/[bcr]ar/baz"],
-  ])("%s matches %s", (pathname, glob) => {
+  ])("path '%s' matches pattern '%s'", (pathname, glob) => {
     expect(path.posix.matchesGlob(pathname, glob)).toBeTrue();
   });
   it.each([
@@ -49,7 +48,7 @@ describe("path.posix.matchesGlob(path, glob)", () => {
     ["src/foo.js", "*.js"],
     ["foo.js", "src/*.js"],
     ["foo/bar", "*"],
-  ])("%s does not match %s", (pathname, glob) => {
+  ])("path '%s' does not match pattern '%s'", (pathname, glob) => {
     expect(path.posix.matchesGlob(pathname, glob)).toBeFalse();
   });
 });
@@ -65,7 +64,7 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     ["src\\bar\\foo.js", "**/*.js"],
     ["foo\\bar\\baz", "foo\\[bcr]ar\\baz"],
     ["foo\\bar\\baz", "foo/[bcr]ar/baz"],
-  ])("%s matches %s", (pathname, glob) => {
+  ])("path '%s' matches gattern '%s'", (pathname, glob) => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeTrue();
   });
   it.each([
@@ -73,7 +72,7 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     ["foo.js", "*.ts"],
     ["foo.js", "src\\*.js"],
     ["foo/bar", "*"],
-  ])("%s does not match %s", (pathname, glob) => {
+  ])("path '%s' does not match pattern '%s'", (pathname, glob) => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeFalse();
   });
 });

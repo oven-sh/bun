@@ -3176,6 +3176,13 @@ pub const DNSResolver = struct {
     }
 
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        if (c_ares.ares_queue_active_queries(channel) != 0) {
+            return globalThis.throwValue((JSC.SystemError{
+                .code = bun.String.static("ERR_DNS_SET_SERVERS_FAILED"),
+                .message = bun.String.createFormat("Failed to set servers: there are pending queries", .{}) catch bun.outOfMemory(),
+            }).toErrorInstance(globalThis));
+        }
+
         const arguments = callframe.arguments();
         if (arguments.len == 0) {
             return globalThis.throwNotEnoughArguments("setServers", 1, 0);

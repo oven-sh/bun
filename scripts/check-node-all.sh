@@ -18,14 +18,14 @@ fi
 case $1 in
   -h|--help)
     echo "Usage: $0 <module-name>"
-    echo "Run all unstaged parallel tests for a single module in node's standard library"
+    echo "Run all parallel tests for a single module in node's standard library"
     exit 0
     ;;
 esac
 
 export BUN_DEBUG_QUIET_LOGS=1
 
-for x in $(git ls-files test/js/node/test/parallel --exclude-standard --others | grep test-$1)
+for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js")
 do
   i=$((i+1))
   echo ./$x

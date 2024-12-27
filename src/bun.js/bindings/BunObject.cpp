@@ -51,6 +51,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCaa);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNs);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolvePtr);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCname);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveAny);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getServers);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__setServers);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__reverse);
@@ -366,6 +367,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNS__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNS__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, Bun__DNS__resolveAny, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNS__getServers, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

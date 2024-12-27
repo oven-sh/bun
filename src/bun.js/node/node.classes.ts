@@ -57,6 +57,10 @@ export default [
         fn: "resolveCname",
         length: 1,
       },
+      resolveAny: {
+        fn: "resolveAny",
+        length: 1,
+      },
       cancel: {
         fn: "cancel",
         length: 0,

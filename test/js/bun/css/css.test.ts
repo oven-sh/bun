@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe } from "bun:test";
+import { describe, test } from "bun:test";
 import "harness";
 import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
 

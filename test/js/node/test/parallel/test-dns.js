@@ -143,7 +143,7 @@ assert.deepStrictEqual(dns.getServers(), []);
   const errObj = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /The "rrtype" argument must be of type string\. Received( an instance of Array|: \[\])$/
+    message: /The "rrtype" argument must be of type string\. Received( an instance of Array|: \[\]|: "object")$/
   };
   assert.throws(() => {
     dns.resolve('example.com', [], common.mustNotCall());

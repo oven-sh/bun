@@ -57,6 +57,9 @@ JSValue JSReadableStream::getReader(VM& vm, JSGlobalObject* globalObject, JSValu
         return {};
     }
 
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
+
     if (!options.isUndefined()) {
         JSObject* optionsObject = options.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -71,16 +74,14 @@ JSValue JSReadableStream::getReader(VM& vm, JSGlobalObject* globalObject, JSValu
                 return {};
             }
 
-            auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-            Structure* readerStructure = zigGlobalObject->readableStreamBYOBReaderStructure();
+            Structure* readerStructure = streams.structure<JSReadableStreamBYOBReader>(domGlobalObject);
             auto* reader = JSReadableStreamBYOBReader::create(vm, globalObject, readerStructure, this);
             m_reader.set(vm, this, reader);
             return reader;
         }
     }
 
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    Structure* readerStructure = zigGlobalObject->readableStreamDefaultReaderStructure();
+    Structure* readerStructure = streams.structure<JSReadableStreamDefaultReader>(domGlobalObject);
     auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, readerStructure, this);
     m_reader.set(vm, this, reader);
     return reader;
@@ -186,12 +187,12 @@ JSPromise* JSReadableStream::pipeTo(VM& vm, JSGlobalObject* globalObject, JSObje
 
     m_disturbed = true;
 
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, zigGlobalObject->readableStreamDefaultReaderStructure(), this);
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
+    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, streams.structure<JSReadableStreamDefaultReader>(domGlobalObject), this);
     m_reader.set(vm, this, reader);
 
-    Structure* writerStructure = zigGlobalObject->writableStreamDefaultWriterStructure();
-    auto* writer = JSWritableStreamDefaultWriter::create(vm, writerStructure, writableStream);
+    auto* writer = JSWritableStreamDefaultWriter::create(vm, streams.structure<JSWritableStreamDefaultWriter>(domGlobalObject), writableStream);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     auto* pipeToOperation = PipeToOperation::create(vm, globalObject, reader, writer, preventClose, preventAbort, preventCancel, signal, promise);
@@ -245,10 +246,12 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSValue& firstS
         return;
     }
 
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto& streams = domGlobalObject->streams();
+
     if (m_state == State::Errored) {
         auto* error = m_storedError.get();
-        auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-        Structure* streamStructure = zigGlobalObject->readableStreamStructure();
+        Structure* streamStructure = streams.structure<JSReadableStream>(domGlobalObject);
         auto* stream1 = JSReadableStream::create(vm, globalObject, streamStructure);
         auto* stream2 = JSReadableStream::create(vm, globalObject, streamStructure);
         stream1->error(error);
@@ -260,11 +263,10 @@ void JSReadableStream::tee(VM& vm, JSGlobalObject* globalObject, JSValue& firstS
 
     m_disturbed = true;
 
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, zigGlobalObject->readableStreamDefaultReaderStructure(), this);
+    auto* reader = JSReadableStreamDefaultReader::create(vm, globalObject, streams.structure<JSReadableStreamDefaultReader>(domGlobalObject), this);
     m_reader.set(vm, this, reader);
 
-    Structure* streamStructure = zigGlobalObject->readableStreamStructure();
+    Structure* streamStructure = streams.structure<JSReadableStream>(domGlobalObject);
     auto* branch1 = JSReadableStream::create(vm, globalObject, streamStructure);
     auto* branch2 = JSReadableStream::create(vm, globalObject, streamStructure);
 
@@ -290,9 +292,5 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStream);
-
-JSReadableStream::~JSReadableStream()
-{
-}
 
 }

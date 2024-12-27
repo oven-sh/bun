@@ -4,9 +4,6 @@
 
 #include "JavaScriptCore/LazyClassStructure.h"
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSObjectInlines.h>
-#include "JavaScriptCore/JSCast.h"
-#include <JavaScriptCore/LazyProperty.h>
 
 namespace Bun {
 
@@ -15,34 +12,64 @@ using namespace JSC;
 // Forward declarations
 class JSReadableStream;
 class JSReadableStreamDefaultReader;
+class JSReadableStreamDefaultController;
+class JSReadableStreamByteController;
 class JSReadableStreamBYOBReader;
 class JSWritableStream;
 class JSWritableStreamDefaultWriter;
+class JSWritableStreamDefaultController;
+class JSTransformStream;
+class JSTransformStreamDefaultController;
+
+// clang-format off
+#define FOR_EACH_WHATWG_STREAM_CLASS_TYPE(macro) \
+    macro(JSReadableStream) \
+    macro(JSReadableStreamDefaultReader) \
+    macro(JSReadableStreamDefaultController) \
+    macro(JSReadableStreamBYOBReader) \
+    macro(JSWritableStream) \
+    macro(JSWritableStreamDefaultWriter) \
+    macro(JSWritableStreamDefaultController) \
+    macro(JSTransformStream) \
+    macro(JSTransformStreamDefaultController)
+// clang-format on
 
 // Stream-related structures for the global object
 struct StreamStructures {
-    LazyClassStructure m_readableStream;
-    LazyClassStructure m_readableStreamDefaultReader;
-    LazyClassStructure m_readableStreamBYOBReader;
-    LazyClassStructure m_writableStreamDefaultWriter;
-    LazyClassStructure m_transformStream;
-    LazyClassStructure m_transformStreamDefaultController;
-    LazyClassStructure m_writableStream;
-    LazyClassStructure m_writableStreamDefaultController;
-
 public:
-    JSObject* getReadableStreamConstructor(const JSGlobalObject* globalObject) const { return m_readableStream.constructorInitializedOnMainThread(globalObject); }
-    Structure* getReadableStreamStructure(const JSGlobalObject* globalObject) const { return m_readableStream.getInitializedOnMainThread(globalObject); }
-    Structure* getReadableStreamDefaultReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamDefaultReader.getInitializedOnMainThread(globalObject); }
-    Structure* getReadableStreamBYOBReaderStructure(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReader.getInitializedOnMainThread(globalObject); }
-    Structure* getWritableStreamDefaultWriterStructure(const JSGlobalObject* globalObject) const { return m_writableStreamDefaultWriter.getInitializedOnMainThread(globalObject); }
-    Structure* getTransformStreamStructure(const JSGlobalObject* globalObject) const { return m_transformStream.getInitializedOnMainThread(globalObject); }
-    Structure* getTransformStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_transformStreamDefaultController.getInitializedOnMainThread(globalObject); }
-    JSObject* getTransformStreamConstructor(const JSGlobalObject* globalObject) const { return m_transformStream.constructorInitializedOnMainThread(globalObject); }
-    Structure* getWritableStreamStructure(const JSGlobalObject* globalObject) const { return m_writableStream.getInitializedOnMainThread(globalObject); }
-    JSObject* getWritableStreamConstructor(const JSGlobalObject* globalObject) const { return m_writableStream.constructorInitializedOnMainThread(globalObject); }
-    JSObject* getReadableStreamBYOBReaderConstructor(const JSGlobalObject* globalObject) const { return m_readableStreamBYOBReader.constructorInitializedOnMainThread(globalObject); }
-    Structure* getWritableStreamDefaultControllerStructure(const JSGlobalObject* globalObject) const { return m_writableStreamDefaultController.getInitializedOnMainThread(globalObject); }
+#define DECLARE_STREAM_MEMBER(ClassName) LazyClassStructure m_##ClassName;
+    FOR_EACH_WHATWG_STREAM_CLASS_TYPE(DECLARE_STREAM_MEMBER)
+#undef DECLARE_STREAM_MEMBER
+
+    template<typename T>
+    JSObject* constructor(const JSGlobalObject* globalObject);
+
+    template<typename T>
+    Structure* structure(const JSGlobalObject* globalObject);
+
+    template<typename T>
+    JSObject* prototype(const JSGlobalObject* globalObject);
+
+    void initialize(VM& vm, JSC::JSGlobalObject* globalObject);
 };
 
-} // namespace Bun
+#define DEFINE_STREAM_MEMBERS(ClassName)                                                   \
+    template<>                                                                             \
+    JSObject* StreamStructures::constructor<ClassName>(const JSGlobalObject* globalObject) \
+    {                                                                                      \
+        return m_##ClassName.constructor(globalObject);                                    \
+    }                                                                                      \
+    template<>                                                                             \
+    Structure* StreamStructures::structure<ClassName>(const JSGlobalObject* globalObject)  \
+    {                                                                                      \
+        return m_##ClassName.get(globalObject);                                            \
+    }                                                                                      \
+    template<>                                                                             \
+    JSObject* StreamStructures::prototype<ClassName>(const JSGlobalObject* globalObject)   \
+    {                                                                                      \
+        return m_##ClassName.prototype(globalObject);                                      \
+    }
+FOR_EACH_WHATWG_STREAM_CLASS_TYPE(DEFINE_STREAM_MEMBERS)
+#undef DEFINE_STREAM_MEMBERS
+
+}

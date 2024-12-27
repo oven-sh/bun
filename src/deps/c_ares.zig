@@ -1702,7 +1702,10 @@ pub const Error = enum(i32) {
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
-            this.promise.reject(globalThis, system_error.toErrorInstance(globalThis));
+            const instance = system_error.toErrorInstance(globalThis);
+            instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+
+            this.promise.reject(globalThis, instance);
             this.hostname = null;
             this.deinit();
         }
@@ -1742,28 +1745,34 @@ pub const Error = enum(i32) {
     }
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return (JSC.SystemError{
+        const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()),
         }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
     }
 
     pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
-        return (JSC.SystemError{
+        const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()),
             .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
         }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
     }
 
     pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
-        return (JSC.SystemError{
+        const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()),
-            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, @tagName(this), hostname }) catch bun.outOfMemory(),
+            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
             .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
             .hostname = bun.String.createUTF8(hostname),
         }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
     }
 
     pub fn initEAI(rc: i32) ?Error {

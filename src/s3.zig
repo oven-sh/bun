@@ -1725,6 +1725,7 @@ pub const MultiPartUpload = struct {
                         this.perform();
                         return;
                     } else {
+                        defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
                 },

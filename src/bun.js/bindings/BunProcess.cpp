@@ -9,6 +9,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
@@ -1182,7 +1183,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    if (!type.isNull() && type.isObject()) {
+    if (!type.isNull() && type.isCell() && type.asCell()->type() == JSC::JSType::ObjectType) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -1205,6 +1206,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     if (!type.isUndefined()) {
         Bun::V::validateString(scope, globalObject, type, "type"_s);
         RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        type = jsString(vm, String("Warning"_s));
     }
 
     if (code.isCallable()) {
@@ -1219,13 +1222,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
 
     if (warning.isString()) {
         errorInstance = createError(globalObject, warning.getString(globalObject));
+        errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning);
     }
 
-    errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
     // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);

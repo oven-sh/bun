@@ -83,11 +83,11 @@ struct mmsghdr {
  *
  * The "flags" arguments supports only the value MSG_DONTWAIT.
  *
- * Each member of "msgp" array is of type "struct msghdr_x".
+ * Each member of "msgp" array is of type "struct mmsghdr".
  *
  * The "msg_iov" and "msg_iovlen" are input parameters that describe where to
  * store a datagram in a scatter gather locations of buffers -- see recvmsg(2).
- * On output the field "msg_datalen" gives the length of the received datagram.
+ * On output the field "msg_len" gives the length of the received datagram.
  *
  * The field "msg_flags" must be set to zero on input. On output, "msg_flags"
  * may have MSG_TRUNC set to indicate the trailing portion of the datagram was
@@ -115,7 +115,7 @@ ssize_t recvmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
  *
  * The "flags" arguments supports only the value MSG_DONTWAIT.
  *
- * Each member of "msgp" array is of type "struct msghdr_x".
+ * Each member of "msgp" array is of type "struct mmsghdr".
  *
  * The "msg_iov" and "msg_iovlen" are input parameters that specify the
  * data to be sent in a scatter gather locations of buffers -- see sendmsg(2).
@@ -127,7 +127,7 @@ ssize_t recvmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
  * must be set to zero on input:
  *   "msg_name", "msg_namelen", "msg_control" and "msg_controllen".
  *
- * The field "msg_flags" and "msg_datalen" must be set to zero on input.
+ * The field "msg_flags must be set to zero on input.
  *
  * sendmsg_x() returns the number of datagrams that have been sent,
  * or -1 if an error occurred.

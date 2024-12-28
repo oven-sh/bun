@@ -997,14 +997,17 @@ pub const AWSCredentials = struct {
                     break :brk buffer;
                 }
             };
-
+            log("reportProgres failed: {} has_more: {} len: {d}", .{ failed, has_more, chunk.list.items.len });
             if (failed) {
                 if (!has_more) {
                     this.callback(chunk, false, err, this.callback_context);
                 }
             } else {
-                this.callback(chunk, has_more, null, this.callback_context);
-                this.reported_response_buffer.reset();
+                // dont report empty chunks if we have more data to read
+                if (!has_more or chunk.list.items.len > 0) {
+                    this.callback(chunk, has_more, null, this.callback_context);
+                    this.reported_response_buffer.reset();
+                }
             }
 
             return has_more;
@@ -1329,11 +1332,14 @@ pub const AWSCredentials = struct {
 
         pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?S3Error, this: *@This()) void {
             defer if (!has_more) this.deinit();
+
             if (this.readable_stream_ref.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     const globalThis = this.readable_stream_ref.globalThis().?;
 
                     if (request_err) |err| {
+                        log("S3DownloadStreamWrapper.callback .temporary", .{});
+
                         readable.ptr.Bytes.onData(
                             .{
                                 .err = .{ .JSValue = err.toJS(globalThis) },
@@ -1343,6 +1349,8 @@ pub const AWSCredentials = struct {
                         return;
                     }
                     if (has_more) {
+                        log("S3DownloadStreamWrapper.callback .temporary", .{});
+
                         readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.initConst(chunk.list.items),
@@ -1351,6 +1359,8 @@ pub const AWSCredentials = struct {
                         );
                         return;
                     }
+                    log("S3DownloadStreamWrapper.callback .temporary_and_done", .{});
+
                     readable.ptr.Bytes.onData(
                         .{
                             .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
@@ -1360,6 +1370,7 @@ pub const AWSCredentials = struct {
                     return;
                 }
             }
+            log("S3DownloadStreamWrapper.callback invalid readable stream", .{});
         }
 
         pub fn deinit(this: *@This()) void {

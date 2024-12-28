@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { access, copyFile, writeFile } from "fs/promises";
+import { access, constants, copyFile, open, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -31,7 +31,13 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   await installResult.exited;
 
   // Ensure the lockfile was created
-  await access(join(package_dir, "bun.lockb"));
+  await access(join(package_dir, "bun.lockb"), constants.F_OK);
+
+  // Assert that the lockfile has the correct permissions
+  const file = await open(join(package_dir, "bun.lockb"), "r");
+  const stat = await file.stat();
+  // 0o755 == 33261
+  expect(stat.mode).toBe(33261);
 
   // create a .env
   await writeFile(join(package_dir, ".env"), "FOO=bar");

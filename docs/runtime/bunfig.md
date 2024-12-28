@@ -335,6 +335,8 @@ dryRun = false
 
 To configure the directory where Bun puts globally installed packages.
 
+Environment variable: `BUN_INSTALL_GLOBAL_DIR`
+
 ```toml
 [install]
 # where `bun install --global` installs packages
@@ -344,6 +346,8 @@ globalDir = "~/.bun/install/global"
 ### `install.globalBinDir`
 
 To configure the directory where Bun installs globally installed binaries and CLIs.
+
+Environment variable: `BUN_INSTALL_BIN`
 
 ```toml
 # where globally-installed package bins are linked

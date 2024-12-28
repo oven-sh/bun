@@ -2,10 +2,9 @@
 // debug builds of JavaScriptCore
 let MAX_ALLOWED_MEMORY_USAGE = 0;
 let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 10;
-const dest = process.argv.at(-1);
 const { randomUUID } = require("crypto");
 
-const s3Dest = randomUUID();
+const s3Dest = randomUUID() + "-s3-stream-leak-fixture";
 
 const s3file = Bun.s3(s3Dest);
 async function readLargeFile() {
@@ -19,18 +18,23 @@ async function readLargeFile() {
 async function run(inputType) {
   await s3file.write(inputType);
   Bun.gc(true);
-  for (let i = 0; i < 5; i++) {
-    await readLargeFile();
+
+  {
+    // base line
+    await Promise.all([readLargeFile(), readLargeFile()]);
     await Bun.sleep(10);
     Bun.gc(true);
-    if (!MAX_ALLOWED_MEMORY_USAGE) {
-      MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
-    }
-    const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    if (rss > MAX_ALLOWED_MEMORY_USAGE) {
-      await s3file.unlink();
-      throw new Error("Memory usage is too high");
-    }
+  }
+  MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
+  {
+    await Promise.all(new Array(10).fill(readLargeFile()));
+    Bun.gc(true);
+  }
+  const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  console.log("Memory usage:", rss, "MB");
+  if (rss > MAX_ALLOWED_MEMORY_USAGE) {
+    await s3file.unlink();
+    throw new Error("Memory usage is too high");
   }
 }
 await run(new Buffer(1024 * 1024 * 1, "A".charCodeAt(0)).toString("utf-8"));

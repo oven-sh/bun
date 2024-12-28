@@ -1708,9 +1708,8 @@ pub const MultiPartUpload = struct {
         }
 
         pub fn onPartResponse(result: AWS.S3PartResult, this: *@This()) void {
-            if (this.owns_data) bun.default_allocator.free(this.data);
-
             if (this.state == .canceled) {
+                if (this.owns_data) bun.default_allocator.free(this.data);
                 this.ctx.deref();
                 return;
             }
@@ -1725,11 +1724,13 @@ pub const MultiPartUpload = struct {
                         this.perform();
                         return;
                     } else {
+                        if (this.owns_data) bun.default_allocator.free(this.data);
                         defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
                 },
                 .etag => |etag| {
+                    if (this.owns_data) bun.default_allocator.free(this.data);
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,

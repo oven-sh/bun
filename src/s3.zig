@@ -1353,15 +1353,6 @@ pub const AWSCredentials = struct {
                         );
                         return;
                     }
-                    if (chunk.list.items.len == 0) {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .done = {},
-                            },
-                            bun.default_allocator,
-                        );
-                        return;
-                    }
                     readable.ptr.Bytes.onData(
                         .{
                             .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
@@ -1371,8 +1362,6 @@ pub const AWSCredentials = struct {
                     return;
                 }
             }
-            var buffer = chunk;
-            buffer.deinit();
         }
 
         pub fn deinit(this: *@This()) void {

@@ -620,7 +620,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "fsFile.stream() should not leak",
       async () => {
-        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+        const dir = tempDirWithFiles("s3-stream-leak-fixture", {
           "s3-stream-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-stream-leak-fixture.js")).text(),
           "out.bin": "here",
         });
@@ -651,7 +651,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "fsFile.writer().write() should not leak",
       async () => {
-        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+        const dir = tempDirWithFiles("s3-writer-leak-fixture", {
           "s3-writer-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-writer-leak-fixture.js")).text(),
           "out.bin": "here",
         });

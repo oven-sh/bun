@@ -621,6 +621,37 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
   describe("leak tests", () => {
     it(
+      "fsFile.stream() should not leak",
+      async () => {
+        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+          "s3-stream-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-stream-leak-fixture.js")).text(),
+          "out.bin": "here",
+        });
+
+        const dest = path.join(dir, "out.bin");
+
+        const { exitCode, stderr } = Bun.spawnSync(
+          [bunExe(), "--smol", path.join(dir, "s3-stream-leak-fixture.js"), dest],
+          {
+            env: {
+              ...bunEnv,
+              BUN_JSC_gcMaxHeapSize: "503316",
+              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
+              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
+              AWS_ENDPOINT: s3Options.endpoint,
+              AWS_BUCKET: S3Bucket,
+            },
+            stderr: "pipe",
+            stdout: "inherit",
+            stdin: "ignore",
+          },
+        );
+        expect(exitCode).toBe(0);
+        expect(stderr.toString()).toBe("");
+      },
+      30 * 1000,
+    );
+    it(
       "fsFile.writer().write() should not leak",
       async () => {
         const dir = tempDirWithFiles("bun-write-leak-fixture", {

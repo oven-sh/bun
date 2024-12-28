@@ -9,10 +9,15 @@ const s3Dest = randomUUID();
 
 const s3file = Bun.s3(s3Dest);
 
+async function writeLargeFile(inputType) {
+  const writer = s3file.writer();
+  writer.write(inputType);
+  await writer.end();
+  Bun.gc(true);
+}
 async function run(inputType) {
   for (let i = 0; i < 5; i++) {
-    const largeFile = inputType;
-    await Bun.write(dest, largeFile);
+    await writeLargeFile(inputType);
     Bun.gc(true);
     if (!MAX_ALLOWED_MEMORY_USAGE) {
       MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
@@ -25,8 +30,5 @@ async function run(inputType) {
     }
   }
 }
-// 30 MB, plain-text ascii
-await s3file.write(new Buffer(1024 * 1024 * 1).fill("A".charCodeAt(0)).toString("utf-8"));
-await run(s3file);
-await run(`s3://${s3Dest}`);
+await run(new Buffer(1024 * 1024 * 1).fill("A".charCodeAt(0)).toString("utf-8"));
 await s3file.unlink();

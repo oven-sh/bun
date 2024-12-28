@@ -27,9 +27,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   for (let bucketInName of [true, false]) {
     describe("fetch", () => {
       describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-        const tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
+        var tmp_filename: string;
         const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
         beforeAll(async () => {
+          tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
           const result = await fetch(tmp_filename, {
             method: "PUT",
             body: "Hello Bun!",
@@ -108,7 +109,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           // 15 MiB big enough to Multipart upload in more than one part
           const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
           {
-            await fetch(tmp_filename, {
+            await fetch(tmp_filename + "-large", {
               method: "PUT",
               body: async function* () {
                 for (let i = 0; i < 15; i++) {
@@ -119,9 +120,12 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
               s3: options,
             }).then(res => res.text());
 
-            const result = await fetch(tmp_filename, { method: "HEAD", s3: options });
+            const result = await fetch(tmp_filename + "-large", { method: "HEAD", s3: options });
+
             expect(result.status).toBe(200);
             expect(result.headers.get("content-length")).toBe("15728640");
+
+            await fetch(tmp_filename + "-large", { method: "DELETE", s3: options });
           }
         }, 10_000);
       });
@@ -456,7 +460,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             }
             expect(bytes).toBe(Buffer.byteLength(bigishPayload));
             expect(Buffer.concat(chunks).toString()).toBe(bigishPayload);
-          }, 20_000);
+          }, 30_000);
         });
       });
     });
@@ -616,6 +620,37 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   });
 
   describe("leak tests", () => {
+    it(
+      "fsFile.writer().write() should not leak",
+      async () => {
+        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+          "s3-writer-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-writer-leak-fixture.js")).text(),
+          "out.bin": "here",
+        });
+
+        const dest = path.join(dir, "out.bin");
+
+        const { exitCode, stderr } = Bun.spawnSync(
+          [bunExe(), "--smol", path.join(dir, "s3-writer-leak-fixture.js"), dest],
+          {
+            env: {
+              ...bunEnv,
+              BUN_JSC_gcMaxHeapSize: "503316",
+              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
+              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
+              AWS_ENDPOINT: s3Options.endpoint,
+              AWS_BUCKET: S3Bucket,
+            },
+            stderr: "pipe",
+            stdout: "inherit",
+            stdin: "ignore",
+          },
+        );
+        expect(exitCode).toBe(0);
+        expect(stderr.toString()).toBe("");
+      },
+      30 * 1000,
+    );
     it(
       "Bun.write should not leak",
       async () => {

@@ -1442,6 +1442,9 @@ pub const AWSCredentials = struct {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
+        if (this.sink.endPromise.hasValue()) {
+            this.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
+        }
         if (this.readable_stream_ref.get()) |stream| {
             stream.done(globalThis);
         }
@@ -1455,8 +1458,9 @@ pub const AWSCredentials = struct {
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
         const err = args.ptr[0];
-
-        this.sink.endPromise.rejectOnNextTick(globalThis, err);
+        if (this.sink.endPromise.hasValue()) {
+            this.sink.endPromise.rejectOnNextTick(globalThis, err);
+        }
 
         if (this.readable_stream_ref.get()) |stream| {
             stream.cancel(globalThis);
@@ -1545,7 +1549,9 @@ pub const AWSCredentials = struct {
 
         if (assignment_result.toError()) |err| {
             readable_stream.cancel(globalThis);
-            response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
+            if (response_stream.sink.endPromise.hasValue()) {
+                response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
+            }
             task.fail(.{
                 .code = "UnknownError",
                 .message = "ReadableStream ended with an error",
@@ -1571,11 +1577,15 @@ pub const AWSCredentials = struct {
                     },
                     .fulfilled => {
                         readable_stream.done(globalThis);
+                        if (response_stream.sink.endPromise.hasValue()) {
+                            response_stream.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
+                        }
                     },
                     .rejected => {
                         readable_stream.cancel(globalThis);
-                        response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
-
+                        if (response_stream.sink.endPromise.hasValue()) {
+                            response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
+                        }
                         task.fail(.{
                             .code = "UnknownError",
                             .message = "ReadableStream ended with an error",
@@ -1584,8 +1594,9 @@ pub const AWSCredentials = struct {
                 }
             } else {
                 readable_stream.cancel(globalThis);
-                response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
-
+                if (response_stream.sink.endPromise.hasValue()) {
+                    response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
+                }
                 task.fail(.{
                     .code = "UnknownError",
                     .message = "ReadableStream ended with an error",
@@ -1603,18 +1614,20 @@ pub const AWSCredentials = struct {
                     event_loop.enter();
                     defer event_loop.exit();
                     switch (result) {
-                        .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
+                        .success => {
+                            sink.endPromise.resolve(globalObject, JSC.jsNumber(0));
+                        },
                         .failure => |err| {
                             if (!sink.done) {
                                 sink.abort();
                                 return;
                             }
+
                             sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
                         },
                     }
                 }
                 sink.finalize();
-                sink.destroy();
             }
         };
         const proxy_url = (proxy orelse "");
@@ -1652,7 +1665,6 @@ pub const AWSCredentials = struct {
         // we use this memory address to disable signals being sent
         signal.clear();
         bun.assert(signal.isDead());
-
         return response_stream.sink.toJS(globalThis);
     }
 };

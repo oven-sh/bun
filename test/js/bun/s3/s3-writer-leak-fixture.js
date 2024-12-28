@@ -23,7 +23,6 @@ async function run(inputType) {
       MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
     }
     const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    console.log("Memory usage:", rss, "MB");
     if (rss > MAX_ALLOWED_MEMORY_USAGE) {
       await s3file.unlink();
       throw new Error("Memory usage is too high");

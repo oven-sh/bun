@@ -1813,7 +1813,7 @@ pub const MultiPartUpload = struct {
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) void {
-            if (this.state != .pending) return;
+            if (this.state != .pending or this.ctx.state != .multipart_completed) return;
             this.ctx.ref();
             this.state = .started;
             this.perform();
@@ -1925,10 +1925,12 @@ pub const MultiPartUpload = struct {
 
     fn drainEnqueuedParts(this: *@This()) void {
         // check pending to start or transformed buffered ones into tasks
-        for (this.queue.items) |*part| {
-            if (part.state == .pending) {
-                // lets start the part request
-                part.start();
+        if (this.state == .multipart_completed) {
+            for (this.queue.items) |*part| {
+                if (part.state == .pending) {
+                    // lets start the part request
+                    part.start();
+                }
             }
         }
         const partSize = this.partSizeInBytes();
@@ -2099,7 +2101,7 @@ pub const MultiPartUpload = struct {
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
-        } else {
+        } else if (this.state == .multipart_completed) {
             part.start();
         }
         return true;

@@ -109,7 +109,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           // 15 MiB big enough to Multipart upload in more than one part
           const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
           {
-            await fetch(tmp_filename + "-large", {
+            await fetch(tmp_filename, {
               method: "PUT",
               body: async function* () {
                 for (let i = 0; i < 15; i++) {
@@ -120,12 +120,9 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
               s3: options,
             }).then(res => res.text());
 
-            const result = await fetch(tmp_filename + "-large", { method: "HEAD", s3: options });
-
+            const result = await fetch(tmp_filename, { method: "HEAD", s3: options });
             expect(result.status).toBe(200);
             expect(result.headers.get("content-length")).toBe("15728640");
-
-            await fetch(tmp_filename + "-large", { method: "DELETE", s3: options });
           }
         }, 10_000);
       });

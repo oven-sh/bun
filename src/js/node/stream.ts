@@ -27,7 +27,7 @@ const kPaused = Symbol("kPaused");
 // END moved from require_readable
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
-const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+// const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 const { kAutoDestroyed } = require("internal/shared");
 const {
   validateBoolean,
@@ -5640,7 +5640,8 @@ function getNativeReadableStream(Readable, stream, options) {
   // There may be a ReadableStream.Strong handle to the ReadableStream.
   // We can't update those handles to point to the NativeReadable from JS
   // So we instead mark it as no longer usable, and create a new NativeReadable
-  transferToNativeReadable(stream);
+  // transferToNativeReadable(stream);
+  throw new Error("TODO: transferToNativeReadable");
 
   return new NativeReadable(ptr, options);
 }

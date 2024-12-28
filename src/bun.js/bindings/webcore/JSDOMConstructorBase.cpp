@@ -36,10 +36,34 @@ JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor, (JSGlobalObject 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* callee = callframe->jsCallee();
-    auto* constructor = jsDynamicCast<JSDOMConstructorBase*>(callee);
+    auto* constructor = jsDynamicCast<InternalFunction*>(callee);
     const auto& name = constructor->name();
     RETURN_IF_EXCEPTION(scope, {});
     Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString("Use `new "_s, name, "(...)` instead of `"_s, name, "(...)`"_s));
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructorNotConstructable, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* callee = callframe->jsCallee();
+    auto* constructor = jsDynamicCast<InternalFunction*>(callee);
+    const auto& name = constructor->name();
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString("Use `new "_s, name, "(...)` instead of `"_s, name, "(...)`"_s));
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructorNotCallableOrConstructable, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* callee = callframe->jsCallee();
+    auto* constructor = jsDynamicCast<InternalFunction*>(callee);
+    const auto& name = constructor->name();
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString("Constructor for "_s, name, " cannot be constructed directly, but you can use it for instanceof."_s));
     return {};
 }
 

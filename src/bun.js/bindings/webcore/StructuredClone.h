@@ -30,11 +30,21 @@ namespace JSC {
 class CallFrame;
 class JSGlobalObject;
 using EncodedJSValue = int64_t;
+class ArgList;
+class JSValue;
 }
 
 namespace WebCore {
 
-JSC_DECLARE_HOST_FUNCTION(cloneArrayBuffer);
-JSC_DECLARE_HOST_FUNCTION(structuredCloneForStream);
+enum class CloneMode {
+    Full,
+    Partial,
+};
+
+JSC::JSValue cloneArrayBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const JSC::ArgList& args, CloneMode mode);
+JSC::JSValue structuredCloneForStream(JSC::JSGlobalObject* lexicalGlobalObject, const JSC::ArgList& args);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCloneArrayBuffer);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStructuredCloneForStream);
 
 } // namespace WebCore

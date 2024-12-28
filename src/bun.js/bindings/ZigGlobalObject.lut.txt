@@ -69,24 +69,21 @@
   PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
   PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
   PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
-  ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
-  ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
-  ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
-  ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         PropertyCallback
-  ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
-  ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
+  ReadableStream                  JSReadableStreamConstructorCallback                    PropertyCallback
+  ReadableStreamDefaultController JSReadableStreamDefaultControllerConstructorCallback   PropertyCallback
+  ReadableStreamDefaultReader     JSReadableStreamDefaultReaderConstructorCallback       PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
-  TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
-  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
+  TransformStream                 JSTransformStreamConstructorCallback                   PropertyCallback
+  TransformStreamDefaultController JSTransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback
-  WritableStream                  WritableStreamConstructorCallback                    PropertyCallback
-  WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
-  WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
+  WritableStream                  JSWritableStreamConstructorCallback                    PropertyCallback
+  WritableStreamDefaultController JSWritableStreamDefaultControllerConstructorCallback   PropertyCallback
+  WritableStreamDefaultWriter     JSWritableStreamDefaultWriterConstructorCallback       PropertyCallback
 @end
 */

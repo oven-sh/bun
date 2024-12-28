@@ -132,6 +132,7 @@
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
+#include "BunPromiseInlines.h"
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -2734,18 +2735,20 @@ static JSC::Identifier jsValueToModuleKey(JSC::JSGlobalObject* lexicalGlobalObje
 
 JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    return JSValue::encode(jsUndefined());
+    // auto& vm = globalObject->vm();
+    // auto clientData = WebCore::clientData(vm);
+    // auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    // return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
 JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    return JSValue::encode(jsUndefined());
+    // auto& vm = globalObject->vm();
+    // auto clientData = WebCore::clientData(vm);
+    // auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
+    // return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
 JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
@@ -3268,7 +3271,7 @@ JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, 
         return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
     }
 
-    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+    return JSValue::encode(Bun::createFulfilledPromise(globalObject, result));
 }
 
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,

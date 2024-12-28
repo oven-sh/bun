@@ -28,6 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMPromise.h"
+#include "BunPromiseInlines.h"
 // #include "WorkerGlobalScope.h"
 
 namespace WebCore {
@@ -47,7 +48,7 @@ template<typename T> struct Converter<IDLPromise<T>> : DefaultConverter<IDLPromi
 
         // 1. Let resolve be the original value of %Promise%.resolve.
         // 2. Let promise be the result of calling resolve with %Promise% as the this value and V as the single argument value.
-        auto* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
+        auto* promise = Bun::createFulfilledPromise(globalObject, value);
         if (scope.exception()) {
             // auto* scriptExecutionContext = globalObject->scriptExecutionContext();
             // if (is<WorkerGlobalScope>(scriptExecutionContext)) {

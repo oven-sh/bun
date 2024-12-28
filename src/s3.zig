@@ -1053,9 +1053,15 @@ pub const AWSCredentials = struct {
                     this.reported_response_lock.lock();
                     defer this.reported_response_lock.unlock();
                     this.response_buffer = body.*;
-
-                    _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
+                    if (body.list.items.len > 0) {
+                        _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
+                    }
                     this.response_buffer.reset();
+                    if (this.reported_response_buffer.list.items.len == 0 and !is_done) {
+                        return;
+                    }
+                } else if (!is_done) {
+                    return;
                 }
                 if (this.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                     if (has_schedule_callback) {

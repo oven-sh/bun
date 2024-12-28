@@ -90,7 +90,6 @@ const linux = std.os.linux;
 const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const AWS = @import("../../s3.zig").AWSCredentials;
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -2030,14 +2029,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.flags.response_protected = true;
             JSC.C.JSValueProtect(ctx.server.?.globalThis, value.asObjectRef());
 
-            if (ctx.method == .HEAD) {
-                if (ctx.resp) |resp| {
-                    var pair = HeaderResponsePair{ .this = ctx, .response = response };
-                    resp.runCorkedWithType(*HeaderResponsePair, doRenderHeadResponse, &pair);
-                }
-                return;
-            }
-
             ctx.render(response);
         }
 
@@ -2363,7 +2354,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.method == .HEAD) {
-                this.endWithoutBody(this.shouldCloseConnection());
+                this.end("", this.shouldCloseConnection());
                 return false;
             }
 
@@ -3171,107 +3162,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // resp == null or aborted or server.stop(true)
             return this.resp == null or this.flags.aborted or this.server == null or this.server.?.flags.terminated;
         }
-        const HeaderResponseSizePair = struct { this: *RequestContext, size: usize };
-        pub fn doRenderHeadResponseAfterS3SizeResolved(pair: *HeaderResponseSizePair) void {
-            var this = pair.this;
 
-            if (this.resp) |resp| {
-                resp.writeHeaderInt("content-length", pair.size);
-            }
-            this.renderMetadata();
-            this.endWithoutBody(this.shouldCloseConnection());
-            this.deref();
-        }
-        pub fn onS3SizeResolved(result: AWS.S3StatResult, this: *RequestContext) void {
-            defer {
-                this.deref();
-            }
-            if (this.resp) |resp| {
-                var pair = HeaderResponseSizePair{ .this = this, .size = switch (result) {
-                    .failure, .not_found => 0,
-                    .success => |stat| stat.size,
-                } };
-                resp.runCorkedWithType(*HeaderResponseSizePair, doRenderHeadResponseAfterS3SizeResolved, &pair);
-            }
-        }
-        const HeaderResponsePair = struct { this: *RequestContext, response: *JSC.WebCore.Response };
-
-        fn doRenderHeadResponse(pair: *HeaderResponsePair) void {
-            var this = pair.this;
-            var response = pair.response;
-            this.flags.needs_content_length = false;
-            if (this.resp == null) {
-                return;
-            }
-            const resp = this.resp.?;
-            this.response_ptr = response;
-            const server = this.server orelse {
-                // server detached?
-                resp.writeHeaderInt("content-length", 0);
-                this.renderMetadata();
-                this.endWithoutBody(this.shouldCloseConnection());
-                return;
-            };
-            const globalThis = server.globalThis;
-            if (response.getFetchHeaders()) |headers| {
-                // first respect the headers
-                if (headers.get("transfer-encoding", globalThis)) |transfer_encoding| {
-                    resp.writeHeader("transfer-encoding", transfer_encoding);
-                } else if (headers.get("content-length", globalThis)) |content_length| {
-                    const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
-                    resp.writeHeaderInt("content-length", len);
-                } else {
-                    resp.writeHeaderInt("content-length", 0);
-                }
-            } else {
-                // then respect the body
-                response.body.value.toBlobIfPossible();
-                switch (response.body.value) {
-                    .InternalBlob, .WTFStringImpl => {
-                        var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
-                        defer blob.detach();
-                        const size = blob.size();
-                        if (size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", size);
-                        }
-                    },
-
-                    .Blob => |*blob| {
-                        if (blob.isS3()) {
-                            // we need to read the size asynchronously
-                            // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                            this.ref();
-
-                            const credentials = blob.store.?.data.s3.getCredentials();
-                            const path = blob.store.?.data.s3.path();
-                            const env = globalThis.bunVM().transpiler.env;
-
-                            credentials.s3Stat(path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
-
-                            return;
-                        }
-                        blob.resolveSize();
-                        if (blob.size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", blob.size);
-                        }
-                    },
-                    .Locked => {
-                        resp.writeHeader("transfer-encoding", "chunked");
-                    },
-                    .Used, .Null, .Empty, .Error => {
-                        resp.writeHeaderInt("content-length", 0);
-                    },
-                }
-            }
-            this.renderMetadata();
-            this.endWithoutBody(this.shouldCloseConnection());
-        }
-
-        // Each HTTP request or TCP socket connection is effectively a "task".
         // Each HTTP request or TCP socket connection is effectively a "task".
         //
         // However, unlike the regular task queue, we don't drain the microtask
@@ -3317,30 +3208,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
-                if (ctx.method == .HEAD) {
-                    if (ctx.resp) |resp| {
-                        var pair = HeaderResponsePair{ .this = ctx, .response = response };
-                        resp.runCorkedWithType(*HeaderResponsePair, doRenderHeadResponse, &pair);
-                    }
-                    return;
-                } else {
-                    response.body.value.toBlobIfPossible();
 
-                    switch (response.body.value) {
-                        .Blob => |*blob| {
-                            if (blob.needsToReadFile()) {
-                                response_value.protect();
-                                ctx.flags.response_protected = true;
-                            }
-                        },
-                        .Locked => {
+                response.body.value.toBlobIfPossible();
+
+                switch (response.body.value) {
+                    .Blob => |*blob| {
+                        if (blob.needsToReadFile()) {
                             response_value.protect();
                             ctx.flags.response_protected = true;
-                        },
-                        else => {},
-                    }
-                    ctx.render(response);
+                        }
+                    },
+                    .Locked => {
+                        response_value.protect();
+                        ctx.flags.response_protected = true;
+                    },
+                    else => {},
                 }
+                ctx.render(response);
                 return;
             }
 
@@ -3376,13 +3260,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
                         ctx.response_ptr = response;
-                        if (ctx.method == .HEAD) {
-                            if (ctx.resp) |resp| {
-                                var pair = HeaderResponsePair{ .this = ctx, .response = response };
-                                resp.runCorkedWithType(*HeaderResponsePair, doRenderHeadResponse, &pair);
-                            }
-                            return;
-                        }
+
                         response.body.value.toBlobIfPossible();
                         switch (response.body.value) {
                             .Blob => |*blob| {
@@ -3589,17 +3467,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob.from(byte_stream.drain().listManaged(bun.default_allocator));
+                                    this.blob.from(byte_stream.buffer);
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
                                 }
-                                this.ref();
+
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
                                 this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.drain().list();
+                                this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -3639,11 +3517,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onPipe(this: *RequestContext, stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
-            const is_done = stream.isDone();
+
             defer {
-                if (is_done) this.deref();
                 if (stream_needs_deinit) {
-                    if (is_done) {
+                    if (stream.isDone()) {
                         stream.owned_and_done.listManaged(allocator).deinit();
                     } else {
                         stream.owned.listManaged(allocator).deinit();
@@ -3662,12 +3539,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // uSockets will append and manage the buffer
             // so any write will buffer if the write fails
             if (resp.write(chunk)) {
-                if (is_done) {
+                if (stream.isDone()) {
                     this.endStream(this.shouldCloseConnection());
                 }
             } else {
                 // when it's the last one, we just want to know if it's done
-                if (is_done) {
+                if (stream.isDone()) {
                     this.flags.has_marked_pending = true;
                     resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
                 }

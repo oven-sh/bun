@@ -977,6 +977,8 @@ comptime {
         BodyValueBuffererContext.shim.ref();
 
         _ = Bun__LoadLibraryBunString;
+
+        JSC.WebCore.BlobToFileSink.shim.ref();
     }
 }
 

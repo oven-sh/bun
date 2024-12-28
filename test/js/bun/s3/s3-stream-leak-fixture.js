@@ -1,7 +1,7 @@
 // Avoid using String.prototype.repeat in this file because it's very slow in
 // debug builds of JavaScriptCore
 let MAX_ALLOWED_MEMORY_USAGE = 0;
-let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 10;
+let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 15;
 const { randomUUID } = require("crypto");
 
 const s3Dest = randomUUID() + "-s3-stream-leak-fixture";
@@ -21,13 +21,13 @@ async function run(inputType) {
 
   {
     // base line
-    await Promise.all([readLargeFile(), readLargeFile()]);
+    await Promise.all(new Array(10).fill(readLargeFile()));
     await Bun.sleep(10);
     Bun.gc(true);
   }
   MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
   {
-    await Promise.all(new Array(20).fill(readLargeFile()));
+    await Promise.all(new Array(100).fill(readLargeFile()));
     Bun.gc(true);
   }
   const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;

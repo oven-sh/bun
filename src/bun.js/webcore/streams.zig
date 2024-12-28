@@ -4762,7 +4762,6 @@ pub const ByteStream = struct {
     size_hint: Blob.SizeType = 0,
     buffer_action: ?BufferAction = null,
 
-
     const log = Output.scoped(.ByteStream, false);
 
     const BufferAction = union(BufferedReadableStreamAction) {
@@ -4897,7 +4896,6 @@ pub const ByteStream = struct {
 
                 log("ByteStream.onData err  action.reject()", .{});
 
-
                 action.reject(stream.err);
                 return;
             }
@@ -4997,7 +4995,6 @@ pub const ByteStream = struct {
         }
 
         log("ByteStream.onData no action just append", .{});
-
 
         this.append(stream, 0, chunk, allocator) catch @panic("Out of memory while copying request body");
     }

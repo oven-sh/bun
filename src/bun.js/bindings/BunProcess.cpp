@@ -35,6 +35,7 @@
 #include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/text/StringToIntegerConversion.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "NodeValidator.h"
 
@@ -467,32 +468,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     return JSValue::encode(resultValue);
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
         umask(currentMask);
-        return JSC::JSValue::encode(JSC::jsNumber(currentMask));
+        return JSValue::encode(jsNumber(currentMask));
     }
 
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue numberValue = callFrame->argument(0);
+    auto value = callFrame->argument(0);
 
-    if (!numberValue.isNumber()) {
-        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "mask"_s, "number"_s, numberValue);
-    }
-
-    if (!numberValue.isAnyInt()) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, "an integer"_s, numberValue);
-    }
-
-    double number = numberValue.toNumber(globalObject);
-    int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-    if (newUmask < 0 || newUmask > 4294967295) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
+    mode_t newUmask;
+    if (value.isString()) {
+        auto str = value.getString(globalObject);
+        auto policy = WTF::TrailingJunkPolicy::Disallow;
+        auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, uint8_t>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, UChar>(str.span16(), 8, policy);
+        if (!opt.has_value()) return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "mask"_s, value, "must be a 32-bit unsigned integer or an octal string"_s);
+        newUmask = opt.value();
+    } else {
+        Bun::V::validateUint32(throwScope, globalObject, value, "mask"_s, jsUndefined());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        newUmask = value.toUInt32(globalObject);
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));

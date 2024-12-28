@@ -16,6 +16,7 @@
 #include "JSBufferEncodingType.h"
 #include "BunProcess.h"
 #include "ErrorCode.h"
+#include "wtf/text/ASCIILiteral.h"
 #include "NodeValidator.h"
 
 namespace Bun {
@@ -348,7 +349,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globa
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto positive = callFrame->argument(2);
+    return V::validateUint32(scope, globalObject, value, name, positive);
+}
+JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (positive.isUndefined()) positive = jsBoolean(false);
 
+    auto value_num = value.asNumber();
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+
+    auto positive_b = positive.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto min = positive_b ? 1 : 0;
+    auto max = std::numeric_limits<uint32_t>().max();
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive)
+{
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (positive.isUndefined()) positive = jsBoolean(false);
 

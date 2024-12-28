@@ -337,6 +337,47 @@ pub const AWSCredentials = struct {
 
         return buffer[0..written];
     }
+
+    const ErrorCodeAndMessage = struct {
+        code: []const u8,
+        message: []const u8,
+    };
+    fn getSignErrorMessage(comptime err: anyerror) [:0]const u8 {
+        return switch (err) {
+            error.MissingCredentials => return "missing s3 credentials",
+            error.InvalidMethod => return "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
+            error.InvalidPath => return "invalid s3 bucket, key combination",
+            error.InvalidEndpoint => return "invalid s3 endpoint",
+            else => return "failed to retrieve s3 content check your credentials",
+        };
+    }
+    pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (err) {
+            error.MissingCredentials => return globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
+            error.InvalidMethod => return globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
+            error.InvalidPath => return globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
+            error.InvalidEndpoint => return globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
+            else => return globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
+        };
+    }
+    pub fn throwSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) bun.JSError {
+        return switch (err) {
+            error.MissingCredentials => globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
+            error.InvalidMethod => globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
+            error.InvalidPath => globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
+            error.InvalidEndpoint => globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
+            else => globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
+        };
+    }
+    pub fn getSignErrorCodeAndMessage(err: anyerror) ErrorCodeAndMessage {
+        return switch (err) {
+            error.MissingCredentials => .{ .code = "MissingCredentials", .message = getSignErrorMessage(error.MissingCredentials) },
+            error.InvalidMethod => .{ .code = "InvalidMethod", .message = getSignErrorMessage(error.InvalidMethod) },
+            error.InvalidPath => .{ .code = "InvalidPath", .message = getSignErrorMessage(error.InvalidPath) },
+            error.InvalidEndpoint => .{ .code = "InvalidEndpoint", .message = getSignErrorMessage(error.InvalidEndpoint) },
+            else => .{ .code = "SignError", .message = getSignErrorMessage(error.SignError) },
+        };
+    }
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
@@ -1050,13 +1091,9 @@ pub const AWSCredentials = struct {
             .content_disposition = options.content_disposition,
         }, null) catch |sign_err| {
             if (options.range) |range_| bun.default_allocator.free(range_);
-
-            return switch (sign_err) {
-                error.MissingCredentials => callback.fail("MissingCredentials", "missing s3 credentials", callback_context),
-                error.InvalidMethod => callback.fail("MissingCredentials", "method must be GET, PUT, DELETE or HEAD when using s3 protocol", callback_context),
-                error.InvalidPath => callback.fail("InvalidPath", "invalid s3 bucket, key combination", callback_context),
-                else => callback.fail("SignError", "failed to retrieve s3 content check your credentials", callback_context),
-            };
+            const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
+            callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
+            return;
         };
 
         const headers = brk: {
@@ -1201,13 +1238,9 @@ pub const AWSCredentials = struct {
             .method = .GET,
         }, null) catch |sign_err| {
             if (range) |range_| bun.default_allocator.free(range_);
-
-            return switch (sign_err) {
-                error.MissingCredentials => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "MissingCredentials", .message = "missing s3 credentials" }, callback_context),
-                error.InvalidMethod => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "MissingCredentials", .message = "method must be GET, PUT, DELETE or HEAD when using s3 protocol" }, callback_context),
-                error.InvalidPath => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "InvalidPath", .message = "invalid s3 bucket, key combination" }, callback_context),
-                else => callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = "SignError", .message = "failed to retrieve s3 content check your credentials" }, callback_context),
-            };
+            const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
+            callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = error_code_and_message.code, .message = error_code_and_message.message }, callback_context);
+            return;
         };
 
         const headers = brk: {

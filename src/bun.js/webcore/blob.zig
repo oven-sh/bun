@@ -4387,12 +4387,7 @@ pub const Blob = struct {
                 .path = path,
                 .method = method,
             }, .{ .expires = expires }) catch |sign_err| {
-                return switch (sign_err) {
-                    error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
-                    error.InvalidMethod => globalThis.throwError(sign_err, "method must be GET, PUT, DELETE or HEAD when using s3 protocol"),
-                    error.InvalidPath => globalThis.throwError(sign_err, "invalid s3 bucket, key combination"),
-                    else => globalThis.throwError(error.SignError, "failed to retrieve s3 content check your credentials"),
-                };
+                return AWS.throwSignError(sign_err, globalThis);
             };
             defer result.deinit();
             var str = bun.String.fromUTF8(result.url);

@@ -533,12 +533,7 @@ pub const Response = struct {
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
                     }, .{ .expires = 15 * 60 }) catch |sign_err| {
-                        return switch (sign_err) {
-                            error.MissingCredentials => globalThis.throwError(sign_err, "missing s3 credentials"),
-                            error.InvalidMethod => unreachable,
-                            error.InvalidPath => globalThis.throwError(sign_err, "invalid s3 bucket, key combination"),
-                            else => globalThis.throwError(error.SignError, "failed to retrieve s3 content check your credentials"),
-                        };
+                        return s3.AWSCredentials.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
@@ -3360,28 +3355,8 @@ pub const Fetch = struct {
                 .path = url.s3Path(),
                 .method = method,
             }, null) catch |sign_err| {
-                switch (sign_err) {
-                    error.MissingCredentials => {
-                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "missing s3 credentials", .{}, ctx);
-                        is_error = true;
-                        return JSPromise.rejectedPromiseValue(globalThis, err);
-                    },
-                    error.InvalidMethod => {
-                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{}, ctx);
-                        is_error = true;
-                        return JSPromise.rejectedPromiseValue(globalThis, err);
-                    },
-                    error.InvalidPath => {
-                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "invalid s3 bucket, key combination", .{}, ctx);
-                        is_error = true;
-                        return JSPromise.rejectedPromiseValue(globalThis, err);
-                    },
-                    else => {
-                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "failed to retrieve s3 content check your credentials", .{}, ctx);
-                        is_error = true;
-                        return JSPromise.rejectedPromiseValue(globalThis, err);
-                    },
-                }
+                is_error = true;
+                return JSPromise.rejectedPromiseValue(globalThis, s3.AWSCredentials.getJSSignError(sign_err, globalThis));
             };
             defer result.deinit();
             if (proxy) |proxy_| {

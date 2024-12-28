@@ -99,4 +99,11 @@ export default [
 
   // Postgres
   ["ERR_POSTGRES_ERROR_RESPONSE", Error, "PostgresError"],
+
+  // AWS
+  ["ERR_AWS_MISSING_CREDENTIALS", Error],
+  ["ERR_AWS_INVALID_METHOD", Error],
+  ["ERR_AWS_INVALID_PATH", Error],
+  ["ERR_AWS_INVALID_ENDPOINT", Error],
+  ["ERR_AWS_INVALID_SIGNATURE", Error],
 ] as ErrorCodeMapping;

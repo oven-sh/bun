@@ -298,6 +298,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * global
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto minLength = callFrame->argument(2);
+    return V::validateArray(scope, globalObject, value, name, minLength);
+}
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 

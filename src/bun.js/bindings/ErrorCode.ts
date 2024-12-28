@@ -52,6 +52,7 @@ export default [
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
   ["ERR_UNHANDLED_ERROR", Error],
+  ["ERR_UNKNOWN_CREDENTIAL", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

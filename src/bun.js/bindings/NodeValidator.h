@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "wtf/text/ASCIILiteral.h"
 
 namespace Bun {
 
@@ -31,6 +32,7 @@ JSC::EncodedJSValue validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* 
 JSC::EncodedJSValue validateFiniteNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue number, JSC::JSValue name);
 JSC::EncodedJSValue validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name);
 JSC::EncodedJSValue validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
+JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive);
 

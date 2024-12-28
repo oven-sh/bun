@@ -53,6 +53,9 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/utsname.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -2243,6 +2246,167 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     }
     return JSValue::encode(groups);
 }
+
+static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isString()) return value;
+
+    auto str = value.getString(globalObject);
+    if (!str.is8Bit()) {
+        auto message = makeString("User identifier does not exist: "_s, str);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+        return {};
+    }
+
+    auto name = (const char*)(str.span8().data());
+    struct passwd pwd;
+    struct passwd* pp = nullptr;
+    char buf[8192];
+
+    if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+        return jsNumber(pp->pw_uid);
+    }
+
+    auto message = makeString("User identifier does not exist: "_s, str);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    return {};
+}
+
+static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isString()) return value;
+
+    auto str = value.getString(globalObject);
+    if (!str.is8Bit()) {
+        auto message = makeString("Group identifier does not exist: "_s, str);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+        return {};
+    }
+
+    auto name = (const char*)(str.span8().data());
+    struct group pwd;
+    struct group* pp = nullptr;
+    char buf[8192];
+
+    if (getgrnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+        return jsNumber(pp->gr_gid);
+    }
+
+    auto message = makeString("Group identifier does not exist: "_s, str);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_uid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setuid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setuid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_uid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = seteuid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "seteuid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_gid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setegid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setegid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_gid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setgid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto groups = callFrame->argument(0);
+    Bun::V::validateArray(scope, globalObject, groups, jsString(vm, String("groups"_s)), jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    auto count = groupsArray->length();
+    gid_t groupsStack[64];
+    if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
+
+    for (unsigned i = 0; i < count; i++) {
+        auto item = groupsArray->getIndexQuickly(i);
+        auto name = makeString("groups["_s, i, "]"_s);
+
+        if (item.isNumber()) {
+            Bun::V::validateUint32(scope, globalObject, item, jsString(vm, name), jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            groupsStack[i] = item.toUInt32(globalObject);
+            continue;
+        } else if (item.isString()) {
+            item = maybe_gid_by_name(scope, globalObject, item);
+            RETURN_IF_EXCEPTION(scope, {});
+            groupsStack[i] = item.toUInt32(globalObject);
+            continue;
+        }
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number or string"_s, item);
+    }
+
+    auto result = setgroups(count, groupsStack);
+    if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -3180,6 +3344,12 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   getgid                           Process_functiongetgid                              Function 0
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
+
+  setegid                          Process_functionsetegid                             Function 1
+  seteuid                          Process_functionseteuid                             Function 1
+  setgid                           Process_functionsetgid                              Function 1
+  setgroups                        Process_functionsetgroups                           Function 1
+  setuid                           Process_functionsetuid                              Function 1
 #endif
 @end
 */

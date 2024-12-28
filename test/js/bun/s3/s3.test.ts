@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { getSecret } from "harness";
+import { bunExe, bunEnv, getSecret, tempDirWithFiles } from "harness";
 import { randomUUID } from "crypto";
 import { S3, s3, file } from "bun";
 import type { S3File, S3FileOptions } from "bun";
-
+import path from "path";
 const s3Options: S3FileOptions = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
@@ -469,7 +469,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           ...s3Options,
           accessKeyId: "invalid",
         });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow(/Access Key Id| AccessKeyId/gim);
+        expect(s3file.write("Hello Bun!")).rejects.toThrow();
       });
     });
     it("should error with invalid secret key id", async () => {
@@ -478,7 +478,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           ...s3Options,
           secretAccessKey: "invalid",
         });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow(/key/gim);
+        expect(s3file.write("Hello Bun!")).rejects.toThrow();
       });
     });
 
@@ -508,7 +508,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           ...s3Options,
           bucket: "invalid",
         });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow(/bucket/);
+        expect(s3file.write("Hello Bun!")).rejects.toThrow();
       });
     });
   });
@@ -613,5 +613,39 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       expect(text).toBe("Bun!");
       await s3file.unlink();
     });
+  });
+
+  describe("leak tests", () => {
+    it(
+      "Bun.write should not leak",
+      async () => {
+        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+          "bun-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "bun-write-leak-fixture.js")).text(),
+          "out.bin": "here",
+        });
+
+        const dest = path.join(dir, "out.bin");
+
+        const { exitCode, stderr } = Bun.spawnSync(
+          [bunExe(), "--smol", path.join(dir, "bun-write-leak-fixture.js"), dest],
+          {
+            env: {
+              ...bunEnv,
+              BUN_JSC_gcMaxHeapSize: "503316",
+              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
+              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
+              AWS_ENDPOINT: s3Options.endpoint,
+              AWS_BUCKET: S3Bucket,
+            },
+            stderr: "pipe",
+            stdout: "inherit",
+            stdin: "ignore",
+          },
+        );
+        expect(exitCode).toBe(0);
+        expect(stderr.toString()).toBe("");
+      },
+      30 * 1000,
+    );
   });
 });

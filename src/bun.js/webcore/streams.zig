@@ -4762,6 +4762,9 @@ pub const ByteStream = struct {
     size_hint: Blob.SizeType = 0,
     buffer_action: ?BufferAction = null,
 
+
+    const log = Output.scoped(.ByteStream, false);
+
     const BufferAction = union(BufferedReadableStreamAction) {
         text: JSC.JSPromise.Strong,
         arrayBuffer: JSC.JSPromise.Strong,
@@ -4867,6 +4870,9 @@ pub const ByteStream = struct {
                 if (stream == .owned_and_done) allocator.free(stream.owned_and_done.slice());
             }
             this.has_received_last_chunk = stream.isDone();
+
+            log("ByteStream.onData already done... do nothing", .{});
+
             return;
         }
 
@@ -4889,6 +4895,9 @@ pub const ByteStream = struct {
                     this.buffer_action = null;
                 }
 
+                log("ByteStream.onData err  action.reject()", .{});
+
+
                 action.reject(stream.err);
                 return;
             }
@@ -4899,11 +4908,15 @@ pub const ByteStream = struct {
                 }
 
                 if (this.buffer.capacity == 0 and stream == .done) {
+                    log("ByteStream.onData done and action.fulfill()", .{});
+
                     var blob = this.toAnyBlob().?;
                     action.fulfill(&blob);
                     return;
                 }
                 if (this.buffer.capacity == 0 and stream == .owned_and_done) {
+                    log("ByteStream.onData owned_and_done and action.fulfill()", .{});
+
                     this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                     var blob = this.toAnyBlob().?;
                     action.fulfill(&blob);
@@ -4914,10 +4927,12 @@ pub const ByteStream = struct {
                         allocator.free(stream.slice());
                     }
                 }
+                log("ByteStream.onData appendSlice and action.fulfill()", .{});
 
                 this.buffer.appendSlice(chunk) catch bun.outOfMemory();
                 var blob = this.toAnyBlob().?;
                 action.fulfill(&blob);
+
                 return;
             } else {
                 this.buffer.appendSlice(chunk) catch bun.outOfMemory();
@@ -4974,9 +4989,15 @@ pub const ByteStream = struct {
             if (remaining.len > 0 and chunk.len > 0)
                 this.append(stream, to_copy.len, chunk, allocator) catch @panic("Out of memory while copying request body");
 
+            log("ByteStream.onData pending.run()", .{});
+
             this.pending.run();
+
             return;
         }
+
+        log("ByteStream.onData no action just append", .{});
+
 
         this.append(stream, 0, chunk, allocator) catch @panic("Out of memory while copying request body");
     }

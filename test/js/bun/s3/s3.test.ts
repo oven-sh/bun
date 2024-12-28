@@ -441,8 +441,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             expect(bytes).toBe(10);
             expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
           });
-
-          it("should work with large files", async () => {
+          it("should work with large files ", async () => {
             const s3file = s3(tmp_filename + "-readable-stream-big", options);
             await s3file.write(bigishPayload);
             const stream = s3file.stream();

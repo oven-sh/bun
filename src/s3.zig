@@ -1332,9 +1332,7 @@ pub const AWSCredentials = struct {
             if (this.readable_stream_ref.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     const globalThis = this.readable_stream_ref.globalThis().?;
-                    const event_loop = globalThis.bunVM().eventLoop();
-                    event_loop.enter();
-                    defer event_loop.exit();
+
                     if (request_err) |err| {
                         readable.ptr.Bytes.onData(
                             .{
@@ -1401,9 +1399,6 @@ pub const AWSCredentials = struct {
             defer self.deref();
 
             if (sink.endPromise.globalObject()) |globalObject| {
-                const event_loop = globalObject.bunVM().eventLoop();
-                event_loop.enter();
-                defer event_loop.exit();
                 switch (result) {
                     .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
                     .failure => |err| {

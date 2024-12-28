@@ -276,7 +276,7 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
         if (!name.isNull() && name.length() > 0) {
             return makeString("function "_s, name);
         }
-        return String("function"_s);
+        return String("function "_s);
     }
     if (cell->isString()) {
         auto str = value.toString(globalObject)->getString(globalObject);

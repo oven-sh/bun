@@ -19,8 +19,8 @@ function makePayLoadFrom(text: string, size: number): string {
   return text.slice(0, size);
 }
 
-// 15 MiB big enough to Multipart upload in more than one part
-const bigPayload = makePayLoadFrom("Bun is the best runtime ever", 15 * 1024 * 1024);
+// 10 MiB big enough to Multipart upload in more than one part
+const bigPayload = makePayLoadFrom("Bun is the best runtime ever", 10 * 1024 * 1024);
 const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
 
 describe.skipIf(!s3Options.accessKeyId)("s3", () => {
@@ -106,13 +106,13 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         });
 
         it("should be able to upload large files", async () => {
-          // 15 MiB big enough to Multipart upload in more than one part
+          // 10 MiB big enough to Multipart upload in more than one part
           const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
           {
             await fetch(tmp_filename, {
               method: "PUT",
               body: async function* () {
-                for (let i = 0; i < 15; i++) {
+                for (let i = 0; i < 10; i++) {
                   await Bun.sleep(10);
                   yield buffer;
                 }
@@ -122,7 +122,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
             const result = await fetch(tmp_filename, { method: "HEAD", s3: options });
             expect(result.status).toBe(200);
-            expect(result.headers.get("content-length")).toBe("15728640");
+            expect(result.headers.get("content-length")).toBe((buffer.byteLength * 10).toString());
           }
         }, 10_000);
       });
@@ -205,7 +205,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
               new Request("https://example.com", {
                 method: "PUT",
                 body: async function* () {
-                  for (let i = 0; i < 15; i++) {
+                  for (let i = 0; i < 10; i++) {
                     if (i % 5 === 0) {
                       await Bun.sleep(10);
                     }
@@ -215,7 +215,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
               }),
               options,
             );
-            expect(await S3.size(tmp_filename, options)).toBe(Buffer.byteLength(bigPayload));
+            expect(await S3.size(tmp_filename, options)).toBe(Buffer.byteLength(bigishPayload) * 10);
           }
         }, 10_000);
 

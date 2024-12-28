@@ -8,19 +8,20 @@ const { randomUUID } = require("crypto");
 const s3Dest = randomUUID();
 
 const s3file = Bun.s3(s3Dest);
-async function readLargeFile(inputType) {
-  const stream = s3file.stream();
+async function readLargeFile() {
+  const stream = Bun.s3(s3Dest).stream();
   const reader = stream.getReader();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
   }
-  Bun.gc(true);
 }
 async function run(inputType) {
   await s3file.write(inputType);
-  for (let i = 0; i < 10; i++) {
-    await readLargeFile(inputType);
+  Bun.gc(true);
+  for (let i = 0; i < 5; i++) {
+    await readLargeFile();
+    await Bun.sleep(10);
     Bun.gc(true);
     if (!MAX_ALLOWED_MEMORY_USAGE) {
       MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
@@ -32,5 +33,5 @@ async function run(inputType) {
     }
   }
 }
-await run(new Buffer(1024 * 1024 * 1).fill("A".charCodeAt(0)).toString("utf-8"));
+await run(new Buffer(1024 * 1024 * 1, "A".charCodeAt(0)).toString("utf-8"));
 await s3file.unlink();

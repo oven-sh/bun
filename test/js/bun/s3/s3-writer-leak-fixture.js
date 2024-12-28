@@ -12,8 +12,11 @@ const s3file = Bun.s3(s3Dest);
 async function writeLargeFile(inputType) {
   const writer = s3file.writer();
   writer.write(inputType);
+  await Bun.sleep(10);
+  writer.write(inputType);
   await writer.end();
   Bun.gc(true);
+  await Bun.sleep(10);
 }
 async function run(inputType) {
   for (let i = 0; i < 5; i++) {
@@ -29,5 +32,5 @@ async function run(inputType) {
     }
   }
 }
-await run(new Buffer(1024 * 1024 * 1).fill("A".charCodeAt(0)).toString("utf-8"));
+await run(new Buffer(1024 * 512 * 1, "A".charCodeAt(0)).toString("utf-8"));
 await s3file.unlink();

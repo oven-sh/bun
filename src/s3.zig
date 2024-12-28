@@ -430,7 +430,7 @@ pub const AWSCredentials = struct {
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
-                var cache = JSC.VirtualMachine.getMainThreadVM().rareData().awsCache();
+                var cache = (JSC.VirtualMachine.getMainThreadVM() orelse JSC.VirtualMachine.get()).rareData().awsCache();
                 if (cache.get(date_result.numeric_day, key)) |cached| {
                     break :brk_sign cached;
                 }

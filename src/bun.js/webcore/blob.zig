@@ -944,7 +944,7 @@ pub const Blob = struct {
 
                 const promise = JSC.JSPromise.Strong.init(ctx);
                 const promise_value = promise.value();
-                const proxy = ctx.bunVM().bundler.env.getHttpProxy(true, null);
+                const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
                 aws_options.credentials.s3Upload(s3.path(), "", destination_blob.contentTypeOrMimeType(), proxy_url, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                     .promise = promise,
@@ -1054,7 +1054,7 @@ pub const Blob = struct {
             };
             defer aws_options.deinit();
             const store = source_blob.store.?;
-            const proxy = ctx.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
             switch (store.data) {
                 .bytes => |bytes| {
@@ -1284,7 +1284,7 @@ pub const Blob = struct {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                                 }
-                                const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+                                const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
 
                                 return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), readable, globalThis, aws_options.options, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
@@ -1333,7 +1333,7 @@ pub const Blob = struct {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                                 }
-                                const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+                                const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
                                 return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), readable, globalThis, aws_options.options, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
                             }
@@ -1997,7 +1997,7 @@ pub const Blob = struct {
     ) bun.JSError!Blob {
 
         // get ENV config
-        var aws_options = try AWS.getCredentialsWithOptions(globalObject.bunVM().bundler.env.getAWSCredentials(), options, globalObject);
+        var aws_options = try AWS.getCredentialsWithOptions(globalObject.bunVM().transpiler.env.getAWSCredentials(), options, globalObject);
         defer aws_options.deinit();
         const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
         errdefer store.deinit();
@@ -2125,7 +2125,7 @@ pub const Blob = struct {
         if (check_s3) {
             if (path_or_fd.* == .path) {
                 if (strings.startsWith(path_or_fd.path.slice(), "s3://")) {
-                    const credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
+                    const credentials = globalThis.bunVM().transpiler.env.getAWSCredentials();
                     const path = path_or_fd.*.path;
                     path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                     return Blob.initWithStore(Blob.Store.initS3(path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
@@ -3827,7 +3827,7 @@ pub const Blob = struct {
             };
             const promise = JSC.JSPromise.Strong.init(globalThis);
             const value = promise.value();
-            const proxy_url = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy = if (proxy_url) |url| url.href else null;
             var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
             defer aws_options.deinit();
@@ -4176,7 +4176,7 @@ pub const Blob = struct {
                 .handler = handler,
             });
             const promise = this.promise.value();
-            const env = this.globalThis.bunVM().bundler.env;
+            const env = this.globalThis.bunVM().transpiler.env;
             const credentials = this.blob.store.?.data.s3.getCredentials();
             const path = this.blob.store.?.data.s3.path();
 
@@ -4254,7 +4254,7 @@ pub const Blob = struct {
             const promise = this.promise.value();
             const credentials = blob.store.?.data.s3.getCredentials();
             const path = blob.store.?.data.s3.path();
-            const env = globalThis.bunVM().bundler.env;
+            const env = globalThis.bunVM().transpiler.env;
 
             credentials.s3Stat(path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             return promise;
@@ -4267,7 +4267,7 @@ pub const Blob = struct {
             const promise = this.promise.value();
             const credentials = blob.store.?.data.s3.getCredentials();
             const path = blob.store.?.data.s3.path();
-            const env = globalThis.bunVM().bundler.env;
+            const env = globalThis.bunVM().transpiler.env;
 
             credentials.s3Stat(path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             return promise;
@@ -4472,7 +4472,7 @@ pub const Blob = struct {
             defer aws_options.deinit();
 
             const path = s3.path();
-            const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
             return (if (extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(path, readable_stream, globalThis, aws_options.options, this.contentTypeOrMimeType(), proxy_url, null, undefined);
@@ -4672,7 +4672,7 @@ pub const Blob = struct {
         if (this.isS3()) {
             const s3 = &this.store.?.data.s3;
             const path = s3.path();
-            const proxy = globalThis.bunVM().bundler.env.getHttpProxy(true, null);
+            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
             if (arguments.len > 0) {
                 const options = arguments.ptr[0];

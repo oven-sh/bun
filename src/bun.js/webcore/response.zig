@@ -1940,10 +1940,10 @@ pub const Fetch = struct {
             var proxy: ?ZigURL = null;
             if (fetch_options.proxy) |proxy_opt| {
                 if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                    proxy = fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxyFor(fetch_options.url);
+                    proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
                 }
             } else {
-                proxy = jsc_vm.transpiler.env.getHttpProxy(fetch_options.url);
+                proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -3242,7 +3242,7 @@ pub const Fetch = struct {
         if (url.isS3()) {
             // get ENV config
             var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
-                .credentials = globalThis.bunVM().bundler.env.getAWSCredentials(),
+                .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
                 .options = .{},
             };
             defer {

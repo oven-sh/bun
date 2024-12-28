@@ -2051,6 +2051,13 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
+    pub fn iterationNumber(this: *const AnyEventLoop) u64 {
+        return switch (this.*) {
+            .js => this.js.usocketsLoop().iterationNumber(),
+            .mini => this.mini.loop.iterationNumber(),
+        };
+    }
+
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }

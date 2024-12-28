@@ -236,13 +236,10 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto* release = JSC::constructEmptyObject(globalObject);
 
-    // SvelteKit compatibility hack
-    release->putDirect(vm, vm.propertyNames->name, jsString(vm, WTF::String("node"_s)), 0);
+    release->putDirect(vm, vm.propertyNames->name, jsString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
 
-    release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsEmptyString(vm), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
 
     return release;
 }

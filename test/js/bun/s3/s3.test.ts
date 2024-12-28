@@ -12,6 +12,10 @@ const s3Options: S3FileOptions = {
 
 const S3Bucket = getSecret("S3_R2_BUCKET");
 
+// 15 MiB big enough to Multipart upload in more than one part
+const bigPayload = Buffer.alloc(15 * 1024 * 1024, "a");
+const bigishPayload = Buffer.alloc(1 * 1024 * 1024, "a");
+
 describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   for (let bucketInName of [true, false]) {
     describe("fetch", () => {
@@ -92,6 +96,27 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             expect(response.headers.get("content-type")).toStartWith("text/plain");
           }
         });
+
+        it("should be able to upload large files", async () => {
+          // 15 MiB big enough to Multipart upload in more than one part
+          const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
+          {
+            await fetch(tmp_filename, {
+              method: "PUT",
+              body: async function* () {
+                for (let i = 0; i < 15; i++) {
+                  await Bun.sleep(10);
+                  yield buffer;
+                }
+              },
+              s3: options,
+            }).then(res => res.text());
+
+            const result = await fetch(tmp_filename, { method: "HEAD", s3: options });
+            expect(result.status).toBe(200);
+            expect(result.headers.get("content-length")).toBe("15728640");
+          }
+        }, 10_000);
       });
     });
 
@@ -152,7 +177,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3file = new S3(tmp_filename, options);
             const writer = s3file.writer({ type: "application/json" });
-            await writer.write("Hello Bun!");
+            writer.write("Hello Bun!");
             await writer.end();
             const response = await fetch(s3file.presign());
             expect(response.headers.get("content-type")).toStartWith("application/json");
@@ -164,6 +189,42 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             expect(response.headers.get("content-type")).toStartWith("application/xml");
           }
         });
+
+        it("should be able to upload large files using S3.upload + readable Request", async () => {
+          {
+            await S3.upload(
+              tmp_filename,
+              new Request("https://example.com", {
+                method: "PUT",
+                body: async function* () {
+                  for (let i = 0; i < 15; i++) {
+                    if (i % 5 === 0) {
+                      await Bun.sleep(10);
+                    }
+                    yield bigishPayload;
+                  }
+                },
+              }),
+              options,
+            );
+            expect(await S3.size(tmp_filename, options)).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
+
+        it("should be able to upload large files in one go using S3.upload", async () => {
+          {
+            await S3.upload(tmp_filename, bigPayload, options);
+            expect(await S3.size(tmp_filename, options)).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
+
+        it("should be able to upload large files in one go using S3File.write", async () => {
+          {
+            const s3File = new S3(tmp_filename, options);
+            await s3File.write(bigPayload);
+            expect(await s3File.size).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
       });
     });
 
@@ -224,12 +285,27 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3file = file(tmp_filename, options);
             const writer = s3file.writer({ type: "application/json" });
-            await writer.write("Hello Bun!");
+            writer.write("Hello Bun!");
             await writer.end();
             const response = await fetch(s3file.presign());
             expect(response.headers.get("content-type")).toStartWith("application/json");
           }
         });
+
+        it("should be able to upload large files in one go using Bun.write", async () => {
+          {
+            await Bun.write(file(tmp_filename, options), bigPayload);
+            expect(await S3.size(tmp_filename, options)).toBe(bigPayload.byteLength);
+          }
+        }, 15_000);
+
+        it("should be able to upload large files in one go using S3File.write", async () => {
+          {
+            const s3File = file(tmp_filename, options);
+            await s3File.write(bigPayload);
+            expect(await s3File.size).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
       });
     });
 
@@ -297,11 +373,69 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3file = s3(tmp_filename, options);
             const writer = s3file.writer({ type: "application/json" });
-            await writer.write("Hello Bun!");
+            writer.write("Hello Bun!");
             await writer.end();
             const response = await fetch(s3file.presign());
             expect(response.headers.get("content-type")).toStartWith("application/json");
           }
+        });
+
+        it("should be able to upload large files in one go using S3.upload", async () => {
+          {
+            await S3.upload(s3(tmp_filename, options), bigPayload);
+            expect(await S3.size(tmp_filename, options)).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
+
+        it("should be able to upload large files in one go using Bun.write", async () => {
+          {
+            await Bun.write(s3(tmp_filename, options), bigPayload);
+            expect(await S3.size(tmp_filename, options)).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
+
+        it("should be able to upload large files in one go using S3File.write", async () => {
+          {
+            const s3File = s3(tmp_filename, options);
+            await s3File.write(bigPayload);
+            expect(await s3File.size).toBe(bigPayload.byteLength);
+          }
+        }, 10_000);
+
+        describe("readable stream", () => {
+          afterAll(async () => {
+            await Promise.all([
+              s3(tmp_filename + "-readable-stream", options).unlink(),
+              s3(tmp_filename + "-readable-stream-big", options).unlink(),
+            ]);
+          });
+          it("should work with small files", async () => {
+            const s3file = s3(tmp_filename + "-readable-stream", options);
+            await s3file.write("Hello Bun!");
+            const stream = s3file.stream();
+            const reader = stream.getReader();
+            let bytes = 0;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bytes += value?.length ?? 0;
+            }
+            expect(bytes).toBe(10);
+          });
+
+          it("should work with large files", async () => {
+            const s3file = s3(tmp_filename + "-readable-stream-big", options);
+            await s3file.write(bigishPayload);
+            const stream = s3file.stream();
+            const reader = stream.getReader();
+            let bytes = 0;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bytes += value?.length ?? 0;
+            }
+            expect(bytes).toBe(bigishPayload.byteLength);
+          }, 20_000);
         });
       });
     });

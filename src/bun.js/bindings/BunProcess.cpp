@@ -36,6 +36,7 @@
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "NodeValidator.h"
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -88,6 +89,9 @@ typedef int mode_t;
 #if !defined(_MSC_VER)
 #include <unistd.h> // setuid, getuid
 #endif
+
+extern "C" bool Bun__Node__ProcessNoDeprecation;
+extern "C" bool Bun__Node__ProcessThrowDeprecation;
 
 namespace Bun {
 
@@ -1112,6 +1116,37 @@ Process::~Process()
 {
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (Zig::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    auto value = callFrame->argument(0);
+
+    auto ident = builtinNames(vm).warningPublicName();
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(value);
+        process->wrapped().emit(ident, args);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto jsArgs = JSValue::encode(value);
+    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_throwValue, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    scope.throwException(globalObject, value);
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
 #if OS(WINDOWS)
@@ -1127,40 +1162,86 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(globalObject, scope, "Not enough arguments"_s);
-        return {};
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* process = jsCast<Process*>(globalObject->processObject());
 
-    JSObject* errorInstance = ([&]() -> JSObject* {
-        JSValue arg0 = callFrame->uncheckedArgument(0);
-        if (!arg0.isEmpty() && arg0.isCell() && arg0.asCell()->type() == ErrorInstanceType) {
-            return arg0.getObject();
-        }
+    auto warning = callFrame->argument(0);
+    auto type = callFrame->argument(1);
+    auto code = callFrame->argument(2);
+    auto ctor = callFrame->argument(3);
+    auto detail = jsUndefined();
 
-        WTF::String str = arg0.toWTFString(globalObject);
-        auto err = createError(globalObject, str);
-        err->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
-        return err;
-    })();
+    auto dep_warning = jsString(vm, String("DeprecationWarning"_s));
 
-    auto ident = Identifier::fromString(vm, "warning"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(errorInstance);
-
-        process->wrapped().emit(ident, args);
+    if (Bun__Node__ProcessNoDeprecation && JSC::JSValue::equal(globalObject, type, dep_warning)) {
         return JSValue::encode(jsUndefined());
     }
 
-    auto jsArgs = JSValue::encode(errorInstance);
-    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!type.isNull() && type.isObject()) {
+        ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        code = type.get(globalObject, builtinNames(vm).codePublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+
+        detail = type.get(globalObject, vm.propertyNames->detail);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!detail.isString()) detail = jsUndefined();
+
+        type = type.get(globalObject, vm.propertyNames->type);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
+    } else if (type.isCallable()) {
+        ctor = type;
+        code = jsUndefined();
+        type = jsString(vm, String("Warning"_s));
+    }
+
+    if (!type.isUndefined()) {
+        Bun::V::validateString(scope, globalObject, type, "type"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (code.isCallable()) {
+        ctor = code;
+        code = jsUndefined();
+    } else if (!code.isUndefined()) {
+        Bun::V::validateString(scope, globalObject, code, "code"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSObject* errorInstance;
+
+    if (warning.isString()) {
+        errorInstance = createError(globalObject, warning.getString(globalObject));
+    } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
+        errorInstance = warning.getObject();
+    } else {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning);
+    }
+
+    errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+    if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
+    if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
+    // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
+
+    if (JSC::JSValue::equal(globalObject, type, dep_warning)) {
+        if (Bun__Node__ProcessNoDeprecation) {
+            return JSValue::encode(jsUndefined());
+        }
+        if (Bun__Node__ProcessThrowDeprecation) {
+            // // Delay throwing the error to guarantee that all former warnings were properly logged.
+            // return process.nextTick(() => {
+            //    throw warning;
+            // });
+            auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
+            process->queueNextTick(vm, globalObject, func, errorInstance);
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    //   process.nextTick(doEmitWarning, warning);
+    auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
+    process->queueNextTick(vm, globalObject, func, errorInstance);
     return JSValue::encode(jsUndefined());
 }
 
@@ -1974,6 +2055,16 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     RELEASE_AND_RETURN(scope, result);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    return JSValue::encode(jsBoolean(Bun__Node__ProcessThrowDeprecation));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessThrowDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    return true;
+}
+
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -2746,6 +2837,16 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     return jsCast<Process*>(processObject)->constructNextTickFn(globalObject->vm(), globalObject);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processNoDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    return JSValue::encode(jsBoolean(Bun__Node__ProcessNoDeprecation));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessNoDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    return true;
+}
+
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
     // {
@@ -3042,6 +3143,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
+  noDeprecation                    processNoDeprecation                                CustomAccessor
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
@@ -3056,6 +3158,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
+  throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   uptime                           Process_functionUptime                              Function 1

@@ -4086,12 +4086,7 @@ pub const VirtualMachine = struct {
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         if (!name.isEmpty() and !message.isEmpty()) {
-            const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
-
-            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
-                display_name,
-                message,
-            });
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{ name, message });
         } else if (!name.isEmpty()) {
             if (!name.hasPrefixComptime("error")) {
                 try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{name});

@@ -50,6 +50,8 @@ const OOM = bun.OOM;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
+pub var Bun__Node__ProcessTitle: ?string = null;
+
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
@@ -237,6 +239,7 @@ pub const Arguments = struct {
         clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
+        clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -805,6 +808,9 @@ pub const Arguments = struct {
             }
             if (args.flag("--throw-deprecation")) {
                 Bun__Node__ProcessThrowDeprecation = true;
+            }
+            if (args.option("--title")) |title| {
+                Bun__Node__ProcessTitle = title;
             }
         }
 

@@ -53,7 +53,7 @@ aws_signature_cache: AWSSignatureCache = .{},
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
-    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = undefined,
+    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
     lock: bun.Lock = .{},
 

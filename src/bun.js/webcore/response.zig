@@ -955,9 +955,9 @@ pub const Fetch = struct {
                 };
             }
 
-            pub fn isS3(this: *HTTPRequestBody) bool {
+            pub fn isS3(this: *const HTTPRequestBody) bool {
                 return switch (this.*) {
-                    .AnyBlob => |blob| blob.isS3(),
+                    .AnyBlob => |*blob| blob.isS3(),
                     else => false,
                 };
             }
@@ -3144,7 +3144,22 @@ pub const Fetch = struct {
         }
 
         var http_body = body;
+        if (body.isS3()) {
+            prepare_body: {
+                // is a S3 file we can use chunked here
 
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                    var old = body;
+                    defer old.detach();
+                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                    break :prepare_body;
+                }
+                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
+                body.detach();
+
+                return rejected_value;
+            }
+        }
         if (body.needsToReadFile()) {
             prepare_body: {
                 const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
@@ -3207,35 +3222,36 @@ pub const Fetch = struct {
                     }
                 }
 
-                // is a file we can use chunked here
+                // TODO: make this async + lazy
+                const res = JSC.Node.NodeFS.readFile(
+                    globalThis.bunVM().nodeFS(),
+                    .{
+                        .encoding = .buffer,
+                        .path = .{ .fd = opened_fd },
+                        .offset = body.AnyBlob.Blob.offset,
+                        .max_size = body.AnyBlob.Blob.size,
+                    },
+                    .sync,
+                );
 
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
-                    var old = body;
-                    defer old.detach();
-                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
-                    break :prepare_body;
+                if (body.store().?.data.file.pathlike == .path) {
+                    _ = bun.sys.close(opened_fd);
                 }
-                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start file stream", .{}));
-                body.detach();
 
-                return rejected_value;
-            }
-        }
+                switch (res) {
+                    .err => |err| {
+                        is_error = true;
+                        const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        body.detach();
 
-        if (body.isS3()) {
-            prepare_body: {
-                // is a S3 file we can use chunked here
-
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
-                    var old = body;
-                    defer old.detach();
-                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
-                    break :prepare_body;
+                        return rejected_value;
+                    },
+                    .result => |result| {
+                        body.detach();
+                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        http_body = .{ .AnyBlob = body.AnyBlob };
+                    },
                 }
-                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
-                body.detach();
-
-                return rejected_value;
             }
         }
 

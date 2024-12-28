@@ -1309,38 +1309,37 @@ pub const AWSCredentials = struct {
                             },
                             bun.default_allocator,
                         );
-                    } else if (has_more) {
+                        return;
+                    }
+                    if (has_more) {
                         readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.initConst(chunk.list.items),
                             },
                             bun.default_allocator,
                         );
-                    } else {
-                        if (chunk.list.items.len == 0) {
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .done = {},
-                                },
-                                bun.default_allocator,
-                            );
-                        } else {
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
-                                },
-                                bun.default_allocator,
-                            );
-                        }
+                        return;
                     }
-                } else {
-                    var buffer = chunk;
-                    buffer.deinit();
+                    if (chunk.list.items.len == 0) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .done = {},
+                            },
+                            bun.default_allocator,
+                        );
+                        return;
+                    }
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
+                        },
+                        bun.default_allocator,
+                    );
+                    return;
                 }
-            } else {
-                var buffer = chunk;
-                buffer.deinit();
             }
+            var buffer = chunk;
+            buffer.deinit();
         }
 
         pub fn deinit(this: *@This()) void {
@@ -1634,8 +1633,7 @@ pub const MultiPartUpload = struct {
     const MAX_QUEUE_SIZE = 64; // dont make sense more than this because we use fetch anything greater will be 64
     const AWS = AWSCredentials;
     queue: std.ArrayListUnmanaged(UploadPart) = .{},
-
-    available: std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
+    available: bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
 
     currentPartNumber: u16 = 1,
     ref_count: u16 = 1,
@@ -1672,17 +1670,21 @@ pub const MultiPartUpload = struct {
 
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
+    const log = bun.Output.scoped(.S3MultiPartUpload, true);
     pub const MultiPartUploadOptions = struct {
-        queueSize: u8 = 5, // more than 255 dont make sense http thread cannot handle more than that
-        // in s3 client sdk they set it in bytes but the min is still 5 MiB
-        // var params = {Bucket: 'bucket', Key: 'key', Body: stream};
-        // var options = {partSize: 10 * 1024 * 1024, queueSize: 1};
-        // s3.upload(params, options, function(err, data) {
-        //   console.log(err, data);
-        // });
-        // See. https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#upload-property
-        partSize: u16 = 5, // in MiB min is 5 and max 5120 (but we limit to 4 GiB aka 4096)
-        retry: u8 = 3, // default is 3 max 255
+        /// more than 255 dont make sense http thread cannot handle more than that
+        queueSize: u8 = 5,
+        /// in s3 client sdk they set it in bytes but the min is still 5 MiB
+        /// var params = {Bucket: 'bucket', Key: 'key', Body: stream};
+        /// var options = {partSize: 10 * 1024 * 1024, queueSize: 1};
+        /// s3.upload(params, options, function(err, data) {
+        ///   console.log(err, data);
+        /// });
+        /// See. https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#upload-property
+        /// The value is in MiB min is 5 and max 5120 (but we limit to 4 GiB aka 4096)
+        partSize: u16 = 5,
+        /// default is 3 max 255
+        retry: u8 = 3,
     };
 
     pub const UploadPart = struct {
@@ -1709,6 +1711,7 @@ pub const MultiPartUpload = struct {
 
         pub fn onPartResponse(result: AWS.S3PartResult, this: *@This()) void {
             if (this.state == .canceled) {
+                log("onPartResponse {} canceled", .{this.partNumber});
                 if (this.owns_data) bun.default_allocator.free(this.data);
                 this.ctx.deref();
                 return;
@@ -1719,17 +1722,21 @@ pub const MultiPartUpload = struct {
             switch (result) {
                 .failure => |err| {
                     if (this.retry > 0) {
+                        log("onPartResponse {} retry", .{this.partNumber});
                         this.retry -= 1;
                         // retry failed
                         this.perform();
                         return;
                     } else {
+                        log("onPartResponse {} failed", .{this.partNumber});
                         if (this.owns_data) bun.default_allocator.free(this.data);
                         defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
                 },
                 .etag => |etag| {
+                    log("onPartResponse {} success", .{this.partNumber});
+
                     if (this.owns_data) bun.default_allocator.free(this.data);
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
@@ -1781,6 +1788,7 @@ pub const MultiPartUpload = struct {
     };
 
     fn deinit(this: *@This()) void {
+        log("deinit", .{});
         if (this.queue.capacity > 0)
             this.queue.deinit(bun.default_allocator);
         this.poll_ref.unref(this.vm);
@@ -1809,6 +1817,7 @@ pub const MultiPartUpload = struct {
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
+                    log("singleSendUploadResponse {} retry", .{this.options.retry});
                     this.options.retry -= 1;
                     // retry failed
                     this.credentials.executeSimpleS3Request(.{
@@ -1821,10 +1830,14 @@ pub const MultiPartUpload = struct {
 
                     return;
                 } else {
+                    log("singleSendUploadResponse failed", .{});
                     return this.fail(err);
                 }
             },
-            .success => this.done(),
+            .success => {
+                log("singleSendUploadResponse success", .{});
+                this.done();
+            },
         }
     }
 
@@ -1884,6 +1897,7 @@ pub const MultiPartUpload = struct {
         }
     }
     pub fn fail(this: *@This(), _err: AWS.S3Error) void {
+        log("fail {s}:{s}", .{ _err.code, _err.message });
         for (this.queue.items) |*task| {
             task.cancel();
         }
@@ -1923,7 +1937,10 @@ pub const MultiPartUpload = struct {
     }
     pub fn startMultiPartRequestResult(result: AWS.S3DownloadResult, this: *@This()) void {
         switch (result) {
-            .failure => |err| this.fail(err),
+            .failure => |err| {
+                log("startMultiPartRequestResult {s} failed {s}: {s}", .{ this.path, err.message, err.message });
+                this.fail(err);
+            },
             .success => |response| {
                 const slice = response.body.list.items;
                 this.uploadid_buffer = result.success.body;
@@ -1935,12 +1952,14 @@ pub const MultiPartUpload = struct {
                 }
                 if (this.upload_id.len == 0) {
                     // Unknown type of response error from AWS
+                    log("startMultiPartRequestResult {s} failed invalid id", .{this.path});
                     this.fail(.{
                         .code = "UnknownError",
                         .message = "Failed to initiate multipart upload",
                     });
                     return;
                 }
+                log("startMultiPartRequestResult {s} success id: {s}", .{ this.path, this.upload_id });
                 this.state = .multipart_completed;
                 this.drainEnqueuedParts();
             },
@@ -1953,6 +1972,7 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn onCommitMultiPartRequest(result: AWS.S3CommitResult, this: *@This()) void {
+        log("onCommitMultiPartRequest {s}", .{this.upload_id});
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
@@ -1973,6 +1993,7 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn onRollbackMultiPartRequest(result: AWS.S3UploadResult, this: *@This()) void {
+        log("onRollbackMultiPartRequest {s}", .{this.upload_id});
         switch (result) {
             .failure => {
                 if (this.options.retry > 0) {
@@ -1990,6 +2011,7 @@ pub const MultiPartUpload = struct {
     }
 
     fn commitMultiPartRequest(this: *@This()) void {
+        log("commitMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
         const searchParams = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
@@ -2004,6 +2026,7 @@ pub const MultiPartUpload = struct {
         }, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this);
     }
     fn rollbackMultiPartRequest(this: *@This()) void {
+        log("rollbackMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
         const search_params = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
@@ -2065,6 +2088,7 @@ pub const MultiPartUpload = struct {
     }
     fn processBuffered(this: *@This(), part_size: usize) void {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
+            log("processBuffered {s} singlefile_started", .{this.path});
             this.state = .singlefile_started;
             // we can do only 1 request
             this.credentials.executeSimpleS3Request(.{

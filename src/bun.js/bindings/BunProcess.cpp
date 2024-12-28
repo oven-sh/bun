@@ -532,21 +532,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
     return JSC::JSValue::encode(JSC::jsNumber(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         int extiCode32 = arg0.toInt32(globalObject) % 256;
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         exitCode = static_cast<uint8_t>(extiCode32);
         Bun__setExitCode(bunVM(globalObject), exitCode);
     } else if (!arg0.isUndefinedOrNull()) {
-        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "code"_s, "number"_s, arg0);
     } else {
         exitCode = Bun__getExitCode(bunVM(globalObject));
     }
@@ -556,7 +556,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     process->m_isExitCodeObservable = true;
 
     Process__dispatchOnExit(zigGlobal, exitCode);
-    Bun__Process__exit(zigGlobal, exitCode);
+
+    // process.reallyExit(exitCode);
+    auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    MarkedArgumentBuffer args;
+    args.append(jsNumber(exitCode));
+    JSC::call(globalObject, reallyExitVal, args, ""_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -2520,12 +2528,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-    } else if (!arg0.isUndefinedOrNull()) {
-        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return {};
-    } else {
-        exitCode = Bun__getExitCode(bunVM(globalObject));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -3335,6 +3338,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   _kill                            Process_functionReallyKill                          Function 2
+
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0
   geteuid                          Process_functiongeteuid                             Function 0

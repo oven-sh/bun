@@ -548,7 +548,7 @@ JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlo
 
 JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase)
 {
-    auto signal_string = JSValueToStringSafe(globalObject, signal);
+    auto signal_string = signal.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message_extra = triedUppercase ? " (signals must use all capital letters)"_s : ""_s;

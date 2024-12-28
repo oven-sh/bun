@@ -1179,7 +1179,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
 
     auto dep_warning = jsString(vm, String("DeprecationWarning"_s));
 
-    if (Bun__Node__ProcessNoDeprecation && JSC::JSValue::equal(globalObject, type, dep_warning)) {
+    if (Bun__Node__ProcessNoDeprecation && JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -1233,7 +1233,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
     // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
 
-    if (JSC::JSValue::equal(globalObject, type, dep_warning)) {
+    if (JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
         if (Bun__Node__ProcessNoDeprecation) {
             return JSValue::encode(jsUndefined());
         }
@@ -3186,8 +3186,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto pid_value = callFrame->argument(0);
+
+    // this is mimicking `if (pid != (pid | 0)) {`
     int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!JSC::JSValue::equal(globalObject, pid_value, jsNumber(pid))) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "pid"_s, "number"_s, pid_value);
+    }
+
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
     if (signalValue.isNumber()) {

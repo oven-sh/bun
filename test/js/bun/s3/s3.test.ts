@@ -598,5 +598,20 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       await S3.unlink(fullPath, s3Options);
       expect(await S3.exists(fullPath, s3Options)).toBe(false);
     });
+
+    it("should be able to upload a slice", async () => {
+      const filename = randomUUID();
+      const fullPath = `s3://${S3Bucket}/${filename}`;
+      const s3file = s3(fullPath, s3Options);
+      await s3file.write("Hello Bun!");
+      const slice = s3file.slice(6, 10);
+      expect(await slice.text()).toBe("Bun!");
+      expect(await s3file.text()).toBe("Hello Bun!");
+
+      await S3.upload(fullPath, slice, s3Options);
+      const text = await s3file.text();
+      expect(text).toBe("Bun!");
+      await s3file.unlink();
+    });
   });
 });

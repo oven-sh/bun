@@ -1124,11 +1124,11 @@ pub const Blob = struct {
         mkdirp_if_not_exists: ?bool = null,
         extra_options: ?JSValue = null,
     };
-    pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: PathOrBlob, data: JSC.JSValue, options: WriteFileOptions) bun.JSError!JSC.JSValue {
+    pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOrBlob, data: JSC.JSValue, options: WriteFileOptions) bun.JSError!JSC.JSValue {
         if (data.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         }
-        var path_or_blob = path_or_blob_;
+        var path_or_blob = path_or_blob_.*;
         if (path_or_blob == .blob) {
             if (path_or_blob.blob.store == null) {
                 return globalThis.throwInvalidArguments("Blob is detached", .{});
@@ -1248,7 +1248,7 @@ pub const Blob = struct {
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path) brk: {
-            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis, true);
+            break :brk Blob.findOrCreateFileFromPath(&path_or_blob_.path, globalThis, true);
         } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
@@ -1412,7 +1412,7 @@ pub const Blob = struct {
                 return globalThis.throwInvalidArgumentType("write", "options", "object");
             }
         }
-        return writeFileInternal(globalThis, path_or_blob, data, .{
+        return writeFileInternal(globalThis, &path_or_blob, data, .{
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
             .extra_options = options,
         });
@@ -1624,12 +1624,13 @@ pub const Blob = struct {
                 var blob = try constructS3FileInternalStore(globalThis, path.path, options);
                 defer blob.deinit();
 
-                return try writeFileInternal(globalThis, .{ .blob = blob }, data, .{
+                var blob_internal: PathOrBlob = .{ .blob = blob };
+                return try writeFileInternal(globalThis, &blob_internal, data, .{
                     .mkdirp_if_not_exists = false,
                     .extra_options = options,
                 });
             },
-            .blob => return try writeFileInternal(globalThis, path_or_blob, data, .{
+            .blob => return try writeFileInternal(globalThis, &path_or_blob, data, .{
                 .mkdirp_if_not_exists = false,
                 .extra_options = args.nextEat(),
             }),
@@ -2126,9 +2127,9 @@ pub const Blob = struct {
             if (path_or_fd.* == .path) {
                 if (strings.startsWith(path_or_fd.path.slice(), "s3://")) {
                     const credentials = globalThis.bunVM().transpiler.env.getAWSCredentials();
-                    const path = path_or_fd.*.path;
+                    const copy = path_or_fd.*;
                     path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
-                    return Blob.initWithStore(Blob.Store.initS3(path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+                    return Blob.initWithStore(Blob.Store.initS3(copy.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
                 }
             }
         }
@@ -4327,7 +4328,8 @@ pub const Blob = struct {
                 return globalThis.throwInvalidArgumentType("write", "options", "object");
             }
         }
-        return writeFileInternal(globalThis, .{ .blob = this.* }, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
+        var blob_internal: PathOrBlob = .{ .blob = this.* };
+        return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
     }
 
     pub fn doUnlink(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

@@ -55,7 +55,7 @@ const kEmptyObject = Object.freeze({ __proto__: null });
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
-const EventEmitter = function EventEmitter(opts) {
+function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
@@ -65,13 +65,10 @@ const EventEmitter = function EventEmitter(opts) {
   if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
     this.emit = emitWithRejectionCapture;
   }
-};
+}
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
-EventEmitterPrototype._events = undefined;
-EventEmitterPrototype._eventsCount = 0;
-EventEmitterPrototype._maxListeners = undefined;
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
   this._maxListeners = n;

@@ -268,9 +268,7 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     emitter.emit(event, arguments);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -288,8 +286,7 @@ extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 
 extern "C" size_t Bun__process_dlopen_count;
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
-    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
@@ -525,8 +522,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     double now = static_cast<double>(Bun__readOriginTimer(bunVM(lexicalGlobalObject)));
     double result = (now / 1000000.0) / 1000.0;
@@ -569,8 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     return JSC::JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue arg0 = callFrame->argument(0);
@@ -583,8 +578,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
     return JSC::JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSValue cb = jsCast<Process*>(zigGlobal->processObject())->getUncaughtExceptionCaptureCallback();
@@ -649,15 +643,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
-    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2594,8 +2586,7 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if OS(LINUX) || OS(FREEBSD)
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
@@ -2604,8 +2595,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
 #endif
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -2777,8 +2767,7 @@ err:
 #endif
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -2792,7 +2781,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
     if (UNLIKELY(throwScope.exception())) {
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     // Node.js:
@@ -2821,8 +2810,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -3051,9 +3039,7 @@ JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, 
     return JSC::JSValue::encode(jsNumber(_debugPort));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3094,9 +3080,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 #endif
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessTitle,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3140,14 +3124,12 @@ extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -3173,8 +3155,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto pid_value = callFrame->argument(0);

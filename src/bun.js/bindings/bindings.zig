@@ -2460,6 +2460,10 @@ pub const JSPromise = extern struct {
             return this.strong.get() orelse .zero;
         }
 
+        pub fn hasValue(this: *const Strong) bool {
+            return this.strong.has();
+        }
+
         pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
             return this.strong.globalThis;
         }

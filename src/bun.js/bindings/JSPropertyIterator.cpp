@@ -90,6 +90,32 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     return JSPropertyIterator::create(vm, array.releaseData());
 }
 
+// The only non-own property that we sometimes want to get is the code property.
+extern "C" EncodedJSValue Bun__JSPropertyIterator__getCodeProperty(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto& vm = iter->vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
+        return {};
+    }
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
+    if (!object->getNonIndexPropertySlot(globalObject, builtinNames.codePublicName(), slot)) {
+        return {};
+    }
+
+    if (slot.isAccessor() || slot.isCustom()) {
+        return {};
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(slot.getPureResult());
+}
+
 extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     size_t longest = 0;

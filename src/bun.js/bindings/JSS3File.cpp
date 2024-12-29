@@ -1,16 +1,37 @@
+
+
 #include "root.h"
+
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSS3File.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JSS3Bucket.h"
 
 using namespace JSC;
 
 extern "C" SYSV_ABI void* JSS3File__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI bool JSS3File__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+BUN_DECLARE_HOST_FUNCTION(JSS3File__upload);
+BUN_DECLARE_HOST_FUNCTION(JSS3File__presign);
+BUN_DECLARE_HOST_FUNCTION(JSS3File__unlink);
+BUN_DECLARE_HOST_FUNCTION(JSS3File__exists);
+BUN_DECLARE_HOST_FUNCTION(JSS3File__size);
 
+JSC::JSObject* createJSS3FileStaticObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSObject* s3Constructor = Bun::createJSS3FileConstructor(vm, globalObject);
+    s3Constructor->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "upload"_s), 3, JSS3File__upload, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    s3Constructor->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "unlink"_s), 3, JSS3File__unlink, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    s3Constructor->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "presign"_s), 3, JSS3File__presign, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    s3Constructor->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "exists"_s), 3, JSS3File__exists, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    s3Constructor->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "size"_s), 3, JSS3File__size, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    return s3Constructor;
+}
 extern "C" {
 
 JSC::EncodedJSValue BUN__createJSS3FileConstructor(JSGlobalObject* lexicalGlobalObject)
@@ -78,6 +99,12 @@ public:
     {
         Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue arg0 = callFrame->argument(0);
+        if (arg0.isObject()) {
+            return JSValue::encode(Bun::constructS3Bucket(lexicalGlobalObject, callFrame));
+        }
+
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSS3FileConstructor();
 
@@ -93,9 +120,12 @@ public:
                 globalObject,
                 newTarget,
                 functionGlobalObject->JSBlobStructure());
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         void* ptr = JSS3File__construct(globalObject, callFrame);
+
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (UNLIKELY(!ptr)) {
             return JSValue::encode(JSC::jsUndefined());

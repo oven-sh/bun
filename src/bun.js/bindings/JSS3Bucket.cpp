@@ -136,9 +136,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSS3Bucket::construct(JSGlobalObject* le
     return {};
 }
 
-JSS3Bucket* JSS3Bucket::create(JSC::VM& vm, Zig::JSGlobalObject* globalObject, void* ptr)
+JSS3Bucket* JSS3Bucket::create(JSC::VM& vm, Zig::GlobalObject* globalObject, void* ptr)
 {
-    auto* structure = createStructure(globalObject);
+    auto* structure = globalObject->m_JSS3BucketStructure.getInitializedOnMainThread(globalObject);
     NativeExecutable* executable = vm.getHostFunction(&JSS3Bucket::call, ImplementationVisibility::Public, &JSS3Bucket::construct, String("S3Bucket"_s));
     JSS3Bucket* functionObject = new (NotNull, JSC::allocateCell<JSS3Bucket>(vm)) JSS3Bucket(vm, globalObject, structure, executable, ptr);
     functionObject->finishCreation(vm, executable, 1, "S3Bucket"_s);
@@ -199,7 +199,12 @@ JSValue constructS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* cal
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(ptr);
 
-    return JSS3Bucket::create(vm, globalObject, ptr);
+    return JSS3Bucket::create(vm, defaultGlobalObject(globalObject), ptr);
+}
+
+Structure* createJSS3BucketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return JSS3Bucket::createStructure(globalObject);
 }
 
 const JSC::ClassInfo JSS3BucketPrototype::s_info = { "S3Bucket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3BucketPrototype) };

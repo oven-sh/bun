@@ -1,4 +1,5 @@
 #include "root.h"
+
 #include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -33,6 +34,7 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
+
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
@@ -157,6 +159,8 @@
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
+
+#include "JSS3Bucket.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2883,6 +2887,11 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
             init.set(result.toObject(init.owner));
+        });
+
+    m_JSS3BucketStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSS3BucketStructure(init.vm, init.owner));
         });
 
     m_commonJSModuleObjectStructure.initLater(

@@ -33,7 +33,7 @@ public:
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
 
-    static JSS3Bucket* create(JSC::VM& vm, Zig::JSGlobalObject* globalObject, void* ptr);
+    static JSS3Bucket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, void* ptr);
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
     void* ptr;
@@ -41,5 +41,6 @@ public:
 
 // Constructor helper
 JSValue constructS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+Structure* createJSS3BucketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
 } // namespace Bun

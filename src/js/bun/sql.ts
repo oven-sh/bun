@@ -182,7 +182,7 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function (query, result, commandTag, count) {
+  function onResolvePostgresQuery(query, result, commandTag, count, queries) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
@@ -194,11 +194,25 @@ init(
 
     result.count = count || 0;
 
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.resolve(result);
     } catch (e) {}
   },
-  function (query, reject) {
+  function onRejectPostgresQuery(query, reject, queries) {
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.reject(reject);
     } catch (e) {}

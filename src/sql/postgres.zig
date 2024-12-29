@@ -13,6 +13,37 @@ pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
 const BoringSSL = @import("../boringssl.zig");
+pub const AnyPostgresError = error{
+    ConnectionClosed,
+    ExpectedRequest,
+    ExpectedStatement,
+    InvalidBackendKeyData,
+    InvalidBinaryData,
+    InvalidByteSequence,
+    InvalidByteSequenceForEncoding,
+    InvalidCharacter,
+    InvalidMessage,
+    InvalidMessageLength,
+    InvalidQueryBinding,
+    InvalidServerKey,
+    InvalidServerSignature,
+    JSError,
+    MultidimensionalArrayNotSupportedYet,
+    NullsInArrayNotSupportedYet,
+    OutOfMemory,
+    Overflow,
+    PBKDFD2,
+    SASL_SIGNATURE_MISMATCH,
+    SASL_SIGNATURE_INVALID_BASE64,
+    ShortRead,
+    TLSNotAvailable,
+    TLSUpgradeFailed,
+    UnexpectedMessage,
+    UNKNOWN_AUTHENTICATION_METHOD,
+    UNSUPPORTED_AUTHENTICATION_METHOD,
+    UnsupportedByteaFormat,
+    UnsupportedIntegerSize,
+};
 
 pub const SSLMode = enum(u8) {
     disable = 0,
@@ -176,15 +207,22 @@ pub const PostgresSQLQuery = struct {
     statement: ?*PostgresSQLStatement = null,
     query: bun.String = bun.String.empty,
     cursor_name: bun.String = bun.String.empty,
+
+    // Kept alive by being in the "queries" array from JS.
     thisValue: JSValue = .undefined,
-    target: JSC.Strong = JSC.Strong.init(),
+
     status: Status = Status.pending,
     is_done: bool = false,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     binary: bool = false,
-    pending_value: JSC.Strong = .{},
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
+
+    pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const target = PostgresSQLQuery.targetGetCached(this.thisValue) orelse return .zero;
+        PostgresSQLQuery.targetSetCached(this.thisValue, globalObject, .zero);
+        return target;
+    }
 
     pub const Status = enum(u8) {
         pending,
@@ -209,9 +247,6 @@ pub const PostgresSQLQuery = struct {
         }
         this.query.deref();
         this.cursor_name.deref();
-        this.target.deinit();
-        this.pending_value.deinit();
-
         bun.default_allocator.destroy(this);
     }
 
@@ -233,12 +268,12 @@ pub const PostgresSQLQuery = struct {
         bun.assert(this.ref_count.fetchAdd(1, .monotonic) > 0);
     }
 
-    pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
+    pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject, queries_array: JSValue) void {
         this.status = .success;
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSValue.zero;
+        const targetValue = this.getTarget(globalObject);
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
@@ -251,13 +286,18 @@ pub const PostgresSQLQuery = struct {
             this.pending_value.trySwap() orelse .undefined,
             JSValue.jsNumber(0),
             JSValue.jsNumber(0),
+            queries_array,
         });
     }
-    pub fn onWriteFail(this: *@This(), err: anyerror, globalObject: *JSC.JSGlobalObject) void {
+    pub fn onWriteFail(
+        this: *@This(),
+        err: AnyPostgresError,
+        globalObject: *JSC.JSGlobalObject,
+        queries_array: JSValue,
+    ) void {
         this.status = .fail;
-        this.pending_value.deinit();
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSValue.zero;
+        const targetValue = this.getTarget(globalObject);
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
@@ -271,6 +311,7 @@ pub const PostgresSQLQuery = struct {
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
             instance,
+            queries_array,
         });
     }
 
@@ -279,7 +320,7 @@ pub const PostgresSQLQuery = struct {
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSValue.zero;
+        const targetValue = this.getTarget(globalObject);
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
@@ -388,14 +429,31 @@ pub const PostgresSQLQuery = struct {
         }
     };
 
-    pub fn onSuccess(this: *@This(), command_tag_str: []const u8, globalObject: *JSC.JSGlobalObject) void {
+    pub fn allowGC(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
+        if (thisValue == .zero) {
+            return;
+        }
+
+        defer thisValue.ensureStillAlive();
+        PostgresSQLQuery.bindingSetCached(thisValue, globalObject, .zero);
+        PostgresSQLQuery.pendingValueSetCached(thisValue, globalObject, .zero);
+        PostgresSQLQuery.targetSetCached(thisValue, globalObject, .zero);
+    }
+
+    fn consumePendingValue(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?JSValue {
+        const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse return null;
+        PostgresSQLQuery.pendingValueSetCached(thisValue, globalObject, .zero);
+        return pending_value;
+    }
+
+    pub fn onSuccess(this: *@This(), command_tag_str: []const u8, globalObject: *JSC.JSGlobalObject, connection: JSC.JSValue) void {
         this.status = .success;
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSValue.zero;
+        const targetValue = this.getTarget(globalObject);
+        defer allowGC(thisValue, globalObject);
         if (thisValue == .zero or targetValue == .zero) {
-            this.pending_value.deinit();
             return;
         }
 
@@ -407,9 +465,10 @@ pub const PostgresSQLQuery = struct {
 
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
-            this.pending_value.trySwap() orelse .undefined,
+            consumePendingValue(thisValue, globalObject) orelse .undefined,
             tag.toJSTag(globalObject),
             tag.toJSNumber(),
+            PostgresSQLConnection.queriesGetCached(connection) orelse .undefined,
         });
     }
 
@@ -458,7 +517,6 @@ pub const PostgresSQLQuery = struct {
         if (columns != .undefined) {
             PostgresSQLQuery.columnsSetCached(this_value, globalThis, columns);
         }
-        ptr.pending_value.set(globalThis, pending_value);
 
         return this_value;
     }
@@ -486,11 +544,11 @@ pub const PostgresSQLQuery = struct {
             return globalObject.throwInvalidArgumentType("run", "query", "Query");
         }
 
-        this.target.set(globalObject, query);
-        const binding_value = PostgresSQLQuery.bindingGetCached(callframe.this()) orelse .zero;
+        const this_value = callframe.this();
+        const binding_value = PostgresSQLQuery.bindingGetCached(this_value) orelse .zero;
         var query_str = this.query.toUTF8(bun.default_allocator);
         defer query_str.deinit();
-        const columns_value = PostgresSQLQuery.columnsGetCached(callframe.this()) orelse .undefined;
+        const columns_value = PostgresSQLQuery.columnsGetCached(this_value) orelse .undefined;
 
         var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
             if (!globalObject.hasException())
@@ -568,6 +626,7 @@ pub const PostgresSQLQuery = struct {
         connection.requests.writeItem(this) catch {};
         this.ref();
         this.status = if (did_write) .binding else .pending;
+        PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
 
         if (connection.is_ready_for_query)
             connection.flushData();
@@ -761,7 +820,7 @@ pub const PostgresRequest = struct {
         params: []const int4,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
-    ) !void {
+    ) AnyPostgresError!void {
         {
             var q = protocol.Parse{
                 .name = name,
@@ -790,7 +849,7 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         writer: protocol.NewWriter(Context),
         signature: *Signature,
-    ) !void {
+    ) AnyPostgresError!void {
         try writeQuery(query, signature.name, signature.fields, Context, writer);
         try writeBind(signature.name, bun.String.empty, globalObject, array_value, .zero, &.{}, &.{}, Context, writer);
         var exec = protocol.Execute{
@@ -863,7 +922,7 @@ pub const PostgresRequest = struct {
                         connection.tls_status = .ssl_not_available;
                         debug("Server does not support SSL", .{});
                         if (connection.ssl_mode == .require) {
-                            connection.fail("Server does not support SSL", error.SSLNotAvailable);
+                            connection.fail("Server does not support SSL", error.TLSNotAvailable);
                             return;
                         }
                         continue;
@@ -911,9 +970,6 @@ pub const PostgresSQLConnection = struct {
     backend_key_data: protocol.BackendKeyData = .{},
 
     pending_disconnect: bool = false,
-
-    on_connect: JSC.Strong = .{},
-    on_close: JSC.Strong = .{},
 
     database: []const u8 = "",
     user: []const u8 = "",
@@ -988,7 +1044,7 @@ pub const PostgresSQLConnection = struct {
             pub fn computeSaltedPassword(this: *SASL, salt_bytes: []const u8, iteration_count: u32, connection: *PostgresSQLConnection) !void {
                 this.salted_password_created = true;
                 if (Crypto.EVP.pbkdf2(&this.salted_password_bytes, connection.password, salt_bytes, iteration_count, .sha256) == null) {
-                    return error.PBKDF2Failed;
+                    return error.PBKDFD2;
                 }
             }
 
@@ -1050,6 +1106,43 @@ pub const PostgresSQLConnection = struct {
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
+    pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (PostgresSQLConnection.queriesGetCached(thisValue)) |value| {
+            return value;
+        }
+
+        const array = JSC.JSValue.createEmptyArray(globalObject, 0);
+        PostgresSQLConnection.queriesSetCached(thisValue, globalObject, array);
+
+        return array;
+    }
+
+    pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+        if (PostgresSQLConnection.onconnectGetCached(thisValue)) |value| {
+            return value;
+        }
+
+        return .undefined;
+    }
+
+    pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+        PostgresSQLConnection.onconnectSetCached(thisValue, globalObject, value);
+        return true;
+    }
+
+    pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+        if (PostgresSQLConnection.oncloseGetCached(thisValue)) |value| {
+            return value;
+        }
+
+        return .undefined;
+    }
+
+    pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+        PostgresSQLConnection.oncloseSetCached(thisValue, globalObject, value);
+        return true;
+    }
+
     pub fn setupTLS(this: *PostgresSQLConnection) void {
         debug("setupTLS", .{});
         const new_socket = uws.us_socket_upgrade_to_tls(this.socket.SocketTCP.socket.connected, this.tls_ctx.?, this.tls_config.server_name) orelse {
@@ -1096,8 +1189,7 @@ pub const PostgresSQLConnection = struct {
         this.status = status;
         switch (status) {
             .connected => {
-                const on_connect = this.on_connect.swap();
-                if (on_connect == .zero) return;
+                const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
                 const js_value = this.js_value;
                 js_value.ensureStillAlive();
                 this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
@@ -1130,8 +1222,7 @@ pub const PostgresSQLConnection = struct {
 
         this.status = .failed;
         if (!this.socket.isClosed()) this.socket.close();
-        const on_close = this.on_close.swap();
-        if (on_close == .zero) return;
+        const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
         _ = on_close.call(
             this.globalObject,
@@ -1142,11 +1233,51 @@ pub const PostgresSQLConnection = struct {
         ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
     }
 
-    pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: anyerror) void {
+    pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
-        const instance = this.globalObject.createErrorInstance("{s}", .{message});
-        instance.put(this.globalObject, JSC.ZigString.static("code"), String.init(@errorName(err)).toJS(this.globalObject));
-        this.failWithJSValue(instance);
+
+        const globalObject = this.globalObject;
+        const error_code: JSC.Error = switch (err) {
+            error.ConnectionClosed => JSC.Error.ERR_POSTGRES_CONNECTION_CLOSED,
+            error.ExpectedRequest => JSC.Error.ERR_POSTGRES_EXPECTED_REQUEST,
+            error.ExpectedStatement => JSC.Error.ERR_POSTGRES_EXPECTED_STATEMENT,
+            error.InvalidBackendKeyData => JSC.Error.ERR_POSTGRES_INVALID_BACKEND_KEY_DATA,
+            error.InvalidBinaryData => JSC.Error.ERR_POSTGRES_INVALID_BINARY_DATA,
+            error.InvalidByteSequence => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE,
+            error.InvalidByteSequenceForEncoding => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
+            error.InvalidCharacter => JSC.Error.ERR_POSTGRES_INVALID_CHARACTER,
+            error.InvalidMessage => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE,
+            error.InvalidMessageLength => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE_LENGTH,
+            error.InvalidQueryBinding => JSC.Error.ERR_POSTGRES_INVALID_QUERY_BINDING,
+            error.InvalidServerKey => JSC.Error.ERR_POSTGRES_INVALID_SERVER_KEY,
+            error.InvalidServerSignature => JSC.Error.ERR_POSTGRES_INVALID_SERVER_SIGNATURE,
+            error.MultidimensionalArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
+            error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
+            error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
+            error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+            error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
+            error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
+            error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
+            error.TLSUpgradeFailed => JSC.Error.ERR_POSTGRES_TLS_UPGRADE_FAILED,
+            error.UnexpectedMessage => JSC.Error.ERR_POSTGRES_UNEXPECTED_MESSAGE,
+            error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
+            error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
+            error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
+            error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+            error.JSError => {
+                this.failWithJSValue(globalObject.takeException(error.JSError));
+                return;
+            },
+            error.OutOfMemory => {
+                // TODO: add binding for creating an out of memory error?
+                this.failWithJSValue(globalObject.takeException(globalObject.throwOutOfMemory()));
+                return;
+            },
+            error.ShortRead => {
+                bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
+            },
+        };
+        this.failWithJSValue(error_code.fmt(globalObject, "{s}", .{message}));
     }
 
     pub fn onClose(this: *PostgresSQLConnection) void {
@@ -1299,11 +1430,7 @@ pub const PostgresSQLConnection = struct {
                     this.read_buffer.byte_list.len = 0;
                     this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
                 } else {
-                    if (comptime bun.Environment.allow_assert) {
-                        if (@errorReturnTrace()) |trace| {
-                            debug("Error: {s}\n{}", .{ @errorName(err), trace });
-                        }
-                    }
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     this.fail("Failed to read data", err);
                 }
             };
@@ -1315,11 +1442,7 @@ pub const PostgresSQLConnection = struct {
             this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
             PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
                 if (err != error.ShortRead) {
-                    if (comptime bun.Environment.allow_assert) {
-                        if (@errorReturnTrace()) |trace| {
-                            debug("Error: {s}\n{}", .{ @errorName(err), trace });
-                        }
-                    }
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     this.fail("Failed to read data", err);
                     return;
                 }
@@ -1465,8 +1588,7 @@ pub const PostgresSQLConnection = struct {
 
         ptr.* = PostgresSQLConnection{
             .globalObject = globalObject,
-            .on_connect = JSC.Strong.create(on_connect, globalObject),
-            .on_close = JSC.Strong.create(on_close, globalObject),
+
             .database = database,
             .user = username,
             .password = password,
@@ -1486,6 +1608,9 @@ pub const PostgresSQLConnection = struct {
         const js_value = ptr.toJS(globalObject);
         js_value.ensureStillAlive();
         ptr.js_value = js_value;
+
+        PostgresSQLConnection.onconnectSetCached(js_value, globalObject, on_connect);
+        PostgresSQLConnection.oncloseSetCached(js_value, globalObject, on_close);
 
         {
             const hostname = hostname_str.toUTF8(bun.default_allocator);
@@ -1609,8 +1734,6 @@ pub const PostgresSQLConnection = struct {
         this.statements.deinit(bun.default_allocator);
         this.write_buffer.deinit(bun.default_allocator);
         this.read_buffer.deinit(bun.default_allocator);
-        this.on_close.deinit();
-        this.on_connect.deinit();
         this.backend_parameters.deinit();
         bun.default_allocator.free(this.options_buf);
         this.tls_config.deinit();
@@ -1636,12 +1759,12 @@ pub const PostgresSQLConnection = struct {
     pub const Writer = struct {
         connection: *PostgresSQLConnection,
 
-        pub fn write(this: Writer, data: []const u8) anyerror!void {
+        pub fn write(this: Writer, data: []const u8) AnyPostgresError!void {
             var buffer = &this.connection.write_buffer;
             try buffer.write(bun.default_allocator, data);
         }
 
-        pub fn pwrite(this: Writer, data: []const u8, index: usize) anyerror!void {
+        pub fn pwrite(this: Writer, data: []const u8, index: usize) AnyPostgresError!void {
             @memcpy(this.connection.write_buffer.byte_list.slice()[index..][0..data.len], data);
         }
 
@@ -1676,7 +1799,7 @@ pub const PostgresSQLConnection = struct {
         pub fn ensureCapacity(this: Reader, count: usize) bool {
             return @as(usize, this.connection.read_buffer.head) + count <= @as(usize, this.connection.read_buffer.byte_list.len);
         }
-        pub fn read(this: Reader, count: usize) anyerror!Data {
+        pub fn read(this: Reader, count: usize) AnyPostgresError!Data {
             var remaining = this.connection.read_buffer.remaining();
             if (@as(usize, remaining.len) < count) {
                 return error.ShortRead;
@@ -1687,7 +1810,7 @@ pub const PostgresSQLConnection = struct {
                 .temporary = remaining[0..count],
             };
         }
-        pub fn readZ(this: Reader) anyerror!Data {
+        pub fn readZ(this: Reader) AnyPostgresError!Data {
             const remain = this.connection.read_buffer.remaining();
 
             if (bun.strings.indexOfChar(remain, 0)) |zero| {
@@ -1799,7 +1922,7 @@ pub const PostgresSQLConnection = struct {
             }
         }
 
-        pub fn fromBytes(binary: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) anyerror!DataCell {
+        pub fn fromBytes(binary: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
@@ -1956,7 +2079,7 @@ pub const PostgresSQLConnection = struct {
             return pg_ntoT(32, x);
         }
 
-        pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) anyerror!ReturnType {
+        pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) AnyPostgresError!ReturnType {
             switch (comptime tag) {
                 .float8 => {
                     return @as(f64, @bitCast(try parseBinary(.int8, i64, bytes)));
@@ -2017,7 +2140,7 @@ pub const PostgresSQLConnection = struct {
                 return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len));
             }
 
-            pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) anyerror!bool {
+            pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) !bool {
                 const oid = this.fields[index].type_oid;
                 debug("index: {d}, oid: {d}", .{ index, oid });
 
@@ -2072,7 +2195,7 @@ pub const PostgresSQLConnection = struct {
                         const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
                         const columns_value = PostgresSQLQuery.columnsGetCached(req.thisValue) orelse .zero;
                         PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                            req.onWriteFail(err, this.globalObject);
+                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                             req.deref();
                             this.requests.discard(1);
                             continue;
@@ -2091,7 +2214,11 @@ pub const PostgresSQLConnection = struct {
         return any;
     }
 
-    pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) !void {
+    pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
+        return PostgresSQLConnection.queriesGetCached(this.js_value) orelse .zero;
+    }
+
+    pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
         debug("on({s})", .{@tagName(MessageType)});
         if (comptime MessageType != .ReadyForQuery) {
             this.is_ready_for_query = false;
@@ -2181,7 +2308,7 @@ pub const PostgresSQLConnection = struct {
                 debug("-> {s}", .{cmd.command_tag.slice()});
                 _ = this.requests.discard(1);
                 defer this.updateRef();
-                request.onSuccess(cmd.command_tag.slice(), this.globalObject);
+                request.onSuccess(cmd.command_tag.slice(), this.globalObject, this.js_value);
             },
             .BindComplete => {
                 try reader.eatMessage(protocol.BindComplete);
@@ -2255,7 +2382,12 @@ pub const PostgresSQLConnection = struct {
 
                         const iteration_count = try cont.iterationCount();
 
-                        const server_salt_decoded_base64 = try bun.base64.decodeAlloc(bun.z_allocator, cont.s);
+                        const server_salt_decoded_base64 = bun.base64.decodeAlloc(bun.z_allocator, cont.s) catch |err| {
+                            return switch (err) {
+                                error.DecodingFailed => error.SASL_SIGNATURE_INVALID_BASE64,
+                                else => |e| e,
+                            };
+                        };
                         defer bun.z_allocator.free(server_salt_decoded_base64);
                         try sasl.computeSaltedPassword(server_salt_decoded_base64, iteration_count, this);
 
@@ -2354,6 +2486,7 @@ pub const PostgresSQLConnection = struct {
 
                     else => {
                         debug("TODO auth: {s}", .{@tagName(std.meta.activeTag(auth))});
+                        this.fail("TODO: support authentication method: {s}", error.UNSUPPORTED_AUTHENTICATION_METHOD);
                     },
                 }
             },
@@ -2379,10 +2512,9 @@ pub const PostgresSQLConnection = struct {
                         this.updateHasPendingActivity();
                     }
 
-                    const on_connect = this.on_connect.swap();
-                    if (on_connect == .zero) return;
+                    const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
+                    defer on_connect.ensureStillAlive();
                     const js_value = this.js_value;
-                    js_value.ensureStillAlive();
                     this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ err.toJS(this.globalObject), js_value });
 
                     // it shouldn't enqueue any requests while connecting
@@ -2426,7 +2558,7 @@ pub const PostgresSQLConnection = struct {
                 try reader.eatMessage(protocol.CloseComplete);
                 var request = this.current() orelse return error.ExpectedRequest;
                 _ = this.requests.discard(1);
-                request.onSuccess("CLOSECOMPLETE", this.globalObject);
+                request.onSuccess("CLOSECOMPLETE", this.globalObject, this.getQueriesArray());
             },
             .CopyInResponse => {
                 debug("TODO CopyInResponse", .{});
@@ -2443,7 +2575,7 @@ pub const PostgresSQLConnection = struct {
                 var request = this.current() orelse return error.ExpectedRequest;
                 _ = this.requests.discard(1);
                 this.updateRef();
-                request.onSuccess("", this.globalObject);
+                request.onSuccess("", this.globalObject, this.getQueriesArray());
             },
             .CopyOutResponse => {
                 debug("TODO CopyOutResponse", .{});
@@ -2467,24 +2599,20 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        _ = callframe;
-        _ = globalObject;
-        _ = this;
-
-        return .undefined;
-    }
-
-    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        _ = callframe;
-        _ = globalObject;
-        _ = this;
-
-        return .undefined;
-    }
-
     pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.status == Status.connected);
+    }
+
+    pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        const on_connect = PostgresSQLConnection.onconnectGetCached(this.js_value) orelse return null;
+        PostgresSQLConnection.onconnectSetCached(this.js_value, globalObject, .zero);
+        return on_connect;
+    }
+
+    pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        const on_close = PostgresSQLConnection.oncloseGetCached(this.js_value) orelse return null;
+        PostgresSQLConnection.oncloseSetCached(this.js_value, globalObject, .zero);
+        return on_close;
     }
 };
 

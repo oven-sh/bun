@@ -15,7 +15,7 @@ const int4 = postgres.int4;
 const int8 = postgres.int8;
 const PostgresInt64 = postgres.PostgresInt64;
 const types = postgres.types;
-
+const AnyPostgresError = postgres.AnyPostgresError;
 pub const ArrayList = struct {
     array: *std.ArrayList(u8),
 
@@ -23,11 +23,11 @@ pub const ArrayList = struct {
         return this.array.items.len;
     }
 
-    pub fn write(this: @This(), bytes: []const u8) anyerror!void {
+    pub fn write(this: @This(), bytes: []const u8) AnyPostgresError!void {
         try this.array.appendSlice(bytes);
     }
 
-    pub fn pwrite(this: @This(), bytes: []const u8, i: usize) anyerror!void {
+    pub fn pwrite(this: @This(), bytes: []const u8, i: usize) AnyPostgresError!void {
         @memcpy(this.array.items[i..][0..bytes.len], bytes);
     }
 
@@ -71,7 +71,7 @@ pub const StackReader = struct {
     pub fn ensureCapacity(this: StackReader, count: usize) bool {
         return this.buffer.len >= (this.offset.* + count);
     }
-    pub fn read(this: StackReader, count: usize) anyerror!Data {
+    pub fn read(this: StackReader, count: usize) AnyPostgresError!Data {
         const offset = this.offset.*;
         if (!this.ensureCapacity(count)) {
             return error.ShortRead;
@@ -82,7 +82,7 @@ pub const StackReader = struct {
             .temporary = this.buffer[offset..this.offset.*],
         };
     }
-    pub fn readZ(this: StackReader) anyerror!Data {
+    pub fn readZ(this: StackReader) AnyPostgresError!Data {
         const remaining = this.peek();
         if (bun.strings.indexOfChar(remaining, 0)) |zero| {
             this.skip(zero + 1);
@@ -98,8 +98,8 @@ pub const StackReader = struct {
 pub fn NewWriterWrap(
     comptime Context: type,
     comptime offsetFn_: (fn (ctx: Context) usize),
-    comptime writeFunction_: (fn (ctx: Context, bytes: []const u8) anyerror!void),
-    comptime pwriteFunction_: (fn (ctx: Context, bytes: []const u8, offset: usize) anyerror!void),
+    comptime writeFunction_: (fn (ctx: Context, bytes: []const u8) AnyPostgresError!void),
+    comptime pwriteFunction_: (fn (ctx: Context, bytes: []const u8, offset: usize) AnyPostgresError!void),
 ) type {
     return struct {
         wrapped: Context,
@@ -111,7 +111,7 @@ pub fn NewWriterWrap(
 
         pub const WrappedWriter = @This();
 
-        pub inline fn write(this: @This(), data: []const u8) anyerror!void {
+        pub inline fn write(this: @This(), data: []const u8) AnyPostgresError!void {
             try writeFn(this.wrapped, data);
         }
 
@@ -119,16 +119,16 @@ pub fn NewWriterWrap(
             index: usize,
             context: WrappedWriter,
 
-            pub fn write(this: LengthWriter) anyerror!void {
+            pub fn write(this: LengthWriter) AnyPostgresError!void {
                 try this.context.pwrite(&Int32(this.context.offset() - this.index), this.index);
             }
 
-            pub fn writeExcludingSelf(this: LengthWriter) anyerror!void {
+            pub fn writeExcludingSelf(this: LengthWriter) AnyPostgresError!void {
                 try this.context.pwrite(&Int32(this.context.offset() -| (this.index + 4)), this.index);
             }
         };
 
-        pub inline fn length(this: @This()) anyerror!LengthWriter {
+        pub inline fn length(this: @This()) AnyPostgresError!LengthWriter {
             const i = this.offset();
             try this.int4(0);
             return LengthWriter{
@@ -141,7 +141,7 @@ pub fn NewWriterWrap(
             return offsetFn(this.wrapped);
         }
 
-        pub inline fn pwrite(this: @This(), data: []const u8, i: usize) anyerror!void {
+        pub inline fn pwrite(this: @This(), data: []const u8, i: usize) AnyPostgresError!void {
             try pwriteFn(this.wrapped, data, i);
         }
 
@@ -349,8 +349,8 @@ pub fn NewReaderWrap(
     comptime peekFn_: (fn (ctx: Context) []const u8),
     comptime skipFn_: (fn (ctx: Context, count: usize) void),
     comptime ensureCapacityFn_: (fn (ctx: Context, count: usize) bool),
-    comptime readFunction_: (fn (ctx: Context, count: usize) anyerror!Data),
-    comptime readZ_: (fn (ctx: Context) anyerror!Data),
+    comptime readFunction_: (fn (ctx: Context, count: usize) AnyPostgresError!Data),
+    comptime readZ_: (fn (ctx: Context) AnyPostgresError!Data),
 ) type {
     return struct {
         wrapped: Context,
@@ -367,11 +367,11 @@ pub fn NewReaderWrap(
             markMessageStartFn(this.wrapped);
         }
 
-        pub inline fn read(this: @This(), count: usize) anyerror!Data {
+        pub inline fn read(this: @This(), count: usize) AnyPostgresError!Data {
             return try readFn(this.wrapped, count);
         }
 
-        pub inline fn eatMessage(this: @This(), comptime msg_: anytype) anyerror!void {
+        pub inline fn eatMessage(this: @This(), comptime msg_: anytype) AnyPostgresError!void {
             const msg = msg_[1..];
             try this.ensureCapacity(msg.len);
 
@@ -381,7 +381,7 @@ pub fn NewReaderWrap(
             return error.InvalidMessage;
         }
 
-        pub fn skip(this: @This(), count: usize) anyerror!void {
+        pub fn skip(this: @This(), count: usize) AnyPostgresError!void {
             skipFn(this.wrapped, count);
         }
 
@@ -389,11 +389,11 @@ pub fn NewReaderWrap(
             return peekFn(this.wrapped);
         }
 
-        pub inline fn readZ(this: @This()) anyerror!Data {
+        pub inline fn readZ(this: @This()) AnyPostgresError!Data {
             return try readZFn(this.wrapped);
         }
 
-        pub inline fn ensureCapacity(this: @This(), count: usize) anyerror!void {
+        pub inline fn ensureCapacity(this: @This(), count: usize) AnyPostgresError!void {
             if (!ensureCapacityFn(this.wrapped, count)) {
                 return error.ShortRead;
             }
@@ -458,7 +458,7 @@ pub fn NewWriter(comptime Context: type) type {
 
 fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     return struct {
-        pub fn decode(this: *Container, context: anytype) anyerror!void {
+        pub fn decode(this: *Container, context: anytype) AnyPostgresError!void {
             const Context = @TypeOf(context);
             try decodeFn(this, Context, NewReader(Context){ .wrapped = context });
         }
@@ -467,7 +467,7 @@ fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
 
 fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
     return struct {
-        pub fn write(this: *Container, context: anytype) anyerror!void {
+        pub fn write(this: *Container, context: anytype) AnyPostgresError!void {
             const Context = @TypeOf(context);
             try writeFn(this, Context, NewWriter(Context){ .wrapped = context });
         }
@@ -809,7 +809,13 @@ pub const ErrorResponse = struct {
             .{ "where", where, void },
         };
 
-        const err = globalObject.ERR_POSTGRES_ERROR_RESPONSE("{s}", .{b.allocatedSlice()[0..b.len]}).toJS();
+        const error_code: JSC.Error =
+            // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
+            if (code.toInt32() orelse 0 == 42601)
+            JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
+        else
+            JSC.Error.ERR_POSTGRES_SERVER_ERROR;
+        const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
 
         inline for (possible_fields) |field| {
             if (!field.@"1".isEmpty()) {
@@ -936,7 +942,7 @@ pub const FormatCode = enum {
 pub const null_int4 = 4294967295;
 
 pub const DataRow = struct {
-    pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(ContextType), comptime forEach: fn (@TypeOf(context), index: u32, bytes: ?*Data) anyerror!bool) anyerror!void {
+    pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(ContextType), comptime forEach: fn (@TypeOf(context), index: u32, bytes: ?*Data) AnyPostgresError!bool) AnyPostgresError!void {
         var remaining_bytes = try reader.length();
         remaining_bytes -|= 4;
 
@@ -974,7 +980,7 @@ pub const FieldDescription = struct {
         this.name.deinit();
     }
 
-    pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
+    pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) AnyPostgresError!void {
         var name = try reader.readZ();
         errdefer {
             name.deinit();

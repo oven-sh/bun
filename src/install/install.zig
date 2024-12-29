@@ -3102,7 +3102,7 @@ pub const PackageManager = struct {
     }
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
-        return this.env.getHttpProxy(url);
+        return this.env.getHttpProxyFor(url);
     }
 
     pub fn tlsRejectUnauthorized(this: *PackageManager) bool {

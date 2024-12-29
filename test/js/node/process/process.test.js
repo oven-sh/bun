@@ -1056,3 +1056,10 @@ describe("process.exitCode", () => {
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
 });
+
+it("process.memoryUsage.arrayBuffers", () => {
+  const initial = process.memoryUsage().arrayBuffers;
+  const array = new ArrayBuffer(1024 * 1024 * 16);
+  array.buffer;
+  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+});

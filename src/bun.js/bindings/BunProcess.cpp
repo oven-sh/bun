@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -1143,10 +1144,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         }
 
         WTF::String str = arg0.toWTFString(globalObject);
-        return createError(globalObject, str);
+        auto err = createError(globalObject, str);
+        err->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
+        return err;
     })();
-
-    errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     auto ident = Identifier::fromString(vm, "warning"_s);
     if (process->wrapped().hasEventListeners(ident)) {
@@ -1158,8 +1159,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     }
 
     auto jsArgs = JSValue::encode(errorInstance);
-    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
-        static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -1905,7 +1906,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
@@ -1958,7 +1959,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject, args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
@@ -2028,7 +2029,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         JSC::CallData callData = JSC::getCallData(getControl);
 
         NakedPtr<JSC::Exception> returnedException = nullptr;
-        auto result = JSC::call(globalObject, getControl, callData, globalObject->globalThis(), args, returnedException);
+        auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args, returnedException);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (auto* exception = returnedException.get()) {
@@ -2195,7 +2196,7 @@ inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
     auto callData = JSC::getCallData(fn);
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, String("util/types"_s)));
-    return JSC::call(globalObject, fn, callData, globalObject, args);
+    return JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, globalObject, args);
 }
 
 inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)
@@ -2322,37 +2323,11 @@ static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
     PropertyOffset offset;
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "rss"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "heapTotal"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "heapUsed"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "external"_s),
-        0,
-        offset);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        JSC::Identifier::fromString(vm, "arrayBuffers"_s),
-        0,
-        offset);
-
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "rss"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "heapTotal"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "heapUsed"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "external"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "arrayBuffers"_s), 0, offset);
     return structure;
 }
 
@@ -2590,10 +2565,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     result->putDirectOffset(vm, 3, JSC::jsDoubleNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
-    // We report 0 for this because m_arrayBuffers in JSC::Heap is private and we need to add a binding
-    // If we use objectTypeCounts(), it's hideously slow because it loops through every single object in the heap
-    // TODO: add a binding for m_arrayBuffers, registerWrapper() in TypedArrayController doesn't work
-    result->putDirectOffset(vm, 4, JSC::jsNumber(0));
+    // JSC won't count this number until vm.heap.addReference() is called.
+    // That will only happen in cases like:
+    // - new ArrayBuffer()
+    // - new Uint8Array(42).buffer
+    // - fs.readFile(path, "utf-8") (sometimes)
+    // - ...
+    //
+    // But it won't happen in cases like:
+    // - new Uint8Array(42)
+    // - Buffer.alloc(42)
+    // - new Uint8Array(42).slice()
+    result->putDirectOffset(vm, 4, JSC::jsDoubleNumber(vm.heap.arrayBufferSize()));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
@@ -2639,7 +2622,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
             auto callData = getCallData(resumeFunction);
 
             MarkedArgumentBuffer args;
-            JSC::call(globalObject, resumeFunction, callData, stdinValue, args);
+            JSC::profiledCall(globalObject, ProfilingReason::API, resumeFunction, callData, stdinValue, args);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
@@ -2673,11 +2656,9 @@ static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0,
-        String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
+    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0, String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
 
-    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
-        String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
+    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0, String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
 
     memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, 0);
     return memoryUsage;
@@ -2758,7 +2739,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    JSValue nextTickFunction = JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -2981,7 +2962,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     JSC::CallData callData = JSC::getCallData(_killFn);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, _killFn, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {

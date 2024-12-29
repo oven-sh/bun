@@ -13,18 +13,20 @@ if (!isCI) {
   // local all postgres trust
   // local all bun_sql_test_scram scram-sha-256
   // local all bun_sql_test trust
-  //
+  // local all bun_sql_test_md5 md5
+
   // # IPv4 local connections:
   // host all ${USERNAME} 127.0.0.1/32 trust
   // host all postgres 127.0.0.1/32 trust
   // host all bun_sql_test_scram 127.0.0.1/32 scram-sha-256
   // host all bun_sql_test 127.0.0.1/32 trust
+  // host all bun_sql_test_md5 127.0.0.1/32 md5
   // # IPv6 local connections:
   // host all ${USERNAME} ::1/128 trust
   // host all postgres ::1/128 trust
   // host all bun_sql_test ::1/128 trust
   // host all bun_sql_test_scram ::1/128 scram-sha-256
-  //
+  // host all bun_sql_test_md5 ::1/128 md5
   // # Allow replication connections from localhost, by a user with the
   // # replication privilege.
   // local replication all trust
@@ -32,9 +34,6 @@ if (!isCI) {
   // host replication all ::1/128 trust
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = "postgres://bun_sql_test@localhost:5432/bun_sql_test";
-
-  const delay = ms => Bun.sleep(ms);
-  const rel = x => new URL(x, import.meta.url);
 
   const login = {
     username: "bun_sql_test",
@@ -598,9 +597,21 @@ if (!isCI) {
   //   return [true, (await postgres({ ...options, ...login })`select true as x`)[0].x]
   // })
 
-  // t('Login using MD5', async() => {
-  //   return [true, (await postgres({ ...options, ...login_md5 })`select true as x`)[0].x]
-  // })
+  test("Login using MD5", async () => {
+    await using sql = postgres({ ...options, ...login_md5 });
+    expect(await sql`select true as x`).toEqual([{ x: true }]);
+  });
+
+  test("Login with bad credentials propagates error from server", async () => {
+    const sql = postgres({ ...options, ...login_md5, username: "bad_user", password: "bad_password" });
+    let err;
+    try {
+      await sql`select true as x`;
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
+  });
 
   test("Login using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });

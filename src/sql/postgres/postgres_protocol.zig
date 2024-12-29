@@ -539,9 +539,6 @@ pub const Authentication = union(enum) {
             },
             5 => {
                 if (message_length != 12) return error.InvalidMessageLength;
-                if (!try reader.expectInt(u32, 5)) {
-                    return error.InvalidMessage;
-                }
                 var salt_data = try reader.bytes(4);
                 defer salt_data.deinit();
                 this.* = .{

@@ -815,7 +815,7 @@ pub const Tree = struct {
 
             // filter out disabled dependencies
             if (comptime method == .filter) {
-                if (builder.lockfile.isPackageDisabled(
+                if (builder.lockfile.isResolvedDependencyDisabled(
                     dep_id,
                     switch (pkg_resolutions[parent_pkg_id].tag) {
                         .root, .workspace, .folder => builder.manager.options.local_package_features,
@@ -973,7 +973,7 @@ pub const Tree = struct {
     }
 };
 
-pub fn isPackageDisabled(
+pub fn isResolvedDependencyDisabled(
     lockfile: *const Lockfile,
     dep_id: DependencyID,
     features: Features,
@@ -1751,7 +1751,7 @@ pub const Printer = struct {
             // It's possible this package was installed but the dependency is disabled.
             // Have "zod@1.0.0" in dependencies and `zod2@npm:zod@1.0.0` in devDependencies
             // and install with --omit=dev.
-            if (this.lockfile.isPackageDisabled(
+            if (this.lockfile.isResolvedDependencyDisabled(
                 dep_id,
                 this.options.local_package_features,
                 &pkg_metas[package_id],
@@ -2247,14 +2247,14 @@ pub const Printer = struct {
                     }
 
                     if (dependencies.len > 0) {
-                        var behavior = Behavior.uninitialized;
+                        var behavior: Behavior = .{};
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
                             if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                                } else if (dep.behavior.isNormal()) {
+                                } else if (dep.behavior.isProd()) {
                                     try writer.writeAll("  dependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                                 } else if (dep.behavior.isDev()) {
@@ -3577,7 +3577,7 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.prod };
         pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
         pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
         pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
@@ -3971,7 +3971,7 @@ pub const Package = extern struct {
                         .name = name.value,
                         .name_hash = name.hash,
                         .behavior = if (comptime is_peer)
-                            group.behavior.setOptional(i < package_version.non_optional_peer_dependencies_start)
+                            group.behavior.set(.optional, i < package_version.non_optional_peer_dependencies_start)
                         else
                             group.behavior,
                         .version = Dependency.parse(
@@ -4531,7 +4531,7 @@ pub const Package = extern struct {
                         for (package_dependencies[0..dependencies_count]) |*dep| {
                             if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
                                 dep.* = .{
-                                    .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
                                     .name = external_alias.value,
                                     .name_hash = external_alias.hash,
                                     .version = dependency_version,
@@ -4643,7 +4643,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+            .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
@@ -5625,7 +5625,7 @@ pub const Package = extern struct {
                     )) |_dep| {
                         var dep = _dep;
                         if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                            dep.behavior = dep.behavior.setOptional(true);
+                            dep.behavior = dep.behavior.add(.optional);
                         }
 
                         package_dependencies[total_dependencies_count] = dep;
@@ -5668,7 +5668,7 @@ pub const Package = extern struct {
                                 )) |_dep| {
                                     var dep = _dep;
                                     if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                                        dep.behavior = dep.behavior.setOptional(true);
+                                        dep.behavior = dep.behavior.add(.optional);
                                     }
 
                                     package_dependencies[total_dependencies_count] = dep;
@@ -7255,9 +7255,9 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         try w.beginObject();
         defer w.endObject() catch {};
 
-        const fields = @typeInfo(Behavior).Struct.fields;
-        inline for (fields[1 .. fields.len - 1]) |field| {
-            if (@field(dep.behavior, field.name)) {
+        const fields = @typeInfo(Behavior.Enum).Enum.fields;
+        inline for (fields) |field| {
+            if (dep.behavior.contains(@enumFromInt(field.value))) {
                 try w.objectField(field.name);
                 try w.write(true);
             }

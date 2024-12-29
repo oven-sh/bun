@@ -675,9 +675,7 @@ pub fn migrateNPMLockfile(
                                 .workspace = wksp_path,
                             },
                         },
-                        .behavior = .{
-                            .workspace = true,
-                        },
+                        .behavior = Dependency.Behavior.workspace,
                     };
                     resolutions_buf[0] = entry1.new_package_id;
 
@@ -767,13 +765,13 @@ pub fn migrateNPMLockfile(
                                 .name = dep_name,
                                 .name_hash = name_hash,
                                 .version = version,
-                                .behavior = .{
-                                    .normal = dep_key == .dependencies,
+                                .behavior = Dependency.Behavior.init(.{
+                                    .prod = dep_key == .dependencies,
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
                                     .workspace = is_workspace,
-                                },
+                                }),
                             };
                             resolutions_buf[0] = id;
 
@@ -944,13 +942,13 @@ pub fn migrateNPMLockfile(
                                                 .name = dep_name,
                                                 .name_hash = name_hash,
                                                 .version = version,
-                                                .behavior = .{
-                                                    .normal = dep_key == .dependencies,
+                                                .behavior = Dependency.Behavior.init(.{
+                                                    .prod = dep_key == .dependencies,
                                                     .optional = true,
                                                     .dev = dep_key == .devDependencies,
                                                     .peer = dep_key == .peerDependencies,
                                                     .workspace = false,
-                                                },
+                                                }),
                                             };
                                             resolutions_buf[0] = Install.invalid_package_id;
                                             dependencies_buf = dependencies_buf[1..];

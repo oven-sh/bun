@@ -366,11 +366,11 @@ pub const OutdatedCommand = struct {
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
                 const package_name_len = package_name.len +
-                    if (dep.behavior.dev)
+                    if (dep.behavior.contains(.dev))
                     " (dev)".len
-                else if (dep.behavior.peer)
+                else if (dep.behavior.contains(.peer))
                     " (peer)".len
-                else if (dep.behavior.optional)
+                else if (dep.behavior.contains(.optional))
                     " (optional)".len
                 else
                     0;
@@ -453,10 +453,10 @@ pub const OutdatedCommand = struct {
         for (workspace_pkg_ids) |workspace_pkg_id| {
             inline for (
                 .{
-                    Behavior{ .normal = true },
-                    Behavior{ .dev = true },
-                    Behavior{ .peer = true },
-                    Behavior{ .optional = true },
+                    Behavior.prod,
+                    Behavior.dev,
+                    Behavior.peer,
+                    Behavior.optional,
                 },
             ) |group_behavior| {
                 for (outdated_ids.items) |ids| {
@@ -465,7 +465,7 @@ pub const OutdatedCommand = struct {
                     const dep_id = ids.dep_id;
 
                     const dep = dependencies[dep_id];
-                    if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+                    if (!dep.behavior.includes(group_behavior)) continue;
 
                     const package_name = pkg_names[package_id].slice(string_buf);
                     const resolution = pkg_resolutions[package_id];
@@ -489,11 +489,11 @@ pub const OutdatedCommand = struct {
 
                     {
                         // package name
-                        const behavior_str = if (dep.behavior.dev)
+                        const behavior_str = if (dep.behavior.contains(.dev))
                             " (dev)"
-                        else if (dep.behavior.peer)
+                        else if (dep.behavior.contains(.peer))
                             " (peer)"
-                        else if (dep.behavior.optional)
+                        else if (dep.behavior.contains(.optional))
                             " (optional)"
                         else
                             "";
@@ -589,7 +589,7 @@ pub const OutdatedCommand = struct {
                     .load_from_memory_fallback_to_disk,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
-                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
+                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.contains(.optional))) continue;
 
                     manager.startProgressBarIfNone();
 
@@ -605,7 +605,7 @@ pub const OutdatedCommand = struct {
                         manager.allocator,
                         manager.scopeForPackageName(package_name),
                         null,
-                        dep.behavior.optional,
+                        dep.behavior.contains(.optional),
                     );
 
                     manager.enqueueNetworkTask(task);

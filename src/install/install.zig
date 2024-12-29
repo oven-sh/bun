@@ -3384,18 +3384,18 @@ pub const PackageManager = struct {
 
     pub fn determinePreinstallState(
         manager: *PackageManager,
-        this: Package,
+        pkg: Package,
         lockfile: *Lockfile,
         out_name_and_version_hash: *?u64,
         out_patchfile_hash: *?u64,
     ) PreinstallState {
-        switch (manager.getPreinstallState(this.meta.id)) {
+        switch (manager.getPreinstallState(pkg.meta.id)) {
             .unknown => {
 
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
-                if (this.isDisabled()) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                if (pkg.isDisabled()) {
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                     return .done;
                 }
 
@@ -3406,37 +3406,37 @@ pub const PackageManager = struct {
                         sfb.get(),
                         "{s}@{}",
                         .{
-                            this.name.slice(manager.lockfile.buffers.string_bytes.items),
-                            this.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
+                            pkg.name.slice(manager.lockfile.buffers.string_bytes.items),
+                            pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
                         },
                     ) catch unreachable;
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     const patched_dep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk null;
                     defer out_name_and_version_hash.* = name_and_version_hash;
                     if (patched_dep.patchfile_hash_is_null) {
-                        manager.setPreinstallState(this.meta.id, manager.lockfile, .calc_patch_hash);
+                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .calc_patch_hash);
                         return .calc_patch_hash;
                     }
                     out_patchfile_hash.* = patched_dep.patchfileHash().?;
                     break :brk patched_dep.patchfileHash().?;
                 };
 
-                const folder_path = switch (this.resolution.tag) {
-                    .git => manager.cachedGitFolderNamePrintAuto(&this.resolution.value.git, patch_hash),
-                    .github => manager.cachedGitHubFolderNamePrintAuto(&this.resolution.value.github, patch_hash),
-                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&this.name), this.resolution.value.npm.version, patch_hash),
-                    .local_tarball => manager.cachedTarballFolderName(this.resolution.value.local_tarball, patch_hash),
-                    .remote_tarball => manager.cachedTarballFolderName(this.resolution.value.remote_tarball, patch_hash),
+                const folder_path = switch (pkg.resolution.tag) {
+                    .git => manager.cachedGitFolderNamePrintAuto(&pkg.resolution.value.git, patch_hash),
+                    .github => manager.cachedGitHubFolderNamePrintAuto(&pkg.resolution.value.github, patch_hash),
+                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&pkg.name), pkg.resolution.value.npm.version, patch_hash),
+                    .local_tarball => manager.cachedTarballFolderName(pkg.resolution.value.local_tarball, patch_hash),
+                    .remote_tarball => manager.cachedTarballFolderName(pkg.resolution.value.remote_tarball, patch_hash),
                     else => "",
                 };
 
                 if (folder_path.len == 0) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                     return .extract;
                 }
 
                 if (manager.isFolderInCache(folder_path)) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                     return .done;
                 }
 
@@ -3453,16 +3453,16 @@ pub const PackageManager = struct {
                     const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
                     defer manager.lockfile.allocator.free(non_patched_path);
                     if (manager.isFolderInCache(non_patched_path)) {
-                        manager.setPreinstallState(this.meta.id, manager.lockfile, .apply_patch);
+                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .apply_patch);
                         // yay step 1 is already done for us
                         return .apply_patch;
                     }
                     // we need to extract non-patched pkg into the cache
-                    manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                     return .extract;
                 }
 
-                manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                 return .extract;
             },
             else => |val| return val,
@@ -7691,7 +7691,7 @@ pub const PackageManager = struct {
         const dependency_groups = &.{
             .{ "optionalDependencies", Dependency.Behavior.optional },
             .{ "devDependencies", Dependency.Behavior.dev },
-            .{ "dependencies", Dependency.Behavior.normal },
+            .{ "dependencies", Dependency.Behavior.prod },
             .{ "peerDependencies", Dependency.Behavior.peer },
         };
 
@@ -13317,7 +13317,7 @@ pub const PackageManager = struct {
                                 log_level,
                                 &lazy_package_dir,
                                 package_id,
-                                dep.behavior.optional,
+                                dep.behavior.contains(.optional),
                                 resolution,
                             )) {
                                 if (is_trusted_through_update_request) {
@@ -13473,7 +13473,7 @@ pub const PackageManager = struct {
                         log_level,
                         &destination_dir,
                         package_id,
-                        dep.behavior.optional,
+                        dep.behavior.contains(.optional),
                         resolution,
                     )) {
                         if (is_trusted_through_update_request) {
@@ -15166,7 +15166,7 @@ pub const PackageManager = struct {
                     else => this.options.remote_package_features,
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(features)) continue;
+                if (failed_dep.behavior.contains(.optional) or !failed_dep.behavior.isEnabled(features)) continue;
 
                 if (log_level != .silent) {
                     if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {

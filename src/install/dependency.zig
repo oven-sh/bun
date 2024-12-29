@@ -51,7 +51,7 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = Behavior.uninitialized,
+behavior: Behavior = .{},
 
 /// Sorting order for dependencies is:
 /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
@@ -153,7 +153,7 @@ pub fn toDependency(
     return Dependency{
         .name = name,
         .name_hash = name_hash,
-        .behavior = @bitCast(this[16]),
+        .behavior = Behavior.fromInt(this[16]),
         .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
@@ -162,7 +162,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
-    bytes[16] = @bitCast(this.behavior);
+    bytes[16] = this.behavior.toInt();
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -1300,91 +1300,98 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     return dep.toJS(buf, globalThis);
 }
 
-pub const Behavior = packed struct(u8) {
-    pub const uninitialized: Behavior = .{};
+pub const Behavior = struct {
+    bits: Enum.Set = Enum.Set.initEmpty(),
 
-    // these padding fields are to have compatibility
-    // with older versions of lockfile v2
-    _unused_1: u1 = 0,
+    pub const Enum = enum(u8) {
+        _unused_1 = 0,
+        prod = 1,
+        optional = 2,
+        dev = 3,
+        peer = 4,
+        workspace = 5,
+        bundled = 6,
+        _unused_2 = 7,
 
-    normal: bool = false,
-    optional: bool = false,
-    dev: bool = false,
-    peer: bool = false,
-    workspace: bool = false,
+        pub const Set = std.EnumSet(@This());
+    };
 
-    _unused_2: u2 = 0,
+    pub fn fromInt(int: u8) Behavior {
+        return .{ .bits = .{ .bits = .{ .mask = int } } };
+    }
 
-    pub const normal = Behavior{ .normal = true };
-    pub const optional = Behavior{ .optional = true };
-    pub const dev = Behavior{ .dev = true };
-    pub const peer = Behavior{ .peer = true };
-    pub const workspace = Behavior{ .workspace = true };
+    pub fn toInt(this: Behavior) u8 {
+        return this.bits.bits.mask;
+    }
 
-    pub inline fn isNormal(this: Behavior) bool {
-        return this.normal;
+    pub fn init(values: std.enums.EnumFieldStruct(Enum, bool, false)) Behavior {
+        return .{ .bits = Enum.Set.init(values) };
+    }
+
+    pub const prod = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.prod) };
+    pub const optional = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.optional) };
+    pub const dev = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.dev) };
+    pub const peer = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.peer) };
+    pub const workspace = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.workspace) };
+
+    pub inline fn isProd(this: Behavior) bool {
+        return this.bits.contains(.prod);
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return this.optional and !this.isPeer();
+        return this.bits.contains(.optional) and !this.bits.contains(.peer);
     }
 
     pub inline fn isOptionalPeer(this: Behavior) bool {
-        return this.optional and this.isPeer();
+        return this.bits.contains(.optional) and this.bits.contains(.peer);
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return this.dev;
+        return this.bits.contains(.dev);
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return this.peer;
+        return this.bits.contains(.peer);
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return this.workspace;
+        return this.bits.contains(.workspace);
     }
 
     pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
-    }
-
-    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.normal = value;
-        return b;
-    }
-
-    pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.optional = value;
-        return b;
-    }
-
-    pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.dev = value;
-        return b;
-    }
-
-    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.peer = value;
-        return b;
-    }
-
-    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.workspace = value;
-        return b;
+        return this.bits.contains(.workspace) and
+            !this.bits.contains(.dev) and
+            !this.bits.contains(.prod) and
+            !this.bits.contains(.optional) and
+            !this.bits.contains(.peer);
     }
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
-        return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
+        return lhs.bits.eql(rhs.bits);
     }
 
     pub inline fn includes(lhs: Behavior, rhs: Behavior) bool {
-        return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
+        return rhs.bits.subsetOf(lhs.bits);
+    }
+
+    pub inline fn contains(this: Behavior, kind: Enum) bool {
+        return this.bits.contains(kind);
+    }
+
+    pub inline fn insert(this: *Behavior, kind: Enum) Behavior {
+        this.bits.insert(kind);
+    }
+
+    pub inline fn add(this: Behavior, kind: Enum) Behavior {
+        var new = this;
+        new.bits.insert(kind);
+        return new;
+    }
+
+    pub inline fn set(this: Behavior, kind: Enum, value: bool) Behavior {
+        var new = this;
+        new.bits.setPresent(kind, value);
+        return new;
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
@@ -1392,8 +1399,8 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isNormal() != rhs.isNormal()) {
-            return if (lhs.isNormal())
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
                 .gt
             else
                 .lt;
@@ -1435,43 +1442,18 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
-        return this.isNormal() or
+        return this.isProd() or
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
             (features.workspaces and this.isWorkspaceOnly());
     }
-
-    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const fields = .{
-            "normal",
-            "optional",
-            "dev",
-            "peer",
-            "workspace",
-        };
-
-        var first = true;
-        inline for (fields) |field| {
-            if (@field(self, field)) {
-                if (!first) {
-                    try writer.writeAll(" | ");
-                }
-                try writer.writeAll(field);
-                first = false;
-            }
-        }
-
-        if (first) {
-            try writer.writeAll("-");
-        }
-    }
-
-    comptime {
-        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
-        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
-    }
 };
+
+comptime {
+    bun.assert(@as(u8, @bitCast(Behavior.prod.toInt())) == (1 << 1));
+    bun.assert(@as(u8, @bitCast(Behavior.optional.toInt())) == (1 << 2));
+    bun.assert(@as(u8, @bitCast(Behavior.dev.toInt())) == (1 << 3));
+    bun.assert(@as(u8, @bitCast(Behavior.peer.toInt())) == (1 << 4));
+    bun.assert(@as(u8, @bitCast(Behavior.workspace.toInt())) == (1 << 5));
+}

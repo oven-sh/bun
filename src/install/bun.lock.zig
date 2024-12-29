@@ -977,7 +977,7 @@ pub const Stringifier = struct {
 };
 
 const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
-    .{ "dependencies", Dependency.Behavior.normal },
+    .{ "dependencies", Dependency.Behavior.prod },
     .{ "devDependencies", Dependency.Behavior.dev },
     .{ "optionalDependencies", Dependency.Behavior.optional },
     .{ "peerDependencies", Dependency.Behavior.peer },
@@ -1245,14 +1245,15 @@ pub fn parseIntoBinaryLockfile(
                 const name = value.get("name").?.asString(allocator).?;
                 const name_hash = String.Builder.stringHash(name);
 
-                var dep: Dependency = .{};
-                dep.name = try string_buf.appendWithHash(name, name_hash);
-                dep.name_hash = name_hash;
-                dep.behavior = Dependency.Behavior.workspace;
-                dep.version = .{
-                    .tag = .workspace,
-                    .value = .{
-                        .workspace = try string_buf.append(path),
+                const dep: Dependency = .{
+                    .name = try string_buf.appendWithHash(name, name_hash),
+                    .name_hash = name_hash,
+                    .behavior = Dependency.Behavior.workspace,
+                    .version = .{
+                        .tag = .workspace,
+                        .value = .{
+                            .workspace = try string_buf.append(path),
+                        },
                     },
                 };
 
@@ -1489,7 +1490,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
                 const res_pkg_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
-                    if (dep.behavior.optional) {
+                    if (dep.behavior.contains(.optional)) {
                         continue;
                     }
                     try dependencyResolutionFailure(&dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
@@ -1536,7 +1537,7 @@ pub fn parseIntoBinaryLockfile(
                     }
 
                     if (offset == 0) {
-                        if (dep.behavior.optional) {
+                        if (dep.behavior.contains(.optional)) {
                             continue :deps;
                         }
                         try dependencyResolutionFailure(&dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
@@ -1603,11 +1604,11 @@ pub fn parseIntoBinaryLockfile(
 }
 
 fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
-    const behavior_str = if (dep.behavior.isDev())
+    const behavior_str = if (dep.behavior.contains(.dev))
         "dev"
-    else if (dep.behavior.isOptional())
+    else if (dep.behavior.contains(.optional))
         "optional"
-    else if (dep.behavior.isPeer())
+    else if (dep.behavior.contains(.peer))
         "peer"
     else if (dep.behavior.isWorkspaceOnly())
         "workspace"
@@ -1684,10 +1685,13 @@ fn parseAppendDependencies(
                 const version = try buf.append(version_str);
                 const version_sliced = version.sliced(buf.bytes.items);
 
-                var dep: Dependency = .{
+                const dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
-                    .behavior = group_behavior,
+                    .behavior = if (group_behavior.contains(.peer) and optional_peers_buf.contains(name.hash))
+                        group_behavior.add(.optional)
+                    else
+                        group_behavior,
                     .version = Dependency.parse(
                         allocator,
                         name.value,
@@ -1701,10 +1705,6 @@ fn parseAppendDependencies(
                         return error.InvalidDependencyVersion;
                     },
                 };
-
-                if (dep.behavior.isPeer() and optional_peers_buf.contains(name.hash)) {
-                    dep.behavior.optional = true;
-                }
 
                 try lockfile.buffers.dependencies.append(allocator, dep);
             }

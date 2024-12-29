@@ -3966,6 +3966,7 @@ pub const VirtualMachine = struct {
                     if (field.eqlComptime("code")) {
                         if (value.isString()) {
                             const str = value.toBunString(this.global);
+                            defer str.deref();
                             if (!str.isEmpty()) {
                                 if (str.eql(name)) {
                                     continue;

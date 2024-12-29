@@ -1,5 +1,5 @@
 import { postgres, sql } from "bun:sql";
-import { expect, test } from "bun:test";
+import { expect, test, mock } from "bun:test";
 import { $ } from "bun";
 import { bunExe, isCI, withoutAggressiveGC } from "harness";
 import path from "path";
@@ -54,8 +54,8 @@ if (!isCI) {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
-    idle_timeout: 1,
-    connect_timeout: 1,
+    idle_timeout: 0,
+    connect_timeout: 0,
     max: 1,
   };
 
@@ -65,6 +65,97 @@ if (!isCI) {
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
     expect(result).toBe(1);
+  });
+
+  test("Connection timeout works", async () => {
+    const onclose = mock();
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      hostname: "unreachable_host",
+      connection_timeout: 1,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    try {
+      await sql`select pg_sleep(2)`;
+    } catch (e) {
+      error = e;
+    }
+    expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
+    expect(error.message).toContain("Connection timeout after 1ms");
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  test("Idle timeout works at start", async () => {
+    const onclose = mock();
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      idle_timeout: 1,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    try {
+      await sql`select pg_sleep(2)`;
+    } catch (e) {
+      error = e;
+    }
+    expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+    expect(onconnect).toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  test("Idle timeout is reset when a query is run", async () => {
+    const onClosePromise = Promise.withResolvers();
+    const onclose = mock(err => {
+      onClosePromise.resolve(err);
+    });
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      idle_timeout: 100,
+      onconnect,
+      onclose,
+    });
+    expect(await sql`select 123 as x`).toEqual([{ x: 123 }]);
+    expect(onconnect).toHaveBeenCalledTimes(1);
+    expect(onclose).not.toHaveBeenCalled();
+    const err = await onClosePromise.promise;
+    expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+  });
+
+  test("Max lifetime works", async () => {
+    const onClosePromise = Promise.withResolvers();
+    const onclose = mock(err => {
+      onClosePromise.resolve(err);
+    });
+    const onconnect = mock();
+    const sql = postgres({
+      ...options,
+      max_lifetime: 64,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+    expect(onconnect).toHaveBeenCalledTimes(1);
+    try {
+      while (true) {
+        for (let i = 0; i < 100; i++) {
+          await sql`select pg_sleep(1)`;
+        }
+      }
+    } catch (e) {
+      error = e;
+    }
+
+    expect(onclose).toHaveBeenCalledTimes(1);
+
+    expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
   });
 
   test("Uses default database without slash", async () => {
@@ -145,10 +236,9 @@ if (!isCI) {
     expect(x).toEqual({ a: "hello", b: 42 });
   });
 
-  // It's treating as a string.
-  test.todo("implicit jsonb", async () => {
+  test("implicit jsonb", async () => {
     const x = (await sql`select ${{ a: "hello", b: 42 }}::jsonb as x`)[0].x;
-    expect([x.a, x.b].join(",")).toBe("hello,42");
+    expect(x).toEqual({ a: "hello", b: 42 });
   });
 
   test("bulk insert nested sql()", async () => {
@@ -428,9 +518,11 @@ if (!isCI) {
   test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
 
   // Add code property.
-  test.todo("Throw syntax error", async () => {
-    const code = await sql`wat 1`.catch(x => x);
-    console.log({ code });
+  test("Throw syntax error", async () => {
+    const err = await sql`wat 1`.catch(x => x);
+    expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
+    expect(err.errno).toBe(42601);
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   // t('Connect using uri', async() =>
@@ -1159,9 +1251,10 @@ if (!isCI) {
   //   ]
   // })
 
-  // t('dynamic column name', async() => {
-  //   return ['!not_valid', Object.keys((await sql`select 1 as ${ sql('!not_valid') }`)[0])[0]]
-  // })
+  test.todo("dynamic column name", async () => {
+    const result = await sql`select 1 as ${"\\!not_valid"}`;
+    expect(Object.keys(result[0])[0]).toBe("!not_valid");
+  });
 
   // t('dynamic select as', async() => {
   //   return ['2', (await sql`select ${ sql({ a: 1, b: 2 }) }`)[0].b]
@@ -1178,12 +1271,12 @@ if (!isCI) {
   //   return ['the answer', (await sql`insert into test ${ sql(x) } returning *`)[0].b, await sql`drop table test`]
   // })
 
-  // t('dynamic insert pluck', async() => {
-  //   await sql`create table test (a int, b text)`
-  //   const x = { a: 42, b: 'the answer' }
-
-  //   return [null, (await sql`insert into test ${ sql(x, 'a') } returning *`)[0].b, await sql`drop table test`]
-  // })
+  // test.todo("dynamic insert pluck", async () => {
+  //   await sql`create table test (a int, b text)`;
+  //   const x = { a: 42, b: "the answer" };
+  //   const [{ b }] = await sql`insert into test ${sql(x, "a")} returning *`;
+  //   expect(b).toBe("the answer");
+  // });
 
   // t('dynamic in with empty array', async() => {
   //   await sql`create table test (a int)`

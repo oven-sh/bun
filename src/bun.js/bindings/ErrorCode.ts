@@ -126,6 +126,9 @@ export default [
   ["ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
 
   // AWS
   ["ERR_AWS_MISSING_CREDENTIALS", Error],

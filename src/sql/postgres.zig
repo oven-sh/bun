@@ -535,7 +535,7 @@ pub const PostgresSQLQuery = struct {
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
-        var connection = arguments[0].as(PostgresSQLConnection) orelse {
+        const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
             return globalObject.throw("connection must be a PostgresSQLConnection", .{});
         };
         var query = arguments[1];
@@ -629,7 +629,9 @@ pub const PostgresSQLQuery = struct {
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
 
         if (connection.is_ready_for_query)
-            connection.flushData();
+            connection.flushDataAndResetTimeout()
+        else if (did_write)
+            connection.resetConnectionTimeout();
 
         return .undefined;
     }
@@ -724,8 +726,10 @@ pub const PostgresRequest = struct {
                 try writer.int4(@bitCast(@as(i32, -1)));
                 continue;
             }
+            if (comptime bun.Environment.enable_logs) {
+                debug("  -> {s}", .{tag.name() orelse "(unknown)"});
+            }
 
-            debug("  -> {s}", .{@tagName(tag)});
             switch (
             // If they pass a value as a string, let's avoid attempting to
             // convert it to the binary representation. This minimizes the room
@@ -733,7 +737,7 @@ pub const PostgresRequest = struct {
             // differently than what Postgres does when given a timestamp with
             // timezone.
             if (tag.isBinaryFormatSupported() and value.isString()) .text else tag) {
-                .json => {
+                .jsonb, .json => {
                     var str = bun.String.empty;
                     defer str.deref();
                     value.jsonStringify(globalObject, 0, &str);
@@ -984,6 +988,31 @@ pub const PostgresSQLConnection = struct {
     tls_status: TLSStatus = .none,
     ssl_mode: SSLMode = .disable,
 
+    idle_timeout_interval_ms: u32 = 0,
+    connection_timeout_ms: u32 = 0,
+
+    /// Before being connected, this is a connection timeout timer.
+    /// After being connected, this is an idle timeout timer.
+    timer: JSC.BunTimer.EventLoopTimer = .{
+        .tag = .PostgresSQLConnectionTimeout,
+        .next = .{
+            .sec = 0,
+            .nsec = 0,
+        },
+    },
+
+    /// This timer controls the maximum lifetime of a connection.
+    /// It starts when the connection successfully starts (i.e. after handshake is complete).
+    /// It stops when the connection is closed.
+    max_lifetime_interval_ms: u32 = 0,
+    max_lifetime_timer: JSC.BunTimer.EventLoopTimer = .{
+        .tag = .PostgresSQLConnectionMaxLifetime,
+        .next = .{
+            .sec = 0,
+            .nsec = 0,
+        },
+    },
+
     pub const TLSStatus = union(enum) {
         none,
         pending,
@@ -1106,6 +1135,27 @@ pub const PostgresSQLConnection = struct {
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
+    fn getTimeoutInterval(this: *const PostgresSQLConnection) u32 {
+        return switch (this.status) {
+            .connected => this.idle_timeout_interval_ms,
+            .failed => 0,
+            else => this.connection_timeout_ms,
+        };
+    }
+
+    pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
+        const interval = this.getTimeoutInterval();
+        if (this.timer.state == .ACTIVE) {
+            this.globalObject.bunVM().timer.remove(&this.timer);
+        }
+        if (interval == 0) {
+            return;
+        }
+
+        this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+        this.globalObject.bunVM().timer.insert(&this.timer);
+    }
+
     pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         if (PostgresSQLConnection.queriesGetCached(thisValue)) |value| {
             return value;
@@ -1159,8 +1209,47 @@ pub const PostgresSQLConnection = struct {
 
         this.start();
     }
+    fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
+        if (this.max_lifetime_interval_ms == 0) return;
+        if (this.max_lifetime_timer.state == .ACTIVE) return;
+
+        this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+        this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
+    }
+
+    pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+        debug("onConnectionTimeout", .{});
+        this.timer.state = .FIRED;
+        if (this.getTimeoutInterval() == 0) {
+            this.resetConnectionTimeout();
+            return .disarm;
+        }
+
+        switch (this.status) {
+            .connected => {
+                this.failFmt(.ERR_POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            },
+            else => {
+                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            },
+            .sent_startup_message => {
+                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            },
+        }
+        return .disarm;
+    }
+
+    pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+        debug("onMaxLifetimeTimeout", .{});
+        this.max_lifetime_timer.state = .FIRED;
+        if (this.status == .failed) return .disarm;
+        this.failFmt(.ERR_POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+        return .disarm;
+    }
 
     fn start(this: *PostgresSQLConnection) void {
+        this.setupMaxLifetimeTimerIfNecessary();
+        this.resetConnectionTimeout();
         this.sendStartupMessage();
 
         const event_loop = this.globalObject.bunVM().eventLoop();
@@ -1187,6 +1276,8 @@ pub const PostgresSQLConnection = struct {
         if (this.status == status) return;
 
         this.status = status;
+        this.resetConnectionTimeout();
+
         switch (status) {
             .connected => {
                 const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
@@ -1202,8 +1293,14 @@ pub const PostgresSQLConnection = struct {
 
     pub fn finalize(this: *PostgresSQLConnection) void {
         debug("PostgresSQLConnection finalize", .{});
+        this.stopTimers();
         this.js_value = .zero;
         this.deref();
+    }
+
+    pub fn flushDataAndResetTimeout(this: *PostgresSQLConnection) void {
+        this.resetConnectionTimeout();
+        this.flushData();
     }
 
     pub fn flushData(this: *PostgresSQLConnection) void {
@@ -1218,19 +1315,30 @@ pub const PostgresSQLConnection = struct {
 
     pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
         defer this.updateHasPendingActivity();
+        this.stopTimers();
         if (this.status == .failed) return;
 
         this.status = .failed;
+        this.ref();
+        defer this.deref();
         if (!this.socket.isClosed()) this.socket.close();
         const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
+        const loop = this.globalObject.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
         _ = on_close.call(
             this.globalObject,
             this.js_value,
             &[_]JSValue{
                 value,
+                this.getQueriesArray(),
             },
         ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+    }
+
+    pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) void {
+        this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
     }
 
     pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
@@ -1395,6 +1503,7 @@ pub const PostgresSQLConnection = struct {
                 this.poll_ref.ref(vm);
             }
 
+            this.resetConnectionTimeout();
             this.deref();
         }
 
@@ -1486,7 +1595,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments_old(10).slice();
+        const arguments = callframe.arguments_old(13).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
@@ -1583,8 +1692,11 @@ pub const PostgresSQLConnection = struct {
 
         const on_connect = arguments[8];
         const on_close = arguments[9];
+        const idle_timeout = arguments[10].toInt32();
+        const connection_timeout = arguments[11].toInt32();
+        const max_lifetime = arguments[12].toInt32();
 
-        var ptr = try bun.default_allocator.create(PostgresSQLConnection);
+        const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
 
         ptr.* = PostgresSQLConnection{
             .globalObject = globalObject,
@@ -1601,6 +1713,9 @@ pub const PostgresSQLConnection = struct {
             .tls_ctx = tls_ctx,
             .ssl_mode = ssl_mode,
             .tls_status = if (ssl_mode != .disable) .pending else .none,
+            .idle_timeout_interval_ms = @intCast(idle_timeout),
+            .connection_timeout_ms = @intCast(connection_timeout),
+            .max_lifetime_interval_ms = @intCast(max_lifetime),
         };
 
         ptr.updateHasPendingActivity();
@@ -1623,6 +1738,7 @@ pub const PostgresSQLConnection = struct {
                 vm.rareData().postgresql_context.tcp = ctx_;
                 break :brk ctx_;
             };
+
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
                     tls_config.deinit();
@@ -1633,6 +1749,8 @@ pub const PostgresSQLConnection = struct {
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };
+
+            ptr.resetConnectionTimeout();
         }
 
         return js_value;
@@ -1725,7 +1843,17 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
+    pub fn stopTimers(this: *PostgresSQLConnection) void {
+        if (this.timer.state == .ACTIVE) {
+            this.globalObject.bunVM().timer.remove(&this.timer);
+        }
+        if (this.max_lifetime_timer.state == .ACTIVE) {
+            this.globalObject.bunVM().timer.remove(&this.max_lifetime_timer);
+        }
+    }
+
     pub fn deinit(this: *@This()) void {
+        this.stopTimers();
         var iter = this.statements.valueIterator();
         while (iter.next()) |stmt_ptr| {
             var stmt = stmt_ptr.*;
@@ -1741,6 +1869,8 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn disconnect(this: *@This()) void {
+        this.stopTimers();
+
         if (this.status == .connected) {
             this.status = .disconnected;
             this.poll_ref.disable();
@@ -1999,7 +2129,7 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .float8, .value = .{ .float8 = float4 } };
                     }
                 },
-                .json => {
+                .jsonb, .json => {
                     return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
                 },
                 .bool => {
@@ -2851,7 +2981,7 @@ const Signature = struct {
                 .float8 => try name.appendSlice(".float8"),
                 .float4 => try name.appendSlice(".float4"),
                 .numeric => try name.appendSlice(".numeric"),
-                .json => try name.appendSlice(".json"),
+                .json, .jsonb => try name.appendSlice(".json"),
                 .bool => try name.appendSlice(".bool"),
                 .timestamp => try name.appendSlice(".timestamp"),
                 .timestamptz => try name.appendSlice(".timestamptz"),

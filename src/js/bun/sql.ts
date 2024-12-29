@@ -520,6 +520,7 @@ function SQL(o) {
     connecting = false,
     closed = false,
     onConnect: any[] = [],
+    storedErrorForClosedConnection,
     connectionInfo = loadOptions(o);
 
   function connectedHandler(query, handle, err) {
@@ -528,7 +529,7 @@ function SQL(o) {
     }
 
     if (!connected) {
-      return query.reject(new Error("Not connected"));
+      return query.reject(storedErrorForClosedConnection || new Error("Not connected"));
     }
 
     if (query.cancelled) {
@@ -551,7 +552,7 @@ function SQL(o) {
   }
 
   function closedConnectionHandler(query, handle) {
-    query.reject(new Error("Connection closed"));
+    query.reject(storedErrorForClosedConnection || new Error("Connection closed"));
   }
 
   function onConnected(err, result) {
@@ -568,6 +569,11 @@ function SQL(o) {
 
   function onClose(err, queries) {
     closed = true;
+    storedErrorForClosedConnection = err;
+    if (sql === lazyDefaultSQL) {
+      resetDefaultSQL(initialDefaultSQL);
+    }
+
     onConnected(err, undefined);
     if (queries) {
       const queriesCopy = queries.slice();
@@ -700,18 +706,23 @@ function SQL(o) {
 }
 
 var lazyDefaultSQL;
-var defaultSQLObject = function sql(strings, ...values) {
+
+function resetDefaultSQL(sql) {
+  lazyDefaultSQL = sql;
+  Object.assign(defaultSQLObject, lazyDefaultSQL);
+  exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+}
+
+var initialDefaultSQL;
+var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
-
   if (!lazyDefaultSQL) {
-    lazyDefaultSQL = SQL(undefined);
-    Object.assign(defaultSQLObject, lazyDefaultSQL);
-    exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+    resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-};
+});
 
 var exportsObject = {
   sql: defaultSQLObject,

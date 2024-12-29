@@ -170,7 +170,16 @@ pub const Tag = enum(short) {
     bit_array = 1561,
     varbit_array = 1563,
     numeric_array = 1231,
+    jsonb = 3802,
+    jsonb_array = 3807,
+    // Not really sure what this is.
+    jsonpath = 4072,
+    jsonpath_array = 4073,
     _,
+
+    pub fn name(this: Tag) ?[]const u8 {
+        return std.enums.tagName(Tag, this);
+    }
 
     pub fn isBinaryFormatSupported(this: Tag) bool {
         return switch (this) {
@@ -293,7 +302,7 @@ pub const Tag = enum(short) {
                 return numeric.toJS(globalObject, value);
             },
 
-            .json => {
+            .json, .jsonb => {
                 return json.toJS(globalObject, value);
             },
 

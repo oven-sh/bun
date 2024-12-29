@@ -93,6 +93,10 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 // The only non-own property that we sometimes want to get is the code property.
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getCodeProperty(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
+    if (UNLIKELY(!iter)) {
+        return {};
+    }
+
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     RETURN_IF_EXCEPTION(scope, {});

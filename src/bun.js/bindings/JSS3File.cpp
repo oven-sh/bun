@@ -36,9 +36,8 @@ extern "C" {
 
 JSC::EncodedJSValue BUN__createJSS3FileConstructor(JSGlobalObject* lexicalGlobalObject)
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    return JSValue::encode(globalObject->JSS3FileConstructor());
+    return JSValue::encode(defaultGlobalObject(lexicalGlobalObject)->JSS3FileConstructor());
 }
 }
 
@@ -74,7 +73,7 @@ public:
 
     static JSS3File* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
-        auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+        auto* zigGlobal = defaultGlobalObject(globalObject);
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSS3File>(vm)) JSS3File(vm, structure);
         object->finishCreation(vm);

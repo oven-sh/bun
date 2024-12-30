@@ -593,9 +593,10 @@ if (!isCI) {
   //   return [1, (await sql`select 1 as x`)[0].x]
   // })
 
-  // t('Login without password', async() => {
-  //   return [true, (await postgres({ ...options, ...login })`select true as x`)[0].x]
-  // })
+  test("Login without password", async () => {
+    await using sql = postgres({ ...options, ...login });
+    expect((await sql`select true as x`)[0].x).toBe(true);
+  });
 
   test("Login using MD5", async () => {
     await using sql = postgres({ ...options, ...login_md5 });

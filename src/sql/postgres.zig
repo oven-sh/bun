@@ -1457,11 +1457,6 @@ pub const PostgresSQLConnection = struct {
     pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
         debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
 
-        if (success != 1) {
-            this.failWithJSValue(ssl_error.toJS(this.globalObject));
-            return;
-        }
-
         if (this.tls_config.reject_unauthorized == 0) {
             return;
         }
@@ -1473,6 +1468,11 @@ pub const PostgresSQLConnection = struct {
         };
 
         if (!do_tls_verification) {
+            return;
+        }
+
+        if (success != 1) {
+            this.failWithJSValue(ssl_error.toJS(this.globalObject));
             return;
         }
 

@@ -707,11 +707,19 @@ pub const Tree = struct {
                 dependencies: Lockfile.DependencyIDList,
             };
 
+            pub const CleanResult = struct {
+                trees: std.ArrayListUnmanaged(Tree),
+                dep_ids: std.ArrayListUnmanaged(DependencyID),
+            };
+
             /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
-            pub fn clean(this: *@This()) OOM!DependencyIDList {
+            pub fn clean(this: *@This()) OOM!CleanResult {
                 var total: u32 = 0;
-                const trees = this.list.items(.tree);
-                const dependencies = this.list.items(.dependencies);
+
+                const list_ptr = this.list.bytes;
+                const slice = this.list.toOwnedSlice();
+                var trees = slice.items(.tree);
+                const dependencies = slice.items(.dependencies);
 
                 for (trees) |*tree| {
                     total += tree.dependencies.len;
@@ -733,7 +741,17 @@ pub const Tree = struct {
                 this.queue.deinit();
                 this.sort_buf.deinit(this.allocator);
 
-                return dependency_ids;
+                // take over the `builder.list` pointer for only trees
+                if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
+                    var new: [*]Tree = @ptrCast(list_ptr);
+                    bun.copy(Tree, new[0..trees.len], trees);
+                    trees = new[0..trees.len];
+                }
+
+                return .{
+                    .trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(trees),
+                    .dep_ids = dependency_ids,
+                };
             }
         };
     }
@@ -1458,6 +1476,7 @@ const Cloner = struct {
     }
 };
 
+/// Sets `buffers.trees` and `buffers.hoisted_dependencies`
 pub fn hoist(
     lockfile: *Lockfile,
     log: *logger.Log,
@@ -1484,8 +1503,9 @@ pub fn hoist(
         try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, method, &builder, if (method == .filter) manager.options.log_level else {});
     }
 
-    lockfile.buffers.trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(builder.list.items(.tree));
-    lockfile.buffers.hoisted_dependencies = try builder.clean();
+    const cleaned = try builder.clean();
+    lockfile.buffers.trees = cleaned.trees;
+    lockfile.buffers.hoisted_dependencies = cleaned.dep_ids;
 }
 
 const PendingResolution = struct {

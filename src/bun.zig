@@ -887,7 +887,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };

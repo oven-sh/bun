@@ -3441,3 +3441,19 @@ it("does not crash with 9 comments and typescript type skipping", () => {
   expect(stdout.toString()).toContain("success!");
   expect(exitCode).toBe(0);
 });
+
+it("runtime transpiler stack overflows", async () => {
+  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transformSync stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transform stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+});

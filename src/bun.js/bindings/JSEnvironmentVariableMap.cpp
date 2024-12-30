@@ -380,7 +380,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (returnedException) {

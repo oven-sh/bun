@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -83,6 +84,7 @@
 #include "JSDOMConvertUnion.h"
 #include "JSDOMException.h"
 #include "JSDOMFile.h"
+#include "JSS3File.h"
 #include "JSDOMFormData.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
@@ -457,7 +459,7 @@ WTF::String Bun::formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
+                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -599,8 +601,8 @@ WTF::String Bun::formatStackTrace(
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     }
                 }
             }
@@ -1885,7 +1887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCallback, (JSC::JSGlobalObject * globalObject, 
 {
     JSFunction* callback = jsCast<JSFunction*>(callFrame->uncheckedArgument(0));
     JSC::CallData callData = JSC::getCallData(callback);
-    return JSC::JSValue::encode(JSC::call(globalObject, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
+    return JSC::JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
@@ -2563,7 +2565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
         break;
     }
 
-    JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, jsUndefined(), arguments, exceptionPtr);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -2615,7 +2617,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
         asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
-    JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, thisValue, arguments, exceptionPtr);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -2810,6 +2812,37 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     return true;
 }
 
+extern "C" JSC::EncodedJSValue JSS3File__upload(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__presign(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__unlink(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__exists(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue JSS3File__size(JSGlobalObject*, JSC::CallFrame*);
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Upload, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__upload(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Presign, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__presign(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Unlink, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__unlink(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Exists, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__exists(lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsS3Size, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return JSS3File__size(lexicalGlobalObject, callFrame);
+}
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -2829,6 +2862,18 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
             init.set(fileConstructor);
+        });
+
+    m_JSS3FileConstructor.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSObject* s3Constructor = Bun::createJSS3FileConstructor(init.vm, init.owner);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "upload"_s), 3, jsS3Upload, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "unlink"_s), 3, jsS3Unlink, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "presign"_s), 3, jsS3Presign, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "exists"_s), 3, jsS3Exists, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+            s3Constructor->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "size"_s), 3, jsS3Size, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+
+            init.set(s3Constructor);
         });
 
     m_cryptoObject.initLater(
@@ -2852,7 +2897,7 @@ void GlobalObject::finishCreation(VM& vm)
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(importMetaObjectCreateRequireCacheCodeGenerator(vm)), globalObject);
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::call(globalObject, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
             init.set(result.toObject(globalObject));
         });
 
@@ -2978,7 +3023,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::CallData callData = JSC::getCallData(getStylize);
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::call(init.owner, getStylize, callData, jsNull(), args, returnedException);
+            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
             // RETURN_IF_EXCEPTION(scope, {});
 
             if (returnedException) {
@@ -3431,7 +3476,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, createConsoleConstructor, callData, console, args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, createConsoleConstructor, callData, console, args, returnedException);
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());
@@ -3805,6 +3850,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
+    thisObject->m_JSS3FileConstructor.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
@@ -4357,6 +4403,14 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
+    } else if (handler == Bun__S3UploadStream__onResolveRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveRequestStream;
+    } else if (handler == Bun__S3UploadStream__onRejectRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectRequestStream;
+    } else if (handler == Bun__FileStreamWrapper__onResolveRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onResolveRequestStream;
+    } else if (handler == Bun__FileStreamWrapper__onRejectRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onRejectRequestStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

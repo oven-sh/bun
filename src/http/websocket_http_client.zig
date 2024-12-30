@@ -204,12 +204,6 @@ const CppWebSocket = opaque {
     }
 };
 
-const body_buf_len = 16384 - 16;
-const BodyBufBytes = [body_buf_len]u8;
-
-const BodyBufPool = ObjectPool(BodyBufBytes, null, true, 4);
-const BodyBuf = BodyBufPool.Node;
-
 pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);

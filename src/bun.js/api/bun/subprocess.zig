@@ -1830,40 +1830,6 @@ pub const Subprocess = struct {
                 }
             }
 
-            {
-                var cmds_array = cmd_value.arrayIterator(globalThis);
-                // + 1 for argv0
-                // + 1 for null terminator
-                argv = try @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2);
-
-                if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                }
-
-                if (cmds_array.len == 0) {
-                    return globalThis.throwInvalidArguments("cmd must not be empty", .{});
-                }
-
-                const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0, cmds_array.next().?, allocator);
-                argv0 = argv0_result.argv0.ptr;
-                argv.appendAssumeCapacity(argv0_result.arg0.ptr);
-
-                while (cmds_array.next()) |value| {
-                    const arg = try value.toBunString2(globalThis);
-                    defer arg.deref();
-
-                    // if the string is empty, ignore it, don't add it to the argv
-                    if (arg.isEmpty()) {
-                        continue;
-                    }
-                    argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
-                }
-
-                if (argv.items.len == 0) {
-                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                }
-            }
-
             if (args != .zero and args.isObject()) {
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
@@ -1930,11 +1896,50 @@ pub const Subprocess = struct {
 
                     override_env = true;
                     // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                    PATH = "";
+                    var NEW_PATH: []const u8 = "";
                     var envp_managed = env_array.toManaged(allocator);
-                    try appendEnvpFromJS(globalThis, object, &envp_managed, &PATH);
+                    try appendEnvpFromJS(globalThis, object, &envp_managed, &NEW_PATH);
                     env_array = envp_managed.moveToUnmanaged();
+                    if (NEW_PATH.len > 0) {
+                        PATH = NEW_PATH;
+                    }
                 }
+
+                // Assign argv *after* PATH to use the updated PATH
+                {
+                    var cmds_array = cmd_value.arrayIterator(globalThis);
+                    // + 1 for argv0
+                    // + 1 for null terminator
+                    argv = try @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2);
+
+                    if (cmd_value.isEmptyOrUndefinedOrNull()) {
+                        return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                    }
+
+                    if (cmds_array.len == 0) {
+                        return globalThis.throwInvalidArguments("cmd must not be empty", .{});
+                    }
+
+                    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0, cmds_array.next().?, allocator);
+                    argv0 = argv0_result.argv0.ptr;
+                    argv.appendAssumeCapacity(argv0_result.arg0.ptr);
+
+                    while (cmds_array.next()) |value| {
+                        const arg = try value.toBunString2(globalThis);
+                        defer arg.deref();
+
+                        // if the string is empty, ignore it, don't add it to the argv
+                        if (arg.isEmpty()) {
+                            continue;
+                        }
+                        argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+                    }
+
+                    if (argv.items.len == 0) {
+                        return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                    }
+                }
+
                 if (try args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {

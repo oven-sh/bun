@@ -199,8 +199,8 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
         struct sockaddr *addr = (struct sockaddr *)addresses[i];
         socklen_t addr_len = 0;
         if (addr) {
-            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
-                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
+            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6)
                      : 0;
             if (addr_len > 0) {
                 buf->has_addresses = 1;
@@ -615,7 +615,7 @@ int bsd_would_block() {
 
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
-    do 
+    do
         result = bind(listenFd, listenAddr, listenAddrLength);
     while (IS_EINTR(result));
 
@@ -624,7 +624,7 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
         return -1;
     }
 
-    do 
+    do
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
     *error = LIBUS_ERR;
@@ -640,7 +640,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int* error
 ) {
 
-     if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
 #if _WIN32
         int optval2 = 1;
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
@@ -649,7 +649,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #if defined(SO_REUSEPORT)
         if((options & LIBUS_LISTEN_REUSE_PORT)) {
             int optval2 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));
         }
 #endif
     }
@@ -661,8 +661,8 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
     //  effectively allows 'stealing' a port which is in use by another application.
     //  See libuv issue #1360.
-    
-    
+
+
     int optval3 = 1;
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
     #endif
@@ -822,11 +822,11 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     if (path_len >= sizeof(server_address->sun_path)) {
         #if defined(_WIN32)
             // simulate ENAMETOOLONG
-            SetLastError(ERROR_FILENAME_EXCED_RANGE);    
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);
         #else
             errno = ENAMETOOLONG;
         #endif
-        
+
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -891,7 +891,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -932,7 +932,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
         int enabled = 1;
         setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &enabled, sizeof(enabled));
     }
-    
+
+    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+#if _WIN32
+        int optval2 = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
+#endif
+    } else {
+#if defined(SO_REUSEPORT)
+        if((options & LIBUS_LISTEN_REUSE_PORT)) {
+            int optval2 = 1;
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));
+        }
+#endif
+    }
+
 #ifdef IPV6_V6ONLY
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
@@ -1019,7 +1033,7 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
     int res = connect(fd, &addr, sizeof(addr));
     // EAFNOSUPPORT is harmless in this case - we just want to disconnect
-    if (res == 0 || 
+    if (res == 0 ||
 #ifdef _WIN32
     WSAGetLastError() == WSAEAFNOSUPPORT
 #else
@@ -1087,14 +1101,14 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
         }
     }
 
-    
+
 #else
     int r;
      do {
         errno = 0;
         r = connect(fd, (struct sockaddr *)addr, namelen);
     } while (IS_EINTR(r));
-    
+
     // connect() can return -1 with an errno of 0.
     // the errno is the correct one in that case.
     if (r == -1 && errno != 0) {
@@ -1104,7 +1118,7 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
 
         return errno;
     }
-    
+
     return 0;
 #endif
 }
@@ -1129,7 +1143,7 @@ static int convert_null_addr(const struct sockaddr_storage *addr, struct sockadd
         }
     }
     return 0;
-} 
+}
 
 static int is_loopback(struct sockaddr_storage *sockaddr) {
     if (sockaddr->ss_family == AF_INET) {
@@ -1153,7 +1167,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 #ifdef _WIN32
     win32_set_nonblocking(fd);
 
-    // On windows we can't connect to the null address directly. 
+    // On windows we can't connect to the null address directly.
     // To match POSIX behavior, we need to connect to localhost instead.
     struct sockaddr_storage converted;
     if (convert_null_addr(addr, &converted)) {

@@ -117,6 +117,7 @@ pub const UDPSocketConfig = struct {
     hostname: [:0]u8,
     connect: ?ConnectConfig = null,
     port: u16,
+    flags: i32,
     binary_type: JSC.BinaryType = .Buffer,
     on_data: JSValue = .zero,
     on_drain: JSValue = .zero,
@@ -153,9 +154,21 @@ pub const UDPSocketConfig = struct {
             }
         };
 
+        const flags: i32 = brk: {
+            if (try options.getTruthy(globalThis, "flags")) |value| {
+                if (!value.isInt32()) {
+                    return globalThis.throwInvalidArguments("Expected \"flags\" to be a number", .{});
+                }
+                break :brk value.asInt32();
+            } else {
+                break :brk 0;
+            }
+        };
+
         var config = This{
             .hostname = hostname,
             .port = port,
+            .flags = flags,
         };
 
         if (try options.getTruthy(globalThis, "socket")) |socket| {
@@ -297,6 +310,8 @@ pub const UDPSocket = struct {
             onClose,
             config.hostname,
             config.port,
+            config.flags,
+            null,
             this,
         )) |socket| {
             this.socket = socket;

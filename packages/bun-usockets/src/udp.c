@@ -55,7 +55,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         num -= count;
         // TODO nohang flag?
         int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
-        if (sent < 0) { 
+        if (sent < 0) {
             return sent;
         }
         total_sent += sent;
@@ -117,16 +117,18 @@ int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
 }
 
 struct us_udp_socket_t *us_create_udp_socket(
-    struct us_loop_t *loop, 
-    void (*data_cb)(struct us_udp_socket_t *, void *, int), 
-    void (*drain_cb)(struct us_udp_socket_t *), 
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    const char *host, 
-    unsigned short port, 
+    const char *host,
+    unsigned short port,
+    int flags,
+    int *err,
     void *user
 ) {
 
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -157,6 +159,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->next = NULL;
 
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    
+
     return (struct us_udp_socket_t *) udp;
 }

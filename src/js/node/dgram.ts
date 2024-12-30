@@ -30,6 +30,12 @@ const CONNECT_STATE_CONNECTED = 2;
 const RECV_BUFFER = true;
 const SEND_BUFFER = false;
 
+const LIBUS_LISTEN_DEFAULT = 0;
+const LIBUS_LISTEN_EXCLUSIVE_PORT = 1;
+const LIBUS_SOCKET_ALLOW_HALF_OPEN = 2;
+const LIBUS_SOCKET_REUSE_PORT = 4;
+const LIBUS_SOCKET_IPV6_ONLY = 8;
+
 const kStateSymbol = Symbol("state symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
@@ -339,8 +345,20 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
     }
 
     let flags = 0;
-    if (state.reuseAddr) flags |= 0; //UV_UDP_REUSEADDR;
-    if (state.ipv6Only) flags |= 0; //UV_UDP_IPV6ONLY;
+
+    if (state.reuseAddr) {
+      flags |= 0; //UV_UDP_REUSEADDR;
+    }
+
+    if (state.ipv6Only) {
+      flags |= LIBUS_SOCKET_IPV6_ONLY;
+    }
+
+    if (exclusive) {
+      flags |= LIBUS_LISTEN_EXCLUSIVE_PORT;
+    } else {
+      flags |= LIBUS_SOCKET_REUSE_PORT;
+    }
 
     // TODO flags
     const family = this.type === "udp4" ? "IPv4" : "IPv6";
@@ -348,6 +366,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       Bun.udpSocket({
         hostname: ip,
         port: port || 0,
+        flags,
         socket: {
           data: (_socket, data, port, address) => {
             this.emit("message", data, {

@@ -10,9 +10,10 @@ using namespace JSC;
 class JSS3Bucket : public JSC::JSFunction {
     using Base = JSC::JSFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = true;
 
 public:
+    static constexpr bool needsDestruction = true;
+
     JSS3Bucket(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, NativeExecutable* executable, void* ptr);
 
     DECLARE_INFO;

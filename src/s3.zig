@@ -24,6 +24,8 @@ pub const AWSCredentials = struct {
     pub const AWSCredentialsWithOptions = struct {
         credentials: AWSCredentials,
         options: MultiPartUpload.MultiPartUploadOptions = .{},
+        /// indicates if the credentials have changed
+        changed_credentials: bool = false,
 
         _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
         _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
@@ -59,6 +61,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._accessKeyIdSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.accessKeyId = new_credentials._accessKeyIdSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("accessKeyId", "string", js_value);
@@ -73,6 +76,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._secretAccessKeySlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.secretAccessKey = new_credentials._secretAccessKeySlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("secretAccessKey", "string", js_value);
@@ -87,6 +91,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._regionSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.region = new_credentials._regionSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("region", "string", js_value);
@@ -103,6 +108,7 @@ pub const AWSCredentials = struct {
                                 const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).host;
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
+                                    new_credentials.changed_credentials = true;
                                 }
                             }
                         } else {
@@ -118,6 +124,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._bucketSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.bucket = new_credentials._bucketSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
@@ -145,6 +152,18 @@ pub const AWSCredentials = struct {
                         });
                     } else {
                         new_credentials.options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
+                    }
+                }
+
+                if (try opts.getOptional(globalObject, "retry", i32)) |retry| {
+                    if (retry < 0 and retry > 255) {
+                        return globalObject.throwRangeError(retry, .{
+                            .min = 0,
+                            .max = 255,
+                            .field_name = "retry",
+                        });
+                    } else {
+                        new_credentials.options.retry = @intCast(retry);
                     }
                 }
             }

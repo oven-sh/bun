@@ -34,7 +34,7 @@ JSC::JSObject* createJSS3FileStaticObject(JSC::VM& vm, JSC::JSGlobalObject* glob
 }
 extern "C" {
 
-JSC::EncodedJSValue BUN__createJSS3FileConstructor(JSGlobalObject* lexicalGlobalObject)
+JSC::EncodedJSValue SYSV_ABI BUN__createJSS3FileConstructor(JSGlobalObject* lexicalGlobalObject)
 {
 
     return JSValue::encode(defaultGlobalObject(lexicalGlobalObject)->JSS3FileConstructor());

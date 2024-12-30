@@ -1893,7 +1893,34 @@ pub const Blob = struct {
             var this = bun.cast(*Store, ptr);
             this.deref();
         }
+        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS.AWSCredentials, allocator: std.mem.Allocator) !*Store {
+            var path = pathlike;
+            // this actually protects/refs the pathlike
+            path.toThreadSafe();
 
+            const store = Blob.Store.new(.{
+                .data = .{
+                    .s3 = S3Store.initWithReferencedCredentials(
+                        path,
+                        mime_type orelse brk: {
+                            const sliced = path.slice();
+                            if (sliced.len > 0) {
+                                var extname = std.fs.path.extension(sliced);
+                                extname = std.mem.trim(u8, extname, ".");
+                                if (http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                                    break :brk mime;
+                                }
+                            }
+                            break :brk null;
+                        },
+                        credentials,
+                    ),
+                },
+                .allocator = allocator,
+                .ref_count = std.atomic.Value(u32).init(1),
+            });
+            return store;
+        }
         pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials, allocator: std.mem.Allocator) !*Store {
             var path = pathlike;
             // this actually protects/refs the pathlike
@@ -3445,6 +3472,7 @@ pub const Blob = struct {
         pub fn unlink(this: *@This(), globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
             const Wrapper = struct {
                 promise: JSC.JSPromise.Strong,
+                store: *S3Store,
 
                 pub usingnamespace bun.New(@This());
 
@@ -3456,8 +3484,9 @@ pub const Blob = struct {
                             self.promise.resolve(globalObject, .true);
                         },
                         .not_found => {
-                            const js_err = globalObject.createErrorInstance("File not found", .{});
-                            js_err.put(globalObject, ZigString.static("code"), ZigString.init("FileNotFound").toJS(globalObject));
+                            const js_err = globalObject
+                                .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(self.store.path())}).toJS();
+                            js_err.put(globalObject, ZigString.static("path"), ZigString.init(self.store.path()).withEncoding().toJS(globalObject));
                             self.promise.reject(globalObject, js_err);
                         },
                         .failure => |err| {
@@ -3479,11 +3508,19 @@ pub const Blob = struct {
             defer aws_options.deinit();
             aws_options.credentials.s3Delete(this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
+                .store = this,
             }), proxy);
 
             return value;
         }
-
+        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS.AWSCredentials) S3Store {
+            credentials.ref();
+            return .{
+                .credentials = credentials,
+                .pathlike = pathlike,
+                .mime_type = mime_type orelse http.MimeType.other,
+            };
+        }
         pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials) S3Store {
             return .{
                 .credentials = credentials.dupe(),

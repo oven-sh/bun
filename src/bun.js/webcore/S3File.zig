@@ -197,7 +197,45 @@ fn constructS3FileInternalStore(
     const existing_credentials = globalObject.bunVM().transpiler.env.getAWSCredentials();
     return constructS3FileWithAWSCredentials(globalObject, path, options, existing_credentials);
 }
+/// if the credentials have changed, we need to clone it, if not we can just ref/deref it
+pub fn constructS3FileWithAWSCredentialsNoCloneIfPossible(
+    globalObject: *JSC.JSGlobalObject,
+    path: JSC.Node.PathLike,
+    options: ?JSC.JSValue,
+    existing_credentials: *AWS.AWSCredentials,
+) bun.JSError!Blob {
+    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, options, globalObject);
+    defer aws_options.deinit();
+    const store = if (aws_options.credentials.changed_credentials) Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory() else Blob.Store.initS3WithReferencedCredentials(path, null, existing_credentials);
+    errdefer store.deinit();
+    store.data.s3.options = aws_options.options;
 
+    var blob = Blob.initWithStore(store, globalObject);
+    if (options) |opts| {
+        if (try opts.getTruthy(globalObject, "type")) |file_type| {
+            inner: {
+                if (file_type.isString()) {
+                    var allocator = bun.default_allocator;
+                    var str = file_type.toSlice(globalObject, bun.default_allocator);
+                    defer str.deinit();
+                    const slice = str.slice();
+                    if (!strings.isAllASCII(slice)) {
+                        break :inner;
+                    }
+                    blob.content_type_was_set = true;
+                    if (globalObject.bunVM().mimeType(str.slice())) |entry| {
+                        blob.content_type = entry.value;
+                        break :inner;
+                    }
+                    const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                    blob.content_type_allocated = true;
+                }
+            }
+        }
+    }
+    return blob;
+}
 pub fn constructS3FileWithAWSCredentials(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
@@ -273,6 +311,7 @@ const AWS = bun.S3.AWSCredentials;
 
 pub const S3BlobStatTask = struct {
     promise: JSC.JSPromise.Strong,
+    store: *Blob.Store,
     usingnamespace bun.New(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: AWS.S3StatResult, this: *S3BlobStatTask) void {
@@ -303,8 +342,8 @@ pub const S3BlobStatTask = struct {
         switch (result) {
             .not_found => {
                 const js_err = globalThis
-                    .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(this.blob.store.?.data.s3.path())}).toJS(globalThis);
-                js_err.put(globalThis, ZigString.static("path"), ZigString.init(this.blob.store.?.data.s3.path()).withEncoding());
+                    .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(this.store.data.s3.path())}).toJS();
+                js_err.put(globalThis, ZigString.static("path"), ZigString.init(this.store.data.s3.path()).withEncoding().toJS(globalThis));
 
                 this.promise.rejectOnNextTick(globalThis, js_err);
             },
@@ -320,7 +359,9 @@ pub const S3BlobStatTask = struct {
     pub fn exists(globalThis: *JSC.JSGlobalObject, blob: *Blob) JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
+            .store = blob.store.?,
         });
+        this.store.ref();
         const promise = this.promise.value();
         const credentials = blob.store.?.data.s3.getCredentials();
         const path = blob.store.?.data.s3.path();
@@ -333,7 +374,9 @@ pub const S3BlobStatTask = struct {
     pub fn size(globalThis: *JSC.JSGlobalObject, blob: *Blob) JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
+            .store = blob.store.?,
         });
+        this.store.ref();
         const promise = this.promise.value();
         const credentials = blob.store.?.data.s3.getCredentials();
         const path = blob.store.?.data.s3.path();
@@ -344,6 +387,7 @@ pub const S3BlobStatTask = struct {
     }
 
     pub fn deinit(this: *S3BlobStatTask) void {
+        this.store.deref();
         this.promise.deinit();
         this.destroy();
     }

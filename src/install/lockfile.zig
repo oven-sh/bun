@@ -496,11 +496,14 @@ pub const Tree = struct {
     pub const HoistDependencyResult = union(enum) {
         dependency_loop,
         hoisted,
-        dest_id: Id,
-        replace: struct {
-            dest_id: Id,
-            dep_id: DependencyID,
+        placement: struct {
+            id: Id,
+            bundled: bool = false,
         },
+        // replace: struct {
+        //     dest_id: Id,
+        //     dep_id: DependencyID,
+        // },
     };
 
     pub const SubtreeError = OOM || error{DependencyLoop};
@@ -741,6 +744,7 @@ pub const Tree = struct {
     pub fn processSubtree(
         this: *const Tree,
         dependency_id: DependencyID,
+        hoist_root_id: Tree.Id,
         comptime method: BuilderMethod,
         builder: *Builder(method),
         log_level: if (method == .filter) PackageManager.Options.LogLevel else void,
@@ -839,13 +843,21 @@ pub const Tree = struct {
                 }
             }
 
-            const dependency = builder.dependencies[dep_id];
-            // Do not hoist folder dependencies
-            const res: HoistDependencyResult = if (pkg_resolutions[pkg_id].tag == .folder)
-                .{ .dest_id = next.id }
-            else
-                try next.hoistDependency(
+            const hoisted: HoistDependencyResult = hoisted: {
+                const dependency = builder.dependencies[dep_id];
+
+                // don't hoist if it's a folder dependency or a bundled dependency.
+                if (dependency.version.tag == .folder) {
+                    break :hoisted .{ .placement = .{ .id = next.id } };
+                }
+
+                if (dependency.behavior.isBundled()) {
+                    break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+                }
+
+                break :hoisted try next.hoistDependency(
                     true,
+                    hoist_root_id,
                     pkg_id,
                     &dependency,
                     dependency_lists,
@@ -853,25 +865,18 @@ pub const Tree = struct {
                     method,
                     builder,
                 );
+            };
 
-            switch (res) {
+            switch (hoisted) {
                 .dependency_loop, .hoisted => continue,
-                .replace => |replacement| {
-                    var dep_ids = dependency_lists[replacement.dest_id].items;
-                    for (0..dep_ids.len) |i| {
-                        if (dep_ids[i] == replacement.dep_id) {
-                            dep_ids[i] = dep_id;
-                            break;
-                        }
-                    }
-                },
-                .dest_id => |dest_id| {
-                    dependency_lists[dest_id].append(builder.allocator, dep_id) catch bun.outOfMemory();
-                    trees[dest_id].dependencies.len += 1;
+                .placement => |dest| {
+                    dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                    trees[dest.id].dependencies.len += 1;
                     if (builder.resolution_lists[pkg_id].len > 0) {
                         try builder.queue.writeItem(.{
-                            .tree_id = dest_id,
+                            .tree_id = dest.id,
                             .dependency_id = dep_id,
+                            .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
                         });
                     }
                 },
@@ -888,10 +893,10 @@ pub const Tree = struct {
     // 1 (return hoisted) - de-duplicate (skip) the package
     // 2 (return id) - move the package to the top directory
     // 3 (return dependency_loop) - leave the package at the same (relative) directory
-    // 4 (replace) - replace the existing (same name) parent dependency
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
+        hoist_root_id: Id,
         package_id: PackageID,
         dependency: *const Dependency,
         dependency_lists: []Lockfile.DependencyIDList,
@@ -955,9 +960,10 @@ pub const Tree = struct {
         }
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
-        if (this.parent != invalid_id) {
+        if (this.parent != invalid_id and this.id != hoist_root_id) {
             const id = trees[this.parent].hoistDependency(
                 false,
+                hoist_root_id,
                 package_id,
                 dependency,
                 dependency_lists,
@@ -969,7 +975,7 @@ pub const Tree = struct {
         }
 
         // place the dependency in the current tree
-        return .{ .dest_id = this.id }; // 2
+        return .{ .placement = .{ .id = this.id } }; // 2
     }
 };
 
@@ -983,7 +989,7 @@ pub fn isResolvedDependencyDisabled(
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
-    return !dep.behavior.isEnabled(features);
+    return dep.behavior.isBundled() or !dep.behavior.isEnabled(features);
 }
 
 /// This conditionally clones the lockfile with root packages marked as non-resolved
@@ -1409,6 +1415,10 @@ pub fn fmtMetaHash(this: *const Lockfile) MetaHashFormatter {
 pub const FillItem = struct {
     tree_id: Tree.Id,
     dependency_id: DependencyID,
+
+    /// If valid, dependencies will not hoist
+    /// beyond this tree if they're in a subtree
+    hoist_root_id: Tree.Id,
 };
 pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 
@@ -1478,10 +1488,23 @@ pub fn hoist(
         .manager = manager,
     };
 
-    try (Tree{}).processSubtree(Tree.root_dep_id, method, &builder, if (method == .filter) manager.options.log_level else {});
+    try (Tree{}).processSubtree(
+        Tree.root_dep_id,
+        Tree.invalid_id,
+        method,
+        &builder,
+        if (method == .filter) manager.options.log_level else {},
+    );
+
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
-        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, method, &builder, if (method == .filter) manager.options.log_level else {});
+        try builder.list.items(.tree)[item.tree_id].processSubtree(
+            item.dependency_id,
+            item.hoist_root_id,
+            method,
+            &builder,
+            if (method == .filter) manager.options.log_level else {},
+        );
     }
 
     lockfile.buffers.trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(builder.list.items(.tree));
@@ -3967,13 +3990,22 @@ pub const Package = extern struct {
                     const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
+                    const behavior = group.behavior.setMany(.{
+                        .optional = if (comptime !is_peer) false else i < package_version.non_optional_peer_dependencies_start,
+                        .bundled = package_version_ptr.allDependenciesBundled() or bundled: {
+                            for (package_version.bundled_dependencies.get(manifest.bundled_deps_buf)) |bundled_dep_name_hash| {
+                                if (bundled_dep_name_hash == name.hash) {
+                                    break :bundled true;
+                                }
+                            }
+                            break :bundled false;
+                        },
+                    });
+
                     const dependency = Dependency{
                         .name = name.value,
                         .name_hash = name.hash,
-                        .behavior = if (comptime is_peer)
-                            group.behavior.set(.optional, i < package_version.non_optional_peer_dependencies_start)
-                        else
-                            group.behavior,
+                        .behavior = behavior,
                         .version = Dependency.parse(
                             allocator,
                             name.value,

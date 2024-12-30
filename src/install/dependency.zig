@@ -1310,6 +1310,7 @@ pub const Behavior = struct {
         dev = 3,
         peer = 4,
         workspace = 5,
+        /// Is not set for transitive bundled dependencies
         bundled = 6,
         _unused_2 = 7,
 
@@ -1358,6 +1359,10 @@ pub const Behavior = struct {
         return this.bits.contains(.workspace);
     }
 
+    pub inline fn isBundled(this: Behavior) bool {
+        return this.bits.contains(.bundled);
+    }
+
     pub inline fn isWorkspaceOnly(this: Behavior) bool {
         return this.bits.contains(.workspace) and
             !this.bits.contains(.dev) and
@@ -1378,10 +1383,6 @@ pub const Behavior = struct {
         return this.bits.contains(kind);
     }
 
-    pub inline fn insert(this: *Behavior, kind: Enum) Behavior {
-        this.bits.insert(kind);
-    }
-
     pub inline fn add(this: Behavior, kind: Enum) Behavior {
         var new = this;
         new.bits.insert(kind);
@@ -1391,6 +1392,16 @@ pub const Behavior = struct {
     pub inline fn set(this: Behavior, kind: Enum, value: bool) Behavior {
         var new = this;
         new.bits.setPresent(kind, value);
+        return new;
+    }
+
+    pub inline fn setMany(this: Behavior, values: std.enums.EnumFieldStruct(Enum, bool, false)) Behavior {
+        var new = this;
+        inline for (std.meta.fields(@TypeOf(values))) |field| {
+            if (@field(values, field.name)) {
+                new.bits.insert(@field(Enum, field.name));
+            }
+        }
         return new;
     }
 

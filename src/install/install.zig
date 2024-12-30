@@ -155,18 +155,19 @@ const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 
 pub fn ExternalSlice(comptime Type: type) type {
-    return ExternalSliceAligned(Type, null);
-}
-
-pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type {
     return extern struct {
-        pub const alignment = alignment_ orelse @alignOf(*Type);
         pub const Slice = @This();
 
         pub const Child: type = Type;
 
         off: u32 = 0,
         len: u32 = 0,
+
+        pub const invalid: @This() = .{ .off = std.math.maxInt(u32), .len = std.math.maxInt(u32) };
+
+        pub inline fn isInvalid(this: Slice) bool {
+            return this.off == std.math.maxInt(u32) and this.len == std.math.maxInt(u32);
+        }
 
         pub inline fn contains(this: Slice, id: u32) bool {
             return id >= this.off and id < (this.len + this.off);
@@ -211,10 +212,20 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
 pub const PackageID = u32;
 pub const DependencyID = u32;
+
+// pub const DependencyID = enum(u32) {
+//     root = max - 1,
+//     invalid = max,
+//     _,
+
+//     const max = std.math.maxInt(u32);
+// };
+
 pub const invalid_package_id = std.math.maxInt(PackageID);
 pub const invalid_dependency_id = std.math.maxInt(DependencyID);
 
 pub const ExternalStringList = ExternalSlice(ExternalString);
+pub const ExternalPackageNameHashList = ExternalSlice(PackageNameHash);
 pub const VersionSlice = ExternalSlice(Semver.Version);
 
 pub const ExternalStringMap = extern struct {

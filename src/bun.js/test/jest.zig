@@ -697,7 +697,6 @@ pub const TestScope = struct {
         JSC.markBinding(@src());
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
-        var initial_value = JSValue.zero;
         task.started_at = bun.timespec.now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
@@ -721,84 +720,114 @@ pub const TestScope = struct {
             }
         }
 
-        if (this.func_has_callback) {
-            const callback_func = JSC.NewFunctionWithData(
-                vm.global,
-                ZigString.static("done"),
-                0,
-                TestScope.onDone,
-                false,
-                task,
-            );
-            task.done_callback_state = .pending;
-            this.func_arg[this.func_arg.len - 1] = callback_func;
-        }
+        // Run a single test iteration
+        const runIteration = struct {
+            fn run(scope: *TestScope, test_task: *TestRunnerTask, virtual_machine: *VirtualMachine) Result {
+                if (scope.func_has_callback) {
+                    const callback_func = JSC.NewFunctionWithData(
+                        virtual_machine.global,
+                        ZigString.static("done"),
+                        0,
+                        TestScope.onDone,
+                        false,
+                        test_task,
+                    );
+                    test_task.done_callback_state = .pending;
+                    scope.func_arg[scope.func_arg.len - 1] = callback_func;
+                }
 
-        initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
+                var iter_value = callJSFunctionForTestRunner(virtual_machine, virtual_machine.global, scope.func, scope.func_arg);
 
-        if (initial_value.isAnyError()) {
-            _ = vm.uncaughtException(vm.global, initial_value, true);
+                if (iter_value.isAnyError()) {
+                    _ = virtual_machine.uncaughtException(virtual_machine.global, iter_value, true);
 
-            if (this.tag == .todo) {
-                return .{ .todo = {} };
-            }
-
-            return .{ .fail = expect.active_test_expectation_counter.actual };
-        }
-
-        if (initial_value.asAnyPromise()) |promise| {
-            if (this.promise != null) {
-                return .{ .pending = {} };
-            }
-            this.task = task;
-
-            // TODO: not easy to coerce JSInternalPromise as JSValue,
-            // so simply wait for completion for now.
-            switch (promise) {
-                .internal => vm.waitForPromise(promise),
-                else => {},
-            }
-            switch (promise.status(vm.global.vm())) {
-                .rejected => {
-                    if (!promise.isHandled(vm.global.vm())) {
-                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
-                    }
-
-                    if (this.tag == .todo) {
+                    if (scope.tag == .todo) {
                         return .{ .todo = {} };
                     }
 
                     return .{ .fail = expect.active_test_expectation_counter.actual };
-                },
-                .pending => {
-                    task.promise_state = .pending;
-                    switch (promise) {
-                        .normal => |p| {
-                            _ = p.asValue(vm.global).then(vm.global, task, onResolve, onReject);
-                            return .{ .pending = {} };
-                        },
-                        else => unreachable,
+                }
+
+                if (iter_value.asAnyPromise()) |promise| {
+                    if (scope.promise != null) {
+                        return .{ .pending = {} };
                     }
-                },
-                else => {
-                    _ = promise.result(vm.global.vm());
-                },
+                    scope.task = test_task;
+
+                    switch (promise) {
+                        .internal => virtual_machine.waitForPromise(promise),
+                        else => {},
+                    }
+                    switch (promise.status(virtual_machine.global.vm())) {
+                        .rejected => {
+                            if (!promise.isHandled(virtual_machine.global.vm())) {
+                                _ = virtual_machine.unhandledRejection(virtual_machine.global, promise.result(virtual_machine.global.vm()), promise.asValue(virtual_machine.global));
+                            }
+
+                            if (scope.tag == .todo) {
+                                return .{ .todo = {} };
+                            }
+
+                            return .{ .fail = expect.active_test_expectation_counter.actual };
+                        },
+                        .pending => {
+                            test_task.promise_state = .pending;
+                            switch (promise) {
+                                .normal => |p| {
+                                    _ = p.asValue(virtual_machine.global).then(virtual_machine.global, test_task, onResolve, onReject);
+                                    return .{ .pending = {} };
+                                },
+                                else => unreachable,
+                            }
+                        },
+                        else => {
+                            _ = promise.result(virtual_machine.global.vm());
+                        },
+                    }
+                }
+
+                if (scope.func_has_callback) {
+                    return .{ .pending = {} };
+                }
+
+                if (expect.active_test_expectation_counter.expected > 0 and expect.active_test_expectation_counter.expected < expect.active_test_expectation_counter.actual) {
+                    Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
+                        expect.active_test_expectation_counter.actual,
+                        expect.active_test_expectation_counter.expected,
+                    });
+                    return .{ .fail = expect.active_test_expectation_counter.actual };
+                }
+
+                return .{ .pass = expect.active_test_expectation_counter.actual };
+            }
+        }.run;
+
+        // Initial run
+        var result = runIteration(this, task, vm);
+
+        // Handle retries on failure
+        if (result.isFailure() and this.retry_count > 0) {
+            var retry_attempts: u32 = 0;
+            while (retry_attempts < this.retry_count) : (retry_attempts += 1) {
+                expect.active_test_expectation_counter = .{};
+                var retry_result = runIteration(this, task, vm);
+                if (!retry_result.isFailure()) {
+                    result = retry_result;
+                    break;
+                }
             }
         }
 
-        if (this.func_has_callback) {
-            return .{ .pending = {} };
+        // Handle repeats regardless of result
+        if (this.repeat_count > 0) {
+            var repeat_count: u32 = 0;
+            while (repeat_count < this.repeat_count) : (repeat_count += 1) {
+                expect.active_test_expectation_counter = .{};
+                _ = runIteration(this, task, vm);
+            }
         }
 
-        if (expect.active_test_expectation_counter.expected > 0 and expect.active_test_expectation_counter.expected < expect.active_test_expectation_counter.actual) {
-            Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
-                expect.active_test_expectation_counter.actual,
-                expect.active_test_expectation_counter.expected,
-            });
-            return .{ .fail = expect.active_test_expectation_counter.actual };
-        }
-
-        return .{ .pass = expect.active_test_expectation_counter.actual };
+        return result;
     }
 
     pub const name = "TestScope";
@@ -1455,8 +1484,10 @@ pub const TestRunnerTask = struct {
     pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) void {
         switch (from) {
             .promise => {
-                if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
-                this.promise_state = .fulfilled;
+                // Remove the assertion to clear state from previous retries/repeats
+                if (this.promise_state == .pending) {
+                    this.promise_state = .fulfilled;
+                }
 
                 if (this.done_callback_state == .pending and result.* == .pass) {
                     return;
@@ -1807,6 +1838,14 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .retry_count = if (try options.get(globalThis, "retry")) |retries|
+                @intCast(@max(0, retries.coerce(i32, globalThis)))
+            else
+                0,
+            .repeat_count = if (try options.get(globalThis, "repeats")) |repeats|
+                @intCast(@max(0, repeats.coerce(i32, globalThis)))
+            else
+                0,
             .test_id_for_debugger = brk: {
                 if (!is_skip) {
                     const vm = globalThis.bunVM();

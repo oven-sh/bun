@@ -137,6 +137,7 @@ pub const Source = struct {
             return true;
         }
 
+        println("colorDepth={}", .{colorDepth()});
         return colorDepth() != .none;
     }
 
@@ -411,18 +412,28 @@ pub const Source = struct {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
+                println("is_stdout_tty={}", .{is_stdout_tty});
+                println("is_stderr_tty={}", .{is_stderr_tty});
+
                 var enable_color: ?bool = null;
                 if (isForceColor()) {
+                    println("force color=1", .{});
                     enable_color = true;
                 } else if (isNoColor()) {
+                    println("force color=0", .{});
                     enable_color = false;
                 } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
+                    println("force color=2", .{});
                     enable_color = true;
                 }
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
                 enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
                 enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
+
+                println("enable_ansi_colors_stdout={}", .{enable_ansi_colors_stdout});
+                println("enable_ansi_colors_stderr={}", .{enable_ansi_colors_stderr});
+                println("enable_ansi_colors={}", .{enable_ansi_colors});
             }
 
             stdout_stream = new_source.stream;

@@ -39,7 +39,8 @@ pub const LinuxMemFdAllocator = struct {
             0 => {
                 // TODO: @branchHint(.cold) after Zig 0.14 upgrade
                 std.debug.panic("LinuxMemFdAllocator ref_count underflow", .{});
-            }
+            },
+            else => {},
         }
     }
 

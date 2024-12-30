@@ -354,7 +354,7 @@ var InternalResolver = class Resolver {
   }
 
   static #getResolver(object) {
-    return #resolver in object ? object.#resolver : dns;
+    return typeof object !== "undefined" && #resolver in object ? object.#resolver : dns;
   }
 
   getServers() {
@@ -822,7 +822,7 @@ const promises = {
     }
 
     static #getResolver(object) {
-      return #resolver in object ? object.#resolver : dns;
+      return typeof object !== "undefined" && #resolver in object ? object.#resolver : dns;
     }
 
     getServers() {

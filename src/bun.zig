@@ -1607,7 +1607,7 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.

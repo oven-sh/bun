@@ -16,23 +16,23 @@ pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").c_allocator;
+    @import("./allocators/memory_allocator.zig").c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").z_allocator;
+    @import("./allocators/memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").huge_allocator;
+    @import("./allocators/memory_allocator.zig").huge_allocator;
 
 pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").auto_allocator;
+    @import("./allocators/memory_allocator.zig").auto_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;

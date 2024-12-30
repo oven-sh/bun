@@ -6350,7 +6350,7 @@ pub const LinkerContext = struct {
                 visitor: *@This(),
                 source_index: Index,
                 wrapping_conditions: *BabyList(bun.css.ImportConditions),
-                wrapping_import_records: *BabyList(*const ImportRecord),
+                wrapping_import_records: *BabyList(ImportRecord),
             ) void {
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
@@ -6399,17 +6399,15 @@ pub const LinkerContext = struct {
 
                         // Follow internal dependencies
                         if (record.source_index.isValid()) {
-                            // TODO: conditions
                             // If this import has conditions, fork our state so that the entire
                             // imported stylesheet subtree is wrapped in all of the conditions
                             if (rule.import.hasConditions()) {
                                 // Fork our state
                                 var nested_conditions = wrapping_conditions.deepClone2(visitor.allocator);
-                                // var nested_import_records = wrapping_import_records.deepClone(visitor.allocator) catch bun.outOfMemory();
-                                // _ = nested_import_records; // autofix
+                                var nested_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
 
                                 // Clone these import conditions and append them to the state
-                                nested_conditions.push(visitor.allocator, rule.import.conditionsOwned(visitor.allocator)) catch bun.outOfMemory();
+                                nested_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &nested_import_records)) catch bun.outOfMemory();
                                 visitor.visit(record.source_index, &nested_conditions, wrapping_import_records);
                                 continue;
                             }
@@ -6417,10 +6415,8 @@ pub const LinkerContext = struct {
                             continue;
                         }
 
-                        // TODO
                         // Record external depednencies
                         if (!record.is_internal) {
-
                             // If this import has conditions, append it to the list of overall
                             // conditions for this external import. Note that an external import
                             // may actually have multiple sets of conditions that can't be
@@ -6428,7 +6424,8 @@ pub const LinkerContext = struct {
                             // CSS file using a data URL.
                             if (rule.import.hasConditions()) {
                                 var all_conditions = wrapping_conditions.deepClone2(visitor.allocator);
-                                all_conditions.push(visitor.allocator, rule.import.conditionsOwned(visitor.allocator)) catch bun.outOfMemory();
+                                var all_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
+                                all_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)) catch bun.outOfMemory();
                                 visitor.order.push(
                                     visitor.allocator,
                                     Chunk.CssImportOrder{
@@ -6436,7 +6433,7 @@ pub const LinkerContext = struct {
                                             .external_path = record.path,
                                         },
                                         .conditions = all_conditions,
-                                        // .condition_import_records = wrapping_import_records.*,
+                                        .condition_import_records = all_import_records,
                                     },
                                 ) catch bun.outOfMemory();
                             } else {
@@ -6447,7 +6444,7 @@ pub const LinkerContext = struct {
                                             .external_path = record.path,
                                         },
                                         .conditions = wrapping_conditions.*,
-                                        // .condition_import_records = visitor.all,
+                                        .condition_import_records = wrapping_import_records.*,
                                     },
                                 ) catch bun.outOfMemory();
                             }
@@ -6456,7 +6453,7 @@ pub const LinkerContext = struct {
                     }
                 }
 
-                // TODO: composes?
+                // TODO: composes from css modules
 
                 if (comptime bun.Environment.isDebug) {
                     debug(
@@ -6488,7 +6485,7 @@ pub const LinkerContext = struct {
             .all_import_records = this.graph.ast.items(.import_records),
         };
         var wrapping_conditions: BabyList(bun.css.ImportConditions) = .{};
-        var wrapping_import_records: BabyList(*const ImportRecord) = .{};
+        var wrapping_import_records: BabyList(ImportRecord) = .{};
         // Include all files reachable from any entry point
         for (entry_points) |entry_point| {
             visitor.visit(entry_point, &wrapping_conditions, &wrapping_import_records);
@@ -6496,6 +6493,8 @@ pub const LinkerContext = struct {
 
         var order = visitor.order;
         var wip_order = BabyList(Chunk.CssImportOrder).initCapacity(temp_allocator, order.len) catch bun.outOfMemory();
+
+        const css_asts: []const ?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
 
         // CSS syntax unfortunately only allows "@import" rules at the top of the
         // file. This means we must hoist all external "@import" rules to the top of
@@ -6548,10 +6547,12 @@ pub const LinkerContext = struct {
                             gop.value_ptr.* = BabyList(u32){};
                         }
                         for (gop.value_ptr.slice()) |j| {
-                            // TODO: check conditions are redundant
                             if (isConditionalImportRedundant(&entry.conditions, &order.at(j).conditions)) {
+                                // This import is redundant, but it might have @layer rules.
+                                // So we should keep the @layer rules so that the cascade ordering of layers
+                                // is preserved
                                 order.mut(i).kind = .{
-                                    .layers = &.{},
+                                    .layers = Chunk.CssImportOrder.Layers.borrow(&css_asts[idx.get()].?.layer_names),
                                 };
                                 continue :next_backward;
                             }
@@ -6564,13 +6565,12 @@ pub const LinkerContext = struct {
                             gop.value_ptr.* = BabyList(u32){};
                         }
                         for (gop.value_ptr.slice()) |j| {
-                            // TODO: check conditions are redundant
                             if (isConditionalImportRedundant(&entry.conditions, &order.at(j).conditions)) {
                                 // Don't remove duplicates entirely. The import conditions may
                                 // still introduce layers to the layer order. Represent this as a
                                 // file with an empty layer list.
                                 order.mut(i).kind = .{
-                                    .layers = &.{},
+                                    .layers = .{ .owned = .{} },
                                 };
                                 continue :next_backward;
                             }
@@ -6582,13 +6582,207 @@ pub const LinkerContext = struct {
             }
         }
 
-        // TODO: layers
         // Then optimize "@layer" rules by removing redundant ones. This loop goes
         // forward instead of backward because "@layer" takes effect at the first
         // copy instead of the last copy like other things in CSS.
+        {
+            const DuplicateEntry = struct {
+                layers: []const bun.css.LayerName,
+                indices: bun.BabyList(u32) = .{},
+            };
+            var layer_duplicates = bun.BabyList(DuplicateEntry){};
 
-        // TODO: layers
+            next_forward: for (order.slice()) |*entry| {
+                switch (entry.kind) {
+                    // Simplify the conditions since we know they only wrap "@layer"
+                    .layers => |*layers| {
+                        // Truncate the conditions at the first anonymous layer
+                        for (entry.conditions.slice(), 0..) |*condition_, i| {
+                            const conditions: *bun.css.ImportConditions = condition_;
+                            // The layer is anonymous if it's a "layer" token without any
+                            // children instead of a "layer(...)" token with children:
+                            //
+                            //   /* entry.css */
+                            //   @import "foo.css" layer;
+                            //
+                            //   /* foo.css */
+                            //   @layer foo;
+                            //
+                            // We don't need to generate this (as far as I can tell):
+                            //
+                            //   @layer {
+                            //     @layer foo;
+                            //   }
+                            //
+                            if (conditions.hasAnonymousLayer()) {
+                                _ = entry.conditions.orderedRemove(i);
+                                layers.replace(temp_allocator, .{});
+                                break;
+                            }
+                        }
+
+                        // If there are no layer names for this file, trim all conditions
+                        // without layers because we know they have no effect.
+                        //
+                        // (They have no effect because this is a `.layer` import with no rules
+                        //  and only layer declarations.)
+                        //
+                        //   /* entry.css */
+                        //   @import "foo.css" layer(foo) supports(display: flex);
+                        //
+                        //   /* foo.css */
+                        //   @import "empty.css" supports(display: grid);
+                        //
+                        // That would result in this:
+                        //
+                        //   @supports (display: flex) {
+                        //     @layer foo {
+                        //       @supports (display: grid) {}
+                        //     }
+                        //   }
+                        //
+                        // Here we can trim "supports(display: grid)" to generate this:
+                        //
+                        //   @supports (display: flex) {
+                        //     @layer foo;
+                        //   }
+                        //
+                        if (layers.inner().len == 0) {
+                            var i: u32 = entry.conditions.len;
+                            while (i != 0) {
+                                i -= 1;
+                                const condition = entry.conditions.at(i);
+                                if (condition.layer != null) {
+                                    break;
+                                }
+                                entry.conditions.len = i;
+                            }
+                        }
+
+                        // Remove unnecessary entries entirely
+                        if (entry.conditions.len == 0 and layers.inner().len == 0) {
+                            continue;
+                        }
+                    },
+                    else => {},
+                }
+
+                // Omit redundant "@layer" rules with the same set of layer names. Note
+                // that this tests all import order entries (not just layer ones) because
+                // sometimes non-layer ones can make following layer ones redundant.
+                // layers_post_import
+                const layers_key: []const bun.css.LayerName = switch (entry.kind) {
+                    .source_index => css_asts[entry.kind.source_index.get()].?.layer_names.sliceConst(),
+                    .layers => entry.kind.layers.inner().sliceConst(),
+                    .external_path => &.{},
+                };
+                var index: usize = 0;
+                while (index < layer_duplicates.len) : (index += 1) {
+                    const both_equal = both_equal: {
+                        if (layers_key.len != layer_duplicates.at(index).layers.len) {
+                            break :both_equal false;
+                        }
+
+                        for (layers_key, layer_duplicates.at(index).layers) |*a, *b| {
+                            if (!a.eql(b)) {
+                                break :both_equal false;
+                            }
+                        }
+
+                        break :both_equal true;
+                    };
+
+                    if (both_equal) {
+                        break;
+                    }
+                }
+                if (index == layer_duplicates.len) {
+                    // This is the first time we've seen this combination of layer names.
+                    // Allocate a new set of duplicate indices to track this combination.
+                    layer_duplicates.push(temp_allocator, DuplicateEntry{
+                        .layers = layers_key,
+                    }) catch bun.outOfMemory();
+                }
+                var duplicates = layer_duplicates.at(index).indices.slice();
+                var j = duplicates.len;
+                while (j != 0) {
+                    j -= 1;
+                    const duplicate_index = duplicates[j];
+                    if (isConditionalImportRedundant(&entry.conditions, &wip_order.at(duplicate_index).conditions)) {
+                        if (entry.kind != .layers) {
+                            // If an empty layer is followed immediately by a full layer and
+                            // everything else is identical, then we don't need to emit the
+                            // empty layer. For example:
+                            //
+                            //   @media screen {
+                            //     @supports (display: grid) {
+                            //       @layer foo;
+                            //     }
+                            //   }
+                            //   @media screen {
+                            //     @supports (display: grid) {
+                            //       @layer foo {
+                            //         div {
+                            //           color: red;
+                            //         }
+                            //       }
+                            //     }
+                            //   }
+                            //
+                            // This can be improved by dropping the empty layer. But we can
+                            // only do this if there's nothing in between these two rules.
+                            if (j == duplicates.len - 1 and duplicate_index == wip_order.len - 1) {
+                                const other = wip_order.at(duplicate_index);
+                                if (other.kind == .layers and importConditionsAreEqual(entry.conditions.sliceConst(), other.conditions.sliceConst())) {
+                                    // Remove the previous entry and then overwrite it below
+                                    duplicates = duplicates[0..j];
+                                    wip_order.len = duplicate_index;
+                                    break;
+                                }
+                            }
+
+                            // Non-layer entries still need to be present because they have
+                            // other side effects beside inserting things in the layer order
+                            wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+                        }
+
+                        // Don't add this to the duplicate list below because it's redundant
+                        continue :next_forward;
+                    }
+                }
+
+                layer_duplicates.mut(index).indices.push(
+                    temp_allocator,
+                    wip_order.len,
+                ) catch bun.outOfMemory();
+                wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+            }
+
+            order.len = wip_order.len;
+            @memcpy(order.slice(), wip_order.slice());
+            wip_order.clearRetainingCapacity();
+        }
+
         // Finally, merge adjacent "@layer" rules with identical conditions together.
+        {
+            var did_clone: i32 = -1;
+            for (order.slice()) |*entry| {
+                if (entry.kind == .layers and wip_order.len > 0) {
+                    const prev_index = wip_order.len - 1;
+                    const prev = wip_order.at(prev_index);
+                    if (prev.kind == .layers and importConditionsAreEqual(prev.conditions.sliceConst(), entry.conditions.sliceConst())) {
+                        if (did_clone != prev_index) {
+                            did_clone = @intCast(prev_index);
+                        }
+                        // need to clone the layers here as they could be references to css ast
+                        wip_order.mut(prev_index).kind.layers.toOwned(temp_allocator).append(
+                            temp_allocator,
+                            entry.kind.layers.inner().sliceConst(),
+                        ) catch bun.outOfMemory();
+                    }
+                }
+            }
+        }
 
         if (bun.Environment.isDebug) {
             debug("CSS order:\n", .{});
@@ -6598,6 +6792,18 @@ pub const LinkerContext = struct {
         }
 
         return order;
+    }
+
+    fn importConditionsAreEqual(a: []const bun.css.ImportConditions, b: []const bun.css.ImportConditions) bool {
+        if (a.len != b.len) {
+            return false;
+        }
+
+        for (a, b) |*ai, *bi| {
+            if (!ai.layersEql(bi) or !ai.supportsEql(bi) or !ai.media.eql(&bi.media)) return false;
+        }
+
+        return true;
     }
 
     // Given two "@import" rules for the same source index (an earlier one and a
@@ -9098,29 +9304,33 @@ pub const LinkerContext = struct {
         defer _ = arena.reset(.retain_capacity);
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
+        const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
 
         switch (css_import.kind) {
             .layers => |layers| {
-                if (layers.len > 0) {
-                    @panic("TODO: layer only import");
-                }
+                _ = layers; // autofix
+                const printer_options = bun.css.PrinterOptions{
+                    // TODO: make this more configurable
+                    .minify = c.options.minify_whitespace,
+                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                };
+                _ = css.toCssWithWriter(
+                    worker.allocator,
+                    &buffer_writer,
+                    printer_options,
+                    &css_import.condition_import_records,
+                ) catch {
+                    @panic("TODO: HANDLE THIS ERROR!");
+                };
                 return CompileResult{
                     .css = .{
-                        .code = &.{},
+                        .result = .{ .result = buffer_writer.getWritten() },
                         .source_index = Index.invalid.get(),
                     },
                 };
             },
-            .external_path => |p| {
-                const import_records_ = [_]ImportRecord{
-                    ImportRecord{
-                        .kind = .at,
-                        .path = p,
-                        .range = Logger.Range.None,
-                    },
-                };
-                var import_records = BabyList(ImportRecord).init(&import_records_);
-                const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+            .external_path => {
+                var import_records = BabyList(ImportRecord).init(css_import.condition_import_records.sliceConst());
                 const printer_options = bun.css.PrinterOptions{
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace,
@@ -9136,13 +9346,13 @@ pub const LinkerContext = struct {
                 };
                 return CompileResult{
                     .css = .{
-                        .code = buffer_writer.getWritten(),
+                        .result = .{ .result = buffer_writer.getWritten() },
+
                         .source_index = Index.invalid.get(),
                     },
                 };
             },
             .source_index => |idx| {
-                const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
                 const printer_options = bun.css.PrinterOptions{
                     .targets = bun.css.Targets.forBundlerTarget(c.options.target),
                     // TODO: make this more configurable
@@ -9152,13 +9362,14 @@ pub const LinkerContext = struct {
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
-                    &c.graph.ast.items(.import_records)[idx.get()],
+                    &css_import.condition_import_records,
                 ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
                 };
                 return CompileResult{
                     .css = .{
-                        .code = buffer_writer.getWritten(),
+                        .result = .{ .result = buffer_writer.getWritten() },
+
                         .source_index = idx.get(),
                     },
                 };
@@ -9254,8 +9465,8 @@ pub const LinkerContext = struct {
 
     fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.mem.Allocator) void {
         const import_records: []const BabyList(ImportRecord) = c.graph.ast.items(.import_records);
-        _ = import_records; // autofix
         const asts: []const ?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
+
         // Prepare CSS asts
         // Remove duplicate rules across files. This must be done in serial, not
         // in parallel, and must be done from the last rule to the first rule.
@@ -9263,17 +9474,38 @@ pub const LinkerContext = struct {
             var i: usize = chunk.content.css.imports_in_chunk_in_order.len;
             while (i != 0) {
                 i -= 1;
-                const entry = chunk.content.css.imports_in_chunk_in_order.at(i);
+                const entry = chunk.content.css.imports_in_chunk_in_order.mut(i);
                 switch (entry.kind) {
                     .layers => |layers| {
-                        if (layers.len > 0) {
-                            @panic("TODO: external path");
+                        const len = layers.inner().len;
+                        var rules = bun.css.BundlerCssRuleList{};
+                        if (len > 0) {
+                            rules.v.append(allocator, bun.css.BundlerCssRule{
+                                .layer_statement = bun.css.LayerStatementRule{
+                                    .names = layers.inner().*.list(),
+                                    .loc = bun.css.Location.dummy(),
+                                },
+                            }) catch bun.outOfMemory();
                         }
-                        // asts[entry.source_index.get()].?.rules.v.len = 0;
+                        var ast = bun.css.BundlerStyleSheet{
+                            .rules = .{},
+                            .sources = .{},
+                            .source_map_urls = .{},
+                            .license_comments = .{},
+                            .options = bun.css.ParserOptions.default(allocator, null),
+                        };
+                        wrapRulesWithConditions(&ast, allocator, &entry.conditions, &entry.condition_import_records);
+                        chunk.content.css.asts[i] = ast;
                     },
-                    .external_path => |p| {
+                    .external_path => |*p| {
+                        var conditions: ?*bun.css.ImportConditions = null;
                         if (entry.conditions.len > 0) {
-                            @panic("TODO: external path with conditions");
+                            conditions = entry.conditions.mut(0);
+                            entry.condition_import_records.push(
+                                allocator,
+                                bun.ImportRecord{ .kind = .at, .path = p.*, .range = Logger.Range{} },
+                            ) catch bun.outOfMemory();
+
                             // Handling a chain of nested conditions is complicated. We can't
                             // necessarily join them together because a) there may be multiple
                             // layer names and b) layer names are only supposed to be inserted
@@ -9282,18 +9514,60 @@ pub const LinkerContext = struct {
                             // Instead we handle them by preserving the "@import" nesting using
                             // imports of data URL stylesheets. This may seem strange but I think
                             // this is the only way to do this in CSS.
-                            // var i: usize = entry.conditions.len;
-                            // while (i != 0) {
-                            //     i -= 1;
+                            var j: usize = entry.conditions.len;
+                            while (j != 0) {
+                                j -= 1;
 
-                            // }
+                                const ast_import = bun.css.BundlerStyleSheet{
+                                    .options = bun.css.ParserOptions.default(allocator, null),
+                                    .license_comments = .{},
+                                    .sources = .{},
+                                    .source_map_urls = .{},
+                                    .rules = rules: {
+                                        var rules = bun.css.BundlerCssRuleList{};
+                                        var import_rule = bun.css.ImportRule{
+                                            .url = p.pretty,
+                                            .import_record_idx = entry.condition_import_records.len,
+                                            .loc = bun.css.Location.dummy(),
+                                        };
+                                        import_rule.conditionsMut().* = entry.conditions.at(i).*;
+                                        rules.v.append(allocator, bun.css.BundlerCssRule{
+                                            .import = import_rule,
+                                        }) catch bun.outOfMemory();
+                                        break :rules rules;
+                                    },
+                                };
+
+                                const printer_options = bun.css.PrinterOptions{
+                                    .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                                    // TODO: make this more configurable
+                                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                                };
+
+                                const print_result = ast_import.toCss(allocator, printer_options, &entry.condition_import_records) catch |e| {
+                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {s}", .{@errorName(e)}) catch bun.outOfMemory();
+                                    continue;
+                                };
+                                p.* = bun.fs.Path.init(print_result.code);
+                            }
                         }
+
+                        var empty_conditions = bun.css.ImportConditions{};
+                        const actual_conditions = if (conditions) |cc| cc else &empty_conditions;
+
+                        entry.condition_import_records.push(allocator, bun.ImportRecord{
+                            .kind = .at,
+                            .path = p.*,
+                            .range = Logger.Range.none,
+                        }) catch bun.outOfMemory();
 
                         chunk.content.css.asts[i] = bun.css.BundlerStyleSheet{
                             .rules = rules: {
                                 var rules = bun.css.BundlerCssRuleList{};
+                                var import_rule = bun.css.ImportRule.fromUrlAndImportRecordIdx(p.pretty, import_records[i].len);
+                                import_rule.conditionsMut().* = actual_conditions.*;
                                 rules.v.append(allocator, bun.css.BundlerCssRule{
-                                    .import = bun.css.ImportRule.fromUrl(p.pretty),
+                                    .import = import_rule,
                                 }) catch bun.outOfMemory();
                                 break :rules rules;
                             },
@@ -9332,7 +9606,6 @@ pub const LinkerContext = struct {
                             ast.rules.v.items.len = 0;
                         }
 
-                        // TODO: wrapRulesWithConditions
                         wrapRulesWithConditions(ast, allocator, &entry.conditions, &entry.condition_import_records);
                         // TODO: Remove top-level duplicate rules across files
                     },
@@ -9348,6 +9621,11 @@ pub const LinkerContext = struct {
         condition_import_records: *const BabyList(ImportRecord),
     ) void {
         _ = condition_import_records; // autofix
+        var dummy_import_records = bun.BabyList(bun.ImportRecord){};
+        defer {
+            bun.debugAssert(dummy_import_records.len == 0);
+        }
+
         var i: usize = conditions.len;
         while (i > 0) {
             i -= 1;
@@ -9383,9 +9661,42 @@ pub const LinkerContext = struct {
                 }
             }
 
-            // TODO: @supports wrappers
+            // Generate "@supports" wrappers. This is not done if the rule block is
+            // empty because empty "@supports" rules have no effect.
+            if (ast.rules.v.items.len > 0) {
+                if (item.supports) |*supports| {
+                    ast.rules = brk: {
+                        var new_rules = bun.css.BundlerCssRuleList{};
+                        new_rules.v.append(temp_allocator, .{
+                            .supports = bun.css.BundlerSupportsRule{
+                                .condition = supports.cloneWithImportRecords(
+                                    temp_allocator,
+                                    &dummy_import_records,
+                                ),
+                                .rules = ast.rules,
+                                .loc = bun.css.Location.dummy(),
+                            },
+                        }) catch bun.outOfMemory();
+                        break :brk new_rules;
+                    };
+                }
+            }
 
-            // TODO: @media wrappers
+            // Generate "@media" wrappers. This is not done if the rule block is
+            // empty because empty "@media" rules have no effect.
+            if (ast.rules.v.items.len > 0 and item.media.media_queries.items.len > 0) {
+                ast.rules = brk: {
+                    var new_rules = bun.css.BundlerCssRuleList{};
+                    new_rules.v.append(temp_allocator, .{
+                        .media = bun.css.BundlerMediaRule{
+                            .query = item.media.cloneWithImportRecords(temp_allocator, &dummy_import_records),
+                            .rules = ast.rules,
+                            .loc = bun.css.Location.dummy(),
+                        },
+                    }) catch bun.outOfMemory();
+                    break :brk new_rules;
+                };
+            }
         }
     }
 
@@ -15030,13 +15341,27 @@ pub const Chunk = struct {
         condition_import_records: BabyList(ImportRecord) = .{},
 
         kind: union(enum) {
-            // kind == .import_layers
-            layers: [][]const u8,
-            // kind == .external_path
+            /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
+            /// We don't want to redundantly print the rules of these redundant imports
+            /// BUT, the imports may include layers.
+            /// We'll just print layer name declarations so that the original ordering is preserved.
+            layers: Layers,
             external_path: bun.fs.Path,
-            // kind == .source_idnex
             source_index: Index,
         },
+
+        const Layers = bun.Cow(bun.BabyList(bun.css.LayerName), struct {
+            const Self = bun.BabyList(bun.css.LayerName);
+            pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
+                return self.deepClone2(allocator);
+            }
+
+            pub fn deinit(self: *Self, a: std.mem.Allocator) void {
+                // do shallow deinit since `LayerName` has
+                // allocations in arena
+                self.deinitWithAllocator(a);
+            }
+        });
 
         pub fn hash(this: *const CssImportOrder, hasher: anytype) void {
             // TODO: conditions, condition_import_records
@@ -15044,7 +15369,17 @@ pub const Chunk = struct {
             bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind));
             switch (this.kind) {
                 .layers => |layers| {
-                    for (layers) |layer| hasher.update(layer);
+                    for (layers.inner().sliceConst()) |layer| {
+                        for (layer.v.slice(), 0..) |layer_name, i| {
+                            const is_last = i == layers.inner().len - 1;
+                            if (is_last) {
+                                hasher.update(layer_name);
+                            } else {
+                                hasher.update(layer_name);
+                                hasher.update(".");
+                            }
+                        }
+                    }
                     hasher.update("\x00");
                 },
                 .external_path => |path| hasher.update(path.text),
@@ -15057,10 +15392,12 @@ pub const Chunk = struct {
             switch (this.kind) {
                 .layers => |layers| {
                     try writer.print("[", .{});
-                    for (layers, 0..) |layer, i| {
+                    const l = layers.inner();
+                    for (l.sliceConst(), 0..) |*layer, i| {
                         if (i > 0) try writer.print(", ", .{});
-                        try writer.print("\"{s}\"", .{layer});
+                        try writer.print("\"{}\"", .{layer});
                     }
+
                     try writer.print("]", .{});
                 },
                 .external_path => |path| {
@@ -15169,9 +15506,8 @@ pub const CompileResult = union(enum) {
         result: js_printer.PrintResult,
     },
     css: struct {
+        result: bun.Maybe([]const u8, anyerror),
         source_index: Index.Int,
-        code: []const u8,
-        // TODO: we need to do this
         source_map: ?bun.sourcemap.Chunk = null,
     },
 
@@ -15192,7 +15528,10 @@ pub const CompileResult = union(enum) {
                 .result => |r2| r2.code,
                 else => "",
             },
-            .css => |*c| c.code,
+            .css => |*c| switch (c.result) {
+                .result => |v| v,
+                .err => "",
+            },
         };
     }
 

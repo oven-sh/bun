@@ -112,7 +112,7 @@ pub fn BabyList(comptime Type: type) type {
 
         fn assertValidDeepClone(comptime T: type) void {
             return switch (T) {
-                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions => {},
+                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions, bun.css.LayerName => {},
                 else => {
                     @compileError("Unsupported type for BabyList.deepClone(): " ++ @typeName(Type));
                 },

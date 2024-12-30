@@ -24,6 +24,7 @@ pub const css_rules = @import("./rules/rules.zig");
 pub const CssRule = css_rules.CssRule;
 pub const CssRuleList = css_rules.CssRuleList;
 pub const LayerName = css_rules.layer.LayerName;
+pub const LayerStatementRule = css_rules.layer.LayerStatementRule;
 pub const SupportsCondition = css_rules.supports.SupportsCondition;
 pub const CustomMedia = css_rules.custom_media.CustomMediaRule;
 pub const NamespaceRule = css_rules.namespace.NamespaceRule;
@@ -1290,6 +1291,8 @@ pub const DefaultAtRuleParser = struct {
         }
 
         pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
+
+        pub fn onLayerRule(_: *This, _: *const ArrayList(LayerName)) void {}
     };
 };
 
@@ -1301,6 +1304,7 @@ pub const BundlerAtRuleParser = struct {
     const This = @This();
     allocator: Allocator,
     import_records: *bun.BabyList(ImportRecord),
+    layer_names: bun.BabyList(LayerName) = .{},
     options: *const ParserOptions,
 
     pub const CustomAtRuleParser = struct {
@@ -1364,6 +1368,13 @@ pub const BundlerAtRuleParser = struct {
                 },
             }) catch bun.outOfMemory();
         }
+
+        pub fn onLayerRule(this: *This, layers: *const ArrayList(LayerName)) void {
+            this.layer_names.ensureUnusedCapacity(this.allocator, layers.items.len) catch bun.outOfMemory();
+            for (layers.items) |*layer| {
+                this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
+            }
+        }
     };
 };
 
@@ -1420,6 +1431,8 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     _ = T.CustomAtRuleParser.parseBlock;
 
     _ = T.CustomAtRuleParser.onImportRule;
+
+    _ = T.CustomAtRuleParser.onLayerRule;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1745,7 +1758,11 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                             this.state = .body;
                         }
                         var nested_parser = this.nested();
-                        return NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
+                        const result = NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
+                        if (result.isOk()) {
+                            AtRuleParserT.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
+                        }
+                        return result;
                     },
                     .charset => return .{ .result = {} },
                     .unknown => {
@@ -2681,6 +2698,9 @@ pub const BundlerStyleSheet = StyleSheet(BundlerAtRule);
 pub const BundlerCssRuleList = CssRuleList(BundlerAtRule);
 pub const BundlerCssRule = CssRule(BundlerAtRule);
 pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(BundlerAtRule);
+pub const BundlerSupportsRule = css_rules.supports.SupportsRule(BundlerAtRule);
+pub const BundlerMediaRule = css_rules.media.MediaRule(BundlerAtRule);
+pub const BundlerPrintResult = bun.css.PrintResult(BundlerAtRule);
 pub const BundlerTailwindState = struct {
     source: []const u8,
     index: bun.bundle_v2.Index,
@@ -2696,6 +2716,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         license_comments: ArrayList([]const u8),
         options: ParserOptions,
         tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0 = if (AtRule == BundlerAtRule) null else 0,
+        layer_names: bun.BabyList(LayerName) = .{},
 
         const This = @This();
 
@@ -2823,6 +2844,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .import_records = import_records,
                 .allocator = allocator,
                 .options = &options,
+                .layer_names = .{},
             };
             return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
         }
@@ -2886,6 +2908,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .source_map_urls = source_map_urls,
                     .license_comments = license_comments,
                     .options = options,
+                    .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
                 },
             };
         }

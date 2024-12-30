@@ -12,7 +12,8 @@ const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
 const Result = css.Result;
 
-// TODO: make this equivalent of SmallVec<[CowArcStr<'i>; 1]
+/// Stored as a list of strings as dot notation can be used
+/// to create sublayers
 pub const LayerName = struct {
     v: css.SmallList([]const u8, 1) = .{},
 
@@ -34,6 +35,14 @@ pub const LayerName = struct {
                 return true;
             }
         }, false);
+    }
+
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return LayerName{ .v = this.v.deepClone(allocator) };
     }
 
     pub fn deepClone(this: *const LayerName, allocator: std.mem.Allocator) LayerName {
@@ -118,6 +127,18 @@ pub const LayerName = struct {
             }
 
             css.serializer.serializeIdentifier(name, dest) catch return dest.addFmtError();
+        }
+    }
+
+    pub fn format(this: *const LayerName, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var first = true;
+        for (this.v.slice()) |name| {
+            if (first) {
+                first = false;
+            } else {
+                try writer.writeAll(".");
+            }
+            try writer.writeAll(name);
         }
     }
 };

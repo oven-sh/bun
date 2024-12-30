@@ -110,61 +110,6 @@ pub const StateKind = enum(u8) {
     subshell,
 };
 
-/// Copy-on-write
-pub fn Cow(comptime T: type, comptime VTable: type) type {
-    const Handler = struct {
-        fn copy(this: *T) T {
-            if (@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
-            return VTable.copy(this);
-        }
-
-        fn deinit(this: *T) void {
-            if (@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
-            return VTable.deinit(this);
-        }
-    };
-
-    return union(enum) {
-        borrowed: *T,
-        owned: T,
-
-        pub fn borrow(val: *T) @This() {
-            return .{
-                .borrowed = val,
-            };
-        }
-
-        pub fn own(val: T) @This() {
-            return .{
-                .owned = val,
-            };
-        }
-
-        /// Get the underlying value.
-        pub inline fn inner(this: *@This()) *T {
-            return switch (this.*) {
-                .borrowed => this.borrowed,
-                .owned => &this.owned,
-            };
-        }
-
-        pub fn copy(this: *@This()) void {
-            switch (this.*) {
-                .borrowed => {
-                    this.* = .{
-                        .owned = Handler.copy(this.borrowed),
-                    };
-                },
-                .owned => {},
-            }
-        }
-
-        pub fn deinit(this: *@This()) void {
-            Handler.deinit(this.inner());
-        }
-    };
-}
-
 /// Copy-on-write file descriptor. This is to avoid having multiple non-blocking
 /// writers to the same file descriptor, which breaks epoll/kqueue
 ///
@@ -517,8 +462,8 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = Cow(EnvMap, struct {
-    pub fn copy(val: *EnvMap) EnvMap {
+pub const CowEnvMap = bun.Cow(EnvMap, struct {
+    pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }
 

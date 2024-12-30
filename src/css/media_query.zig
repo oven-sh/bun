@@ -94,6 +94,14 @@ pub const MediaList = struct {
         };
     }
 
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return deepClone(this, allocator);
+    }
+
     /// Returns whether the media query list always matches.
     pub fn alwaysMatches(this: *const MediaList) bool {
         // If the media list is empty, it always matches.

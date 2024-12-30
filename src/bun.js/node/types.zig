@@ -60,8 +60,10 @@ pub const Flavor = enum {
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const hasRetry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
+    // can't call @hasDecl on void, anyerror, etc
+    const has_any_decls = ErrorTypeT != void and ErrorTypeT != anyerror;
+    const hasRetry = has_any_decls and @hasDecl(ErrorTypeT, "retry");
+    const hasTodo = has_any_decls and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;

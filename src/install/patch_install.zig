@@ -425,20 +425,25 @@ pub const PatchTask = struct {
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
                 if (e.getErrno() == bun.C.E.NOENT) {
-                    const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
-                    const args = .{
+                    log.addErrorFmt(null, Loc.Empty, this.manager.allocator,
+                        \\Could not find patch file <b>'{s}'<r>
+                        \\
+                        \\To create a new patch file run:
+                        \\
+                        \\  <cyan>bun patch {s}<r>
+                    , .{
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
-                    };
-                    log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args) catch bun.outOfMemory();
+                    }) catch bun.outOfMemory();
                     return null;
                 }
-                log.addWarningFmt(
+
+                log.addErrorFmt(
                     null,
                     Loc.Empty,
                     this.manager.allocator,
-                    "patchfile <b>{s}<r> is empty, please restore or delete it.",
-                    .{absolute_patchfile_path},
+                    "<red>{s}<r> - Failed to stat patch file <b>'{s}'<r>",
+                    .{ @tagName(e.getErrno()), absolute_patchfile_path },
                 ) catch bun.outOfMemory();
                 return null;
             },
@@ -450,8 +455,16 @@ pub const PatchTask = struct {
                 null,
                 Loc.Empty,
                 this.manager.allocator,
-                "patchfile <b>{s}<r> is empty, plese restore or delete it.",
-                .{absolute_patchfile_path},
+                \\Patch file <b>'{s}'<r> is empty.
+                \\
+                \\To create a new patch file run:
+                \\
+                \\  <cyan>bun patch {s}<r>
+            ,
+                .{
+                    absolute_patchfile_path,
+                    this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
+                },
             ) catch bun.outOfMemory();
             return null;
         }
@@ -462,8 +475,8 @@ pub const PatchTask = struct {
                     null,
                     Loc.Empty,
                     this.manager.allocator,
-                    "failed to open patch file: {}",
-                    .{e},
+                    "<red>{s}<r> - Failed to open patch file <b>'{s}'<r>",
+                    .{ @tagName(e.getErrno()), absolute_patchfile_path },
                 ) catch bun.outOfMemory();
                 return null;
             },
@@ -487,8 +500,8 @@ pub const PatchTask = struct {
                         null,
                         Loc.Empty,
                         this.manager.allocator,
-                        "failed to read from patch file: {} ({s})",
-                        .{ e, absolute_patchfile_path },
+                        "<red>{s}<r> - Failed to read patch file <b>'{s}'<r>",
+                        .{ @tagName(e.getErrno()), absolute_patchfile_path },
                     ) catch bun.outOfMemory();
                     return null;
                 },

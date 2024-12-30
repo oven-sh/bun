@@ -1462,17 +1462,30 @@ pub const PostgresSQLConnection = struct {
             return;
         }
 
-        if (this.tls_config.reject_unauthorized == 1) {
-            if (ssl_error.error_no != 0) {
+        if (this.tls_config.reject_unauthorized == 0) {
+            return;
+        }
+
+        const do_tls_verification = switch (this.ssl_mode) {
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+            .verify_ca, .verify_full => true,
+            else => false,
+        };
+
+        if (!do_tls_verification) {
+            return;
+        }
+
+        if (ssl_error.error_no != 0) {
+            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+            return;
+        }
+
+        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
+        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+            const hostname = servername[0..bun.len(servername)];
+            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
-                return;
-            }
-            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-            if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                const hostname = servername[0..bun.len(servername)];
-                if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                    this.failWithJSValue(ssl_error.toJS(this.globalObject));
-                }
             }
         }
     }

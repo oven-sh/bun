@@ -220,8 +220,6 @@ test("dns.resolveNs (empty string) ", () => {
   dns.resolveNs("", (err, results) => {
     try {
       expect(err).toBeNull();
-      console.log("resolveNs:", results);
-
       expect(results instanceof Array).toBe(true);
       // root servers
       expect(results.sort()).toStrictEqual(
@@ -254,7 +252,6 @@ test("dns.resolvePtr (ptr.socketify.dev)", () => {
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {
     try {
       expect(err).toBeNull();
-      console.log("resolvePtr:", results);
       expect(results instanceof Array).toBe(true);
       expect(results[0]).toBe("bun.sh");
       resolve();
@@ -270,7 +267,6 @@ test("dns.resolveCname (cname.socketify.dev)", () => {
   dns.resolveCname("cname.socketify.dev", (err, results) => {
     try {
       expect(err).toBeNull();
-      console.log("resolveCname:", results);
       expect(results instanceof Array).toBe(true);
       expect(results[0]).toBe("bun.sh");
       resolve();
@@ -427,7 +423,7 @@ describe("test invalid arguments", () => {
     }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a invalid address for 'lookupService'.");
+    }).toThrow('The "address" argument is invalid. Received google.com');
   });
 });
 
@@ -486,7 +482,7 @@ describe("dns.lookupService", () => {
     ["1.1.1.1", 80, ["one.one.one.one", "http"]],
     ["1.1.1.1", 443, ["one.one.one.one", "https"]],
   ])("promises.lookupService(%s, %d)", async (address, port, expected) => {
-    const [hostname, service] = await dns.promises.lookupService(address, port);
+    const { hostname, service } = await dns.promises.lookupService(address, port);
     expect(hostname).toStrictEqual(expected[0]);
     expect(service).toStrictEqual(expected[1]);
   });

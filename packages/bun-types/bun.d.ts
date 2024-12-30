@@ -529,7 +529,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | Bun.PathLike,
+    destination: BunFile | S3File | Bun.PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
@@ -1210,6 +1210,207 @@ declare module "bun" {
      * For empty Blob, this always returns true.
      */
     exists(): Promise<boolean>;
+
+    /**
+     * Write data to the file. This is equivalent to using {@link Bun.write} with a {@link BunFile}.
+     * @param data - The data to write.
+     * @param options - The options to use for the write.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      options?: { highWaterMark?: number },
+    ): Promise<number>;
+
+    /**
+     * Deletes the file.
+     */
+    unlink(): Promise<void>;
+  }
+
+  interface S3FileOptions extends BlobPropertyBag {
+    /**
+     * The bucket to use for the S3 client. by default will use the `S3_BUCKET` and `AWS_BUCKET` environment variable, or deduce as first part of the path.
+     */
+    bucket?: string;
+    /**
+     * The region to use for the S3 client. By default, it will use the `S3_REGION` and `AWS_REGION` environment variable.
+     */
+    region?: string;
+    /**
+     * The access key ID to use for the S3 client. By default, it will use the `S3_ACCESS_KEY_ID` and `AWS_ACCESS_KEY_ID` environment variable.
+     */
+    accessKeyId?: string;
+    /**
+     * The secret access key to use for the S3 client. By default, it will use the `S3_SECRET_ACCESS_KEY and `AWS_SECRET_ACCESS_KEY` environment variable.
+     */
+    secretAccessKey?: string;
+
+    /**
+     * The endpoint to use for the S3 client. Defaults to `https://s3.{region}.amazonaws.com`, it will also use the `S3_ENDPOINT` and `AWS_ENDPOINT`  environment variable.
+     */
+    endpoint?: string;
+
+    /**
+     * The size of each part in MiB. Minimum and Default is 5 MiB and maximum is 5120 MiB.
+     */
+    partSize?: number;
+    /**
+     * The number of parts to upload in parallel. Default is 5 and maximum is 255. This can speed up the upload of large files but will also use more memory.
+     */
+    queueSize?: number;
+    /**
+     * The number of times to retry the upload if it fails. Default is 3 and maximum is 255.
+     */
+    retry?: number;
+
+    /**
+     * The Content-Type of the file. If not provided, it is automatically set based on the file extension when possible.
+     */
+    type?: string;
+
+    /**
+     * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
+     */
+    highWaterMark?: number;
+  }
+
+  interface S3FilePresignOptions extends S3FileOptions {
+    /**
+     * The number of seconds the presigned URL will be valid for. Defaults to 86400 (1 day).
+     */
+    expiresIn?: number;
+    /**
+     * The HTTP method to use for the presigned URL. Defaults to GET.
+     */
+    method?: string;
+  }
+
+  interface S3File extends BunFile {
+    /**
+     * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
+     * @param options - The options to use for the S3 client.
+     */
+    new (path: string | URL, options?: S3FileOptions): S3File;
+    /**
+     * The size of the file in bytes.
+     */
+    size: Promise<number>;
+    /**
+     * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
+     *
+     * @param begin - start offset in bytes
+     * @param end - absolute offset in bytes (relative to 0)
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(begin?: number, end?: number, contentType?: string): S3File;
+
+    /** */
+    /**
+     * Offset any operation on the file starting at `begin`
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
+     *
+     * @param begin - start offset in bytes
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(begin?: number, contentType?: string): S3File;
+
+    /**
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(contentType?: string): S3File;
+
+    /**
+     * Incremental writer to stream writes to S3, this is equivalent of using MultipartUpload and is suitable for large files.
+     */
+    writer(options?: S3FileOptions): FileSink;
+
+    /**
+     * The readable stream of the file.
+     */
+    readonly readable: ReadableStream;
+
+    /**
+     * Get a readable stream of the file.
+     */
+    stream(): ReadableStream;
+
+    /**
+     * The name or path of the file, as specified in the constructor.
+     */
+    readonly name?: string;
+
+    /**
+     * The bucket name of the file.
+     */
+    readonly bucket?: string;
+
+    /**
+     * Does the file exist?
+     * It will use [`head`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/HEAD) to check if the file exists.
+     */
+    exists(): Promise<boolean>;
+
+    /**
+     * Uploads the data to S3. This is equivalent of using {@link S3File.upload} with a {@link S3File}.
+     * @param data - The data to write.
+     * @param options - The options to use for the S3 client.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
+      options?: S3FileOptions,
+    ): Promise<number>;
+
+    /**
+     * Returns a presigned URL for the file.
+     * @param options - The options to use for the presigned URL.
+     */
+    presign(options?: S3FilePresignOptions): string;
+
+    /**
+     * Deletes the file from S3.
+     */
+    unlink(): Promise<void>;
+  }
+
+  namespace S3File {
+    /**
+     * Uploads the data to S3.
+     * @param data - The data to write.
+     * @param options - The options to use for the S3 client.
+     */
+    function upload(
+      path: string | S3File,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File,
+      options?: S3FileOptions,
+    ): Promise<number>;
+
+    /**
+     * Returns a presigned URL for the file.
+     * @param options - The options to use for the presigned URL.
+     */
+    function presign(path: string | S3File, options?: S3FilePresignOptions): string;
+
+    /**
+     * Deletes the file from S3.
+     */
+    function unlink(path: string | S3File, options?: S3FileOptions): Promise<void>;
+
+    /**
+     * The size of the file in bytes.
+     */
+    function size(path: string | S3File, options?: S3FileOptions): Promise<number>;
+
+    /**
+     * The size of the file in bytes.
+     */
+    function exists(path: string | S3File, options?: S3FileOptions): Promise<boolean>;
   }
 
   /**
@@ -1630,9 +1831,27 @@ declare module "bun" {
     /**
      * **Experimental**
      *
-     * Enable CSS support.
+     * Bundle CSS files.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bunv 1.2)
      */
     experimentalCss?: boolean;
+
+    /**
+     * **Experimental**
+     *
+     * Bundle JavaScript & CSS files from HTML files. JavaScript & CSS files
+     * from non-external <script> or <link> tags will be bundled.
+     *
+     * Underneath, this works similarly to HTMLRewriter.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bun v1.2)
+     */
+    html?: boolean;
 
     /**
      * Drop function calls to matching property accesses.
@@ -2996,7 +3215,7 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded)
+   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
@@ -3022,7 +3241,7 @@ declare module "bun" {
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied)
+   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
@@ -3043,6 +3262,17 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * Lazily load/upload a file from S3.
+   * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
+   * @param options - The options to use for the S3 client.
+   */
+  function s3(path: string | URL, options?: S3FileOptions): S3File;
+  /**
+   * The S3 file class.
+   */
+  const S3: typeof S3File;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -3817,7 +4047,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**

@@ -109,7 +109,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
 
-        this_transpiler.options.experimental_css = ctx.bundler_options.experimental_css;
+        this_transpiler.options.experimental = ctx.bundler_options.experimental;
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;

@@ -17,6 +17,7 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
+    macro(S3) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \
@@ -57,6 +58,7 @@
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
+    macro(s3) \
     macro(serve) \
     macro(sha) \
     macro(shrink) \

@@ -33,7 +33,9 @@ pub const HTMLRewriter = opaque {
 
     pub fn write(rewriter: *HTMLRewriter, chunk: []const u8) Error!void {
         auto_disable();
-        if (rewriter.lol_html_rewriter_write(ptrWithoutPanic(chunk), chunk.len) < 0)
+        const ptr = ptrWithoutPanic(chunk);
+        const rc = rewriter.lol_html_rewriter_write(ptr, chunk.len);
+        if (rc < 0)
             return error.Fail;
     }
 
@@ -207,17 +209,17 @@ pub const HTMLRewriter = opaque {
             auto_disable();
             return switch (builder.lol_html_rewriter_builder_add_element_content_handlers(
                 selector,
-                if (element_handler_data != null)
+                if (element_handler != null and element_handler_data != null)
                     DirectiveHandler(Element, ElementHandler, element_handler.?)
                 else
                     null,
                 element_handler_data,
-                if (comment_handler_data != null)
+                if (comment_handler != null and comment_handler_data != null)
                     DirectiveHandler(Comment, CommentHandler, comment_handler.?)
                 else
                     null,
                 comment_handler_data,
-                if (text_chunk_handler_data != null)
+                if (text_chunk_handler != null and text_chunk_handler_data != null)
                     DirectiveHandler(TextChunk, TextChunkHandler, text_chunk_handler.?)
                 else
                     null,
@@ -794,6 +796,8 @@ pub const DocType = opaque {
     extern fn lol_html_doctype_system_id_get(doctype: *const DocType) HTMLString;
     extern fn lol_html_doctype_user_data_set(doctype: *const DocType, user_data: ?*anyopaque) void;
     extern fn lol_html_doctype_user_data_get(doctype: *const DocType) ?*anyopaque;
+    extern fn lol_html_doctype_remove(doctype: *DocType) void;
+    extern fn lol_html_doctype_is_removed(doctype: *const DocType) bool;
 
     pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.C) Directive;
 
@@ -808,6 +812,14 @@ pub const DocType = opaque {
     pub fn getSystemId(this: *const DocType) HTMLString {
         auto_disable();
         return this.lol_html_doctype_system_id_get();
+    }
+    pub fn remove(this: *DocType) void {
+        auto_disable();
+        return this.lol_html_doctype_remove();
+    }
+    pub fn isRemoved(this: *const DocType) bool {
+        auto_disable();
+        return this.lol_html_doctype_is_removed();
     }
 };
 

@@ -3229,6 +3229,19 @@ pub fn exitThread() noreturn {
     }
 }
 
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
+    }
+}
+
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
 
 pub const io = @import("./io/io.zig");
@@ -4122,3 +4135,81 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+/// To handle stack overflows:
+/// 1. StackCheck.init()
+/// 2. .isSafeToRecurse()
+pub const StackCheck = struct {
+    cached_stack_end: usize = 0,
+
+    extern fn Bun__StackCheck__initialize() void;
+    pub fn configureThread() void {
+        Bun__StackCheck__initialize();
+    }
+
+    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    fn getStackEnd() usize {
+        return Bun__StackCheck__getMaxStack();
+    }
+
+    pub fn init() StackCheck {
+        return StackCheck{ .cached_stack_end = getStackEnd() };
+    }
+
+    pub fn update(this: *StackCheck) void {
+        this.cached_stack_end = getStackEnd();
+    }
+
+    /// Is there at least 128 KB of stack space available?
+    pub fn isSafeToRecurse(this: StackCheck) bool {
+        const stack_ptr: usize = @frameAddress();
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
+    }
+};
+
+// Workaround for lack of branch hints.
+pub noinline fn throwStackOverflow() StackOverflow!void {
+    @setCold(true);
+    return error.StackOverflow;
+}
+const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
+
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
+        }
+    };
+}
+
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
+};
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;

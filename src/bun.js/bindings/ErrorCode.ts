@@ -51,6 +51,7 @@ export default [
   ["ERR_INVALID_URI", URIError, "URIError"],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
+  ["ERR_UNHANDLED_ERROR", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -95,4 +96,14 @@ export default [
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_ASYNC_CALLBACK", TypeError],
+
+  // Postgres
+  ["ERR_POSTGRES_ERROR_RESPONSE", Error, "PostgresError"],
+
+  // AWS
+  ["ERR_AWS_MISSING_CREDENTIALS", Error],
+  ["ERR_AWS_INVALID_METHOD", Error],
+  ["ERR_AWS_INVALID_PATH", Error],
+  ["ERR_AWS_INVALID_ENDPOINT", Error],
+  ["ERR_AWS_INVALID_SIGNATURE", Error],
 ] as ErrorCodeMapping;

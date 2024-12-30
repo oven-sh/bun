@@ -576,6 +576,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
     MD4                                            BunObject_getter_wrap_MD4                                           DontDelete|PropertyCallback
     MD5                                            BunObject_getter_wrap_MD5                                           DontDelete|PropertyCallback
+    S3                                             BunObject_getter_wrap_S3                                            DontDelete|PropertyCallback
     SHA1                                           BunObject_getter_wrap_SHA1                                          DontDelete|PropertyCallback
     SHA224                                         BunObject_getter_wrap_SHA224                                        DontDelete|PropertyCallback
     SHA256                                         BunObject_getter_wrap_SHA256                                        DontDelete|PropertyCallback
@@ -637,6 +638,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
     sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1

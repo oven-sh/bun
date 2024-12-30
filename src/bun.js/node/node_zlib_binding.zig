@@ -358,6 +358,7 @@ pub const SNativeZlib = struct {
 
     pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(7).slice();
+        const this_value = callframe.this();
 
         if (arguments.len != 7) {
             return globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
@@ -373,7 +374,12 @@ pub const SNativeZlib = struct {
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
-        SNativeZlib.writeCallbackSetCached(callframe.this(), globalThis, writeCallback);
+        SNativeZlib.writeCallbackSetCached(this_value, globalThis, writeCallback);
+
+        // Keep the dictionary alive by keeping a reference to it in the JS object.
+        if (dictionary != null) {
+            SNativeZlib.dictionarySetCached(this_value, globalThis, arguments[6]);
+        }
 
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
@@ -723,7 +729,7 @@ pub const SNativeBrotli = struct {
         };
     }
 
-    pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn init(this: *SNativeBrotli, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
         const this_value = callframe.this();
         if (arguments.len != 3) {

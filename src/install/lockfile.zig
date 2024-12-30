@@ -847,7 +847,7 @@ pub const Tree = struct {
                 const dependency = builder.dependencies[dep_id];
 
                 // don't hoist if it's a folder dependency or a bundled dependency.
-                if (dependency.version.tag == .folder) {
+                if (pkg_resolutions[pkg_id].tag == .folder) {
                     break :hoisted .{ .placement = .{ .id = next.id } };
                 }
 

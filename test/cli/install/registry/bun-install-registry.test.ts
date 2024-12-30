@@ -1898,6 +1898,197 @@ describe("text lockfile", () => {
   }
 });
 
+describe("bundledDependencies", () => {
+  for (const textLockfile of [true, false]) {
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) basic`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-basic",
+            version: "1.1.1",
+            dependencies: {
+              "bundled-1": "1.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
+        ]),
+      ).toEqual([false, true]);
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
+        ]),
+      ).toEqual([false, true]);
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundledDependencies === true`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-true",
+            version: "1.1.1",
+            dependencies: {
+              "bundled-true": "1.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        return Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "one-dep", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-true", "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-true", "node_modules", "one-dep", "package.json")),
+          exists(
+            join(
+              packageDir,
+              "node_modules",
+              "bundled-true",
+              "node_modules",
+              "one-dep",
+              "node_modules",
+              "no-deps",
+              "package.json",
+            ),
+          ),
+        ]);
+      }
+
+      expect(await check()).toEqual([false, false, true, true, true]);
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      expect(await check()).toEqual([false, false, true, true, true]);
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) transitive bundled dependency collision`, async () => {
+      // Install a package with one bundled dependency and one regular dependency.
+      // The bundled dependency has a transitive dependency of the same regular dependency,
+      // but at a different version. Test that the regular dependency does not replace the
+      // other version (both should exist).
+
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-collision",
+            dependencies: {
+              "bundled-transitive": "1.0.0",
+              // prevent both transitive dependencies from hoisting
+              "no-deps": "npm:a-dep@1.0.2",
+              "one-dep": "npm:a-dep@1.0.3",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+            file(
+              join(packageDir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json"),
+            ).json(),
+            file(
+              join(
+                packageDir,
+                "node_modules",
+                "bundled-transitive",
+                "node_modules",
+                "one-dep",
+                "node_modules",
+                "no-deps",
+                "package.json",
+              ),
+            ).json(),
+            exists(join(packageDir, "node_modules", "bundled-transitive", "node_modules", "one-dep", "package.json")),
+          ]),
+        ).toEqual([
+          { name: "a-dep", version: "1.0.2" },
+          { name: "no-deps", version: "1.0.0" },
+          { name: "no-deps", version: "1.0.1" },
+          true,
+        ]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+  }
+});
+
 describe("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {

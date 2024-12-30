@@ -54,6 +54,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         pub fn reset(this: *@This()) void {
             this.iter_i = 0;
             this.i = 0;
+            this.tried_code_property = false;
         }
 
         /// The bun.String returned has not incremented it's reference count.

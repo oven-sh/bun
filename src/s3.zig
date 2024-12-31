@@ -677,19 +677,38 @@ pub const AWSCredentials = struct {
             ._headers_len = 4,
         };
     }
+    const JSS3Error = extern struct {
+        code: bun.String = bun.String.empty,
+        message: bun.String = bun.String.empty,
+        path: bun.String = bun.String.empty,
+
+        pub fn init(code: []const u8, message: []const u8, path: ?[]const u8) @This() {
+            return .{
+                .code = bun.String.init(code),
+                .message = bun.String.init(message),
+                .path = if (path) |p| bun.String.init(p) else bun.String.empty,
+            };
+        }
+        pub fn toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) JSC.JSValue {
+            defer {
+                this.path.deref();
+                this.code.deref();
+                this.message.deref();
+            }
+
+            return S3Error__toErrorInstance(this, global);
+        }
+        extern fn S3Error__toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
+    };
+
     pub const S3Error = struct {
         code: []const u8,
         message: []const u8,
 
         pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject, path: ?[]const u8) JSC.JSValue {
-            //TODO: cache the structure of the error
-            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-            js_err.put(globalObject, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalObject));
-            if (path) |p| {
-                js_err.put(globalObject, JSC.ZigString.static("path"), JSC.ZigString.init(p).withEncoding().toJS(globalObject));
-            }
-            return js_err;
+            const value = JSS3Error.init(err.code, err.message, path).toErrorInstance(globalObject);
+            bun.assert(!globalObject.hasException());
+            return value;
         }
     };
     pub const S3StatResult = union(enum) {

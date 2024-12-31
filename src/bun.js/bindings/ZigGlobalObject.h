@@ -479,6 +479,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3BucketStructure;
+    LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }

@@ -50,6 +50,12 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
+
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
 /// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
@@ -58,6 +64,9 @@ threadlocal var panic_stage: usize = 0;
 /// attach the affected files to crash report. Others, which may have low crash
 /// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
+
+var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
+var before_crash_handlers_mutex: std.Thread.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
@@ -180,6 +189,13 @@ pub fn crashHandler(
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .seq_cst);
 
+            if (before_crash_handlers_mutex.tryLock()) {
+                for (before_crash_handlers.items) |item| {
+                    const ptr, const cb = item;
+                    cb(ptr);
+                }
+            }
+
             {
                 panic_mutex.lock();
                 defer panic_mutex.unlock();
@@ -216,6 +232,18 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
                     printMetadata(writer) catch std.posix.abort();
+
+                    if (inside_native_plugin) |name| {
+                        const native_plugin_name = name;
+                        const fmt =
+                            \\
+                            \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                            \\
+                            \\This indicates either a bug in the native plugin or in Bun.
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    }
                 } else {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
@@ -298,7 +326,17 @@ pub fn crashHandler(
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
-                        if (reason == .out_of_memory) {
+                        if (inside_native_plugin) |name| {
+                            const native_plugin_name = name;
+                            writer.print(Output.prettyFmt(
+                                \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (reason == .out_of_memory) {
                             writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
@@ -840,8 +878,7 @@ pub fn printMetadata(writer: anytype) !void {
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
-        if (bun.Environment.isLinux) {
-            // TODO: musl
+        if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
             const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
@@ -849,6 +886,9 @@ pub fn printMetadata(writer: anytype) !void {
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
+        } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
@@ -1437,63 +1477,70 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
+noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
+    @setCold(true);
+    const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
+
+    // The format of the panic trace is slightly different in debug
+    // builds Mainly, we demangle the backtrace immediately instead
+    // of using a trace string.
+    //
+    // To make the release-mode behavior easier to demo, debug mode
+    // checks for this CLI flag.
+    const is_debug = bun.Environment.isDebug and check_flag: {
+        for (bun.argv) |arg| {
+            if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                break :check_flag false;
+            }
+        }
+        break :check_flag true;
+    };
+
+    if (is_debug) {
+        if (is_root) {
+            if (verbose_error_trace) {
+                Output.note("Release build will not have this trace by default:", .{});
+            }
+        } else {
+            Output.note(
+                "caught error.{s}:",
+                .{@errorName(err)},
+            );
+        }
+        Output.flush();
+        dumpStackTrace(trace.*);
+    } else {
+        const ts = TraceString{
+            .trace = trace,
+            .reason = .{ .zig_error = err },
+            .action = .view_trace,
+        };
+        if (is_root) {
+            Output.prettyErrorln(
+                \\
+                \\To send a redacted crash report to Bun's team,
+                \\please file a GitHub issue using the link below:
+                \\
+                \\ <cyan>{}<r>
+                \\
+            ,
+                .{ts},
+            );
+        } else {
+            Output.prettyErrorln(
+                "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                .{ @errorName(err), ts },
+            );
+        }
+    }
+}
+
+inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
     if (!verbose_error_trace and !is_root) return;
 
     if (maybe_trace) |trace| {
-        // The format of the panic trace is slightly different in debug
-        // builds Mainly, we demangle the backtrace immediately instead
-        // of using a trace string.
-        //
-        // To make the release-mode behavior easier to demo, debug mode
-        // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug and check_flag: {
-            for (bun.argv) |arg| {
-                if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
-                    break :check_flag false;
-                }
-            }
-            break :check_flag true;
-        };
-
-        if (is_debug) {
-            if (is_root) {
-                if (verbose_error_trace) {
-                    Output.note("Release build will not have this trace by default:", .{});
-                }
-            } else {
-                Output.note(
-                    "caught error.{s}:",
-                    .{@errorName(err)},
-                );
-            }
-            Output.flush();
-            dumpStackTrace(trace.*);
-        } else {
-            const ts = TraceString{
-                .trace = trace,
-                .reason = .{ .zig_error = err },
-                .action = .view_trace,
-            };
-            if (is_root) {
-                Output.prettyErrorln(
-                    \\
-                    \\To send a redacted crash report to Bun's team,
-                    \\please file a GitHub issue using the link below:
-                    \\
-                    \\ <cyan>{}<r>
-                    \\
-                ,
-                    .{ts},
-                );
-            } else {
-                Output.prettyErrorln(
-                    "<cyan>trace<r>: error.{s}: <d>{}<r>",
-                    .{ @errorName(err), ts },
-                );
-            }
-        }
+        coldHandleErrorReturnTrace(@intFromError(err), trace, is_root);
     }
 }
 
@@ -1513,6 +1560,7 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+    Output.flush();
     const stderr = std.io.getStdErr().writer();
     if (!bun.Environment.isDebug) {
         // debug symbols aren't available, lets print a tracestring
@@ -1667,7 +1715,7 @@ pub const js_bindings = struct {
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
         if (!bun.Environment.isMac) return .undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .undefined;
@@ -1677,7 +1725,7 @@ pub const js_bindings = struct {
         return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         @setRuntimeSafety(false);
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
@@ -1685,23 +1733,23 @@ pub const js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.outOfMemory();
     }
 
-    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
@@ -1712,7 +1760,7 @@ pub const js_bindings = struct {
         return str.transferToJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
@@ -1731,3 +1779,32 @@ pub const js_bindings = struct {
         return obj;
     }
 };
+
+const OnBeforeCrash = fn (opaque_ptr: *anyopaque) void;
+
+/// For large codebases such as bun.bake.DevServer, it may be helpful
+/// to dump a large amount of state to a file to aid debugging a crash.
+///
+/// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
+pub fn appendPreCrashHandler(comptime T: type, ptr: *T, comptime handler: fn (*T) anyerror!void) !void {
+    const wrap = struct {
+        fn onCrash(opaque_ptr: *anyopaque) void {
+            handler(@ptrCast(@alignCast(opaque_ptr))) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            };
+        }
+    };
+
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    try before_crash_handlers.append(bun.default_allocator, .{ ptr, wrap.onCrash });
+}
+
+pub fn removePreCrashHandler(ptr: *anyopaque) void {
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    const index = for (before_crash_handlers.items, 0..) |item, i| {
+        if (item.@"0" == ptr) break i;
+    } else return;
+    _ = before_crash_handlers.orderedRemove(index);
+}

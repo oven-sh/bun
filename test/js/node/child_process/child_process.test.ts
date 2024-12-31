@@ -96,7 +96,7 @@ describe("spawn()", () => {
   it("should disallow invalid filename", () => {
     // @ts-ignore
     expect(() => spawn(123)).toThrow({
-      message: 'The "file" argument must be of type string. Received 123',
+      message: 'The "file" argument must be of type string. Received type number (123)',
       code: "ERR_INVALID_ARG_TYPE",
     });
   });
@@ -444,3 +444,23 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+
+  expect(signal).toBe("SIGTRAP");
+});
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

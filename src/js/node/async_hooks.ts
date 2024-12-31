@@ -23,6 +23,7 @@
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
 const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
+const { validateFunction, validateString, validateObject } = require("internal/validators");
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -89,6 +90,7 @@ class AsyncLocalStorage {
   }
 
   static bind(fn, ...args: any) {
+    validateFunction(fn);
     return this.snapshot().bind(null, fn, ...args);
   }
 
@@ -234,6 +236,14 @@ class AsyncLocalStorage {
       if (context[i] === this) return context[i + 1];
     }
   }
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _enable() {}
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _propagate(resource, triggerResource, type) {}
 }
 
 if (IS_BUN_DEVELOPMENT) {
@@ -250,10 +260,22 @@ class AsyncResource {
   type;
   #snapshot;
 
-  constructor(type, options?) {
-    if (typeof type !== "string") {
-      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+  constructor(type, opts?) {
+    validateString(type, "type");
+
+    let triggerAsyncId = opts;
+    if (opts != null) {
+      if (typeof opts !== "number") {
+        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
+      }
+      if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
+        throw $ERR_INVALID_ASYNC_ID(`Invalid triggerAsyncId value: ${triggerAsyncId}`);
+      }
     }
+    if (hasEnabledCreateHook && type.length === 0) {
+      throw $ERR_ASYNC_TYPE(`Invalid name for async "type": ${type}`);
+    }
+
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
@@ -292,6 +314,7 @@ class AsyncResource {
   }
 
   bind(fn, thisArg) {
+    validateFunction(fn, "fn");
     return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
   }
 
@@ -320,11 +343,10 @@ function createWarning(message, isCreateHook?: boolean) {
       // times bundled into a framework or application. Their use defines three
       // handlers which are all TODO stubs. for more info see this comment:
       // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
-      if (typeof arg1 === 'object') {
+      if (typeof arg1 === "object") {
         const { init, promiseResolve, destroy } = arg1;
         if (init && promiseResolve && destroy) {
-          if (isEmptyFunction(init) && isEmptyFunction(destroy))
-            return;
+          if (isEmptyFunction(init) && isEmptyFunction(destroy)) return;
         }
       }
     }
@@ -337,8 +359,8 @@ function createWarning(message, isCreateHook?: boolean) {
 
 function isEmptyFunction(f: Function) {
   let str = f.toString();
-  if(!str.startsWith('function()'))return false;
-  str = str.slice('function()'.length).trim();
+  if (!str.startsWith("function()")) return false;
+  str = str.slice("function()".length).trim();
   return /^{\s*}$/.test(str);
 }
 
@@ -347,10 +369,28 @@ const createHookNotImpl = createWarning(
   true,
 );
 
-function createHook(callbacks) {
+let hasEnabledCreateHook = false;
+function createHook(hook) {
+  validateObject(hook, "hook");
+  const { init, before, after, destroy, promiseResolve } = hook;
+  if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init must be a function");
+  if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before must be a function");
+  if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after must be a function");
+  if (destroy !== undefined && typeof destroy !== "function")
+    throw $ERR_ASYNC_CALLBACK("hook.destroy must be a function");
+  if (promiseResolve !== undefined && typeof promiseResolve !== "function")
+    throw $ERR_ASYNC_CALLBACK("hook.promiseResolve must be a function");
+
   return {
-    enable: () => createHookNotImpl(callbacks),
-    disable: createHookNotImpl,
+    enable() {
+      createHookNotImpl(hook);
+      hasEnabledCreateHook = true;
+      return this;
+    },
+    disable() {
+      createHookNotImpl();
+      return this;
+    },
   };
 }
 

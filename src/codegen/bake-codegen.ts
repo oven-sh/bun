@@ -1,26 +1,15 @@
 import assert from "node:assert";
 import { existsSync, writeFileSync, rmSync, readFileSync } from "node:fs";
-import { watch } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { argParse } from "./helpers";
 
 // arg parsing
-const options = {};
-for (const arg of process.argv.slice(2)) {
-  if (!arg.startsWith("--")) {
-    console.error("Unknown argument " + arg);
-    process.exit(1);
-  }
-  const split = arg.split("=");
-  const value = split[1] || "true";
-  options[split[0].slice(2)] = value;
-}
-
-let { codegen_root, debug, live } = options as any;
-if (!codegen_root) {
-  console.error("Missing --codegen_root=...");
+let { "codegen-root": codegenRoot, debug, ...rest } = argParse(["codegen-root", "debug"]);
+if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
+if (!codegenRoot) {
+  console.error("Missing --codegen-root=...");
   process.exit(1);
 }
-if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 
 const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
@@ -28,7 +17,7 @@ process.chdir(base_dir); // to make bun build predictable in development
 function convertZigEnum(zig: string) {
   const startTrigger = "\npub const MessageId = enum(u8) {";
   const start = zig.indexOf(startTrigger) + startTrigger.length;
-  const endTrigger = /\n    pub fn |\n};/g;
+  const endTrigger = /\n    pub (inline )?fn |\n};/g;
   const end = zig.slice(start).search(endTrigger) + start;
   const enumText = zig.slice(start, end);
   const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
@@ -51,8 +40,9 @@ async function run() {
           IS_BUN_DEVELOPMENT: String(!!debug),
         },
         minify: {
-          syntax: true,
+          syntax: !debug,
         },
+        target: side === "server" ? "bun" : "browser",
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -65,6 +55,8 @@ async function run() {
         file !== "error" && "input_graph",
         file !== "error" && "config",
         file === "server" && "server_exports",
+        file === "server" && "$separateSSRGraph",
+        file === "server" && "$importMeta",
       ].filter(Boolean);
       const combined_source =
         file === "error"
@@ -81,17 +73,19 @@ async function run() {
 
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
-        minify: {
-          syntax: true,
-          whitespace: !debug,
-          identifiers: !debug,
-        },
+        minify: !debug,
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
       code = (await result.outputs[0].text()).replace(`// ${basename(generated_entrypoint)}`, "").trim();
 
       rmSync(generated_entrypoint);
+
+      if (code.includes("export default ")) {
+        throw new AggregateError([
+          new Error("export default is not allowed in bake codegen. this became a commonjs module!"),
+        ]);
+      }
 
       if (file !== "error") {
         let names: string = "";
@@ -102,6 +96,12 @@ async function run() {
           })
           .trim();
         assert(names, "missing name");
+        const split_names = names.split(",").map(x => x.trim());
+        const out_names = Object.fromEntries(in_names.map((x, i) => [x, split_names[i]]));
+        function outName(name) {
+          if (!out_names[name]) throw new Error(`missing out name for ${name}`);
+          return out_names[name];
+        }
 
         if (debug) {
           code = "\n  " + code.replace(/\n/g, "\n  ") + "\n";
@@ -110,18 +110,21 @@ async function run() {
         if (code[code.length - 1] === ";") code = code.slice(0, -1);
 
         if (side === "server") {
-          const server_fetch_function = names.split(",")[2].trim();
-          code = debug ? `${code}  return ${server_fetch_function};\n` : `${code};return ${server_fetch_function};`;
-        }
+          code = debug
+            ? `${code}  return ${outName("server_exports")};\n`
+            : `${code};return ${outName("server_exports")};`;
 
-        code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
+          const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
+          code = code.replaceAll("import.meta", outName("$importMeta"));
+          code = `let ${outName("input_graph")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
-        if (side === "server") {
-          code = `export default await ${code}`;
+          code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
+        } else {
+          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
         }
       }
 
-      writeFileSync(join(codegen_root, `bake.${file}.js`), code);
+      writeFileSync(join(codegenRoot, `bake.${file}.js`), code);
     }),
   );
 
@@ -162,26 +165,12 @@ async function run() {
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
-    if (!live) process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 
-    const empty_file = join(codegen_root, "bake_empty_file");
+    const empty_file = join(codegenRoot, "bake_empty_file");
     if (!existsSync(empty_file)) writeFileSync(empty_file, "this is used to fulfill a cmake dependency");
   }
 }
 
 await run();
-
-if (live) {
-  const watcher = watch(base_dir, { recursive: true }) as any;
-  for await (const event of watcher) {
-    if (event.filename.endsWith(".zig")) continue;
-    if (event.filename.startsWith(".")) continue;
-    try {
-      await run();
-    } catch (e) {
-      console.log(e);
-    }
-  }
-}

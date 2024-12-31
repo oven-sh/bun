@@ -1,14 +1,18 @@
-optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ON)
+
+set(DEFAULT_ENABLE_LLVM ON)
+
+# if target is bun-zig, set ENABLE_LLVM to OFF
+if(TARGET bun-zig)
+  set(DEFAULT_ENABLE_LLVM OFF)
+endif()
+
+optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ${DEFAULT_ENABLE_LLVM})
 
 if(NOT ENABLE_LLVM)
   return()
 endif()
 
-if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE)
-  set(DEFAULT_LLVM_VERSION "18.1.8")
-else()
-  set(DEFAULT_LLVM_VERSION "16.0.6")
-endif()
+set(DEFAULT_LLVM_VERSION "18.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -52,6 +56,7 @@ if(UNIX)
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}/bin
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}/bin
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin
+      /usr/lib/llvm${LLVM_VERSION_MAJOR}/bin
     )
   endif()
 endif()
@@ -72,7 +77,7 @@ macro(find_llvm_command variable command)
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION ${LLVM_VERSION}
+    VERSION >=${LLVM_VERSION_MAJOR}.1.0
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
@@ -108,8 +113,23 @@ else()
   find_llvm_command(CMAKE_CXX_COMPILER clang++)
   find_llvm_command(CMAKE_LINKER llvm-link)
   find_llvm_command(CMAKE_AR llvm-ar)
-  find_llvm_command(CMAKE_STRIP llvm-strip)
+  if (LINUX)
+    # On Linux, strip ends up being more useful for us.
+    find_command(
+      VARIABLE
+        CMAKE_STRIP
+      COMMAND
+        strip
+      REQUIRED
+        ON
+    )
+  else()
+    find_llvm_command(CMAKE_STRIP llvm-strip)
+  endif()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
+  if(LINUX)
+    find_llvm_command(LLD_PROGRAM ld.lld)
+  endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)
   endif()

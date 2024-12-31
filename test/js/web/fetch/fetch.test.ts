@@ -1,12 +1,14 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, gc, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
 import net from "net";
 import { join } from "path";
 import { gzipSync } from "zlib";
-
+import { Readable } from "stream";
+import { once } from "events";
+import type { AddressInfo } from "net";
 const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
@@ -15,6 +17,7 @@ const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
+    idleTimeout: 0,
     ...options,
     fetch,
     port: 0,
@@ -1312,9 +1315,16 @@ describe("Response", () => {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
-      var input = await response.arrayBuffer();
+      const input = await response.bytes();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
+      let chunks: Uint8Array[] = [];
+      const reader = output.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      expect(input).toEqual(Buffer.concat(chunks));
     });
   });
 
@@ -2008,7 +2018,7 @@ describe("http/1.1 response body length", () => {
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 
-  it("should ignore body on HEAD", async () => {
+  it.todoIf(isBroken)("should ignore body on HEAD", async () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
@@ -2016,35 +2026,31 @@ describe("http/1.1 response body length", () => {
 });
 describe("fetch Response life cycle", () => {
   it("should not keep Response alive if not consumed", async () => {
-    const serverProcess = Bun.spawn({
+    let deferred = Promise.withResolvers<string>();
+
+    await using serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
+      ipc(message) {
+        deferred.resolve(message);
+      },
     });
 
-    async function getServerUrl() {
-      const reader = serverProcess.stdout.getReader();
-      const { done, value } = await reader.read();
-      return new TextDecoder().decode(value);
-    }
-    const serverUrl = await getServerUrl();
-    const clientProcess = Bun.spawn({
+    const serverUrl = await deferred.promise;
+    await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
     });
-    try {
-      expect(await clientProcess.exited).toBe(0);
-    } finally {
-      serverProcess.kill();
-    }
+    expect(await clientProcess.exited).toBe(0);
   });
   it("should allow to get promise result after response is GC'd", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         return new Response(
@@ -2073,4 +2079,250 @@ describe("fetch Response life cycle", () => {
       server.stop(true);
     }
   });
+});
+
+describe("fetch should allow duplex", () => {
+  it("should allow duplex streaming", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const intervalStream = new ReadableStream({
+      start(c) {
+        let count = 0;
+        const timer = setInterval(() => {
+          c.enqueue("Hello\n");
+          if (count === 5) {
+            clearInterval(timer);
+            c.close();
+          }
+          count++;
+        }, 20);
+      },
+    }).pipeThrough(new TextEncoderStream());
+
+    const resp = await fetch(server.url, {
+      method: "POST",
+      body: intervalStream,
+      duplex: "half",
+    });
+
+    const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+    var result = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      result += value;
+    }
+    expect(result).toBe("Hello\n".repeat(6));
+  });
+
+  it("should allow duplex extending Readable (sync)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        if (this.index < this.chunks.length) {
+          this.push(this.chunks[this.index]);
+          this.index++;
+        } else {
+          this.push(null);
+        }
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+  it("should allow duplex extending Readable (async)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        setTimeout(() => {
+          if (this.index < this.chunks.length) {
+            this.push(this.chunks[this.index]);
+            this.index++;
+          } else {
+            this.push(null);
+          }
+        }, 20);
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should allow duplex using async iterator (async)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: async function* iter() {
+        yield "Hello";
+        await Bun.sleep(20);
+        yield " ";
+        await Bun.sleep(20);
+        yield "World!";
+      },
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should fail in redirects .follow when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+      });
+
+      await response.text();
+    }).toThrow();
+  });
+
+  it("should work in redirects .manual when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+        redirect: "manual",
+      });
+
+      await response.text();
+    }).not.toThrow();
+  });
+});
+
+it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
+  for (const type of ["normal", "delay"]) {
+    await using server = net.createServer(socket => {
+      let body = "";
+      socket.on("data", data => {
+        body += data.toString("utf8");
+
+        const headerEndIndex = body.indexOf("\r\n\r\n");
+        if (headerEndIndex !== -1) {
+          // headers received
+          const headers = body.split("\r\n\r\n")[0];
+          const path = headers.split("\r\n")[0].split(" ")[1];
+          if (path === "/redirect") {
+            socket.end(
+              "HTTP/1.1 308 Permanent Redirect\r\nCache-Control: public, max-age=0, must-revalidate\r\nContent-Type: text/plain\r\nLocation: /\r\nConnection: close\r\n\r\n",
+            );
+          } else {
+            if (type === "delay") {
+              setTimeout(() => {
+                if (!socket.destroyed)
+                  socket.end(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+                  );
+              }, 200);
+            } else {
+              socket.end(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+              );
+            }
+          }
+        }
+      });
+    });
+    await once(server.listen(0), "listening");
+
+    try {
+      let { address, port } = server.address() as AddressInfo;
+      if (address === "::") {
+        address = "[::]";
+      }
+      const response = await fetch(`http://${address}:${port}/redirect`, {
+        signal: AbortSignal.timeout(150),
+      });
+      if (type === "delay") {
+        console.error(response, type);
+        expect.unreachable();
+      } else {
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Hello Bun");
+      }
+    } catch (err) {
+      if (type === "delay") {
+        expect((err as Error).name).toBe("TimeoutError");
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
 });

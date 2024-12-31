@@ -1203,7 +1203,7 @@ var require_browser2 = __commonJS({
       this._hasher.update(data, encoding);
       return this;
     };
-    LazyHash.prototype.digest = function update(data, encoding) {
+    LazyHash.prototype.digest = function digest(data, encoding) {
       this._checkFinalized();
       this._finalized = true;
       return this._hasher.digest(data, encoding);
@@ -1334,8 +1334,8 @@ var require_browser2 = __commonJS({
       });
     }
 
-    module.exports = function createHash(algorithm) {
-      return new LazyHash(algorithm);
+    module.exports = function createHash(algorithm, options) {
+      return new LazyHash(algorithm, options);
     };
 
     module.exports.createHash = module.exports;
@@ -12035,6 +12035,10 @@ crypto_exports.publicDecrypt = function (key, message) {
 
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
+};
+
+crypto_exports.getFips = function getFips() {
+  return 0;
 };
 
 crypto_exports.getRandomValues = getRandomValues;

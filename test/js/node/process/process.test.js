@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+import { familySync } from "detect-libc";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -117,11 +118,15 @@ it("process.chdir() on root dir", () => {
   }
 });
 
-it("process.hrtime()", () => {
+it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);
-  const end2 = process.hrtime();
   expect(end[0]).toBe(0);
+
+  // Flaky on Ubuntu & Windows.
+  await Bun.sleep(16);
+  const end2 = process.hrtime();
+
   expect(end2[1] > start[1]).toBe(true);
 });
 
@@ -135,8 +140,9 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
-  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`;
-  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}-baseline.zip`;
+  const abi = familySync() === "musl" ? "-musl" : "";
+  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
+  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
 
   expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });
@@ -1049,4 +1055,11 @@ describe("process.exitCode", () => {
 
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
+});
+
+it("process.memoryUsage.arrayBuffers", () => {
+  const initial = process.memoryUsage().arrayBuffers;
+  const array = new ArrayBuffer(1024 * 1024 * 16);
+  array.buffer;
+  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });

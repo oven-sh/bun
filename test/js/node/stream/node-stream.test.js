@@ -544,3 +544,26 @@ it("should emit prefinish on current tick", done => {
     done();
   });
 });
+
+for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0x80000, 0xa0000, 0xa0010]) {
+  it(`should emit 'readable' with null data and 'close' exactly once each, 0x${size.toString(16)} bytes`, async () => {
+    const path = `${tmpdir()}/${Date.now()}.readable_and_close.txt`;
+    writeFileSync(path, new Uint8Array(size));
+    const stream = createReadStream(path);
+    const close_resolvers = Promise.withResolvers();
+    const readable_resolvers = Promise.withResolvers();
+
+    stream.on("close", () => {
+      close_resolvers.resolve();
+    });
+
+    stream.on("readable", () => {
+      const data = stream.read();
+      if (data === null) {
+        readable_resolvers.resolve();
+      }
+    });
+
+    await Promise.all([close_resolvers.promise, readable_resolvers.promise]);
+  });
+}

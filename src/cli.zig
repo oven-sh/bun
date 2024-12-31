@@ -21,6 +21,7 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -31,7 +32,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
@@ -61,7 +62,7 @@ pub const Cli = struct {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            log.printForLogLevel(Output.errorWriter()) catch {};
+            log.print(Output.errorWriter()) catch {};
 
             bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
@@ -182,11 +183,12 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
-        clap.parseParam("<POS>...") catch unreachable,
-    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+    } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
         // This will print more error return traces, as a debug aid
-        clap.parseParam("--verbose-error-trace") catch unreachable,
-    } else [_]ParamType{};
+        clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
+    } else [_]ParamType{}) ++ [_]ParamType{
+        clap.parseParam("<POS>...") catch unreachable,
+    };
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
@@ -229,6 +231,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -240,6 +243,7 @@ pub const Arguments = struct {
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
@@ -247,6 +251,7 @@ pub const Arguments = struct {
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -281,15 +286,19 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
+        clap.parseParam("--experimental-css               Enable experimental CSS bundling") catch unreachable,
         clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--experimental-html              Use .html files as entry points for JavaScript & CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
-    } ++ if (FeatureFlags.bake) [_]ParamType{
-        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake") catch unreachable,
+        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
+        clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
+        clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
     } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
@@ -305,6 +314,8 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
+        clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -362,11 +373,7 @@ pub const Arguments = struct {
                 if (getHomeConfigPath(&config_buf)) |path| {
                     loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
                         if (ctx.log.hasAny()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                },
-                            }
+                            ctx.log.print(Output.errorWriter()) catch {};
                         }
                         if (ctx.log.hasAny()) Output.printError("\n", .{});
                         Output.err(err, "failed to load bunfig", .{});
@@ -421,11 +428,7 @@ pub const Arguments = struct {
 
         loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
             if (ctx.log.hasAny()) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                ctx.log.print(Output.errorWriter()) catch {};
             }
             if (ctx.log.hasAny()) Output.printError("\n", .{});
             Output.err(err, "failed to load bunfig", .{});
@@ -501,6 +504,15 @@ pub const Arguments = struct {
 
         if (cmd == .RunCommand or cmd == .AutoCommand) {
             ctx.filters = args.options("--filter");
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         if (cmd == .TestCommand) {
@@ -528,6 +540,23 @@ pub const Arguments = struct {
                         Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
                         Global.exit(1);
                     }
+                }
+            }
+
+            if (args.option("--reporter-outfile")) |reporter_outfile| {
+                ctx.test_options.reporter_outfile = reporter_outfile;
+            }
+
+            if (args.option("--reporter")) |reporter| {
+                if (strings.eqlComptime(reporter, "junit")) {
+                    if (ctx.test_options.reporter_outfile == null) {
+                        Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                        Global.crash();
+                    }
+                    ctx.test_options.file_reporter = .junit;
+                } else {
+                    Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                    Global.crash();
                 }
             }
 
@@ -762,6 +791,10 @@ pub const Arguments = struct {
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+
+            if (args.flag("--expose-internals")) {
+                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -778,8 +811,16 @@ pub const Arguments = struct {
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
             if (args.flag("--app")) {
+                if (!bun.FeatureFlags.bake()) {
+                    Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
+                    Global.crash();
+                }
+
                 ctx.bundler_options.bake = true;
-                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_dump_server = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_disable_minify = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-no-minify");
             }
 
             // TODO: support --format=esm
@@ -801,7 +842,9 @@ pub const Arguments = struct {
             }
 
             const experimental_css = args.flag("--experimental-css");
-            ctx.bundler_options.experimental_css = experimental_css;
+            const experimental_html = args.flag("--experimental-html");
+            ctx.bundler_options.experimental.css = experimental_css;
+            ctx.bundler_options.experimental.html = experimental_html;
             ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
 
             const minify_flag = args.flag("--minify");
@@ -827,6 +870,24 @@ pub const Arguments = struct {
                     opts.packages = .external;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
+            }
+
+            if (args.option("--env")) |env| {
+                if (strings.indexOfChar(env, '*')) |asterisk| {
+                    if (asterisk == 0) {
+                        ctx.bundler_options.env_behavior = .load_all;
+                    } else {
+                        ctx.bundler_options.env_behavior = .prefix;
+                        ctx.bundler_options.env_prefix = env[0..asterisk];
+                    }
+                } else if (strings.eqlComptime(env, "inline") or strings.eqlComptime(env, "1")) {
+                    ctx.bundler_options.env_behavior = .load_all;
+                } else if (strings.eqlComptime(env, "disable") or strings.eqlComptime(env, "0")) {
+                    ctx.bundler_options.env_behavior = .load_all_without_inlining;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character", .{});
                     Global.crash();
                 }
             }
@@ -881,6 +942,31 @@ pub const Arguments = struct {
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
                 ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+            }
+
+            if (args.flag("--windows-hide-console")) {
+                // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
+                // does, all of these customization options have been gated to windows-only
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-hide-console requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_hide_console = true;
+            }
+            if (args.option("--windows-icon")) |path| {
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-icon requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_icon = path;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -942,18 +1028,14 @@ pub const Arguments = struct {
             }
 
             if (args.flag("--server-components")) {
-                if (!bun.FeatureFlags.cli_server_components) {
-                    // TODO: i want to disable this in non-canary
-                    // but i also want to have tests that can run for PRs
-                }
                 ctx.bundler_options.server_components = true;
                 if (opts.target) |target| {
                     if (!bun.options.Target.from(target).isServerSide()) {
                         bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
                         Global.crash();
+                    } else {
+                        opts.target = .bun;
                     }
-                } else {
-                    opts.target = .bun;
                 }
             }
 
@@ -1036,6 +1118,15 @@ pub const Arguments = struct {
             // "run.silent" in bunfig.toml
             if (args.flag("--silent")) {
                 ctx.debug.silent = true;
+            }
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
             }
 
             if (opts.define) |define| {
@@ -1365,6 +1456,9 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+
+        file_reporter: ?TestCommand.FileReporter = null,
+        reporter_outfile: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {
@@ -1412,9 +1506,6 @@ pub const Command = struct {
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
-            compile: bool = false,
-            compile_target: Cli.CompileTarget = .{},
-
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
@@ -1436,11 +1527,21 @@ pub const Command = struct {
             bytecode: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",
-            experimental_css: bool = false,
+            experimental: options.Loader.Experimental = .{},
             css_chunking: bool = false,
 
             bake: bool = false,
             bake_debug_dump_server: bool = false,
+            bake_debug_disable_minify: bool = false,
+
+            env_behavior: Api.DotEnvBehavior = .disable,
+            env_prefix: []const u8 = "",
+            elide_lines: ?usize = null,
+            // Compile options
+            compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
+            windows_hide_console: bool = false,
+            windows_icon: ?[]const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1840,7 +1941,6 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 } else if (strings.eqlComptime(filter[0], "a")) {
                     const FirstLetter = AddCompletions.FirstLetter;
-                    const index = AddCompletions.index;
 
                     outer: {
                         if (filter.len > 1 and filter[1].len > 0) {
@@ -1873,7 +1973,8 @@ pub const Command = struct {
                                 'z' => FirstLetter.z,
                                 else => break :outer,
                             };
-                            const results = index.get(first_letter);
+                            AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                            const results = AddCompletions.getPackages(first_letter);
 
                             var prefilled_i: usize = 0;
                             for (results) |cur| {
@@ -2086,7 +2187,15 @@ pub const Command = struct {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
-                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                var path_buf: bun.PathBuffer = undefined;
+                                @memcpy(path_buf[0..ctx.args.entry_points[0].len], ctx.args.entry_points[0]);
+                                path_buf[ctx.args.entry_points[0].len] = 0;
+                                const lockfile_path = path_buf[0..ctx.args.entry_points[0].len :0];
+                                const file = File.open(lockfile_path, bun.O.RDONLY, 0).unwrap() catch |err| {
+                                    Output.err(err, "failed to open lockfile", .{});
+                                    Global.crash();
+                                };
+                                try PackageManagerCommand.printHash(ctx, file);
                                 return;
                             }
                         }
@@ -2277,11 +2386,7 @@ pub const Command = struct {
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                 std.fs.path.basename(file_path),
@@ -2521,19 +2626,25 @@ pub const Command = struct {
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Install the latest stable version<r>
+                        \\  <d>Install the latest {s} version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Install the most recent canary version of Bun<r>
-                        \\  <b><green>bun upgrade --canary<r>
+                        \\  <d>{s}<r>
+                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;
+
+                    const args = comptime switch (Environment.is_canary) {
+                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                    };
+
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    Output.pretty(outro_text, .{});
+                    Output.pretty(outro_text, args);
                     Output.flush();
                 },
                 Command.Tag.ReplCommand => {

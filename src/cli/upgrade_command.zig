@@ -25,7 +25,6 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -87,7 +86,9 @@ pub const Version = struct {
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix = if (Environment.baseline) "-baseline" else "";
+    const suffix_abi = if (Environment.isMusl) "-musl" else "";
+    const suffix_cpu = if (Environment.baseline) "-baseline" else "";
+    const suffix = suffix_abi ++ suffix_cpu;
     pub const folder_name = "bun-" ++ triplet ++ suffix;
     pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";
@@ -230,7 +231,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -272,11 +273,7 @@ pub const UpgradeCommand = struct {
                 refresher.?.refresh();
 
                 if (log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try log.print(Output.errorWriter());
 
                     Global.exit(1);
                 } else {
@@ -293,11 +290,7 @@ pub const UpgradeCommand = struct {
                 progress.?.end();
                 refresher.?.refresh();
 
-                if (Output.enable_ansi_colors) {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try log.print(Output.errorWriter());
                 Global.exit(1);
             }
 
@@ -508,7 +501,7 @@ pub const UpgradeCommand = struct {
         };
 
         const zip_url = URL.parse(version.zip_url);
-        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(zip_url);
 
         {
             var refresher = Progress{};
@@ -996,7 +989,7 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
@@ -1050,7 +1043,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

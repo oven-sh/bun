@@ -37,6 +37,8 @@ pub const scope = @import("./scope.zig");
 pub const media = @import("./media.zig");
 pub const starting_style = @import("./starting_style.zig");
 
+pub const tailwind = @import("./tailwind.zig");
+
 const debug = bun.Output.scoped(.CSS_MINIFY, false);
 
 pub fn CssRule(comptime Rule: type) type {
@@ -288,8 +290,6 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                         // Attempt to merge the new rule with the last rule we added.
                         var merged = false;
-                        const ZACK_REMOVE_THIS = false;
-                        _ = ZACK_REMOVE_THIS; // autofix
                         if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
                             const last_style_rule = &rules.items[rules.items.len - 1].style;
                             if (mergeStyleRules(AtRule, sty, last_style_rule, context)) {

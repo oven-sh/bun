@@ -24,13 +24,11 @@ const Properties = @import("../base.zig").Properties;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = bun.NullableAllocator;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
@@ -57,6 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+const s3 = @import("../../s3.zig");
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -145,7 +144,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -158,7 +157,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+            try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -170,13 +169,13 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -262,7 +261,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const this_value = callframe.this();
         const cloned = this.clone(globalThis);
         if (globalThis.hasException()) {
@@ -365,8 +364,8 @@ pub const Response = struct {
     pub fn constructJSON(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
-        const args_list = callframe.arguments(2);
+    ) bun.JSError!JSValue {
+        const args_list = callframe.arguments_old(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -433,8 +432,8 @@ pub const Response = struct {
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
-        var args_list = callframe.arguments(4);
+    ) bun.JSError!JSValue {
+        var args_list = callframe.arguments_old(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -455,7 +454,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis.ptr());
+                url_string = url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -495,7 +494,7 @@ pub const Response = struct {
     pub fn constructError(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const response = bun.new(
             Response,
             Response{
@@ -511,76 +510,73 @@ pub const Response = struct {
         return response.toJS(globalThis);
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Response {
-        const args_list = brk: {
-            var args = callframe.arguments(2);
-            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
-                args.len = 1;
-            }
-            break :brk args;
-        };
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
+        const arguments = callframe.argumentsAsArray(2);
 
-        const arguments = args_list.ptr[0..args_list.len];
-
-        var init: Init = @as(?Init, brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                1 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                else => {
-                    if (arguments[1].isObject()) {
-                        break :brk Init.init(globalThis, arguments[1]) catch null;
+        if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
+            if (arguments[0].as(Blob)) |blob| {
+                if (blob.isS3()) {
+                    if (!arguments[1].isEmptyOrUndefinedOrNull()) {
+                        return globalThis.throwInvalidArguments("new Response(s3File) do not support ResponseInit options", .{});
                     }
+                    var response: Response = .{
+                        .init = Response.Init{
+                            .status_code = 302,
+                        },
+                        .body = Body{
+                            .value = .{ .Empty = {} },
+                        },
+                        .url = bun.String.empty,
+                    };
 
-                    if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
-                    }
-
-                    break :brk null;
-                },
+                    const result = blob.store.?.data.s3.getCredentials().signRequest(.{
+                        .path = blob.store.?.data.s3.path(),
+                        .method = .GET,
+                    }, .{ .expires = 15 * 60 }) catch |sign_err| {
+                        return s3.AWSCredentials.throwSignError(sign_err, globalThis);
+                    };
+                    defer result.deinit();
+                    response.init.headers = response.getOrCreateHeaders(globalThis);
+                    response.redirected = true;
+                    var headers_ref = response.init.headers.?;
+                    headers_ref.put(.Location, result.url, globalThis);
+                    return bun.new(Response, response);
+                }
             }
-            unreachable;
-        }) orelse return null;
+        }
+        var init: Init = (brk: {
+            if (arguments[1].isUndefinedOrNull()) {
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
+            }
+            if (arguments[1].isObject()) {
+                break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
+            }
+            if (!globalThis.hasException()) {
+                return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+            }
+            return error.JSError;
+        });
+        errdefer init.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var body: Body = brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Body{
-                        .value = Body.Value{ .Null = {} },
-                    };
-                },
-                else => {
-                    break :brk Body.extract(globalThis, arguments[0]);
-                },
+            if (arguments[0].isUndefinedOrNull()) {
+                break :brk Body{
+                    .value = Body.Value{ .Null = {} },
+                };
             }
-            unreachable;
-        } orelse {
-            init.deinit(bun.default_allocator);
-
-            return null;
+            break :brk try Body.extract(globalThis, arguments[0]);
         };
+        errdefer body.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            body.deinit(bun.default_allocator);
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var response = bun.new(Response, Response{
@@ -618,7 +614,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
             var result = Init{ .status_code = 200 };
             errdefer {
                 result.deinit(bun.default_allocator);
@@ -654,7 +650,7 @@ pub const Response = struct {
                         result.headers = orig.cloneThis(globalThis);
                     }
                 } else {
-                    result.headers = FetchHeaders.createFromJS(globalThis.ptr(), headers);
+                    result.headers = FetchHeaders.createFromJS(globalThis, headers);
                 }
             }
 
@@ -669,7 +665,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }
@@ -733,7 +729,14 @@ pub const Response = struct {
 };
 
 const null_fd = bun.invalid_fd;
+fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocator: std.mem.Allocator) void {
+    var old = headers.*;
+    headers.* = Headers.fromPicoHttpHeaders(new_headers, allocator) catch bun.outOfMemory();
 
+    if (old) |*headers_| {
+        headers_.deinit();
+    }
+}
 pub const Fetch = struct {
     const headers_string = "headers";
     const method_string = "method";
@@ -800,22 +803,18 @@ pub const Fetch = struct {
         break :brk errors;
     };
 
-    comptime {
-        if (!JSC.is_bindgen) {
-            _ = Bun__fetch;
-            _ = Bun__fetchPreconnect;
-        }
-    }
-
     pub const FetchTasklet = struct {
-        const log = Output.scoped(.FetchTasklet, false);
+        pub const FetchTaskletStream = JSC.WebCore.FetchTaskletChunkedRequestSink;
 
+        const log = Output.scoped(.FetchTasklet, false);
+        sink: ?*FetchTaskletStream.JSSink = null,
         http: ?*http.AsyncHTTP = null,
         result: http.HTTPClientResult = .{},
         metadata: ?http.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
+
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
         /// buffer used to stream response to JS
@@ -857,6 +856,7 @@ pub const Fetch = struct {
         hostname: ?[]u8 = null,
         is_waiting_body: bool = false,
         is_waiting_abort: bool = false,
+        is_waiting_request_stream_start: bool = false,
         mutex: Mutex,
 
         tracker: JSC.AsyncTaskTracker,
@@ -877,9 +877,24 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
+            ReadableStream: JSC.WebCore.ReadableStream.Strong,
+
+            pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
             pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
                 return switch (this.*) {
@@ -898,6 +913,9 @@ pub const Fetch = struct {
             pub fn detach(this: *HTTPRequestBody) void {
                 switch (this.*) {
                     .AnyBlob => this.AnyBlob.detach(),
+                    .ReadableStream => |*stream| {
+                        stream.deinit();
+                    },
                     .Sendfile => {
                         if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
                             _ = bun.sys.close(this.Sendfile.fd);
@@ -906,10 +924,76 @@ pub const Fetch = struct {
                     },
                 }
             }
+
+            pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!HTTPRequestBody {
+                var body_value = try Body.Value.fromJS(globalThis, value);
+                if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed2(globalThis)))) {
+                    return globalThis.ERR_BODY_ALREADY_USED("body already used", .{}).throw();
+                }
+                if (body_value == .Locked) {
+                    if (body_value.Locked.readable.has()) {
+                        // just grab the ref
+                        return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                    }
+                    const readable = body_value.toReadableStream(globalThis);
+                    if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
+                        return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                    }
+                }
+                return FetchTasklet.HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
+            }
+
+            pub fn needsToReadFile(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.needsToReadFile(),
+                    else => false,
+                };
+            }
+
+            pub fn isS3(this: *const HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |*blob| blob.isS3(),
+                    else => false,
+                };
+            }
+
+            pub fn hasContentTypeFromUser(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.hasContentTypeFromUser(),
+                    else => false,
+                };
+            }
+
+            pub fn getAnyBlob(this: *HTTPRequestBody) ?*AnyBlob {
+                return switch (this.*) {
+                    .AnyBlob => &this.AnyBlob,
+                    else => null,
+                };
+            }
+
+            pub fn hasBody(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.size() > 0,
+                    .ReadableStream => |*stream| stream.has(),
+                    .Sendfile => true,
+                };
+            }
         };
 
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
+        }
+
+        fn clearSink(this: *FetchTasklet) void {
+            if (this.sink) |wrapper| {
+                this.sink = null;
+
+                wrapper.sink.done = true;
+                wrapper.sink.ended = true;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                wrapper.sink.finalizeAndDestroy();
+            }
         }
 
         fn clearData(this: *FetchTasklet) void {
@@ -954,14 +1038,16 @@ pub const Fetch = struct {
             this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
-            this.request_body.detach();
+            if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+                this.request_body.detach();
+            }
 
             this.abort_reason.deinit();
             this.check_server_identity.deinit();
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -996,6 +1082,144 @@ pub const Fetch = struct {
             return null;
         }
 
+        pub fn onResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var args = callframe.arguments_old(2);
+            var this: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            if (this.request_body == .ReadableStream) {
+                var readable_stream_ref = this.request_body.ReadableStream;
+                this.request_body.ReadableStream = .{};
+                defer readable_stream_ref.deinit();
+                if (readable_stream_ref.get()) |stream| {
+                    stream.done(globalThis);
+                    this.clearSink();
+                }
+            }
+
+            return JSValue.jsUndefined();
+        }
+
+        pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const args = callframe.arguments_old(2);
+            var this = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            const err = args.ptr[0];
+            if (this.request_body == .ReadableStream) {
+                var readable_stream_ref = this.request_body.ReadableStream;
+                this.request_body.ReadableStream = .{};
+                defer readable_stream_ref.deinit();
+                if (readable_stream_ref.get()) |stream| {
+                    stream.cancel(globalThis);
+                    this.clearSink();
+                }
+            }
+
+            this.abortListener(err);
+            return JSValue.jsUndefined();
+        }
+        pub const shim = JSC.Shimmer("Bun", "FetchTasklet", @This());
+
+        pub const Export = shim.exportFunctions(.{
+            .onResolveRequestStream = onResolveRequestStream,
+            .onRejectRequestStream = onRejectRequestStream,
+        });
+        comptime {
+            const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
+            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
+            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        }
+
+        pub fn startRequestStream(this: *FetchTasklet) void {
+            this.is_waiting_request_stream_start = false;
+            bun.assert(this.request_body == .ReadableStream);
+            if (this.request_body.ReadableStream.get()) |stream| {
+                this.ref(); // lets only unref when sink is done
+
+                const globalThis = this.global_this;
+                var response_stream = FetchTaskletStream.new(.{
+                    .task = .{ .fetch = this },
+                    .buffer = .{},
+                    .globalThis = globalThis,
+                }).toSink();
+                var signal = &response_stream.sink.signal;
+                this.sink = response_stream;
+
+                signal.* = FetchTaskletStream.JSSink.SinkSignal.init(JSValue.zero);
+
+                // explicitly set it to a dead pointer
+                // we use this memory address to disable signals being sent
+                signal.clear();
+                bun.assert(signal.isDead());
+
+                // We are already corked!
+                const assignment_result: JSValue = FetchTaskletStream.JSSink.assignToStream(
+                    globalThis,
+                    stream.value,
+                    response_stream,
+                    @as(**anyopaque, @ptrCast(&signal.ptr)),
+                );
+
+                assignment_result.ensureStillAlive();
+
+                // assert that it was updated
+                bun.assert(!signal.isDead());
+
+                if (assignment_result.toError()) |err_value| {
+                    response_stream.detach();
+                    this.sink = null;
+                    response_stream.sink.finalizeAndDestroy();
+                    return this.abortListener(err_value);
+                }
+
+                if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+                    this.javascript_vm.drainMicrotasks();
+
+                    assignment_result.ensureStillAlive();
+                    // it returns a Promise when it goes through ReadableStreamDefaultReader
+                    if (assignment_result.asAnyPromise()) |promise| {
+                        switch (promise.status(globalThis.vm())) {
+                            .pending => {
+                                this.ref();
+                                assignment_result.then(
+                                    globalThis,
+                                    this,
+                                    onResolveRequestStream,
+                                    onRejectRequestStream,
+                                );
+                            },
+                            .fulfilled => {
+                                var readable_stream_ref = this.request_body.ReadableStream;
+                                this.request_body.ReadableStream = .{};
+                                defer {
+                                    stream.done(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+                            },
+                            .rejected => {
+                                var readable_stream_ref = this.request_body.ReadableStream;
+                                this.request_body.ReadableStream = .{};
+                                defer {
+                                    stream.cancel(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+
+                                this.abortListener(promise.result(globalThis.vm()));
+                            },
+                        }
+                        return;
+                    } else {
+                        // if is not a promise we treat it as Error
+                        response_stream.detach();
+                        this.sink = null;
+                        response_stream.sink.finalizeAndDestroy();
+                        return this.abortListener(assignment_result);
+                    }
+                }
+            }
+        }
         pub fn onBodyReceived(this: *FetchTasklet) void {
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
@@ -1172,11 +1396,17 @@ pub const Fetch = struct {
                     this.deref();
                 }
             }
+            if (this.is_waiting_request_stream_start and this.result.can_stream) {
+                // start streaming
+                this.startRequestStream();
+            }
             // if we already respond the metadata and still need to process the body
             if (this.is_waiting_body) {
                 this.onBodyReceived();
                 return;
             }
+            if (this.metadata == null and this.result.isSuccess()) return;
+
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
@@ -1226,7 +1456,6 @@ pub const Fetch = struct {
                 this.promise.deinit();
             }
             const success = this.result.isSuccess();
-
             const result = switch (success) {
                 true => JSC.Strong.create(this.onResolve(), globalThis),
                 false => brk: {
@@ -1295,17 +1524,28 @@ pub const Fetch = struct {
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
-                        const js_cert = X509.toJS(x509, globalObject);
+                        const js_cert = X509.toJS(x509, globalObject) catch |err| {
+                            switch (err) {
+                                error.JSError => {},
+                                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+                            }
+                            const check_result = globalObject.tryTakeException().?;
+                            // mark to wait until deinit
+                            this.is_waiting_abort = this.result.has_more;
+                            this.abort_reason.set(globalObject, check_result);
+                            this.signal_store.aborted.store(true, .monotonic);
+                            this.tracker.didCancel(this.global_this);
+                            // we need to abort the request
+                            if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
+                            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                            return false;
+                        };
                         var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
                         defer hostname.deref();
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(
-                            globalObject,
-                            .undefined,
-                            &.{ js_hostname, js_cert },
-                        ) catch |err| globalObject.takeException(err);
+                        const check_result = check_server_identity.call(globalObject, .undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                         // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {
@@ -1695,10 +1935,10 @@ pub const Fetch = struct {
             var proxy: ?ZigURL = null;
             if (fetch_options.proxy) |proxy_opt| {
                 if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                    proxy = fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                    proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
                 }
             } else {
-                proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -1733,7 +1973,18 @@ pub const Fetch = struct {
                     .tls_props = fetch_options.ssl_config,
                 },
             );
-
+            // enable streaming the write side
+            const isStream = fetch_tasklet.request_body == .ReadableStream;
+            fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
+            fetch_tasklet.is_waiting_request_stream_start = isStream;
+            if (isStream) {
+                fetch_tasklet.http.?.request_body = .{
+                    .stream = .{
+                        .buffer = .{},
+                        .ended = false,
+                    },
+                };
+            }
             // TODO is this necessary? the http client already sets the redirect type,
             // so manually setting it here seems redundant
             if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -1760,6 +2011,22 @@ pub const Fetch = struct {
             log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason.set(this.global_this, reason);
+            this.abortTask();
+            if (this.sink) |wrapper| {
+                wrapper.sink.abort();
+                return;
+            }
+        }
+
+        pub fn sendRequestData(this: *FetchTasklet, data: []const u8, ended: bool) void {
+            if (this.http) |http_| {
+                http.http_thread.scheduleRequestWrite(http_, data, ended);
+            } else if (data.len != 3) {
+                bun.default_allocator.free(data);
+            }
+        }
+
+        pub fn abortTask(this: *FetchTasklet) void {
             this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
@@ -1817,12 +2084,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
+            task.mutex.lock();
+            // we need to unlock before task.deref();
+            defer task.mutex.unlock();
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
@@ -1928,18 +2198,21 @@ pub const Fetch = struct {
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
 
-    pub export fn Bun__fetchPreconnect(
+    comptime {
+        const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
+        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+    }
+    pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+    ) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(1).slice();
 
         if (arguments.len < 1) {
-            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
-            return .zero;
+            return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
         }
 
-        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
         defer url_str.deref();
 
         if (globalObject.hasException()) {
@@ -1947,32 +2220,27 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
         }
 
         if (url_str.isEmpty()) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
-        if (!url.isHTTP() and !url.isHTTPS()) {
-            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
+        if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
 
         if (url.hostname.len == 0) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
-            globalObject.throwInvalidArguments("Invalid port", .{});
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("Invalid port", .{});
         }
 
         bun.http.AsyncHTTP.preconnect(url, true);
@@ -1980,41 +2248,37 @@ pub const Fetch = struct {
     }
 
     const StringOrURL = struct {
-        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) ?bun.String {
+        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return bun.String.tryFromJS(value, globalThis);
+                return try bun.String.fromJS2(value, globalThis);
             }
 
-            const out = JSC.URL.hrefFromJS(value, globalThis);
-            if (out.tag == .Dead) {
-                return null;
-            }
+            const out = try JSC.URL.hrefFromJS(value, globalThis);
+            if (out.tag == .Dead) return null;
             return out;
         }
     };
 
-    pub export fn Bun__fetch(
+    comptime {
+        const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
+        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+    }
+    pub fn Bun__fetch_(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const globalThis = ctx.ptr();
-        const arguments = callframe.arguments(2);
+        const globalThis = ctx;
+        const arguments = callframe.arguments_old(2);
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
-        var exception_val = [_]JSC.C.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
+        errdefer bun.default_allocator.destroy(memory_reporter);
         defer {
-            if (exception.* != null) {
-                is_error = true;
-                ctx.throwValue(JSC.JSValue.c(exception.*));
-            }
-
             memory_reporter.report(globalThis.vm());
 
             if (is_error) bun.default_allocator.destroy(memory_reporter);
@@ -2040,9 +2304,7 @@ pub const Fetch = struct {
         // which is important for FormData.
         // https://github.com/oven-sh/bun/issues/2264
         //
-        var body: AnyBlob = AnyBlob{
-            .Blob = .{},
-        };
+        var body: FetchTasklet.HTTPRequestBody = FetchTasklet.HTTPRequestBody.Empty;
 
         var disable_timeout = false;
         var disable_keepalive = false;
@@ -2057,6 +2319,7 @@ pub const Fetch = struct {
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
+        var range: ?[]u8 = null;
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
         var url_proxy_buffer: []const u8 = "";
@@ -2077,10 +2340,6 @@ pub const Fetch = struct {
                 sig.unref();
             }
 
-            if (!is_error and globalThis.hasException()) {
-                is_error = true;
-            }
-
             unix_socket_path.deinit();
 
             allocator.free(url_proxy_buffer);
@@ -2098,6 +2357,10 @@ pub const Fetch = struct {
             if (hostname) |hn| {
                 bun.default_allocator.free(hn);
                 hostname = null;
+            }
+            if (range) |range_| {
+                bun.default_allocator.free(range_);
+                range = null;
             }
 
             if (ssl_config) |conf| {
@@ -2126,7 +2389,7 @@ pub const Fetch = struct {
             break :brk null;
         };
         // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-        const url_str_optional = if (first_arg.as(Request) == null) StringOrURL.fromJS(first_arg, globalThis) else null;
+        const url_str_optional = if (first_arg.as(Request) == null) try StringOrURL.fromJS(first_arg, globalThis) else null;
         if (globalThis.hasException()) {
             is_error = true;
             return .zero;
@@ -2150,9 +2413,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        if (bun.String.tryFromJS(url_, globalThis)) |str| {
-                            break :extract_url str;
-                        }
+                        break :extract_url try bun.String.fromJS2(url_, globalThis);
                     }
                 }
             }
@@ -2219,7 +2480,7 @@ pub const Fetch = struct {
         // "method"
         method = extract_method: {
             if (options_object) |options| {
-                if (options.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try options.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 
@@ -2234,7 +2495,7 @@ pub const Fetch = struct {
             }
 
             if (request_init_object) |req| {
-                if (req.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try req.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 
@@ -2261,7 +2522,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "decompress")) |decompression_value| {
+                    if (try objects_to_try[i].get(globalThis, "decompress")) |decompression_value| {
                         if (decompression_value.isBoolean()) {
                             break :extract_disable_decompression !decompression_value.asBoolean();
                         } else if (decompression_value.isNumber()) {
@@ -2293,9 +2554,9 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "tls")) |tls| {
+                    if (try objects_to_try[i].get(globalThis, "tls")) |tls| {
                         if (tls.isObject()) {
-                            if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                            if (try tls.get(ctx, "rejectUnauthorized")) |reject| {
                                 if (reject.isBoolean()) {
                                     reject_unauthorized = reject.asBoolean();
                                 } else if (reject.isNumber()) {
@@ -2308,7 +2569,7 @@ pub const Fetch = struct {
                                 return .zero;
                             }
 
-                            if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                            if (try tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
                                 if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
                                     check_server_identity = checkServerIdentity;
                                 }
@@ -2319,20 +2580,13 @@ pub const Fetch = struct {
                                 return .zero;
                             }
 
-                            if (SSLConfig.inJS(vm, globalThis, tls, exception)) |config| {
-                                if (exception.* != null) {
-                                    is_error = true;
-                                    return .zero;
-                                }
-
+                            if (SSLConfig.fromJS(vm, globalThis, tls) catch {
+                                is_error = true;
+                                return .zero;
+                            }) |config| {
                                 const ssl_config_object = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                 ssl_config_object.* = config;
                                 break :extract_ssl_config ssl_config_object;
-                            }
-
-                            if (exception.* != null) {
-                                is_error = true;
-                                return .zero;
                             }
                         }
                     }
@@ -2356,7 +2610,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "unix")) |socket_path| {
+                    if (try objects_to_try[i].get(globalThis, "unix")) |socket_path| {
                         if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
                             if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                                 break :extract_unix_socket_path slice;
@@ -2387,7 +2641,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "timeout")) |timeout_value| {
+                    if (try objects_to_try[i].get(globalThis, "timeout")) |timeout_value| {
                         if (timeout_value.isBoolean()) {
                             break :extract_disable_timeout !timeout_value.asBoolean();
                         } else if (timeout_value.isNumber()) {
@@ -2445,7 +2699,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
+                    if (try objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
                         if (keepalive_value.isBoolean()) {
                             break :extract_disable_keepalive !keepalive_value.asBoolean();
                         } else if (keepalive_value.isNumber()) {
@@ -2477,7 +2731,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "verbose")) |verb| {
+                    if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                         if (verb.isString()) {
                             if (verb.getZigString(globalThis).eqlComptime("curl")) {
                                 break :extract_verbose .curl;
@@ -2504,19 +2758,16 @@ pub const Fetch = struct {
             };
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
+                    if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                             if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 is_error = true;
                                 return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
                             defer href.deref();
-                            const buffer = std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                            const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             if (url.isFile()) {
                                 url_type = URLType.file;
@@ -2548,7 +2799,7 @@ pub const Fetch = struct {
         // signal: AbortSignal | undefined;
         signal = extract_signal: {
             if (options_object) |options| {
-                if (options.get(globalThis, "signal")) |signal_| {
+                if (try options.get(globalThis, "signal")) |signal_| {
                     if (!signal_.isUndefined()) {
                         if (signal_.as(JSC.WebCore.AbortSignal)) |signal__| {
                             break :extract_signal signal__.ref();
@@ -2570,7 +2821,7 @@ pub const Fetch = struct {
             }
 
             if (request_init_object) |options| {
-                if (options.get(globalThis, "signal")) |signal_| {
+                if (try options.get(globalThis, "signal")) |signal_| {
                     if (signal_.isUndefined()) {
                         break :extract_signal null;
                     }
@@ -2598,10 +2849,7 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                     }
                 }
 
@@ -2613,27 +2861,32 @@ pub const Fetch = struct {
 
             if (request) |req| {
                 if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
-                    is_error = true;
-                    return .zero;
+                    return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                 }
 
-                break :extract_body req.body.value.useAsAnyBlob();
+                if (req.body.value == .Locked) {
+                    if (req.body.value.Locked.readable.has()) {
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                    }
+                    const readable = req.body.value.toReadableStream(globalThis);
+                    if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                    }
+                }
+
+                break :extract_body FetchTasklet.HTTPRequestBody{ .AnyBlob = req.body.value.useAsAnyBlob() };
             }
 
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                     }
                 }
             }
 
             break :extract_body null;
-        } orelse AnyBlob{ .Blob = .{} };
+        } orelse FetchTasklet.HTTPRequestBody.Empty;
 
         if (globalThis.hasException()) {
             is_error = true;
@@ -2661,7 +2914,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }
@@ -2695,7 +2948,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }
@@ -2726,8 +2979,17 @@ pub const Fetch = struct {
                     }
                     hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                 }
+                if (url.isS3()) {
+                    if (headers_.fastGet(JSC.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                        if (range) |range_| {
+                            range = null;
+                            allocator.free(range_);
+                        }
+                        range = _range.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    }
+                }
 
-                break :extract_headers Headers.from(headers_, allocator, .{ .body = &body }) catch bun.outOfMemory();
+                break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch bun.outOfMemory();
             }
 
             break :extract_headers headers;
@@ -2767,8 +3029,7 @@ pub const Fetch = struct {
                     .remote => unreachable,
                 },
             ) catch |err| {
-                globalThis.throwError(err, "Failed to decode file url");
-                return .zero;
+                return globalThis.throwError(err, "Failed to decode file url");
             }];
             var url_string: bun.String = bun.String.empty;
             defer url_string.deref();
@@ -2798,8 +3059,7 @@ pub const Fetch = struct {
                                 url_path_decoded = url_path_decoded[1..];
                             }
                             break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
-                                globalThis.throwError(err, "Failed to resolve file url");
-                                return .zero;
+                                return globalThis.throwError(err, "Failed to resolve file url");
                             };
                         }
                         break :brk url_path_decoded;
@@ -2807,9 +3067,8 @@ pub const Fetch = struct {
 
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
-                        globalThis.throwError(err, "Failed to resolve file url");
-                        return .zero;
-                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                        return globalThis.throwError(err, "Failed to resolve file url");
+                    }) else globalThis.bunVM().transpiler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
                         cwd,
@@ -2823,8 +3082,7 @@ pub const Fetch = struct {
                     );
                     if (Environment.isWindows) {
                         break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
-                            globalThis.throwError(err, "Failed to resolve file url");
-                            return .zero;
+                            return globalThis.throwError(err, "Failed to resolve file url");
                         };
                     }
                     break :brk fullpath;
@@ -2834,16 +3092,14 @@ pub const Fetch = struct {
 
                 var pathlike: JSC.Node.PathOrFileDescriptor = .{
                     .path = .{
-                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        }),
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                     },
                 };
 
                 break :blob Blob.findOrCreateFileFromPath(
                     &pathlike,
                     globalThis,
+                    true,
                 );
             };
 
@@ -2861,34 +3117,47 @@ pub const Fetch = struct {
         }
 
         if (url.protocol.len > 0) {
-            if (!(url.isHTTP() or url.isHTTPS())) {
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
+            if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
                 is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
         }
 
-        if (!method.hasRequestBody() and body.size() > 0) {
+        if (!method.hasRequestBody() and body.hasBody()) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
             is_error = true;
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
-        if (headers == null and body.size() > 0 and body.hasContentTypeFromUser()) {
+        if (headers == null and body.hasBody() and body.hasContentTypeFromUser()) {
             headers = Headers.from(
                 null,
                 allocator,
-                .{ .body = &body },
+                .{ .body = body.getAnyBlob() },
             ) catch bun.outOfMemory();
         }
 
-        var http_body = FetchTasklet.HTTPRequestBody{
-            .AnyBlob = body,
-        };
+        var http_body = body;
+        if (body.isS3()) {
+            prepare_body: {
+                // is a S3 file we can use chunked here
 
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                    var old = body;
+                    defer old.detach();
+                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                    break :prepare_body;
+                }
+                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
+                body.detach();
+
+                return rejected_value;
+            }
+        }
         if (body.needsToReadFile()) {
             prepare_body: {
-                const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
+                const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
                     .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
                 };
@@ -2922,7 +3191,7 @@ pub const Fetch = struct {
                             break :use_sendfile;
                         }
 
-                        const original_size = body.Blob.size;
+                        const original_size = body.AnyBlob.Blob.size;
                         const stat_size = @as(Blob.SizeType, @intCast(stat.size));
                         const blob_size = if (bun.isRegularFile(stat.mode))
                             stat_size
@@ -2932,8 +3201,8 @@ pub const Fetch = struct {
                         http_body = .{
                             .Sendfile = .{
                                 .fd = opened_fd,
-                                .remain = body.Blob.offset + original_size,
-                                .offset = body.Blob.offset,
+                                .remain = body.AnyBlob.Blob.offset + original_size,
+                                .offset = body.AnyBlob.Blob.offset,
                                 .content_size = blob_size,
                             },
                         };
@@ -2954,13 +3223,13 @@ pub const Fetch = struct {
                     .{
                         .encoding = .buffer,
                         .path = .{ .fd = opened_fd },
-                        .offset = body.Blob.offset,
-                        .max_size = body.Blob.size,
+                        .offset = body.AnyBlob.Blob.offset,
+                        .max_size = body.AnyBlob.Blob.size,
                     },
                     .sync,
                 );
 
-                if (body.Blob.store.?.data.file.pathlike == .path) {
+                if (body.store().?.data.file.pathlike == .path) {
                     _ = bun.sys.close(opened_fd);
                 }
 
@@ -2974,10 +3243,183 @@ pub const Fetch = struct {
                     },
                     .result => |result| {
                         body.detach();
-                        body.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
-                        http_body = .{ .AnyBlob = body };
+                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        http_body = .{ .AnyBlob = body.AnyBlob };
                     },
                 }
+            }
+        }
+
+        if (url.isS3()) {
+            // get ENV config
+            var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
+                .options = .{},
+            };
+            defer {
+                credentialsWithOptions.deinit();
+            }
+
+            if (options_object) |options| {
+                if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
+                    if (s3_options.isObject()) {
+                        s3_options.ensureStillAlive();
+                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, s3_options, globalThis);
+                    }
+                }
+            }
+
+            if (body == .ReadableStream) {
+                // we cannot direct stream to s3 we need to use multi part upload
+                defer body.ReadableStream.deinit();
+                const Wrapper = struct {
+                    promise: JSC.JSPromise.Strong,
+                    url: ZigURL,
+                    url_proxy_buffer: []const u8,
+                    pub usingnamespace bun.New(@This());
+
+                    pub fn resolve(result: s3.AWSCredentials.S3UploadResult, self: *@This()) void {
+                        if (self.promise.globalObject()) |global| {
+                            switch (result) {
+                                .success => {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{ .value = .Empty },
+                                        .redirected = false,
+                                        .init = .{ .method = .PUT, .status_code = 200 },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                                .failure => |err| {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{
+                                            .value = .{
+                                                .InternalBlob = .{
+                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                                    .was_string = true,
+                                                },
+                                            },
+                                        },
+                                        .redirected = false,
+                                        .init = .{
+                                            .method = .PUT,
+                                            .status_code = 500,
+                                            .status_text = bun.String.createAtomIfPossible(err.code),
+                                        },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                            }
+                        }
+                        bun.default_allocator.free(self.url_proxy_buffer);
+                        self.destroy();
+                    }
+                };
+                if (method != .PUT and method != .POST) {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
+                }
+                const promise = JSC.JSPromise.Strong.init(globalThis);
+
+                const s3_stream = Wrapper.new(.{
+                    .url = url,
+                    .url_proxy_buffer = url_proxy_buffer,
+                    .promise = promise,
+                });
+
+                const promise_value = promise.value();
+                const proxy_url = if (proxy) |p| p.href else "";
+                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(
+                    url.s3Path(),
+                    body.ReadableStream.get().?,
+                    globalThis,
+                    credentialsWithOptions.options,
+                    if (headers) |h| h.getContentType() else null,
+                    proxy_url,
+                    @ptrCast(&Wrapper.resolve),
+                    s3_stream,
+                );
+                url = .{};
+                url_proxy_buffer = "";
+                return promise_value;
+            }
+            if (method == .POST) {
+                method = .PUT;
+            }
+
+            var result = credentialsWithOptions.credentials.signRequest(.{
+                .path = url.s3Path(),
+                .method = method,
+            }, null) catch |sign_err| {
+                is_error = true;
+                return JSPromise.rejectedPromiseValue(globalThis, s3.AWSCredentials.getJSSignError(sign_err, globalThis));
+            };
+            defer result.deinit();
+            if (proxy) |proxy_| {
+                // proxy and url are in the same buffer lets replace it
+                const old_buffer = url_proxy_buffer;
+                defer allocator.free(old_buffer);
+                var buffer = allocator.alloc(u8, result.url.len + proxy_.href.len) catch bun.outOfMemory();
+                bun.copy(u8, buffer[0..result.url.len], result.url);
+                bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
+                url_proxy_buffer = buffer;
+
+                url = ZigURL.parse(url_proxy_buffer[0..result.url.len]);
+                proxy = ZigURL.parse(url_proxy_buffer[result.url.len..]);
+            } else {
+                // replace headers and url of the request
+                allocator.free(url_proxy_buffer);
+                url_proxy_buffer = result.url;
+                url = ZigURL.parse(result.url);
+                result.url = ""; // fetch now owns this
+            }
+
+            const content_type = if (headers) |h| h.getContentType() else null;
+
+            if (range) |range_| {
+                const _headers = result.headers();
+                var headersWithRange: [5]picohttp.Header = .{
+                    _headers[0],
+                    _headers[1],
+                    _headers[2],
+                    _headers[3],
+                    .{ .name = "range", .value = range_ },
+                };
+
+                setHeaders(&headers, &headersWithRange, allocator);
+            } else if (content_type) |ct| {
+                if (ct.len > 0) {
+                    const _headers = result.headers();
+                    if (_headers.len > 4) {
+                        var headersWithContentType: [6]picohttp.Header = .{
+                            _headers[0],
+                            _headers[1],
+                            _headers[2],
+                            _headers[3],
+                            _headers[4],
+                            .{ .name = "Content-Type", .value = ct },
+                        };
+                        setHeaders(&headers, &headersWithContentType, allocator);
+                    } else {
+                        var headersWithContentType: [5]picohttp.Header = .{
+                            _headers[0],
+                            _headers[1],
+                            _headers[2],
+                            _headers[3],
+                            .{ .name = "Content-Type", .value = ct },
+                        };
+
+                        setHeaders(&headers, &headersWithContentType, allocator);
+                    }
+                } else {
+                    setHeaders(&headers, result.headers(), allocator);
+                }
+            } else {
+                setHeaders(&headers, result.headers(), allocator);
             }
         }
 
@@ -3045,9 +3487,7 @@ pub const Fetch = struct {
             body.detach();
         } else {
             // These are single-use, and have effectively been moved to the FetchTasklet.
-            body = .{
-                .Blob = .{},
-            };
+            body = FetchTasklet.HTTPRequestBody.Empty;
         }
         proxy = null;
         url_proxy_buffer = "";
@@ -3071,7 +3511,21 @@ pub const Headers = struct {
         this.entries.deinit(this.allocator);
         this.buf.clearAndFree(this.allocator);
     }
+    pub fn getContentType(this: *const Headers) ?[]const u8 {
+        if (this.entries.len == 0 or this.buf.items.len == 0) {
+            return null;
+        }
+        const header_entries = this.entries.slice();
+        const header_names = header_entries.items(.name);
+        const header_values = header_entries.items(.value);
 
+        for (header_names, 0..header_names.len) |name, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+                return this.asStr(header_values[i]);
+            }
+        }
+        return null;
+    }
     pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
         return if (ptr.offset + ptr.length <= this.buf.items.len)
             this.buf.items[ptr.offset..][0..ptr.length]
@@ -3082,6 +3536,45 @@ pub const Headers = struct {
     pub const Options = struct {
         body: ?*const AnyBlob = null,
     };
+
+    pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.Allocator) !Headers {
+        const header_count = headers.len;
+        var result = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+
+        var buf_len: usize = 0;
+        for (headers) |header| {
+            buf_len += header.name.len + header.value.len;
+        }
+        result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        result.entries.len = headers.len;
+        result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        result.buf.items.len = buf_len;
+        var offset: u32 = 0;
+        for (headers, 0..headers.len) |header, i| {
+            const name_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.name.len], header.name);
+            offset += @truncate(header.name.len);
+            const value_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.value.len], header.value);
+            offset += @truncate(header.value.len);
+
+            result.entries.set(i, .{
+                .name = .{
+                    .offset = name_offset,
+                    .length = @truncate(header.name.len),
+                },
+                .value = .{
+                    .offset = value_offset,
+                    .length = @truncate(header.value.len),
+                },
+            });
+        }
+        return result;
+    }
 
     pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, options: Options) !Headers {
         var header_count: u32 = 0;

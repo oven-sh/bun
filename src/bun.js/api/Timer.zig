@@ -550,7 +550,7 @@ pub const TimerObject = struct {
         return .{ timer, timer_js };
     }
 
-    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -564,7 +564,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
@@ -578,7 +578,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -643,10 +643,10 @@ pub const TimerObject = struct {
         }
     }
 
-    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
-    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
@@ -731,6 +731,8 @@ pub const EventLoopTimer = struct {
         StatWatcherScheduler,
         UpgradedDuplex,
         WindowsNamedPipe,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -740,6 +742,8 @@ pub const EventLoopTimer = struct {
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     } else enum {
@@ -748,6 +752,8 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -756,6 +762,8 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     };
@@ -808,11 +816,14 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
+            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }
+
                 if (comptime t.Type() == StatWatcherScheduler) {
                     return container.timerCallback();
                 }

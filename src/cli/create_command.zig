@@ -25,7 +25,6 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -714,11 +713,7 @@ pub const CreateCommand = struct {
                 const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try ctx.log.print(Output.errorWriter());
 
                     package_json_file = null;
                     break :process_package_json;
@@ -1962,7 +1957,7 @@ pub const Example = struct {
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
         const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8192);
 
@@ -2041,7 +2036,7 @@ pub const Example = struct {
 
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+        var http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -2080,11 +2075,7 @@ pub const Example = struct {
             refresher.refresh();
 
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
@@ -2096,11 +2087,7 @@ pub const Example = struct {
             progress.end();
             refresher.refresh();
 
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 
@@ -2132,7 +2119,7 @@ pub const Example = struct {
         // ensure very stable memory address
         const parsed_tarball_url = URL.parse(tarball_url);
 
-        http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
+        http_proxy = env_loader.getHttpProxyFor(parsed_tarball_url);
 
         async_http.* = HTTP.AsyncHTTP.initSync(
             ctx.allocator,
@@ -2170,7 +2157,7 @@ pub const Example = struct {
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         const mutable = try ctx.allocator.create(MutableString);
@@ -2216,11 +2203,7 @@ pub const Example = struct {
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
         const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
@@ -2229,11 +2212,7 @@ pub const Example = struct {
         };
 
         if (ctx.log.errors > 0) {
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 

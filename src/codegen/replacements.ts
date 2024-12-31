@@ -120,7 +120,7 @@ for (const name in enums) {
   if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
   const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {
@@ -140,7 +140,17 @@ export interface ReplacementRule {
   global?: boolean;
 }
 
-export const function_replacements = ["$debug", "$assert", "$zig", "$newZigFunction", "$cpp", "$newCppFunction"];
+export const function_replacements = [
+  "$debug",
+  "$assert",
+  "$zig",
+  "$newZigFunction",
+  "$cpp",
+  "$newCppFunction",
+  "$isPromiseResolved",
+  "$bindgenFn",
+];
+const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
@@ -151,10 +161,7 @@ export function applyReplacements(src: string, length: number) {
     slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll("%", "$"));
   }
   let match;
-  if (
-    (match = slice.match(/__intrinsic__(debug|assert|zig|cpp|newZigFunction|newCppFunction)$/)) &&
-    rest.startsWith("(")
-  ) {
+  if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
@@ -222,6 +229,40 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
+    } else if (name === "isPromiseResolved") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "bindgenFn") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      try {
+        const str =
+          "[" +
+          inner.result
+            .slice(1, -1)
+            .replaceAll("'", '"')
+            .replace(/,[\s\n]*$/s, "") +
+          "]";
+        args = JSON.parse(str);
+      } catch {
+        throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
+      }
+      if (args.length != 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
+        throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+      }
+
+      const id = registerNativeCall("bind", args[0], args[1], undefined);
+
+      return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
+    } else {
+      throw new Error("Unknown preprocessor macro " + name);
     }
   }
   return [slice, rest, false];

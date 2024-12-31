@@ -52,12 +52,20 @@ pub const Bunfig = struct {
         ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
-            this.log.addError(this.source, loc, text) catch unreachable;
+            this.log.addErrorOpts(text, .{
+                .source = this.source,
+                .loc = loc,
+                .redact_sensitive_information = true,
+            }) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
         fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
+            this.log.addErrorFmtOpts(allocator, text, args, .{
+                .source = this.source,
+                .loc = loc,
+                .redact_sensitive_information = true,
+            }) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
@@ -258,6 +266,17 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("reporter")) |expr| {
+                        try this.expect(expr, .e_object);
+                        if (expr.get("junit")) |junit_expr| {
+                            try this.expectString(junit_expr);
+                            if (junit_expr.data.e_string.len() > 0) {
+                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                            }
+                        }
+                    }
+
                     if (test_.get("coverageReporter")) |expr| brk: {
                         this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                         if (expr.data == .e_string) {
@@ -450,6 +469,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("saveTextLockfile")) |save_text_lockfile| {
+                        if (save_text_lockfile.asBool()) |value| {
+                            install.save_text_lockfile = value;
+                        }
+                    }
+
                     if (install_obj.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();
@@ -569,6 +594,14 @@ pub const Bunfig = struct {
                             this.ctx.debug.silent = value;
                         } else {
                             try this.addError(silent.loc, "Expected boolean");
+                        }
+                    }
+
+                    if (run_expr.get("elide-lines")) |elide_lines| {
+                        if (elide_lines.data == .e_number) {
+                            this.ctx.bundler_options.elide_lines = @intFromFloat(elide_lines.data.e_number.value);
+                        } else {
+                            try this.addError(elide_lines.loc, "Expected number");
                         }
                     }
 
@@ -789,11 +822,20 @@ pub const Bunfig = struct {
 
         pub fn expectString(this: *Parser, expr: js_ast.Expr) !void {
             switch (expr.data) {
-                .e_string, .e_utf8_string => {},
+                .e_string => {},
                 else => {
-                    this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
-                        @as(js_ast.Expr.Tag, expr.data),
-                    }) catch unreachable;
+                    this.log.addErrorFmtOpts(
+                        this.allocator,
+                        "expected string but received {}",
+                        .{
+                            @as(js_ast.Expr.Tag, expr.data),
+                        },
+                        .{
+                            .source = this.source,
+                            .loc = expr.loc,
+                            .redact_sensitive_information = true,
+                        },
+                    ) catch unreachable;
                     return error.@"Invalid Bunfig";
                 },
             }
@@ -801,10 +843,19 @@ pub const Bunfig = struct {
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
-                this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected {} but received {}", .{
-                    token,
-                    @as(js_ast.Expr.Tag, expr.data),
-                }) catch unreachable;
+                this.log.addErrorFmtOpts(
+                    this.allocator,
+                    "expected {} but received {}",
+                    .{
+                        token,
+                        @as(js_ast.Expr.Tag, expr.data),
+                    },
+                    .{
+                        .source = this.source,
+                        .loc = expr.loc,
+                        .redact_sensitive_information = true,
+                    },
+                ) catch unreachable;
                 return error.@"Invalid Bunfig";
             }
         }
@@ -813,14 +864,20 @@ pub const Bunfig = struct {
     pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                try ctx.log.addErrorOpts("Failed to parse", .{
+                    .source = &source,
+                    .redact_sensitive_information = true,
+                });
             }
             return err;
         } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                try ctx.log.addErrorOpts("Failed to parse", .{
+                    .source = &source,
+                    .redact_sensitive_information = true,
+                });
             }
             return err;
         };

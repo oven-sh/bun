@@ -896,6 +896,12 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
 }
 
+size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSWebSocket*>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
+}
+
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSWebSocket*>(cell);

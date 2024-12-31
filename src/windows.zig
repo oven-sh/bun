@@ -72,6 +72,10 @@ pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix = [8]u16{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
+pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
+pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
+pub const nt_maxpath_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
+
 const std = @import("std");
 const Environment = bun.Environment;
 
@@ -3387,8 +3391,8 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
     };
 }
 
-pub fn WSAGetLastError() !void {
-    return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
+pub fn WSAGetLastError() ?SystemErrno {
+    return SystemErrno.init(@intFromEnum(std.os.windows.ws2_32.WSAGetLastError()));
 }
 
 // BOOL CreateDirectoryExW(
@@ -3623,3 +3627,33 @@ pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;
 pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;
+
+const pe_header_offset_location = 0x3C;
+const subsystem_offset = 0x5C;
+
+pub const Subsystem = enum(u16) {
+    windows_gui = 2,
+};
+
+pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
+    comptime bun.assert(bun.Environment.isWindows);
+    if (bun.windows.SetFilePointerEx(fd.handle.cast(), pe_header_offset_location, null, std.os.windows.FILE_BEGIN) == 0)
+        return error.Win32Error;
+    const offset = try fd.reader().readInt(u32, .little);
+    if (bun.windows.SetFilePointerEx(fd.handle.cast(), offset + subsystem_offset, null, std.os.windows.FILE_BEGIN) == 0)
+        return error.Win32Error;
+    try fd.writer().writeInt(u16, @intFromEnum(subsystem), .little);
+}
+
+pub const rescle = struct {
+    extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
+
+    pub fn setIcon(exe_path: [*:0]const u16, icon: [*:0]const u16) !void {
+        comptime bun.assert(bun.Environment.isWindows);
+        const status = rescle__setIcon(exe_path, icon);
+        return switch (status) {
+            0 => {},
+            else => error.IconEditError,
+        };
+    }
+};

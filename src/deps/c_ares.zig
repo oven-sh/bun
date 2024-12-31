@@ -1554,18 +1554,17 @@ pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
-pub export fn Bun__canonicalizeIP(
-    ctx: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+comptime {
+    const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
+    @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
+}
+pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
-    const globalThis = ctx.ptr();
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     if (arguments.len == 0) {
-        globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
-        return .zero;
+        return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
     }
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
@@ -1605,8 +1604,8 @@ pub export fn Bun__canonicalizeIP(
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
         if (!globalThis.hasException())
-            globalThis.throwInvalidArguments("address must be a string", .{});
-        return .zero;
+            return globalThis.throwInvalidArguments("address must be a string", .{});
+        return error.JSError;
     }
 }
 
@@ -1655,9 +1654,4 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     return -1;
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__canonicalizeIP;
-    }
-}
 const GetAddrInfo = bun.dns.GetAddrInfo;

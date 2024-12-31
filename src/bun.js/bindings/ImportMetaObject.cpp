@@ -23,6 +23,7 @@
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/CallData.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -80,6 +81,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
 
             BunString from = Bun::toString(fromStr);
             auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false);
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (!JSC::JSValue::decode(result).isString()) {
                 JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
@@ -260,6 +262,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     }
 
     auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
@@ -323,13 +326,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     auto bunStr = Bun::toString(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
-                    return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
+                    return JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
                 }
             }
         }
     }
 
     auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
@@ -426,6 +430,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto a = Bun::toString(specifier);
     auto b = Bun::toString(fromWTFString);
     auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
+    RETURN_IF_EXCEPTION(scope, {});
+
     if (!result.isString()) {
         JSC::throwException(globalObject, scope, result);
         return {};
@@ -484,6 +490,24 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * glo
     return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
 }
 
+// https://github.com/oven-sh/bun/issues/11754#issuecomment-2452626172
+// This setter exists mainly to support various libraries doing weird things wrapping the require function.
+JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return false;
+
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isCell()) {
+        // TODO:
+        return true;
+    }
+
+    thisObject->requireProperty.set(thisObject->vm(), thisObject, value.asCell());
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
@@ -497,7 +521,7 @@ static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
-    { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, 0 } },
+    { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
     { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
     { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
@@ -572,7 +596,7 @@ void ImportMetaObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSFunction>::Initializer& init) {
+    this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
         WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);

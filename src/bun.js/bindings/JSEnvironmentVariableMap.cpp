@@ -254,6 +254,27 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
+extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+
+JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(global->vm());
+    ASSERT(callFrame->argumentCount() == 2);
+    ASSERT(callFrame->uncheckedArgument(0).isString());
+    WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue arg2 = callFrame->uncheckedArgument(1);
+    ASSERT(arg2.isNull() || arg2.isString());
+    if (arg2.isCell()) {
+        WTF::String string2 = arg2.toWTFString(global);
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun__Process__editWindowsEnvVar(Bun::toString(string1), Bun::toString(string2));
+    } else {
+        Bun__Process__editWindowsEnvVar(Bun::toString(string1), { .tag = BunStringTag::Dead });
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -348,15 +369,18 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
 #if OS(WINDOWS)
+    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
+
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer args;
     args.append(object);
     args.append(keyArray);
+    args.append(editWindowsEnvVar);
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (returnedException) {

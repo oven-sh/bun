@@ -1,17 +1,12 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, please refer to [this guide](/docs/project/building-windows)
-
-{% details summary="For Ubuntu users" %}
-TL;DR: Ubuntu 22.04 is suggested.
-Bun currently requires `glibc >=2.32` in development which means if you're on Ubuntu 20.04 (glibc == 2.31), you may likely meet `error: undefined symbol: __libc_single_threaded `. You need to take extra configurations. Also, according to this [issue](https://github.com/llvm/llvm-project/issues/97314), LLVM 16 is no longer maintained on Ubuntu 24.04 (noble). And instead, you might want `brew` to install LLVM 16 for your Ubuntu 24.04.
-{% /details %}
+If you are using Windows, please refer to [this guide](/docs/project/building-windows.md)
 
 ## Install Dependencies
 
 Using your system's package manager, install Bun's dependencies:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
@@ -58,9 +53,9 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 18 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 $ brew install llvm@18
@@ -89,7 +84,7 @@ $ sudo zypper install clang16 lld16 llvm16
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
-Make sure Clang/LLVM 16 is in your path:
+Make sure Clang/LLVM 18 is in your path:
 
 ```bash
 $ which clang-16
@@ -97,7 +92,7 @@ $ which clang-16
 
 If not, run this to manually add it:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
@@ -285,17 +280,17 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Cannot find `libatomic.a`
+### Cannot find `libatomic.a`
 
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
+$ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
 
-## ccache conflicts with building TinyCC on macOS
+### ccache conflicts with building TinyCC on macOS
 
 If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
 
@@ -303,3 +298,9 @@ If you run into issues with `ccache` when building TinyCC, try reinstalling ccac
 brew uninstall ccache
 brew install ccache
 ```
+
+## Using bun-debug
+
+- Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)
+- Enable logging for a specific zig scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to allow `std.log.scoped(.EventLoop)`)
+- Bun transpiles every file it runs, to see the actual executed source in a debug build find it in `/tmp/bun-debug-src/...path/to/file`, for example the transpiled version of `/home/bun/index.ts` would be in `/tmp/bun-debug-src/home/bun/index.ts`

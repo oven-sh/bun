@@ -287,7 +287,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
-      .all, .unparsed => true,
+      .unparsed => |*u| u.eql(&rhs.unparsed),
+      .all => true,
       .custom => |*c| c.eql(&rhs.custom),
     };
   }
@@ -369,11 +370,21 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   }
 
   pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
-    // TODO: todo_stuff.match_ignore_ascii_case
-    ${generatePropertyIdImplFromNameAndPrefix(property_defs)}
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {
-    } else {
-      return null;
+    const Enum = enum { ${Object.entries(property_defs)
+      .map(
+        ([prop_name, def], i) => `${escapeIdent(prop_name)}${i === Object.keys(property_defs).length - 1 ? "" : ", "}`,
+      )
+      .join("")} };
+    const Map = comptime bun.ComptimeEnumMap(Enum);
+    if (Map.getASCIIICaseInsensitive(name1)) |prop| {
+      switch (prop) {
+        ${Object.entries(property_defs).map(([name, meta]) => {
+          return `.${escapeIdent(name)} => {
+            const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
+            if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+          }`;
+        })}
+      }
     }
 
     return null;
@@ -1067,6 +1078,7 @@ generateCode({
   "margin-right": {
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "margin", category: "physical" },
+    eval_branch_quota: 5000,
   },
   "margin-block-start": {
     ty: "LengthPercentageOrAuto",

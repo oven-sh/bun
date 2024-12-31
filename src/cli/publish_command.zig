@@ -281,11 +281,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -314,11 +313,7 @@ pub const PublishCommand = struct {
                             }
 
                             if (manager.log.hasErrors()) {
-                                switch (Output.enable_ansi_colors) {
-                                    inline else => |enable_ansi_colors| {
-                                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                    },
-                                }
+                                manager.log.print(Output.errorWriter()) catch {};
                             }
 
                             Global.crash();
@@ -367,11 +362,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("failed to find package.json in tarball '{s}'", .{cli.positionals[1]});
                     },
                     error.InvalidPackageJSON => {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| {
-                                manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                            },
-                        }
+                        manager.log.print(Output.errorWriter()) catch {};
                         Output.errGeneric("failed to parse tarball package.json", .{});
                     },
                     error.PrivatePackage => {
@@ -449,6 +440,8 @@ pub const PublishCommand = struct {
 
         if (manager.options.do.run_scripts) {
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            try context.script_env.map.put("npm_command", "publish");
+
             if (context.publish_script) |publish_script| {
                 _ = Run.runPackageScriptForeground(
                     context.command_ctx,

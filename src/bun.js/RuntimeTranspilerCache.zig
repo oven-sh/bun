@@ -5,7 +5,11 @@
 /// Version 6: `use strict` is preserved in CommonJS modules when at the top of the file
 /// Version 7: Several bundler changes that are likely to impact the runtime as well.
 /// Version 8: Fix for generated symbols
-const expected_version = 8;
+/// Version 9: String printing changes
+/// Version 10: Constant folding for ''.charCodeAt(n)
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+const expected_version = 12;
 
 const bun = @import("root").bun;
 const std = @import("std");

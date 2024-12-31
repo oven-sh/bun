@@ -8,6 +8,20 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
+
 pub fn getTotalMemory() usize {
     return uv.uv_get_total_memory();
 }
@@ -690,8 +704,9 @@ pub const SystemErrno = enum(u16) {
     }
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime @TypeOf(code) == u16) {
-            if (code <= 3950) {
+        if (@TypeOf(code) == u16 or (@TypeOf(code) == c_int and code > 0)) {
+            // Win32Error and WSA Error codes
+            if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
@@ -1319,6 +1334,9 @@ pub fn getErrno(_: anytype) E {
         return sys.toE();
     }
 
+    if (bun.windows.WSAGetLastError()) |wsa| {
+        return wsa.toE();
+    }
     return .SUCCESS;
 }
 

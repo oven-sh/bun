@@ -11,8 +11,8 @@ const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
 const mem = std.mem;
 const mode_t = posix.mode_t;
-const open_sym = system.open;
-const sys = std.posix.system;
+const libc = std.posix.system;
+
 const windows = bun.windows;
 
 const C = bun.C;
@@ -23,16 +23,20 @@ const PathString = bun.PathString;
 const Syscall = @This();
 const SystemError = JSC.SystemError;
 
-const linux = system;
+const linux = syscall;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
-pub const system = switch (Environment.os) {
+pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
+
+    // This is actually libc on MacOS
+    // We don't directly use the Darwin syscall interface.
     .mac => bun.AsyncIO.system,
+
     else => @compileError("not implemented"),
 };
 
@@ -245,11 +249,13 @@ pub const Tag = enum(u8) {
     pipe,
     try_write,
     socketpair,
+    setsockopt,
 
     uv_spawn,
     uv_pipe,
     uv_tty_set_mode,
     uv_open_osfhandle,
+    uv_os_homedir,
 
     // Below this line are Windows API calls only.
 
@@ -297,17 +303,17 @@ pub const Error = struct {
         return copy;
     }
 
-    pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
+    pub fn fromCode(errno: E, syscall_tag: Syscall.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(@intFromEnum(errno))),
-            .syscall = syscall,
+            .syscall = syscall_tag,
         };
     }
 
-    pub fn fromCodeInt(errno: anytype, syscall: Syscall.Tag) Error {
+    pub fn fromCodeInt(errno: anytype, syscall_tag: Syscall.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
-            .syscall = syscall,
+            .syscall = syscall_tag,
         };
     }
 
@@ -435,7 +441,7 @@ pub const Error = struct {
     }
 
     pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
-        return this.toSystemError().toErrorInstance(ctx.ptr()).asObjectRef();
+        return this.toSystemError().toErrorInstance(ctx).asObjectRef();
     }
 
     pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
@@ -460,8 +466,9 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     buf[0] = 0;
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, &wbuf);
+        var wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, wbuf);
         if (Result.errnoSys(len, .getcwd)) |err| return err;
         return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
     }
@@ -502,7 +509,7 @@ pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     assertIsValidWindowsPath(bun.OSPathChar, destination);
 
     if (comptime Environment.isPosix) {
-        const rc = sys.chdir(destination);
+        const rc = syscall.chdir(destination);
         return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
     }
 
@@ -549,8 +556,9 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return chdirOSPath(@as(bun.OSPathSliceZ, destination));
         }
 
-        var wbuf: bun.WPathBuffer = undefined;
-        return chdirOSPath(bun.strings.toWDirPath(&wbuf, destination));
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        return chdirOSPath(bun.strings.toWDirPath(wbuf, destination));
     }
 
     return Maybe(void).todo();
@@ -594,7 +602,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(C.lstat64(path, &stat_), .lstat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -620,13 +628,14 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
-    var buf: bun.WPathBuffer = undefined;
-    return mkdiratW(dir_fd, bun.strings.toWPathNormalized(&buf, file_path));
+    const buf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(buf);
+    return mkdiratW(dir_fd, bun.strings.toWPathNormalized(buf, file_path));
 }
 
 pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode_t) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(system.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
         .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
         else => @compileError("mkdir is not implemented on this platform"),
     };
@@ -667,7 +676,7 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
+    if (Maybe(bun.Stat).errnoSys(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
@@ -677,14 +686,15 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
-        .linux => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
         .windows => {
-            var wbuf: bun.WPathBuffer = undefined;
+            const wbuf = bun.WPathBufferPool.get();
+            defer bun.WPathBufferPool.put(wbuf);
             return Maybe(void).errnoSysP(
-                kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
+                kernel32.CreateDirectoryW(bun.strings.toWPath(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
             ) orelse Maybe(void).success;
@@ -696,7 +706,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
 pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isMac) {
-        return Maybe(void).errnoSysP(system.mkdir(&(std.posix.toPosixPath(file_path) catch return Maybe(void){
+        return Maybe(void).errnoSysP(syscall.mkdir(&(std.posix.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
                 .errno = @intFromEnum(bun.C.E.NOMEM),
                 .syscall = .open,
@@ -714,8 +724,9 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     }
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const wpath = bun.strings.toWPath(&wbuf, file_path);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const wpath = bun.strings.toWPath(wbuf, file_path);
         assertIsValidWindowsPath(u16, wpath);
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
@@ -747,9 +758,16 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
 
 const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
-    const result = fcntl_symbol(fd.cast(), cmd, arg);
-    if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| return err;
-    return .{ .result = @intCast(result) };
+    while (true) {
+        const result = fcntl_symbol(fd.cast(), cmd, arg);
+        if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @intCast(result) };
+    }
+
+    unreachable;
 }
 
 pub fn getErrno(rc: anytype) bun.C.E {
@@ -779,8 +797,9 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
-    var wbuf: if (T == u16) void else bun.WPathBuffer = undefined;
-    var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
+    const wbuf = if (T != u16) bun.WPathBufferPool.get() else {};
+    defer if (T != u16) bun.WPathBufferPool.put(wbuf);
+    var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         // handle the special "nul" device
@@ -832,7 +851,8 @@ pub fn normalizePathWindows(
         path = path[2..];
     }
 
-    var buf1: bun.WPathBuffer = undefined;
+    const buf1 = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(buf1);
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';
     @memcpy(buf1[base_path.len + 1 .. base_path.len + 1 + path.len], path);
@@ -951,13 +971,19 @@ fn openDirAtWindowsT(
     path: []const T,
     options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
-    var wbuf: bun.WPathBuffer = undefined;
+    const wbuf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, &wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
 
+    if (comptime T == u8) {
+        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+    } else {
+        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+    }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 
@@ -1139,9 +1165,10 @@ pub fn openFileAtWindowsT(
     disposition: w.ULONG,
     options: w.ULONG,
 ) Maybe(bun.FileDescriptor) {
-    var wbuf: bun.WPathBuffer = undefined;
+    const wbuf = bun.WPathBufferPool.get();
+    defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, &wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -1249,7 +1276,7 @@ pub fn openatWindowsA(
 pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = system.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
+        const rc = syscall.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
@@ -1259,7 +1286,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 
     while (true) {
-        const rc = Syscall.system.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
+        const rc = syscall.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
@@ -1275,6 +1302,10 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
             },
         };
     }
+}
+
+pub fn access(path: bun.OSPathSliceZ, mode: bun.Mode) Maybe(void) {
+    return Maybe(void).errnoSysP(syscall.access(path, mode), .access, path) orelse .{ .result = {} };
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1359,7 +1390,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 
     return switch (Environment.os) {
         .mac => {
-            const rc = system.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
+            const rc = syscall.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
             log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
@@ -1370,7 +1401,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         },
         .linux => {
             while (true) {
-                const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
+                const rc = syscall.write(fd.cast(), bytes.ptr, adjusted_len);
                 log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
@@ -1549,39 +1580,35 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
 const preadv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.preadv
 else if (builtin.os.tag.isDarwin())
-    system.@"preadv$NOCANCEL"
+    syscall.@"preadv$NOCANCEL"
 else
-    system.preadv;
+    syscall.preadv;
 
 const readv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.readv
 else if (builtin.os.tag.isDarwin())
-    system.@"readv$NOCANCEL"
+    syscall.@"readv$NOCANCEL"
 else
-    system.readv;
+    syscall.readv;
 
 const pwritev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.pwritev
 else if (builtin.os.tag.isDarwin())
-    system.@"pwritev$NOCANCEL"
+    syscall.@"pwritev$NOCANCEL"
 else
-    system.pwritev;
+    syscall.pwritev;
 
-const writev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    std.os.linux.writev
-else if (builtin.os.tag.isDarwin())
-    system.@"writev$NOCANCEL"
+const writev_sym = if (builtin.os.tag.isDarwin())
+    syscall.@"writev$NOCANCEL"
 else
-    system.writev;
+    syscall.writev;
 
-const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    sys.pread64
-else if (builtin.os.tag.isDarwin())
-    system.@"pread$NOCANCEL"
+const pread_sym = if (builtin.os.tag.isDarwin())
+    syscall.@"pread$NOCANCEL"
 else
-    system.pread;
+    syscall.pread;
 
-const fcntl_symbol = system.fcntl;
+const fcntl_symbol = syscall.fcntl;
 
 pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
@@ -1603,10 +1630,10 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     }
 }
 
-const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    sys.pwrite64
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc and !bun.Environment.isMusl)
+    libc.pwrite64
 else
-    sys.pwrite;
+    syscall.pwrite;
 
 pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
     if (comptime Environment.allow_assert) {
@@ -1639,7 +1666,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     return switch (Environment.os) {
         .mac => {
-            const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
+            const rc = syscall.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
@@ -1651,7 +1678,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         },
         .linux => {
             while (true) {
-                const rc = sys.read(fd.cast(), buf.ptr, adjusted_len);
+                const rc = syscall.read(fd.cast(), buf.ptr, adjusted_len);
                 log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
@@ -1705,7 +1732,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     }
 
     if (comptime Environment.isMac) {
-        const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
+        const rc = syscall.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
             log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
@@ -1736,7 +1763,7 @@ pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = system.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
+        const rc = syscall.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
             syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
@@ -1762,13 +1789,25 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
+pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
+    while (true) {
+        const rc = syscall.lseek(fd.cast(), offset, whence);
+        if (Maybe(usize).errnoSys(rc, .lseek)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(usize){ .result = rc };
+    }
+}
+
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     if (comptime Environment.isWindows) {
         return sys_uv.readlink(in, buf);
     }
 
     while (true) {
-        const rc = sys.readlink(in, buf.ptr, buf.len);
+        const rc = syscall.readlink(in, buf.ptr, buf.len);
 
         if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -1779,16 +1818,16 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     }
 }
 
-pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
+pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     while (true) {
-        const rc = sys.readlinkat(fd.cast(), in, buf.ptr, buf.len);
+        const rc = syscall.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe([:0]const u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         buf[@intCast(rc)] = 0;
-        return Maybe([:0]const u8){ .result = buf[0..@intCast(rc) :0] };
+        return Maybe([:0]u8){ .result = buf[0..@intCast(rc) :0] };
     }
 }
 
@@ -1802,7 +1841,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     }
 
     return while (true) {
-        if (Maybe(void).errnoSys(sys.ftruncate(fd.cast(), size), .ftruncate)) |err| {
+        if (Maybe(void).errnoSys(syscall.ftruncate(fd.cast(), size), .ftruncate)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1812,7 +1851,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.rename(from, to), .rename)) |err| {
+        if (Maybe(void).errnoSys(syscall.rename(from, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1944,21 +1983,25 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     if (Environment.isWindows) {
-        var w_buf_from: bun.WPathBuffer = undefined;
-        var w_buf_to: bun.WPathBuffer = undefined;
+        const w_buf_from = bun.WPathBufferPool.get();
+        const w_buf_to = bun.WPathBufferPool.get();
+        defer {
+            bun.WPathBufferPool.put(w_buf_from);
+            bun.WPathBufferPool.put(w_buf_to);
+        }
 
         const rc = bun.C.renameAtW(
             from_dir,
-            bun.strings.toNTPath(&w_buf_from, from),
+            bun.strings.toNTPath(w_buf_from, from),
             to_dir,
-            bun.strings.toNTPath(&w_buf_to, to),
+            bun.strings.toNTPath(w_buf_to, to),
             true,
         );
 
         return rc;
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
+        if (Maybe(void).errnoSys(syscall.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
@@ -1982,7 +2025,7 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
 
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.symlink(target, dest), .symlink)) |err| {
+        if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1992,7 +2035,7 @@ pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
 
 pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
+        if (Maybe(void).errnoSys(syscall.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2023,10 +2066,14 @@ pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
     if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
-        var sym16: bun.WPathBuffer = undefined;
-        var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toWPathNormalizeAutoExtend(&sym16, dest);
-        const target_path = bun.strings.toWPathNormalizeAutoExtend(&target16, target);
+        const sym16 = bun.WPathBufferPool.get();
+        const target16 = bun.WPathBufferPool.get();
+        defer {
+            bun.WPathBufferPool.put(sym16);
+            bun.WPathBufferPool.put(target16);
+        }
+        const sym_path = bun.strings.toWPathNormalizeAutoExtend(sym16, dest);
+        const target_path = bun.strings.toWPathNormalizeAutoExtend(target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
                 return Maybe(void).success;
@@ -2115,7 +2162,7 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
-        if (Maybe(void).errnoSys(system.fcopyfile(fd_in.cast(), fd_out.cast(), null, flags), .fcopyfile)) |err| {
+        if (Maybe(void).errnoSys(syscall.fcopyfile(fd_in.cast(), fd_out.cast(), null, flags), .fcopyfile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2133,12 +2180,13 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     if (comptime Environment.isWindows) {
-        var w_buf: bun.WPathBuffer = undefined;
-        return unlinkW(bun.strings.toNTPath(&w_buf, from));
+        const w_buf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(w_buf);
+        return unlinkW(bun.strings.toNTPath(w_buf, from));
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errnoSys(syscall.unlink(from), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2155,8 +2203,9 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
     if (Environment.isWindows) {
         if (comptime std.meta.Elem(@TypeOf(to)) == u8) {
-            var w_buf: bun.WPathBuffer = undefined;
-            return unlinkatWithFlags(dirfd, bun.strings.toNTPath(&w_buf, bun.span(to)), flags);
+            const w_buf = bun.WPathBufferPool.get();
+            defer bun.WPathBufferPool.put(w_buf);
+            return unlinkatWithFlags(dirfd, bun.strings.toNTPath(w_buf, bun.span(to)), flags);
         }
 
         return bun.windows.DeleteFileBun(to, .{
@@ -2166,7 +2215,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
+        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2184,7 +2233,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return unlinkatWithFlags(dirfd, to, 0);
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2211,7 +2260,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..MAX_PATH_BYTES], 0);
-            if (Maybe([]u8).errnoSys(system.fcntl(fd.cast(), posix.F.GETPATH, out_buffer), .fcntl)) |err| {
+            if (Maybe([]u8).errnoSys(syscall.fcntl(fd.cast(), posix.F.GETPATH, out_buffer), .fcntl)) |err| {
                 return err;
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
@@ -2287,8 +2336,134 @@ pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offse
     return .{ .result = map };
 }
 
+pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
+    switch (fcntl(fd, std.posix.F.GETFD, 0)) {
+        .result => |fl| {
+            switch (fcntl(fd, std.posix.F.SETFD, fl | std.posix.FD_CLOEXEC)) {
+                .result => {},
+                .err => |err| return .{ .err = err },
+            }
+        },
+        .err => |err| return .{ .err = err },
+    }
+
+    return .{ .result = {} };
+}
+
+pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
+    while (true) {
+        const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
+        if (Maybe(i32).errnoSys(rc, .setsockopt)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });
+            return err;
+        }
+        log("setsockopt({d}, {d}, {d}) = {d}", .{ fd.cast(), level, optname, rc });
+        return .{ .result = @intCast(rc) };
+    }
+
+    unreachable;
+}
+
+pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
+    if (comptime Environment.isMac) {
+        return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
+            .result => .{ .result = {} },
+            .err => |err| .{ .err = err },
+        };
+    }
+
+    return .{ .result = {} };
+}
+
+const socketpair_t = if (Environment.isLinux) i32 else c_uint;
+
+/// libc socketpair() except it defaults to:
+/// - SOCK_CLOEXEC on Linux
+/// - SO_NOSIGPIPE on macOS
+///
+/// On POSIX it otherwise makes it do O_CLOEXEC.
+pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: enum { blocking, nonblocking }) Maybe([2]bun.FileDescriptor) {
+    if (comptime !Environment.isPosix) @compileError("linux only!");
+
+    var fds_i: [2]syscall.fd_t = .{ 0, 0 };
+
+    if (comptime Environment.isLinux) {
+        while (true) {
+            const nonblock_flag: i32 = if (nonblocking_status == .nonblocking) linux.SOCK.NONBLOCK else 0;
+            const rc = std.os.linux.socketpair(domain, socktype | linux.SOCK.CLOEXEC | nonblock_flag, protocol, &fds_i);
+            if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .socketpair)) |err| {
+                if (err.getErrno() == .INTR) continue;
+
+                log("socketpair() = {d} {s}", .{ err.err.errno, err.err.name() });
+                return err;
+            }
+
+            break;
+        }
+    } else {
+        while (true) {
+            const err = libc.socketpair(domain, socktype, protocol, &fds_i);
+
+            if (Maybe([2]bun.FileDescriptor).errnoSys(err, .socketpair)) |err2| {
+                if (err2.getErrno() == .INTR) continue;
+                log("socketpair() = {d} {s}", .{ err2.err.errno, err2.err.name() });
+                return err2;
+            }
+
+            break;
+        }
+
+        const err: ?Syscall.Error = err: {
+
+            // Set O_CLOEXEC first.
+            inline for (0..2) |i| {
+                switch (setCloseOnExec(bun.toFD(fds_i[i]))) {
+                    .err => |err| break :err err,
+                    .result => {},
+                }
+            }
+
+            if (comptime Environment.isMac) {
+                inline for (0..2) |i| {
+                    switch (setNoSigpipe(bun.toFD(fds_i[i]))) {
+                        .err => |err| break :err err,
+                        else => {},
+                    }
+                }
+            }
+
+            if (nonblocking_status == .nonblocking) {
+                inline for (0..2) |i| {
+                    switch (setNonblocking(bun.toFD(fds_i[i]))) {
+                        .err => |err| break :err err,
+                        .result => {},
+                    }
+                }
+            }
+
+            break :err null;
+        };
+
+        // On any error after socketpair(), we need to close it.
+        if (err) |errr| {
+            inline for (0..2) |i| {
+                _ = close(bun.toFD(fds_i[i]));
+            }
+
+            log("socketpair() = {d} {s}", .{ errr.errno, errr.name() });
+
+            return .{ .err = errr };
+        }
+    }
+
+    log("socketpair() = [{d} {d}]", .{ fds_i[0], fds_i[1] });
+
+    return Maybe([2]bun.FileDescriptor){ .result = .{ bun.toFD(fds_i[0]), bun.toFD(fds_i[1]) } };
+}
+
 pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
-    if (Maybe(void).errnoSys(system.munmap(memory.ptr, memory.len), .munmap)) |err| {
+    if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;
 }
@@ -2443,15 +2618,16 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
         const attributes: WindowsFileAttributes = @bitCast(dword);
         return attributes;
     } else {
-        var wbuf: bun.WPathBuffer = undefined;
-        const path_to_use = bun.strings.toWPath(&wbuf, path);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const path_to_use = bun.strings.toWPath(wbuf, path);
         return getFileAttributes(path_to_use);
     }
 }
 
 pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isPosix) {
-        return system.access(path, 0) == 0;
+        return syscall.access(path, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
@@ -2469,7 +2645,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
 
 pub fn exists(path: []const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.access(&(std.posix.toPosixPath(path) catch return false), 0) == 0;
+        return syscall.access(&(std.posix.toPosixPath(path) catch return false), 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
@@ -2481,7 +2657,7 @@ pub fn exists(path: []const u8) bool {
 
 pub fn existsZ(path: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.access(path, 0) == 0;
+        return syscall.access(path, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
@@ -2522,8 +2698,9 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir_);
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const path = bun.strings.toNTPath(&wbuf, subpath);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const path = bun.strings.toNTPath(wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2589,8 +2766,9 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const path = bun.strings.toNTPath(&wbuf, subpath);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const path = bun.strings.toNTPath(wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2745,7 +2923,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     }
 
     var fds: [2]i32 = undefined;
-    const rc = system.pipe(&fds);
+    const rc = syscall.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(
         rc,
         .pipe,
@@ -2788,15 +2966,15 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
     }
 
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
-    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
+    const out = syscall.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
     if (Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd)) |err| {
         return err;
     }
 
     if (flags != 0) {
-        const fd_flags: ArgType = @intCast(system.fcntl(@intCast(out), @as(i32, std.posix.F.GETFD), @as(ArgType, 0)));
-        _ = system.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
+        const fd_flags: ArgType = @intCast(syscall.fcntl(@intCast(out), @as(i32, std.posix.F.GETFD), @as(ArgType, 0)));
+        _ = syscall.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
     }
 
     return Maybe(bun.FileDescriptor){
@@ -3013,14 +3191,14 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
-    pub fn openat(other: anytype, path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openat(other: anytype, path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
     }
 
-    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn open(path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 
@@ -3256,15 +3434,19 @@ pub const File = struct {
         return .{ .result = buf[0..read_amount] };
     }
 
-    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
-        const size = switch (this.getEndPos()) {
-            .err => |err| {
-                return .{ .err = err };
-            },
-            .result => |s| s,
-        };
-
-        list.ensureTotalCapacityPrecise(size + 16) catch bun.outOfMemory();
+    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
+        if (probably_small) {
+            list.ensureUnusedCapacity(64) catch bun.outOfMemory();
+        } else {
+            list.ensureTotalCapacityPrecise(
+                switch (this.getEndPos()) {
+                    .err => |err| {
+                        return .{ .err = err };
+                    },
+                    .result => |s| s,
+                } + 16,
+            ) catch bun.outOfMemory();
+        }
 
         var total: i64 = 0;
         while (true) {
@@ -3292,9 +3474,22 @@ pub const File = struct {
 
         return .{ .result = @intCast(total) };
     }
+
+    /// Use this function on potentially large files.
+    /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
     pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list)) {
+        return switch (readToEndWithArrayList(this, &list, false)) {
+            .err => |err| .{ .err = err, .bytes = list },
+            .result => .{ .err = null, .bytes = list },
+        };
+    }
+
+    /// Use this function on small files <= 1024 bytes.
+    /// This will skip the fstat() call, preallocating 64 bytes instead of the file's size.
+    pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        var list = std.ArrayList(u8).init(allocator);
+        return switch (readToEndWithArrayList(this, &list, true)) {
             .err => |err| .{ .err = err, .bytes = list },
             .result => .{ .err = null, .bytes = list },
         };
@@ -3389,7 +3584,7 @@ pub const File = struct {
 
 pub inline fn toLibUVOwnedFD(
     maybe_windows_fd: bun.FileDescriptor,
-    comptime syscall: Syscall.Tag,
+    comptime syscall_tag: Syscall.Tag,
     comptime error_case: enum { close_on_fail, leak_fd_on_fail },
 ) Maybe(bun.FileDescriptor) {
     if (!Environment.isWindows) {
@@ -3405,7 +3600,7 @@ pub inline fn toLibUVOwnedFD(
                 return .{
                     .err = .{
                         .errno = @intFromEnum(bun.C.E.MFILE),
-                        .syscall = syscall,
+                        .syscall = syscall_tag,
                     },
                 };
             },

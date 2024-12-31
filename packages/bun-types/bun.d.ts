@@ -14,6 +14,7 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
@@ -528,7 +529,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | Bun.PathLike,
+    destination: BunFile | S3File | Bun.PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
@@ -1209,6 +1210,207 @@ declare module "bun" {
      * For empty Blob, this always returns true.
      */
     exists(): Promise<boolean>;
+
+    /**
+     * Write data to the file. This is equivalent to using {@link Bun.write} with a {@link BunFile}.
+     * @param data - The data to write.
+     * @param options - The options to use for the write.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      options?: { highWaterMark?: number },
+    ): Promise<number>;
+
+    /**
+     * Deletes the file.
+     */
+    unlink(): Promise<void>;
+  }
+
+  interface S3FileOptions extends BlobPropertyBag {
+    /**
+     * The bucket to use for the S3 client. by default will use the `S3_BUCKET` and `AWS_BUCKET` environment variable, or deduce as first part of the path.
+     */
+    bucket?: string;
+    /**
+     * The region to use for the S3 client. By default, it will use the `S3_REGION` and `AWS_REGION` environment variable.
+     */
+    region?: string;
+    /**
+     * The access key ID to use for the S3 client. By default, it will use the `S3_ACCESS_KEY_ID` and `AWS_ACCESS_KEY_ID` environment variable.
+     */
+    accessKeyId?: string;
+    /**
+     * The secret access key to use for the S3 client. By default, it will use the `S3_SECRET_ACCESS_KEY and `AWS_SECRET_ACCESS_KEY` environment variable.
+     */
+    secretAccessKey?: string;
+
+    /**
+     * The endpoint to use for the S3 client. Defaults to `https://s3.{region}.amazonaws.com`, it will also use the `S3_ENDPOINT` and `AWS_ENDPOINT`  environment variable.
+     */
+    endpoint?: string;
+
+    /**
+     * The size of each part in MiB. Minimum and Default is 5 MiB and maximum is 5120 MiB.
+     */
+    partSize?: number;
+    /**
+     * The number of parts to upload in parallel. Default is 5 and maximum is 255. This can speed up the upload of large files but will also use more memory.
+     */
+    queueSize?: number;
+    /**
+     * The number of times to retry the upload if it fails. Default is 3 and maximum is 255.
+     */
+    retry?: number;
+
+    /**
+     * The Content-Type of the file. If not provided, it is automatically set based on the file extension when possible.
+     */
+    type?: string;
+
+    /**
+     * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
+     */
+    highWaterMark?: number;
+  }
+
+  interface S3FilePresignOptions extends S3FileOptions {
+    /**
+     * The number of seconds the presigned URL will be valid for. Defaults to 86400 (1 day).
+     */
+    expiresIn?: number;
+    /**
+     * The HTTP method to use for the presigned URL. Defaults to GET.
+     */
+    method?: string;
+  }
+
+  interface S3File extends BunFile {
+    /**
+     * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
+     * @param options - The options to use for the S3 client.
+     */
+    new (path: string | URL, options?: S3FileOptions): S3File;
+    /**
+     * The size of the file in bytes.
+     */
+    size: Promise<number>;
+    /**
+     * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
+     *
+     * @param begin - start offset in bytes
+     * @param end - absolute offset in bytes (relative to 0)
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(begin?: number, end?: number, contentType?: string): S3File;
+
+    /** */
+    /**
+     * Offset any operation on the file starting at `begin`
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
+     *
+     * @param begin - start offset in bytes
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(begin?: number, contentType?: string): S3File;
+
+    /**
+     * @param contentType - MIME type for the new S3File
+     */
+    slice(contentType?: string): S3File;
+
+    /**
+     * Incremental writer to stream writes to S3, this is equivalent of using MultipartUpload and is suitable for large files.
+     */
+    writer(options?: S3FileOptions): FileSink;
+
+    /**
+     * The readable stream of the file.
+     */
+    readonly readable: ReadableStream;
+
+    /**
+     * Get a readable stream of the file.
+     */
+    stream(): ReadableStream;
+
+    /**
+     * The name or path of the file, as specified in the constructor.
+     */
+    readonly name?: string;
+
+    /**
+     * The bucket name of the file.
+     */
+    readonly bucket?: string;
+
+    /**
+     * Does the file exist?
+     * It will use [`head`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/HEAD) to check if the file exists.
+     */
+    exists(): Promise<boolean>;
+
+    /**
+     * Uploads the data to S3. This is equivalent of using {@link S3File.upload} with a {@link S3File}.
+     * @param data - The data to write.
+     * @param options - The options to use for the S3 client.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
+      options?: S3FileOptions,
+    ): Promise<number>;
+
+    /**
+     * Returns a presigned URL for the file.
+     * @param options - The options to use for the presigned URL.
+     */
+    presign(options?: S3FilePresignOptions): string;
+
+    /**
+     * Deletes the file from S3.
+     */
+    unlink(): Promise<void>;
+  }
+
+  namespace S3File {
+    /**
+     * Uploads the data to S3.
+     * @param data - The data to write.
+     * @param options - The options to use for the S3 client.
+     */
+    function upload(
+      path: string | S3File,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File,
+      options?: S3FileOptions,
+    ): Promise<number>;
+
+    /**
+     * Returns a presigned URL for the file.
+     * @param options - The options to use for the presigned URL.
+     */
+    function presign(path: string | S3File, options?: S3FilePresignOptions): string;
+
+    /**
+     * Deletes the file from S3.
+     */
+    function unlink(path: string | S3File, options?: S3FileOptions): Promise<void>;
+
+    /**
+     * The size of the file in bytes.
+     */
+    function size(path: string | S3File, options?: S3FileOptions): Promise<number>;
+
+    /**
+     * The size of the file in bytes.
+     */
+    function exists(path: string | S3File, options?: S3FileOptions): Promise<boolean>;
   }
 
   /**
@@ -1543,7 +1745,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1552,6 +1754,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -1609,14 +1831,41 @@ declare module "bun" {
     /**
      * **Experimental**
      *
-     * Enable CSS support.
+     * Bundle CSS files.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bunv 1.2)
      */
     experimentalCss?: boolean;
+
+    /**
+     * **Experimental**
+     *
+     * Bundle JavaScript & CSS files from HTML files. JavaScript & CSS files
+     * from non-external <script> or <link> tags will be bundled.
+     *
+     * Underneath, this works similarly to HTMLRewriter.
+     *
+     * This will be enabled by default in Bun v1.2.
+     *
+     * @default false (until Bun v1.2)
+     */
+    html?: boolean;
 
     /**
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     *
+     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+     * as most usage of `Bun.build` forgets to check for errors.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -2130,6 +2379,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -2964,7 +3215,7 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded)
+   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
@@ -2990,7 +3241,7 @@ declare module "bun" {
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied)
+   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
@@ -3011,6 +3262,17 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * Lazily load/upload a file from S3.
+   * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
+   * @param options - The options to use for the S3 client.
+   */
+  function s3(path: string | URL, options?: S3FileOptions): S3File;
+  /**
+   * The S3 file class.
+   */
+  const S3: typeof S3File;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -3785,7 +4047,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**
@@ -3873,10 +4135,17 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3891,6 +4160,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /**
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -3920,7 +4193,30 @@ declare module "bun" {
     args: OnResolveArgs,
   ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
 
+  type FFIFunctionCallable = Function & {
+    // Making a nominally typed function so that the user must get it from dlopen
+    readonly __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+  };
+
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
+    onBeforeParse(
+      constraints: PluginConstraints,
+      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+    ): void;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -4362,6 +4658,35 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4467,6 +4792,7 @@ declare module "bun" {
     port: number;
     tls?: TLSOptions;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -4474,11 +4800,17 @@ declare module "bun" {
     port: number;
     tls?: boolean;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
     tls?: TLSOptions;
     unix: string;
+  }
+
+  interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
+    fd: number;
   }
 
   /**
@@ -5464,6 +5796,57 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
 }
 
 // extends lib.dom.d.ts

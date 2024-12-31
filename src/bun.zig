@@ -11,7 +11,7 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = !Environment.isTest;
+pub const use_mimalloc = true;
 
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -37,18 +37,8 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
-const cmath = struct {
-    extern "c" fn powf(x: f32, y: f32) f32;
-    extern "c" fn pow(x: f64, y: f64) f64;
-};
-
-pub inline fn powf(x: f32, y: f32) f32 {
-    return cmath.powf(x, y);
-}
-
-pub inline fn pow(x: f64, y: f64) f64 {
-    return cmath.pow(x, y);
-}
+pub extern "c" fn powf(x: f32, y: f32) f32;
+pub extern "c" fn pow(x: f64, y: f64) f64;
 
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
@@ -98,16 +88,17 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
-pub const OOM = error{OutOfMemory};
+pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
-    /// There is an active exception on the global object. Options:
-    ///
-    /// - Bubble it up to the caller
-    /// - Call `global.takeException(err)` to get the JSValue of the exception,
-    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    /// There is an active exception on the global object.
+    /// You should almost never have to construct this manually.
     JSError,
+    // XXX: This is temporary! meghan will remove this soon
+    OutOfMemory,
 };
+
+pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
@@ -124,6 +115,12 @@ pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
 
+/// All functions and interfaces provided from Bun's `bindgen` utility.
+pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+comptime {
+    _ = &gen; // reference bindings
+}
+
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
 /// Copied from Zig std.Progress before 0.13 rewrite
@@ -139,6 +136,7 @@ pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
+pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -327,7 +325,7 @@ pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
 pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
@@ -892,7 +890,6 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
-        const flag_ = flag;
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
@@ -900,13 +897,28 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
+                    const enabled = if (getenvZ(flag)) |val|
+                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
+                    else
+                        false;
                     is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
                     return enabled;
                 },
             };
         }
     }.get();
+}
+
+pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
+    for (std.os.environ) |lineZ| {
+        const line = sliceTo(lineZ, 0);
+        const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
+        if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
+            return line[@min(key_end + 1, line.len)..];
+        }
+    }
+
+    return null;
 }
 
 /// This wrapper exists to avoid the call to sliceTo(0)
@@ -917,16 +929,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     }
 
     if (comptime Environment.isWindows) {
-        // Windows UCRT will fill this in for us
-        for (std.os.environ) |lineZ| {
-            const line = sliceTo(lineZ, 0);
-            const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
-                return line[@min(key_end + 1, line.len)..];
-            }
-        }
-
-        return null;
+        return getenvZAnyCase(key);
     }
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
@@ -1278,7 +1281,7 @@ pub const SignalCode = enum(u8) {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    // This wrapper struct is lame, what if bun's color formatter was more versatile
     const Fmt = struct {
         signal: SignalCode,
         enable_ansi_colors: bool,
@@ -1328,8 +1331,8 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = bundler.Bundler;
-pub const bundler = @import("./bundler.zig");
+pub const Transpiler = transpiler.Transpiler;
+pub const transpiler = @import("./transpiler.zig");
 pub const which = @import("./which.zig").which;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
@@ -1700,7 +1703,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 
     // This shouldn't be reachable, but it can technically be because
-    // pthread_exit is a request and not guranteed.
+    // pthread_exit is a request and not guaranteed.
     if (isProcessReloadInProgressOnAnotherThread()) {
         while (true) {
             std.atomic.spinLoopHint();
@@ -2078,8 +2081,6 @@ pub const WTF = struct {
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };
 
-pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
-
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
@@ -2357,7 +2358,7 @@ pub const win32 = struct {
         return original_mode;
     }
 
-    const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    const watcherChildEnv: [:0]const u16 = strings.toUTF16Literal("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
     const watcher_reload_exit: w.DWORD = 3224497970;
@@ -2763,8 +2764,6 @@ pub const MakePath = struct {
                 @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
-            const is_last = it.peekNext() == null;
-            _ = is_last; // autofix
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
                 .no_follow = no_follow,
                 .create_disposition = w.FILE_OPEN_IF,
@@ -3146,8 +3145,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             const ptr = bun.new(T, t);
 
             if (Environment.enable_logs) {
-                if (ptr.ref_count != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 
@@ -3227,6 +3226,19 @@ pub fn exitThread() noreturn {
         exiter.pthread_exit(null);
     } else {
         @compileError("Unsupported platform");
+    }
+}
+
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
     }
 }
 
@@ -3315,6 +3327,7 @@ pub inline fn resolveSourcePath(
     comptime sub_path: string,
 ) string {
     return comptime path: {
+        @setEvalBranchQuota(2000000);
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
@@ -3339,7 +3352,7 @@ const RuntimeEmbedRoot = enum {
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
-) []const u8 {
+) [:0]const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
@@ -3349,11 +3362,17 @@ pub fn runtimeEmbedFile(
     };
 
     const static = struct {
-        var storage: []const u8 = undefined;
-        var once = std.once(load);
+        var once = bun.once(load);
 
-        fn load() void {
-            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+        fn load() [:0]const u8 {
+            return std.fs.cwd().readFileAllocOptions(
+                default_allocator,
+                abs_path,
+                std.math.maxInt(usize),
+                null,
+                @alignOf(u8),
+                '\x00',
+            ) catch |e| {
                 Output.panic(
                     \\Failed to load '{s}': {}
                     \\
@@ -3367,12 +3386,10 @@ pub fn runtimeEmbedFile(
 
     if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
-        default_allocator.free(static.storage);
+        default_allocator.free(static.once.payload);
     }
 
-    static.once.call();
-
-    return static.storage;
+    return static.once.call(.{});
 }
 
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
@@ -3457,6 +3474,9 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+// TODO: migrate
+pub const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
@@ -3872,7 +3892,12 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
-        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
+        locked_at: crash_handler.StoredTrace,
+
+        pub const unlocked: DebugThreadLock = .{
+            .owning_thread = null,
+            .locked_at = crash_handler.StoredTrace.empty,
+        };
 
         pub fn lock(impl: *@This()) void {
             if (impl.owning_thread) |thread| {
@@ -3886,19 +3911,29 @@ pub const DebugThreadLock = if (Environment.allow_assert)
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.* = .{};
+            impl.* = unlocked;
         }
 
         pub fn assertLocked(impl: *const @This()) void {
             assert(impl.owning_thread != null); // not locked
             assert(impl.owning_thread == std.Thread.getCurrentId());
         }
+
+        pub fn initLocked() @This() {
+            var impl = DebugThreadLock.unlocked;
+            impl.lock();
+            return impl;
+        }
     }
 else
     struct {
+        pub const unlocked: @This() = .{};
         pub fn lock(_: *@This()) void {}
         pub fn unlock(_: *@This()) void {}
         pub fn assertLocked(_: *const @This()) void {}
+        pub fn initLocked() @This() {
+            return .{};
+        }
     };
 
 pub const bytecode_extension = ".jsc";
@@ -3954,7 +3989,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) ?Index {
+            pub inline fn init(maybe: ?Index) Optional {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
@@ -4028,21 +4063,24 @@ pub fn once(comptime f: anytype) Once(f) {
 /// It is undefined behavior if `f` re-enters the same Once instance.
 pub fn Once(comptime f: anytype) type {
     return struct {
+        const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
+
         done: bool = false,
-        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+        payload: Return = undefined,
+        mutex: std.Thread.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
         /// first time.
         /// The invocations are thread-safe.
-        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             if (@atomicLoad(bool, &self.done, .acquire))
-                return;
+                return self.payload;
 
             return self.callSlow(args);
         }
 
-        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             @setCold(true);
 
             self.mutex.lock();
@@ -4050,9 +4088,11 @@ pub fn Once(comptime f: anytype) type {
 
             // The first thread to acquire the mutex gets to run the initializer
             if (!self.done) {
-                @call(.auto, f, args);
+                self.payload = @call(.auto, f, args);
                 @atomicStore(bool, &self.done, true, .release);
             }
+
+            return self.payload;
         }
     };
 }
@@ -4089,3 +4129,88 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
 }
 
 pub const perf = @import("./perf.zig");
+pub inline fn isComptimeKnown(x: anytype) bool {
+    return comptime @typeInfo(@TypeOf(.{x})).Struct.fields[0].is_comptime;
+}
+
+pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
+    return if (index < slice.len) slice[index] else null;
+}
+
+/// To handle stack overflows:
+/// 1. StackCheck.init()
+/// 2. .isSafeToRecurse()
+pub const StackCheck = struct {
+    cached_stack_end: usize = 0,
+
+    extern fn Bun__StackCheck__initialize() void;
+    pub fn configureThread() void {
+        Bun__StackCheck__initialize();
+    }
+
+    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    fn getStackEnd() usize {
+        return Bun__StackCheck__getMaxStack();
+    }
+
+    pub fn init() StackCheck {
+        return StackCheck{ .cached_stack_end = getStackEnd() };
+    }
+
+    pub fn update(this: *StackCheck) void {
+        this.cached_stack_end = getStackEnd();
+    }
+
+    /// Is there at least 128 KB of stack space available?
+    pub fn isSafeToRecurse(this: StackCheck) bool {
+        const stack_ptr: usize = @frameAddress();
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
+    }
+};
+
+// Workaround for lack of branch hints.
+pub noinline fn throwStackOverflow() StackOverflow!void {
+    @setCold(true);
+    return error.StackOverflow;
+}
+const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
+
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
+        }
+    };
+}
+
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
+};
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;

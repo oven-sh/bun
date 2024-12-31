@@ -19,7 +19,7 @@ version: bun.Semver.Version = .{
     .minor = @truncate(Environment.version.minor),
     .patch = @truncate(Environment.version.patch),
 },
-libc: Libc = .default,
+libc: Libc = if (!Environment.isMusl) .default else .musl,
 
 const Libc = enum {
     /// The default libc for the target
@@ -153,7 +153,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         {
             var progress = refresher.start("Downloading", 0);
             defer progress.end();
-            const http_proxy: ?bun.URL = env.getHttpProxy(url);
+            const http_proxy: ?bun.URL = env.getHttpProxyFor(url);
 
             async_http.* = HTTP.AsyncHTTP.initSync(
                 allocator,
@@ -311,8 +311,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 pub fn isSupported(this: *const CompileTarget) bool {
     return switch (this.os) {
         .windows => this.arch == .x64,
+
         .mac => true,
-        .linux => this.libc == .default,
+        .linux => true,
+
         .wasm => false,
     };
 }
@@ -429,6 +431,8 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
                         .arm64 => "\"arm64\"",
                         else => @compileError("TODO"),
                     },
+
+                    "\"" ++ Global.package_json_version ++ "\"",
                 };
             }.values,
             else => @panic("TODO"),

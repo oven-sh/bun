@@ -99,11 +99,12 @@ pub const Features = struct {
     pub var https_server: usize = 0;
     /// Set right before JSC::initialize is called
     pub var jsc: usize = 0;
-    /// Set when kit.DevServer is initialized
-    pub var kit_dev: usize = 0;
+    /// Set when bake.DevServer is initialized
+    pub var dev_server: usize = 0;
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
+    pub var text_lockfile: usize = 0;
     pub var macros: usize = 0;
     pub var no_avx2: usize = 0;
     pub var no_avx: usize = 0;
@@ -119,6 +120,13 @@ pub const Features = struct {
     pub var virtual_modules: usize = 0;
     pub var workers_spawned: usize = 0;
     pub var workers_terminated: usize = 0;
+    pub var napi_module_register: usize = 0;
+    pub var process_dlopen: usize = 0;
+
+    comptime {
+        @export(napi_module_register, .{ .name = "Bun__napi_module_register_count" });
+        @export(process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+    }
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -334,6 +342,25 @@ pub const GenerateHeader = struct {
             _ = forOS();
 
             return linux_kernel_version;
+        }
+
+        export fn Bun__isEpollPwait2SupportedOnLinuxKernel() i32 {
+            if (comptime !Environment.isLinux) {
+                return 0;
+            }
+
+            // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
+            const min_epoll_pwait2 = Semver.Version{
+                .major = 5,
+                .minor = 11,
+                .patch = 0,
+            };
+
+            return switch (kernelVersion().order(min_epoll_pwait2, "", "")) {
+                .gt => 1,
+                .eq => 1,
+                .lt => 0,
+            };
         }
 
         fn forLinux() Analytics.Platform {

@@ -204,12 +204,6 @@ const CppWebSocket = opaque {
     }
 };
 
-const body_buf_len = 16384 - 16;
-const BodyBufBytes = [body_buf_len]u8;
-
-const BodyBufPool = ObjectPool(BodyBufBytes, null, true, 4);
-const BodyBuf = BodyBufPool.Node;
-
 pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -308,6 +302,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 HTTPClient,
                 client,
                 "tcp",
+                false,
             )) |out| {
                 // I don't think this case gets reached.
                 if (out.state == .failed) {
@@ -625,6 +620,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
         }
 
+        pub fn memoryCost(this: *HTTPClient) callconv(.C) usize {
+            var cost: usize = @sizeOf(HTTPClient);
+            cost += this.body.capacity;
+            cost += this.to_send.len;
+            return cost;
+        }
+
         pub fn handleWritable(
             this: *HTTPClient,
             socket: Socket,
@@ -668,6 +670,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             .connect = connect,
             .cancel = cancel,
             .register = register,
+            .memoryCost = memoryCost,
         });
 
         comptime {
@@ -680,6 +683,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 });
                 @export(register, .{
                     .name = Export[2].symbol_name,
+                });
+                @export(memoryCost, .{
+                    .name = Export[3].symbol_name,
                 });
             }
         }
@@ -1130,7 +1136,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
-                    const utf16_bytes_ = strings.toUTF16AllocNoTrim(bun.default_allocator, data_, true, false) catch {
+                    const utf16_bytes_ = strings.toUTF16Alloc(bun.default_allocator, data_, true, false) catch {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };
@@ -1927,6 +1933,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
         }
 
+        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
+            var cost: usize = @sizeOf(WebSocket);
+            cost += this.send_buffer.buf.len;
+            cost += this.receive_buffer.buf.len;
+            // This is under-estimated a little, as we don't include usockets context.
+            return cost;
+        }
+
         pub const Export = shim.exportFunctions(.{
             .writeBinaryData = writeBinaryData,
             .writeString = writeString,
@@ -1935,6 +1949,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             .register = register,
             .init = init,
             .finalize = finalize,
+            .memoryCost = memoryCost,
         });
 
         comptime {
@@ -1946,6 +1961,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(register, .{ .name = Export[4].symbol_name });
                 @export(init, .{ .name = Export[5].symbol_name });
                 @export(finalize, .{ .name = Export[6].symbol_name });
+                @export(memoryCost, .{ .name = Export[7].symbol_name });
             }
         }
     };

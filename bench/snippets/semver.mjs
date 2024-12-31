@@ -1,5 +1,5 @@
 import { satisfies } from "semver";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 const tests = [
   ["~1.2.3", "1.2.3", true],
   ["~1.2", "1.2.0", true],

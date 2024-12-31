@@ -461,7 +461,26 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       });
     });
   }
-
+  describe("errors", () => {
+    it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
+      try {
+        await Bun.write(s3("test.txt", s3Options), file("./do-not-exist.txt"));
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e?.code).toBe("ENOENT");
+        expect(e?.path).toBe("./do-not-exist.txt");
+        expect(e?.syscall).toBe("open");
+      }
+    });
+    it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
+      try {
+        await Bun.write(s3("test.txt", s3Options), s3("do-not-exist.txt", s3Options));
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e?.code).toBe("NoSuchKey");
+      }
+    });
+  });
   describe("credentials", () => {
     it("should error with invalid access key id", async () => {
       [s3, (...args) => new S3(...args), file].forEach(fn => {

@@ -3484,10 +3484,7 @@ pub const Blob = struct {
                             self.promise.resolve(globalObject, .true);
                         },
                         .not_found => {
-                            const js_err = globalObject
-                                .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(self.store.data.s3.path())}).toJS();
-                            js_err.put(globalObject, ZigString.static("path"), ZigString.init(self.store.data.s3.path()).withEncoding().toJS(globalObject));
-                            self.promise.reject(globalObject, js_err);
+                            self.promise.reject(globalObject, bun.S3.createNotFoundError(globalObject, self.store.data.s3.path()));
                         },
                         .failure => |err| {
                             self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
@@ -3841,9 +3838,7 @@ pub const Blob = struct {
                     JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
                 },
                 .not_found => {
-                    const js_err = this.globalThis.createErrorInstance("File not found", .{});
-                    js_err.put(this.globalThis, ZigString.static("code"), ZigString.init("FileNotFound").toJS(this.globalThis));
-                    this.promise.reject(this.globalThis, js_err);
+                    this.promise.reject(this.globalThis, bun.S3.createNotFoundError(this.globalThis, this.blob.store.?.data.s3.path()));
                 },
                 .failure => |err| {
                     this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis));

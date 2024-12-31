@@ -341,11 +341,7 @@ pub const S3BlobStatTask = struct {
 
         switch (result) {
             .not_found => {
-                const js_err = globalThis
-                    .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(this.store.data.s3.path())}).toJS();
-                js_err.put(globalThis, ZigString.static("path"), ZigString.init(this.store.data.s3.path()).withEncoding().toJS(globalThis));
-
-                this.promise.rejectOnNextTick(globalThis, js_err);
+                this.promise.rejectOnNextTick(globalThis, bun.S3.createNotFoundError(globalThis, this.store.data.s3.path()));
             },
             .success => |stat| {
                 this.promise.resolve(globalThis, JSValue.jsNumber(stat.size));

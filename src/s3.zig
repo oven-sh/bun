@@ -658,6 +658,7 @@ pub const AWSCredentials = struct {
         pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             const js_err = globalObject.createErrorInstance("{s}", .{err.message});
             js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
+            js_err.put(globalObject, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalObject));
             return js_err;
         }
     };
@@ -2292,3 +2293,9 @@ pub const MultiPartUpload = struct {
         }
     }
 };
+pub fn createNotFoundError(globalThis: *JSC.JSGlobalObject, path: []const u8) JSC.JSValue {
+    const js_err = globalThis
+        .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(path)}).toJS();
+    js_err.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalThis));
+    return js_err;
+}

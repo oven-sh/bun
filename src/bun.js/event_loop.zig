@@ -18,6 +18,10 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
+const AWS = @import("../s3.zig").AWSCredentials;
+const S3HttpSimpleTask = AWS.S3HttpSimpleTask;
+const S3HttpDownloadStreamingTask = AWS.S3HttpDownloadStreamingTask;
+
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -407,6 +411,8 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    S3HttpSimpleTask,
+    S3HttpDownloadStreamingTask,
     PosixSignalTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
@@ -1006,6 +1012,15 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
                 },
+                .S3HttpSimpleTask => {
+                    var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
+                },
+                .S3HttpDownloadStreamingTask => {
+                    var s3_task: *S3HttpDownloadStreamingTask = task.get(S3HttpDownloadStreamingTask).?;
+                    s3_task.onResponse();
+                },
+
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                     globWalkTask.*.runFromJS();
@@ -2050,6 +2065,13 @@ pub const AnyEventLoop = union(enum) {
     mini: MiniEventLoop,
 
     pub const Task = AnyTaskWithExtraContext;
+
+    pub fn iterationNumber(this: *const AnyEventLoop) u64 {
+        return switch (this.*) {
+            .js => this.js.usocketsLoop().iterationNumber(),
+            .mini => this.mini.loop.iterationNumber(),
+        };
+    }
 
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();

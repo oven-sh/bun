@@ -1015,9 +1015,6 @@ pub fn parseIntoBinaryLockfile(
     log: *logger.Log,
     manager: ?*PackageManager,
 ) ParseError!void {
-    var temp_buf: std.ArrayListUnmanaged(u8) = .{};
-    defer temp_buf.deinit(allocator);
-
     lockfile.initEmpty(allocator);
 
     const lockfile_version_expr = root.get("lockfileVersion") orelse {

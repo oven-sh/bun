@@ -323,6 +323,12 @@ pub const String = extern struct {
     extern fn BunString__fromUTF16ToLatin1(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
+    extern fn BunString__toInt32(this: String) i64;
+    pub fn toInt32(this: String) ?i32 {
+        const val = BunString__toInt32(this);
+        if (val > std.math.maxInt(i32)) return null;
+        return @intCast(val);
+    }
 
     pub fn ascii(bytes: []const u8) String {
         return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };

@@ -2565,10 +2565,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     result->putDirectOffset(vm, 3, JSC::jsDoubleNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
-    // We report 0 for this because m_arrayBuffers in JSC::Heap is private and we need to add a binding
-    // If we use objectTypeCounts(), it's hideously slow because it loops through every single object in the heap
-    // TODO: add a binding for m_arrayBuffers, registerWrapper() in TypedArrayController doesn't work
-    result->putDirectOffset(vm, 4, JSC::jsNumber(0));
+    // JSC won't count this number until vm.heap.addReference() is called.
+    // That will only happen in cases like:
+    // - new ArrayBuffer()
+    // - new Uint8Array(42).buffer
+    // - fs.readFile(path, "utf-8") (sometimes)
+    // - ...
+    //
+    // But it won't happen in cases like:
+    // - new Uint8Array(42)
+    // - Buffer.alloc(42)
+    // - new Uint8Array(42).slice()
+    result->putDirectOffset(vm, 4, JSC::jsDoubleNumber(vm.heap.arrayBufferSize()));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

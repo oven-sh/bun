@@ -402,7 +402,7 @@ namespace ERR {
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
-    auto arg_kind = arg_name.startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = arg_name.contains("."_s) ? "property"_s : "argument"_s;
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
@@ -417,7 +417,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 {
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto arg_kind = arg_name.startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = arg_name.contains("."_s) ? "property"_s : "argument"_s;
 
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
@@ -497,13 +497,27 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
 
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
 {
-    ASCIILiteral type = String(name).find('.') != notFound ? "property"_s : "argument"_s;
+    ASCIILiteral type = String(name).contains("."_s) ? "property"_s : "argument"_s;
 
     auto value_string = JSValueToStringSafe(globalObject, value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    return {};
+}
+JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
+{
+    ASCIILiteral type = String(name).contains("."_s) ? "property"_s : "argument"_s;
+
+    auto value_string = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto& vm = globalObject->vm();
+    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
+    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
+    auto error = JSC::ErrorInstance::create(vm, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
+    throwScope.throwException(globalObject, error);
     return {};
 }
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason)

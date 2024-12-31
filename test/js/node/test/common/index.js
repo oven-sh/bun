@@ -898,6 +898,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 

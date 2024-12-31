@@ -2654,11 +2654,7 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if OS(LINUX) || OS(FREEBSD)
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
-#else
-    return JSValue::encode(jsUndefined());
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

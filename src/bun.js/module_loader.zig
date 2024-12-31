@@ -2911,6 +2911,22 @@ pub const HardcodedModule = enum {
             .{ "node:worker_threads", .{ .path = "worker_threads" } },
             .{ "node:zlib", .{ .path = "zlib" } },
 
+            // These are returned in builtinModules, but probably not many packages use them so we will just alias them.
+            .{ "node:_http_agent", .{ .path = "http" } },
+            .{ "node:_http_client", .{ .path = "http" } },
+            .{ "node:_http_common", .{ .path = "http" } },
+            .{ "node:_http_incoming", .{ .path = "http" } },
+            .{ "node:_http_outgoing", .{ .path = "http" } },
+            .{ "node:_http_server", .{ .path = "http" } },
+            .{ "node:_stream_duplex", .{ .path = "stream" } },
+            .{ "node:_stream_passthrough", .{ .path = "stream" } },
+            .{ "node:_stream_readable", .{ .path = "stream" } },
+            .{ "node:_stream_transform", .{ .path = "stream" } },
+            .{ "node:_stream_writable", .{ .path = "stream" } },
+            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_tls_wrap", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "tls" } },
+
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
             .{ "async_hooks", .{ .path = "async_hooks" } },

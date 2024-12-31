@@ -1,8 +1,9 @@
 import { test, expect } from "bun:test";
 import { chmodSync } from "fs";
-import { tempDirWithFiles, bunEnv } from "harness";
+import { isWindows, tempDirWithFiles, bunEnv } from "harness";
 import path from "path";
-test("spawn uses PATH from env if present", async () => {
+
+test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {
   const tmpDir = await tempDirWithFiles("spawn-path", {
     "test-script": `#!/usr/bin/env bash
 echo "hello from script"`,

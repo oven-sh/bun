@@ -2303,7 +2303,7 @@ pub const MultiPartUpload = struct {
     }
 };
 pub fn createNotFoundError(globalThis: *JSC.JSGlobalObject, path: []const u8) JSC.JSValue {
-    //TODO: cache the structure of the error
+    //TODO: remove this function .not_found should return the proper S3Error
     const js_err = globalThis
         .createErrorInstance("File {} not found", .{bun.fmt.quote(path)}).toJS(globalThis);
     // make it consistent with S3 services

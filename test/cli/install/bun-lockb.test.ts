@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { access, copyFile, open, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
 it("should not print anything to stderr when running bun.lockb", async () => {
@@ -36,8 +36,14 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   // Assert that the lockfile has the correct permissions
   const file = await open(join(package_dir, "bun.lockb"), "r");
   const stat = await file.stat();
-  // 0o755 == 33261
-  expect(stat.mode).toBe(33261);
+
+  // in unix, 0o755 == 33261
+  let mode = 33261;
+  // ..but windows is different
+  if(isWindows) {
+    mode = 33206;
+  }
+  expect(stat.mode).toBe(mode);
 
   // create a .env
   await writeFile(join(package_dir, ".env"), "FOO=bar");

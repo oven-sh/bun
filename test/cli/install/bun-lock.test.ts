@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { access, copyFile, open, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
 it("should write plaintext lockfiles", async () => {
@@ -36,8 +36,14 @@ it("should write plaintext lockfiles", async () => {
   // Assert that the lockfile has the correct permissions
   const file = await open(join(package_dir, "bun.lock"), "r");
   const stat = await file.stat();
-  // 0o644 == 33188
-  expect(stat.mode).toBe(33188);
+
+  // in unix, 0o644 == 33188
+  let mode = 33188;
+  // ..but windows is different
+  if (isWindows) {
+    mode = 33206;
+  }
+  expect(stat.mode).toBe(mode);
 
   expect(await file.readFile({ encoding: "utf8" })).toEqual(
     `{\n  \"lockfileVersion\": 0,\n  \"workspaces\": {\n    \"\": {\n      \"dependencies\": {\n        \"dummy-package\": \"file:./bar-0.0.2.tgz\",\n      },\n    },\n  },\n  \"packages\": {\n    \"dummy-package\": [\"bar@./bar-0.0.2.tgz\", {}],\n  }\n}\n`,

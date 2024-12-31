@@ -1212,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    if (!type.isNull() && type.isCell() && type.asCell()->type() == JSC::JSType::ObjectType) {
+    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -1250,7 +1250,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     JSObject* errorInstance;
 
     if (warning.isString()) {
-        errorInstance = createError(globalObject, warning.getString(globalObject));
+        auto s = warning.getString(globalObject);
+        errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();

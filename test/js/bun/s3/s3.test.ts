@@ -485,7 +485,23 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should allow special characters in the path", async () => {
       const options = { ...s3Options, bucket: S3Bucket };
-      const s3file = s3("🌈🦄.txt", options);
+      const s3file = s3(`🌈🦄${randomUUID()}.txt`, options);
+      await s3file.write("Hello Bun!");
+      await s3file.exists();
+      await s3file.unlink();
+      expect().pass();
+    });
+    it("should allow forward slashes in the path", async () => {
+      const options = { ...s3Options, bucket: S3Bucket };
+      const s3file = s3(`${randomUUID()}/test.txt`, options);
+      await s3file.write("Hello Bun!");
+      await s3file.exists();
+      await s3file.unlink();
+      expect().pass();
+    });
+    it("should allow backslashes in the path", async () => {
+      const options = { ...s3Options, bucket: S3Bucket };
+      const s3file = s3(`${randomUUID()}\\test.txt`, options);
       await s3file.write("Hello Bun!");
       await s3file.exists();
       await s3file.unlink();

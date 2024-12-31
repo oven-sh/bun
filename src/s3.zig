@@ -356,7 +356,7 @@ pub const AWSCredentials = struct {
             else => error.InvalidHexChar,
         };
     }
-    fn encodeURIComponent(input: []const u8, buffer: []u8) ![]const u8 {
+    fn encodeURIComponent(input: []const u8, buffer: []u8, comptime encode_slash: bool) ![]const u8 {
         var written: usize = 0;
 
         for (input) |c| {
@@ -369,6 +369,12 @@ pub const AWSCredentials = struct {
                 },
                 // All other characters need to be percent-encoded
                 else => {
+                    if (!encode_slash and (c == '/' or c == '\\')) {
+                        if (written >= buffer.len) return error.BufferTooSmall;
+                        buffer[written] = if (c == '\\') '/' else c;
+                        written += 1;
+                        continue;
+                    }
                     if (written + 3 > buffer.len) return error.BufferTooSmall;
                     buffer[written] = '%';
                     // Convert byte to hex
@@ -482,8 +488,8 @@ pub const AWSCredentials = struct {
         var normalized_path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
         var path_buffer: [1024]u8 = undefined;
         var bucket_buffer: [63]u8 = undefined;
-        bucket = encodeURIComponent(bucket, &bucket_buffer) catch return error.InvalidPath;
-        path = encodeURIComponent(path, &path_buffer) catch return error.InvalidPath;
+        bucket = encodeURIComponent(bucket, &bucket_buffer, false) catch return error.InvalidPath;
+        path = encodeURIComponent(path, &path_buffer, false) catch return error.InvalidPath;
         const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
 
         const date_result = getAMZDate(bun.default_allocator);
@@ -511,7 +517,7 @@ pub const AWSCredentials = struct {
         var encoded_host: []const u8 = "";
         const host = brk_host: {
             if (this.endpoint.len > 0) {
-                encoded_host = encodeURIComponent(this.endpoint, &encoded_host_buffer) catch return error.InvalidEndpoint;
+                encoded_host = encodeURIComponent(this.endpoint, &encoded_host_buffer, true) catch return error.InvalidEndpoint;
                 break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
             } else {
                 break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
@@ -567,7 +573,7 @@ pub const AWSCredentials = struct {
                 }
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
-                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer) catch return error.ContentTypeIsTooLong else "";
+                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
                     if (content_disposition != null) {
                         if (session_token) |token| {

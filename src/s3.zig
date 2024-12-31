@@ -672,7 +672,7 @@ pub const AWSCredentials = struct {
             /// etag is not owned and need to be copied if used after this callback
             etag: []const u8 = "",
         },
-        not_found: void,
+        not_found: S3Error,
 
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
@@ -684,7 +684,7 @@ pub const AWSCredentials = struct {
             /// body is owned and dont need to be copied, but dont forget to free it
             body: bun.MutableString,
         },
-        not_found: void,
+        not_found: S3Error,
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
     };
@@ -695,7 +695,7 @@ pub const AWSCredentials = struct {
     };
     pub const S3DeleteResult = union(enum) {
         success: void,
-        not_found: void,
+        not_found: S3Error,
 
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
@@ -756,6 +756,20 @@ pub const AWSCredentials = struct {
                     }, context),
                 }
             }
+            pub fn notFound(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) void {
+                switch (this) {
+                    inline .download,
+                    .stat,
+                    .delete,
+                    => |callback| callback(.{
+                        .not_found = .{
+                            .code = code,
+                            .message = message,
+                        },
+                    }, context),
+                    else => this.fail(code, message, context),
+                }
+            }
         };
         pub fn deinit(this: *@This()) void {
             if (this.result.certificate_info) |*certificate| {
@@ -775,7 +789,11 @@ pub const AWSCredentials = struct {
             this.destroy();
         }
 
-        fn fail(this: *@This()) void {
+        const ErrorType = enum {
+            not_found,
+            failure,
+        };
+        fn errorWithBody(this: @This(), comptime error_type: ErrorType) void {
             var code: []const u8 = "UnknownError";
             var message: []const u8 = "an unexpected error has occurred";
             if (this.result.fail) |err| {
@@ -796,7 +814,11 @@ pub const AWSCredentials = struct {
                     }
                 }
             }
-            this.callback.fail(code, message, this.callback_context);
+            if (error_type == .not_found) {
+                this.callback.notFound(code, message, this.callback_context);
+            } else {
+                this.callback.fail(code, message, this.callback_context);
+            }
         }
 
         fn failIfContainsError(this: *@This(), status: u32) bool {
@@ -837,7 +859,7 @@ pub const AWSCredentials = struct {
         pub fn onResponse(this: *@This()) void {
             defer this.deinit();
             if (!this.result.isSuccess()) {
-                this.fail();
+                this.errorWithBody(.failure);
                 return;
             }
             bun.assert(this.result.metadata != null);
@@ -845,9 +867,6 @@ pub const AWSCredentials = struct {
             switch (this.callback) {
                 .stat => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200 => {
                             callback(.{
                                 .success = .{
@@ -856,21 +875,24 @@ pub const AWSCredentials = struct {
                                 },
                             }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
                 .delete => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200, 204 => {
                             callback(.{ .success = {} }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
@@ -880,15 +902,12 @@ pub const AWSCredentials = struct {
                             callback(.{ .success = {} }, this.callback_context);
                         },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
                 .download => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200, 204, 206 => {
                             const body = this.response_buffer;
                             this.response_buffer = .{
@@ -905,9 +924,12 @@ pub const AWSCredentials = struct {
                                 },
                             }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
                             //error
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
@@ -922,7 +944,7 @@ pub const AWSCredentials = struct {
                         if (response.headers.get("etag")) |etag| {
                             callback(.{ .etag = etag }, this.callback_context);
                         } else {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         }
                     }
                 },
@@ -1056,14 +1078,7 @@ pub const AWSCredentials = struct {
                                 }
                             }
                         }
-                        if (state.status_code == 404) {
-                            if (!has_body_code) {
-                                code = "NoSuchKey";
-                            }
-                            if (!has_body_message) {
-                                message = "File not found";
-                            }
-                        }
+
                         err = .{
                             .code = code,
                             .message = message,
@@ -2302,13 +2317,3 @@ pub const MultiPartUpload = struct {
         }
     }
 };
-pub fn createNotFoundError(globalThis: *JSC.JSGlobalObject, path: []const u8) JSC.JSValue {
-    //TODO: remove this function .not_found should return the proper S3Error
-    const js_err = globalThis
-        .createErrorInstance("File {} not found", .{bun.fmt.quote(path)}).toJS(globalThis);
-    // make it consistent with S3 services
-    js_err.put(globalThis, JSC.ZigString.static("code"), JSC.ZigString.static("NoSuchKey").toJS(globalThis));
-    js_err.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalThis));
-    js_err.put(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(path).withEncoding().toJS(globalThis));
-    return js_err;
-}

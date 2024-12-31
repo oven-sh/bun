@@ -340,13 +340,10 @@ pub const S3BlobStatTask = struct {
         const globalThis = this.promise.globalObject().?;
 
         switch (result) {
-            .not_found => {
-                this.promise.rejectOnNextTick(globalThis, bun.S3.createNotFoundError(globalThis, this.store.data.s3.path()));
-            },
             .success => |stat| {
                 this.promise.resolve(globalThis, JSValue.jsNumber(stat.size));
             },
-            .failure => |err| {
+            inline .not_found, .failure => |err| {
                 this.promise.rejectOnNextTick(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }

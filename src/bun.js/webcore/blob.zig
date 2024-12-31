@@ -3488,10 +3488,7 @@ pub const Blob = struct {
                         .success => {
                             self.promise.resolve(globalObject, .true);
                         },
-                        .not_found => {
-                            self.promise.reject(globalObject, bun.S3.createNotFoundError(globalObject, self.store.data.s3.path()));
-                        },
-                        .failure => |err| {
+                        inline .not_found, .failure => |err| {
                             self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.store.data.s3.path()));
                         },
                     }
@@ -3842,10 +3839,7 @@ pub const Blob = struct {
                     }
                     JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
                 },
-                .not_found => {
-                    this.promise.reject(this.globalThis, bun.S3.createNotFoundError(this.globalThis, this.blob.store.?.data.s3.path()));
-                },
-                .failure => |err| {
+                inline .not_found, .failure => |err| {
                     this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.data.s3.path()));
                 },
             }

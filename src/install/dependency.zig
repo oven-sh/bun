@@ -1389,6 +1389,10 @@ pub const Behavior = struct {
         return new;
     }
 
+    pub inline fn insert(this: *Behavior, kind: Enum) void {
+        this.bits.insert(kind);
+    }
+
     pub inline fn set(this: Behavior, kind: Enum, value: bool) Behavior {
         var new = this;
         new.bits.setPresent(kind, value);
@@ -1399,7 +1403,7 @@ pub const Behavior = struct {
         var new = this;
         inline for (std.meta.fields(@TypeOf(values))) |field| {
             if (@field(values, field.name)) {
-                new.bits.insert(@field(Enum, field.name));
+                new.insert(@field(Enum, field.name));
             }
         }
         return new;

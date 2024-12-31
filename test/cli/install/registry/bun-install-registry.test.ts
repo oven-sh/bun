@@ -2086,6 +2086,121 @@ describe("bundledDependencies", () => {
 
       await check();
     });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-git",
+            dependencies: {
+              // bundledDependencies: ["zod"],
+              "install-test1": "dylan-conway/bundled-install-test#7824752",
+              // bundledDependencies: true,
+              "install-test2": "git+ssh://git@github.com/dylan-conway/bundled-install-test#1301309",
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          `
+[install]
+cache = "${join(packageDir, ".bun-cache")}"
+          `,
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "zod", "package.json")),
+            exists(join(packageDir, "node_modules", "install-test1", "node_modules", "zod", "package.json")),
+            exists(join(packageDir, "node_modules", "install-test2", "node_modules", "zod", "package.json")),
+          ]),
+        ).toEqual([false, true, true]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) workspace dependencies are not bundled`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-workspace",
+            workspaces: ["packages/*"],
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg-one-one-one", "package.json"),
+          JSON.stringify({
+            name: "pkg-one-one-one",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+            bundledDependencies: ["no-deps"],
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+            exists(join(packageDir, "packages", "pkg-one-one-one", "node_modules", "no-deps", "package.json")),
+          ]),
+        ).toEqual([true, false]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
   }
 });
 

@@ -865,12 +865,12 @@ pub const Tree = struct {
                 const dependency = builder.dependencies[dep_id];
 
                 // don't hoist if it's a folder dependency or a bundled dependency.
-                if (pkg_resolutions[pkg_id].tag == .folder) {
-                    break :hoisted .{ .placement = .{ .id = next.id } };
-                }
-
                 if (dependency.behavior.isBundled()) {
                     break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+                }
+
+                if (pkg_resolutions[pkg_id].tag == .folder) {
+                    break :hoisted .{ .placement = .{ .id = next.id } };
                 }
 
                 break :hoisted try next.hoistDependency(
@@ -894,6 +894,8 @@ pub const Tree = struct {
                         try builder.queue.writeItem(.{
                             .tree_id = dest.id,
                             .dependency_id = dep_id,
+
+                            // if it's bundled, start a new hoist root
                             .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
                         });
                     }
@@ -4338,6 +4340,7 @@ pub const Package = extern struct {
 
                                 const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
+                                var resolver: void = {};
                                 try workspace.parseWithJSON(
                                     to_lockfile,
                                     pm,
@@ -4346,7 +4349,7 @@ pub const Package = extern struct {
                                     source,
                                     json.root,
                                     void,
-                                    {},
+                                    &resolver,
                                     Features.workspace,
                                 );
 
@@ -4427,7 +4430,7 @@ pub const Package = extern struct {
         log: *logger.Log,
         source: logger.Source,
         comptime ResolverContext: type,
-        resolver: ResolverContext,
+        resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
         initializeStore();
@@ -5117,7 +5120,7 @@ pub const Package = extern struct {
         source: logger.Source,
         json: Expr,
         comptime ResolverContext: type,
-        resolver: ResolverContext,
+        resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
         var string_builder = lockfile.stringBuilder();
@@ -5139,7 +5142,7 @@ pub const Package = extern struct {
             }
 
             // name is not validated by npm, so fallback to creating a new from the version literal
-            if (ResolverContext == *PackageManager.GitResolver) {
+            if (ResolverContext == PackageManager.GitResolver) {
                 const resolution: *const Resolution = resolver.resolution;
                 const repo = switch (resolution.tag) {
                     .git => resolution.value.git,
@@ -5429,7 +5432,7 @@ pub const Package = extern struct {
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
         name: {
-            if (ResolverContext == *PackageManager.GitResolver) {
+            if (ResolverContext == PackageManager.GitResolver) {
                 if (resolver.new_name.len != 0) {
                     defer lockfile.allocator.free(resolver.new_name);
                     const external_string = string_builder.append(ExternalString, resolver.new_name);
@@ -5577,6 +5580,25 @@ pub const Package = extern struct {
             try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
         }
 
+        var bundled_deps = bun.StringSet.init(allocator);
+        defer bundled_deps.deinit();
+        var bundle_all_deps = false;
+        if (comptime ResolverContext != void and ResolverContext.checkBundledDependencies()) {
+            if (json.get("bundleDependencies") orelse json.get("bundledDependencies")) |bundled_deps_expr| {
+                switch (bundled_deps_expr.data) {
+                    .e_boolean => |boolean| {
+                        bundle_all_deps = boolean.value;
+                    },
+                    .e_array => |arr| {
+                        for (arr.slice()) |item| {
+                            try bundled_deps.insert(item.asString(allocator) orelse continue);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
         total_dependencies_count = 0;
         const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
@@ -5720,7 +5742,11 @@ pub const Package = extern struct {
                                 )) |_dep| {
                                     var dep = _dep;
                                     if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                                        dep.behavior = dep.behavior.add(.optional);
+                                        dep.behavior.insert(.optional);
+                                    }
+
+                                    if (bundle_all_deps or bundled_deps.contains(dep.name.slice(lockfile.buffers.string_bytes.items))) {
+                                        dep.behavior.insert(.bundled);
                                     }
 
                                     package_dependencies[total_dependencies_count] = dep;

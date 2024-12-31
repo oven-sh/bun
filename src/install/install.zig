@@ -6015,6 +6015,10 @@ pub const PackageManager = struct {
             resolution.value.github.resolved = builder.append(String, this.resolved);
             return resolution;
         }
+
+        pub fn checkBundledDependencies() bool {
+            return true;
+        }
     };
 
     const TarballResolver = struct {
@@ -6037,6 +6041,10 @@ pub const PackageManager = struct {
                 else => unreachable,
             }
             return resolution;
+        }
+
+        pub fn checkBundledDependencies() bool {
+            return true;
         }
     };
 
@@ -6071,7 +6079,7 @@ pub const PackageManager = struct {
                             manager.allocator,
                             manager.log,
                             package_json_source,
-                            *GitResolver,
+                            GitResolver,
                             &resolver,
                             Features.npm,
                         ) catch |err| {
@@ -6144,6 +6152,11 @@ pub const PackageManager = struct {
                 );
                 var package = Lockfile.Package{};
 
+                var resolver: TarballResolver = .{
+                    .url = data.url,
+                    .resolution = resolution,
+                };
+
                 package.parse(
                     manager.lockfile,
                     manager,
@@ -6151,10 +6164,7 @@ pub const PackageManager = struct {
                     manager.log,
                     package_json_source,
                     TarballResolver,
-                    TarballResolver{
-                        .url = data.url,
-                        .resolution = resolution,
-                    },
+                    &resolver,
                     Features.npm,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
@@ -9188,7 +9198,8 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                var resolver: void = {};
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -9370,7 +9381,8 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                var resolver: void = {};
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -11261,8 +11273,9 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
+                var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -11674,8 +11687,9 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
+                var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -14388,6 +14402,7 @@ pub const PackageManager = struct {
                     lockfile.initEmpty(manager.allocator);
                     var maybe_root = Lockfile.Package{};
 
+                    var resolver: void = {};
                     try maybe_root.parse(
                         &lockfile,
                         manager,
@@ -14395,7 +14410,7 @@ pub const PackageManager = struct {
                         manager.log,
                         root_package_json_source,
                         void,
-                        {},
+                        &resolver,
                         Features.main,
                     );
                     const mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
@@ -14621,6 +14636,7 @@ pub const PackageManager = struct {
                 Global.crash();
             }
 
+            var resolver: void = {};
             try root.parse(
                 manager.lockfile,
                 manager,
@@ -14628,7 +14644,7 @@ pub const PackageManager = struct {
                 manager.log,
                 root_package_json_source,
                 void,
-                {},
+                &resolver,
                 Features.main,
             );
 

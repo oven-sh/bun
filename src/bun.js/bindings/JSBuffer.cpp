@@ -1292,7 +1292,7 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     if (thisLength < valueLength + byteOffset)
         return -1;
     auto start = thisPtr + byteOffset;
-    auto it = reinterpret_cast<uint8_t*>(const_cast<void*>(memmem(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength))));
+    auto it = reinterpret_cast<uint8_t*>(memmem(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength)));
     if (it != NULL) {
         return it - thisPtr;
     }

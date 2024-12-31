@@ -148,6 +148,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
+bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
+
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
 #if CPU(X86_64)
@@ -538,25 +540,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 {
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    uint8_t exitCode = 0;
-    JSValue arg0 = callFrame->argument(0);
-    if (arg0.isAnyInt()) {
-        int extiCode32 = arg0.toInt32(globalObject) % 256;
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        exitCode = static_cast<uint8_t>(extiCode32);
-        Bun__setExitCode(bunVM(globalObject), exitCode);
-    } else if (!arg0.isUndefinedOrNull()) {
-        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "code"_s, "number"_s, arg0);
-    } else {
-        exitCode = Bun__getExitCode(bunVM(globalObject));
-    }
-
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto process = jsCast<Process*>(zigGlobal->processObject());
-    process->m_isExitCodeObservable = true;
 
+    auto code = callFrame->argument(0);
+
+    setProcessExitCodeInner(globalObject, process, code);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
     Process__dispatchOnExit(zigGlobal, exitCode);
 
     // process.reallyExit(exitCode);
@@ -1292,28 +1284,39 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(jsNumber(Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM())));
 }
 
+bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(process->vm());
+
+    if (!code.isUndefinedOrNull()) {
+        if (code.isString() && !code.getString(lexicalGlobalObject).isEmpty()) {
+            auto num = code.toNumber(lexicalGlobalObject);
+            if (!std::isnan(num)) {
+                code = jsDoubleNumber(num);
+            }
+        }
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined());
+        RETURN_IF_EXCEPTION(throwScope, false);
+
+        int exitCodeInt = code.toInt32(lexicalGlobalObject) % 256;
+        RETURN_IF_EXCEPTION(throwScope, false);
+
+        process->m_isExitCodeObservable = true;
+        void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
+        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+    }
+    return true;
+}
 JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
 {
     Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
     if (!process) {
         return false;
     }
-
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
-    JSValue exitCode = JSValue::decode(value);
-    if (!exitCode.isAnyInt()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be an integer"_s);
-        return false;
-    }
+    auto code = JSValue::decode(value);
 
-    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
-    RETURN_IF_EXCEPTION(throwScope, false);
-
-    process->m_isExitCodeObservable = true;
-    void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
-    Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
-
-    return true;
+    return setProcessExitCodeInner(lexicalGlobalObject, process, code);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -3318,7 +3321,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   execArgv                         constructExecArgv                                   PropertyCallback
   execPath                         constructExecPath                                   PropertyCallback
   exit                             Process_functionExit                                Function 1
-  exitCode                         processExitCode                                     CustomAccessor
+  exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
   getBuiltinModule                 Process_getBuiltinModule                            Function 1

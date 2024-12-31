@@ -1703,6 +1703,8 @@ pub const Subprocess = struct {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
+    extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
+
     // This is split into a separate function to conserve stack space.
     // On Windows, a single path buffer can take 64 KB.
     fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
@@ -1717,18 +1719,28 @@ pub const Subprocess = struct {
 
         var actual_argv0: [:0]const u8 = "";
 
-        if (PATH.len == 0 and argv0 == null) {
-            actual_argv0 = try allocator.dupeZ(u8, arg0.slice());
-        } else if (PATH.len > 0 and argv0 != null) {
-            actual_argv0 = try allocator.dupeZ(u8, bun.sliceTo(argv0.?, 0));
-        } else if (argv0 == null) {
-            const resolved = Which.which(path_buf, PATH, cwd, arg0.slice()) orelse {
-                return throwCommandNotFound(globalThis, arg0.slice());
-            };
-            actual_argv0 = try allocator.dupeZ(u8, resolved);
+        const argv0_to_use: []const u8 = if (argv0) |_argv0|
+            bun.sliceTo(_argv0, 0)
+        else
+            arg0.slice();
+
+        // This mimicks libuv's behavior, which mimicks execvpe
+        // Only resolve from $PATH when the command is not an absolute path
+        const PATH_to_use = if (strings.containsChar(argv0_to_use, '/'))
+            ""
+            // If no $PATH is provided, we fallback to the one from environ
+            // This is already the behavior of the PATH passed in here.
+        else if (PATH.len > 0)
+            PATH
+        else
+            // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
+            bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0);
+
+        if (PATH_to_use.len == 0) {
+            actual_argv0 = try allocator.dupeZ(u8, argv0_to_use);
         } else {
-            const resolved = Which.which(path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                return throwCommandNotFound(globalThis, arg0.slice());
+            const resolved = Which.which(path_buf, PATH_to_use, cwd, argv0_to_use) orelse {
+                return throwCommandNotFound(globalThis, argv0_to_use);
             };
             actual_argv0 = try allocator.dupeZ(u8, resolved);
         }

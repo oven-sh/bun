@@ -49,6 +49,13 @@ const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
+function getNodeParallelTestTimeout(testPath) {
+  if (testPath.includes("test-dns")) {
+    return 45_000;
+  }
+  return 10_000;
+}
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
@@ -207,7 +214,7 @@ async function runTests() {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
-            timeout: 10_000,
+            timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
             },

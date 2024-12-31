@@ -1,13 +1,10 @@
-// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 const assert = require('assert');
-const { internalBinding } = require('internal/test/binding');
-// const cares = internalBinding('cares_wrap');
 
 // Stub `getaddrinfo` to *always* error. This has to be done before we load the
 // `dns` module to guarantee that the `dns` module uses the stub.
-// cares.getaddrinfo = () => internalBinding('uv').UV_ENOMEM;
+Bun.dns.lookup = (hostname) => Promise.reject(Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
 
 const dns = require('dns');
 const dnsPromises = dns.promises;
@@ -199,7 +196,6 @@ dns.lookup('127.0.0.1', {
 
 let tickValue = 0;
 
-/*
 // Should fail due to stub.
 dns.lookup('example.com', common.mustCall((error, result, addressType) => {
   assert(error);
@@ -215,5 +211,4 @@ tickValue = 1;
 
 // Should fail due to stub.
 assert.rejects(dnsPromises.lookup('example.com'),
-               { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());
-*/
+              { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());

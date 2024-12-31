@@ -10,8 +10,6 @@ const {
   validateNumber,
 } = require("internal/validators");
 
-const { ERR_INVALID_IP_ADDRESS } = require("internal/errors");
-
 const errorCodes = {
   NODATA: "ENODATA",
   FORMERR: "EFORMERR",
@@ -73,6 +71,13 @@ const getRuntimeDefaultResultOrderOption = $newZigFunction(
   0,
 );
 
+function newResolver(options) {
+  if (!newResolver.zig) {
+    newResolver.zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
+  }
+  return newResolver.zig(options);
+}
+
 let defaultResultOrder = getRuntimeDefaultResultOrderOption();
 
 function setDefaultResultOrder(order) {
@@ -125,7 +130,7 @@ function setServersOn(servers, object) {
       }
     }
 
-    throw ERR_INVALID_IP_ADDRESS(server);
+    throw $ERR_INVALID_IP_ADDRESS(server);
   });
 
   object.setServers(triples);
@@ -281,6 +286,16 @@ function lookup(hostname, options, callback) {
     return;
   }
 
+  const family = isIP(hostname);
+  if (family) {
+    if (options.all) {
+      process.nextTick(callback, null, [{ address: hostname, family }]);
+    } else {
+      process.nextTick(callback, null, hostname, family);
+    }
+    return;
+  }
+
   dns.lookup(hostname, options).then(res => {
     throwIfEmpty(res);
 
@@ -346,7 +361,7 @@ var InternalResolver = class Resolver {
 
   constructor(options) {
     validateResolverOptions(options);
-    this.#resolver = this._handle = dns.newResolver(options);
+    this.#resolver = this._handle = newResolver(options);
   }
 
   cancel() {
@@ -721,6 +736,12 @@ const promises = {
       );
     }
 
+    const family = isIP(hostname);
+    if (family) {
+      const obj = { address: hostname, family };
+      return Promise.resolve(options.all ? [obj] : obj);
+    }
+
     if (options.all) {
       return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
     }
@@ -814,7 +835,7 @@ const promises = {
 
     constructor(options) {
       validateResolverOptions(options);
-      this.#resolver = this._handle = dns.newResolver(options);
+      this.#resolver = this._handle = newResolver(options);
     }
 
     cancel() {

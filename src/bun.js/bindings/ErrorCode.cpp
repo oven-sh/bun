@@ -600,16 +600,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObje
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_IP_ADDRESS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    EXPECT_ARG_COUNT(1);
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
-}
-
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
@@ -695,6 +685,15 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg2 = callFrame->argument(3);
 
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_IP_ADDRESS: {
+        JSValue arg0 = callFrame->argument(1);
+
+        auto param = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
     }
 
     default: {

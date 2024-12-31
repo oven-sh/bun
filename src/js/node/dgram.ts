@@ -746,7 +746,7 @@ Socket.prototype.close = function (callback) {
 
   state.receiving = false;
   state.handle.socket?.close();
-  state.handle.socket = undefined;
+  state.handle = null;
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 
   return this;

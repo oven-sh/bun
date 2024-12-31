@@ -2101,14 +2101,14 @@ pub const Process = struct {
                     },
                 };
                 @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
-                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
+                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len :0];
 
                 const len = fs.top_level_dir.len;
                 // Ensure the path ends with a slash
                 if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
                     fs.top_level_dir_buf[len] = std.fs.path.sep;
                     fs.top_level_dir_buf[len + 1] = 0;
-                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1 :0];
                 }
                 const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
                 var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));

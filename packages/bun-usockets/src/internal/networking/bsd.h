@@ -180,7 +180,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
-LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);

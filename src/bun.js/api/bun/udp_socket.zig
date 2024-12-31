@@ -303,6 +303,8 @@ pub const UDPSocket = struct {
             .vm = vm,
         });
 
+        var err: i32 = 0;
+
         if (uws.udp.Socket.create(
             this.loop,
             onData,
@@ -311,13 +313,22 @@ pub const UDPSocket = struct {
             config.hostname,
             config.port,
             config.flags,
-            null,
+            &err,
             this,
         )) |socket| {
             this.socket = socket;
         } else {
             this.closed = true;
             this.deinit();
+            if (err != 0) {
+                const code = @tagName(@as(bun.C.E, @enumFromInt(err)));
+                const sys_err = JSC.SystemError{
+                    .errno = err,
+                    .code = bun.String.createFormat("E{s}", .{code}) catch bun.outOfMemory(),
+                    .message = bun.String.static("Failed to bind socket"),
+                };
+                return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+            }
             return globalThis.throw("Failed to bind socket", .{});
         }
 
@@ -329,12 +340,12 @@ pub const UDPSocket = struct {
         if (config.connect) |connect| {
             const ret = this.socket.connect(connect.address, connect.port);
             if (ret != 0) {
-                if (JSC.Maybe(void).errnoSys(ret, .connect)) |err| {
-                    return globalThis.throwValue(err.toJS(globalThis));
+                if (JSC.Maybe(void).errnoSys(ret, .connect)) |sys_err| {
+                    return globalThis.throwValue(sys_err.toJS(globalThis));
                 }
 
-                if (bun.c_ares.Error.initEAI(ret)) |err| {
-                    return globalThis.throwValue(err.toJS(globalThis));
+                if (bun.c_ares.Error.initEAI(ret)) |eai_err| {
+                    return globalThis.throwValue(eai_err.toJS(globalThis));
                 }
             }
             this.connect_info = .{ .port = connect.port };

@@ -402,7 +402,11 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
+    if (err != NULL) {
+        *err = 0;
+    }
+
     LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
     const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
@@ -411,6 +415,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
     } while (IS_EINTR(created_fd));
 
     if (UNLIKELY(created_fd == -1)) {
+        if (err != NULL) {
+            *err = errno;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -421,6 +428,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
     } while (IS_EINTR(created_fd));
 
     if (UNLIKELY(created_fd == -1)) {
+        if (err != NULL) {
+            *err = errno;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -706,7 +716,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     struct addrinfo *listenAddr;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
                 continue;
             }
@@ -723,7 +733,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
                 continue;
             }
@@ -837,7 +847,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
-    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
+    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
@@ -892,6 +902,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+    if (err != NULL) {
+        *err = 0;
+    }
+
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -902,7 +916,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
+    int gai_result = getaddrinfo(host, port_string, &hints, &result);
+    if (gai_result != 0) {
+        if (err != NULL) {
+            *err = -gai_result;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -910,14 +928,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     struct addrinfo *listenAddr = NULL;
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
             listenAddr = a;
         }
     }
 
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
             listenAddr = a;
         }
     }
@@ -983,12 +1001,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
+        if (err != NULL) {
+            *err = errno;
+        }
         bsd_close_socket(listenFd);
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
     freeaddrinfo(result);
+    if (err != NULL) {
+        *err = 0;
+    }
     return listenFd;
 }
 
@@ -1159,7 +1183,7 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 #endif
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
@@ -1206,7 +1230,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;

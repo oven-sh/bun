@@ -479,9 +479,12 @@ pub const AWSCredentials = struct {
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (path.len == 0) return error.InvalidPath;
 
-        var path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
-
-        const normalizedPath = std.fmt.bufPrint(&path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
+        var normalized_path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
+        var path_buffer: [1024]u8 = undefined;
+        var bucket_buffer: [63]u8 = undefined;
+        bucket = encodeURIComponent(bucket, &bucket_buffer) catch return error.InvalidPath;
+        path = encodeURIComponent(path, &path_buffer) catch return error.InvalidPath;
+        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -796,8 +799,10 @@ pub const AWSCredentials = struct {
         fn errorWithBody(this: @This(), comptime error_type: ErrorType) void {
             var code: []const u8 = "UnknownError";
             var message: []const u8 = "an unexpected error has occurred";
+            var has_error_code = false;
             if (this.result.fail) |err| {
                 code = @errorName(err);
+                has_error_code = true;
             } else if (this.result.body) |body| {
                 const bytes = body.list.items;
                 if (bytes.len > 0) {
@@ -805,6 +810,7 @@ pub const AWSCredentials = struct {
                     if (strings.indexOf(bytes, "<Code>")) |start| {
                         if (strings.indexOf(bytes, "</Code>")) |end| {
                             code = bytes[start + "<Code>".len .. end];
+                            has_error_code = true;
                         }
                     }
                     if (strings.indexOf(bytes, "<Message>")) |start| {
@@ -814,7 +820,12 @@ pub const AWSCredentials = struct {
                     }
                 }
             }
+
             if (error_type == .not_found) {
+                if (!has_error_code) {
+                    code = "NoSuchKey";
+                    message = "The specified key does not exist.";
+                }
                 this.callback.notFound(code, message, this.callback_context);
             } else {
                 this.callback.fail(code, message, this.callback_context);

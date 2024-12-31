@@ -913,7 +913,7 @@ pub const Blob = struct {
                             switch (result) {
                                 .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
                                 .failure => |err| {
-                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.data.s3.path()));
+                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.getPath()));
                                 },
                             }
                         }
@@ -1066,7 +1066,7 @@ pub const Blob = struct {
                                     switch (result) {
                                         .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
                                         .failure => |err| {
-                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.data.s3.path()));
+                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.getPath()));
                                         },
                                     }
                                 }
@@ -1856,6 +1856,14 @@ pub const Blob = struct {
                 .file => 0,
                 .s3 => |s3| s3.estimatedSize(),
             } else 0;
+        }
+
+        pub fn getPath(this: *const Store) ?[]const u8 {
+            return switch (this.data) {
+                .bytes => |*bytes| if (bytes.stored_name.len > 0) bytes.stored_name.slice() else null,
+                .file => |*file| if (file.pathlike == .path) file.pathlike.path.slice() else null,
+                .s3 => |*s3| s3.pathlike.slice(),
+            };
         }
 
         pub fn size(this: *const Store) SizeType {
@@ -3489,7 +3497,7 @@ pub const Blob = struct {
                             self.promise.resolve(globalObject, .true);
                         },
                         inline .not_found, .failure => |err| {
-                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.store.data.s3.path()));
+                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.store.getPath()));
                         },
                     }
                 }
@@ -3840,7 +3848,7 @@ pub const Blob = struct {
                     JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
                 },
                 inline .not_found, .failure => |err| {
-                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.data.s3.path()));
+                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
                 },
             }
         }

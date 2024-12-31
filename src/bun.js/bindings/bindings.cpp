@@ -2933,44 +2933,6 @@ CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg
     array->push(arg1, value2);
 }
 
-JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
-    size_t arg2, bool clone)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (arg2 == 0) {
-        return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-    }
-
-    JSC::JSArray* array = nullptr;
-    {
-        JSC::GCDeferralContext deferralContext(vm);
-        JSC::ObjectInitializationScope initializationScope(vm);
-        if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, &deferralContext,
-                 globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                 arg2))) {
-
-            if (!clone) {
-                for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
-                }
-            } else {
-                for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
-                }
-            }
-        }
-
-        if (!array) {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
-    }
-}
-
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
     const JSValue* errors, size_t errors_count,
     const ZigString* arg3)
@@ -5049,34 +5011,33 @@ size_t JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    if (!malloc_zone_check(nullptr)) {
-        BUN_PANIC("Heap corruption detected!!");
-    }
-#endif
+    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    //     if (!malloc_zone_check(nullptr)) {
+    //         BUN_PANIC("Heap corruption detected!!");
+    //     }
+    // #endif
 
-    vm->finalizeSynchronousJSExecution();
-    WTF::releaseFastMallocFreeMemory();
+    //     vm->finalizeSynchronousJSExecution();
 
-    if (sync) {
-        vm->clearSourceProviderCaches();
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-        malloc_zone_pressure_relief(nullptr, 0);
-#endif
-    } else {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
-        vm->heap.collectSync(JSC::CollectionScope::Full);
-    }
+    //     if (sync) {
+    //         vm->clearSourceProviderCaches();
+    //         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+    //         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    //         malloc_zone_pressure_relief(nullptr, 0);
+    // #endif
+    //     } else {
+    //         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+    //         vm->heap.collectSync(JSC::CollectionScope::Full);
+    //     }
 
-    vm->finalizeSynchronousJSExecution();
+    //     vm->finalizeSynchronousJSExecution();
 
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    if (!malloc_zone_check(nullptr)) {
-        BUN_PANIC("Heap corruption detected after GC!!");
-    }
-#endif
+    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    //     if (!malloc_zone_check(nullptr)) {
+    //         BUN_PANIC("Heap corruption detected after GC!!");
+    //     }
+    // #endif
 
     return vm->heap.sizeAfterLastFullCollection();
 }

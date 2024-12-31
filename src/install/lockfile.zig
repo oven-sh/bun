@@ -7335,7 +7335,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         defer w.endObject() catch {};
 
         const fields = @typeInfo(Behavior).Struct.fields;
-        inline for (fields) |field| {
+        inline for (fields[1 .. fields.len - 1]) |field| {
             if (@field(dep.behavior, field.name)) {
                 try w.objectField(field.name);
                 try w.write(true);

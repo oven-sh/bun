@@ -1301,7 +1301,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 pub const Behavior = packed struct(u8) {
-    _unused_1: bool = false,
+    _unused_1: u1 = 0,
     prod: bool = false,
     optional: bool = false,
     dev: bool = false,
@@ -1309,7 +1309,7 @@ pub const Behavior = packed struct(u8) {
     workspace: bool = false,
     /// Is not set for transitive bundled dependencies
     bundled: bool = false,
-    _unused_2: bool = false,
+    _unused_2: u1 = 0,
 
     pub const prod = Behavior{ .prod = true };
     pub const optional = Behavior{ .optional = true };
@@ -1330,7 +1330,7 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return this.peer;
+        return this.dev;
     }
 
     pub inline fn isPeer(this: Behavior) bool {

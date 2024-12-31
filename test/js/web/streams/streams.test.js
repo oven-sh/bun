@@ -445,6 +445,7 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
     stdout: "pipe",
     stdin: null,
     env: {
+      ...bunEnv,
       FIFO_TEST: large,
     },
   });

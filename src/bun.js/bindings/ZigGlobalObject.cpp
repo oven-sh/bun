@@ -297,7 +297,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         auto* str = errorMessage.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (str->length() > 0) {
-            auto value = str->value(lexicalGlobalObject);
+            auto value = str->view(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             sb.append("Error: "_s);
             sb.append(value.data);

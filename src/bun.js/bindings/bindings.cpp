@@ -5011,33 +5011,33 @@ size_t JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
-    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    //     if (!malloc_zone_check(nullptr)) {
-    //         BUN_PANIC("Heap corruption detected!!");
-    //     }
-    // #endif
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected!!");
+    }
+#endif
 
-    //     vm->finalizeSynchronousJSExecution();
+    vm->finalizeSynchronousJSExecution();
 
-    //     if (sync) {
-    //         vm->clearSourceProviderCaches();
-    //         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-    //         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    //         malloc_zone_pressure_relief(nullptr, 0);
-    // #endif
-    //     } else {
-    //         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
-    //         vm->heap.collectSync(JSC::CollectionScope::Full);
-    //     }
+    if (sync) {
+        vm->clearSourceProviderCaches();
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+        malloc_zone_pressure_relief(nullptr, 0);
+#endif
+    } else {
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        vm->heap.collectSync(JSC::CollectionScope::Full);
+    }
 
-    //     vm->finalizeSynchronousJSExecution();
+    vm->finalizeSynchronousJSExecution();
 
-    // #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    //     if (!malloc_zone_check(nullptr)) {
-    //         BUN_PANIC("Heap corruption detected after GC!!");
-    //     }
-    // #endif
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected after GC!!");
+    }
+#endif
 
     return vm->heap.sizeAfterLastFullCollection();
 }

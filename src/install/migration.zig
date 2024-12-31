@@ -765,13 +765,13 @@ pub fn migrateNPMLockfile(
                                 .name = dep_name,
                                 .name_hash = name_hash,
                                 .version = version,
-                                .behavior = Dependency.Behavior.init(.{
+                                .behavior = .{
                                     .prod = dep_key == .dependencies,
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
                                     .workspace = is_workspace,
-                                }),
+                                },
                             };
                             resolutions_buf[0] = id;
 
@@ -942,13 +942,13 @@ pub fn migrateNPMLockfile(
                                                 .name = dep_name,
                                                 .name_hash = name_hash,
                                                 .version = version,
-                                                .behavior = Dependency.Behavior.init(.{
+                                                .behavior = .{
                                                     .prod = dep_key == .dependencies,
                                                     .optional = true,
                                                     .dev = dep_key == .devDependencies,
                                                     .peer = dep_key == .peerDependencies,
                                                     .workspace = false,
-                                                }),
+                                                },
                                             };
                                             resolutions_buf[0] = Install.invalid_package_id;
                                             dependencies_buf = dependencies_buf[1..];

@@ -153,7 +153,7 @@ pub fn toDependency(
     return Dependency{
         .name = name,
         .name_hash = name_hash,
-        .behavior = Behavior.fromInt(this[16]),
+        .behavior = @bitCast(this[16]),
         .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
@@ -162,7 +162,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
-    bytes[16] = this.behavior.toInt();
+    bytes[16] = @bitCast(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -1300,112 +1300,72 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     return dep.toJS(buf, globalThis);
 }
 
-pub const Behavior = struct {
-    bits: Enum.Set = Enum.Set.initEmpty(),
+pub const Behavior = packed struct(u8) {
+    _unused_1: bool = false,
+    prod: bool = false,
+    optional: bool = false,
+    dev: bool = false,
+    peer: bool = false,
+    workspace: bool = false,
+    /// Is not set for transitive bundled dependencies
+    bundled: bool = false,
+    _unused_2: bool = false,
 
-    pub const Enum = enum(u8) {
-        _unused_1 = 0,
-        prod = 1,
-        optional = 2,
-        dev = 3,
-        peer = 4,
-        workspace = 5,
-        /// Is not set for transitive bundled dependencies
-        bundled = 6,
-        _unused_2 = 7,
-
-        pub const Set = std.EnumSet(@This());
-    };
-
-    pub fn fromInt(int: u8) Behavior {
-        return .{ .bits = .{ .bits = .{ .mask = int } } };
-    }
-
-    pub fn toInt(this: Behavior) u8 {
-        return this.bits.bits.mask;
-    }
-
-    pub fn init(values: std.enums.EnumFieldStruct(Enum, bool, false)) Behavior {
-        return .{ .bits = Enum.Set.init(values) };
-    }
-
-    pub const prod = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.prod) };
-    pub const optional = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.optional) };
-    pub const dev = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.dev) };
-    pub const peer = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.peer) };
-    pub const workspace = Behavior{ .bits = Dependency.Behavior.Enum.Set.initOne(.workspace) };
+    pub const prod = Behavior{ .prod = true };
+    pub const optional = Behavior{ .optional = true };
+    pub const dev = Behavior{ .dev = true };
+    pub const peer = Behavior{ .peer = true };
+    pub const workspace = Behavior{ .workspace = true };
 
     pub inline fn isProd(this: Behavior) bool {
-        return this.bits.contains(.prod);
+        return this.prod;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return this.bits.contains(.optional) and !this.bits.contains(.peer);
+        return this.optional and !this.peer;
     }
 
     pub inline fn isOptionalPeer(this: Behavior) bool {
-        return this.bits.contains(.optional) and this.bits.contains(.peer);
+        return this.optional and this.peer;
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return this.bits.contains(.dev);
+        return this.peer;
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return this.bits.contains(.peer);
+        return this.peer;
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return this.bits.contains(.workspace);
+        return this.workspace;
     }
 
     pub inline fn isBundled(this: Behavior) bool {
-        return this.bits.contains(.bundled);
+        return this.bundled;
     }
 
     pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.bits.contains(.workspace) and
-            !this.bits.contains(.dev) and
-            !this.bits.contains(.prod) and
-            !this.bits.contains(.optional) and
-            !this.bits.contains(.peer);
+        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
     }
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
-        return lhs.bits.eql(rhs.bits);
+        return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
 
     pub inline fn includes(lhs: Behavior, rhs: Behavior) bool {
-        return rhs.bits.subsetOf(lhs.bits);
+        return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
     }
 
-    pub inline fn contains(this: Behavior, kind: Enum) bool {
-        return this.bits.contains(kind);
-    }
-
-    pub inline fn add(this: Behavior, kind: Enum) Behavior {
+    pub inline fn add(this: Behavior, kind: @Type(.EnumLiteral)) Behavior {
         var new = this;
-        new.bits.insert(kind);
+        @field(new, @tagName(kind)) = true;
         return new;
     }
 
-    pub inline fn insert(this: *Behavior, kind: Enum) void {
-        this.bits.insert(kind);
-    }
-
-    pub inline fn set(this: Behavior, kind: Enum, value: bool) Behavior {
+    pub inline fn set(this: Behavior, kind: @Type(.EnumLiteral), value: bool) Behavior {
         var new = this;
-        new.bits.setPresent(kind, value);
-        return new;
-    }
-
-    pub inline fn setMany(this: Behavior, values: std.enums.EnumFieldStruct(Enum, bool, false)) Behavior {
-        var new = this;
-        inline for (std.meta.fields(@TypeOf(values))) |field| {
-            if (@field(values, field.name)) {
-                new.insert(@field(Enum, field.name));
-            }
-        }
+        @field(new, @tagName(kind)) = value;
         return new;
     }
 
@@ -1463,12 +1423,12 @@ pub const Behavior = struct {
             (features.peer_dependencies and this.isPeer()) or
             (features.workspaces and this.isWorkspaceOnly());
     }
-};
 
-comptime {
-    bun.assert(@as(u8, @bitCast(Behavior.prod.toInt())) == (1 << 1));
-    bun.assert(@as(u8, @bitCast(Behavior.optional.toInt())) == (1 << 2));
-    bun.assert(@as(u8, @bitCast(Behavior.dev.toInt())) == (1 << 3));
-    bun.assert(@as(u8, @bitCast(Behavior.peer.toInt())) == (1 << 4));
-    bun.assert(@as(u8, @bitCast(Behavior.workspace.toInt())) == (1 << 5));
-}
+    comptime {
+        bun.assert(@as(u8, @bitCast(Behavior.prod)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+    }
+};

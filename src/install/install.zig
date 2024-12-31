@@ -13342,7 +13342,7 @@ pub const PackageManager = struct {
                                 log_level,
                                 &lazy_package_dir,
                                 package_id,
-                                dep.behavior.contains(.optional),
+                                dep.behavior.optional,
                                 resolution,
                             )) {
                                 if (is_trusted_through_update_request) {
@@ -13498,7 +13498,7 @@ pub const PackageManager = struct {
                         log_level,
                         &destination_dir,
                         package_id,
-                        dep.behavior.contains(.optional),
+                        dep.behavior.optional,
                         resolution,
                     )) {
                         if (is_trusted_through_update_request) {
@@ -15193,7 +15193,7 @@ pub const PackageManager = struct {
                     else => this.options.remote_package_features,
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if (failed_dep.behavior.contains(.optional) or !failed_dep.behavior.isEnabled(features)) continue;
+                if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(features)) continue;
 
                 if (log_level != .silent) {
                     if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {

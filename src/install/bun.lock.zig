@@ -1518,7 +1518,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
                 const entry = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
-                    if (dep.behavior.contains(.optional)) {
+                    if (dep.behavior.optional) {
                         continue;
                     }
                     try dependencyResolutionFailure(&dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
@@ -1526,7 +1526,7 @@ pub fn parseIntoBinaryLockfile(
                 };
 
                 lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
-                lockfile.buffers.dependencies.items[dep_id].behavior.bits.setPresent(.bundled, entry.bundled);
+                lockfile.buffers.dependencies.items[dep_id].behavior.bundled = entry.bundled;
             }
 
             // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
@@ -1562,12 +1562,12 @@ pub fn parseIntoBinaryLockfile(
 
                     if (pkg_map.get(res_path)) |entry| {
                         lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
-                        dep.behavior.bits.setPresent(.bundled, entry.bundled);
+                        dep.behavior.bundled = entry.bundled;
                         continue :deps;
                     }
 
                     if (offset == 0) {
-                        if (dep.behavior.contains(.optional)) {
+                        if (dep.behavior.optional) {
                             continue :deps;
                         }
                         try dependencyResolutionFailure(dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
@@ -1634,11 +1634,11 @@ pub fn parseIntoBinaryLockfile(
 }
 
 fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
-    const behavior_str = if (dep.behavior.contains(.dev))
+    const behavior_str = if (dep.behavior.dev)
         "dev"
-    else if (dep.behavior.contains(.optional))
+    else if (dep.behavior.optional)
         "optional"
-    else if (dep.behavior.contains(.peer))
+    else if (dep.behavior.peer)
         "peer"
     else if (dep.behavior.isWorkspaceOnly())
         "workspace"
@@ -1718,7 +1718,7 @@ fn parseAppendDependencies(
                 const dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
-                    .behavior = if (group_behavior.contains(.peer) and optional_peers_buf.contains(name.hash))
+                    .behavior = if (group_behavior.peer and optional_peers_buf.contains(name.hash))
                         group_behavior.add(.optional)
                     else
                         group_behavior,

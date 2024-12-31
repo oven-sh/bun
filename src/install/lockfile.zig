@@ -4012,17 +4012,18 @@ pub const Package = extern struct {
                     const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
-                    const behavior = group.behavior.setMany(.{
-                        .optional = if (comptime !is_peer) false else i < package_version.non_optional_peer_dependencies_start,
-                        .bundled = package_version_ptr.allDependenciesBundled() or bundled: {
-                            for (package_version.bundled_dependencies.get(manifest.bundled_deps_buf)) |bundled_dep_name_hash| {
-                                if (bundled_dep_name_hash == name.hash) {
-                                    break :bundled true;
-                                }
-                            }
-                            break :bundled false;
-                        },
-                    });
+                    var behavior = group.behavior;
+                    if (comptime is_peer) {
+                        behavior.optional = i < package_version.non_optional_peer_dependencies_start;
+                    }
+                    if (package_version_ptr.allDependenciesBundled()) {
+                        behavior.bundled = true;
+                    } else for (package_version.bundled_dependencies.get(manifest.bundled_deps_buf)) |bundled_dep_name_hash| {
+                        if (bundled_dep_name_hash == name.hash) {
+                            behavior.bundled = true;
+                            break;
+                        }
+                    }
 
                     const dependency = Dependency{
                         .name = name.value,
@@ -5742,11 +5743,11 @@ pub const Package = extern struct {
                                 )) |_dep| {
                                     var dep = _dep;
                                     if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                                        dep.behavior.insert(.optional);
+                                        dep.behavior.optional = true;
                                     }
 
                                     if (bundle_all_deps or bundled_deps.contains(dep.name.slice(lockfile.buffers.string_bytes.items))) {
-                                        dep.behavior.insert(.bundled);
+                                        dep.behavior.bundled = true;
                                     }
 
                                     package_dependencies[total_dependencies_count] = dep;
@@ -7333,9 +7334,9 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         try w.beginObject();
         defer w.endObject() catch {};
 
-        const fields = @typeInfo(Behavior.Enum).Enum.fields;
+        const fields = @typeInfo(Behavior).Struct.fields;
         inline for (fields) |field| {
-            if (dep.behavior.contains(@enumFromInt(field.value))) {
+            if (@field(dep.behavior, field.name)) {
                 try w.objectField(field.name);
                 try w.write(true);
             }

@@ -366,11 +366,11 @@ pub const OutdatedCommand = struct {
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
                 const package_name_len = package_name.len +
-                    if (dep.behavior.contains(.dev))
+                    if (dep.behavior.dev)
                     " (dev)".len
-                else if (dep.behavior.contains(.peer))
+                else if (dep.behavior.peer)
                     " (peer)".len
-                else if (dep.behavior.contains(.optional))
+                else if (dep.behavior.optional)
                     " (optional)".len
                 else
                     0;
@@ -489,11 +489,11 @@ pub const OutdatedCommand = struct {
 
                     {
                         // package name
-                        const behavior_str = if (dep.behavior.contains(.dev))
+                        const behavior_str = if (dep.behavior.dev)
                             " (dev)"
-                        else if (dep.behavior.contains(.peer))
+                        else if (dep.behavior.peer)
                             " (peer)"
-                        else if (dep.behavior.contains(.optional))
+                        else if (dep.behavior.optional)
                             " (optional)"
                         else
                             "";
@@ -589,7 +589,7 @@ pub const OutdatedCommand = struct {
                     .load_from_memory_fallback_to_disk,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
-                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.contains(.optional))) continue;
+                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
 
                     manager.startProgressBarIfNone();
 
@@ -605,7 +605,7 @@ pub const OutdatedCommand = struct {
                         manager.allocator,
                         manager.scopeForPackageName(package_name),
                         null,
-                        dep.behavior.contains(.optional),
+                        dep.behavior.optional,
                     );
 
                     manager.enqueueNetworkTask(task);

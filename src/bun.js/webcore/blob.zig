@@ -1893,7 +1893,7 @@ pub const Blob = struct {
             var this = bun.cast(*Store, ptr);
             this.deref();
         }
-        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS.AWSCredentials, allocator: std.mem.Allocator) !*Store {
+        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS, allocator: std.mem.Allocator) !*Store {
             var path = pathlike;
             // this actually protects/refs the pathlike
             path.toThreadSafe();
@@ -3454,7 +3454,7 @@ pub const Blob = struct {
         }
 
         pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWS.AWSCredentialsWithOptions {
-            return AWS.getCredentialsWithOptions(this.getCredentials().*, options, globalObject);
+            return AWS.getCredentialsWithOptions(this.getCredentials().*, this.options, options, globalObject);
         }
 
         pub fn path(this: *@This()) []const u8 {
@@ -3469,10 +3469,10 @@ pub const Blob = struct {
             return path_name;
         }
 
-        pub fn unlink(this: *@This(), globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
+        pub fn unlink(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
             const Wrapper = struct {
                 promise: JSC.JSPromise.Strong,
-                store: *S3Store,
+                store: *Store,
 
                 pub usingnamespace bun.New(@This());
 
@@ -3485,8 +3485,8 @@ pub const Blob = struct {
                         },
                         .not_found => {
                             const js_err = globalObject
-                                .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(self.store.path())}).toJS();
-                            js_err.put(globalObject, ZigString.static("path"), ZigString.init(self.store.path()).withEncoding().toJS(globalObject));
+                                .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(self.store.data.s3.path())}).toJS();
+                            js_err.put(globalObject, ZigString.static("path"), ZigString.init(self.store.data.s3.path()).withEncoding().toJS(globalObject));
                             self.promise.reject(globalObject, js_err);
                         },
                         .failure => |err| {
@@ -3496,6 +3496,7 @@ pub const Blob = struct {
                 }
 
                 fn deinit(self: *@This()) void {
+                    self.store.deref();
                     self.promise.deinit();
                     self.destroy();
                 }
@@ -3508,12 +3509,13 @@ pub const Blob = struct {
             defer aws_options.deinit();
             aws_options.credentials.s3Delete(this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
-                .store = this,
+                .store = store, // store is needed in case of not found error
             }), proxy);
+            store.ref();
 
             return value;
         }
-        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS.AWSCredentials) S3Store {
+        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS) S3Store {
             credentials.ref();
             return .{
                 .credentials = credentials,
@@ -3946,7 +3948,7 @@ pub const Blob = struct {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
         };
         return switch (store.data) {
-            .s3 => |*s3| try s3.unlink(globalThis, args.nextEat()),
+            .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
             .file => |file| file.unlink(globalThis),
             else => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
         };

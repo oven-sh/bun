@@ -13,6 +13,7 @@ pub const AWSCredentials = struct {
     region: []const u8,
     endpoint: []const u8,
     bucket: []const u8,
+    sessionToken: []const u8,
 
     ref_count: u32 = 1,
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
@@ -32,6 +33,7 @@ pub const AWSCredentials = struct {
         _regionSlice: ?JSC.ZigString.Slice = null,
         _endpointSlice: ?JSC.ZigString.Slice = null,
         _bucketSlice: ?JSC.ZigString.Slice = null,
+        _sessionTokenSlice: ?JSC.ZigString.Slice = null,
 
         pub fn deinit(this: *@This()) void {
             if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -39,13 +41,14 @@ pub const AWSCredentials = struct {
             if (this._regionSlice) |slice| slice.deinit();
             if (this._endpointSlice) |slice| slice.deinit();
             if (this._bucketSlice) |slice| slice.deinit();
+            if (this._sessionTokenSlice) |slice| slice.deinit();
         }
     };
-    pub fn getCredentialsWithOptions(this: AWSCredentials, options: ?JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
         // get ENV config
         var new_credentials = AWSCredentialsWithOptions{
             .credentials = this,
-            .options = .{},
+            .options = default_options,
         };
         errdefer {
             new_credentials.deinit();
@@ -132,6 +135,22 @@ pub const AWSCredentials = struct {
                     }
                 }
 
+                if (try opts.getTruthyComptime(globalObject, "sessionToken")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._sessionTokenSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.sessionToken = new_credentials._sessionTokenSlice.?.slice();
+                                new_credentials.changed_credentials = true;
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
+                        }
+                    }
+                }
+
                 if (try opts.getOptional(globalObject, "pageSize", i32)) |pageSize| {
                     if (pageSize < MultiPartUpload.MIN_SINGLE_UPLOAD_SIZE_IN_MiB and pageSize > MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE_IN_MiB) {
                         return globalObject.throwRangeError(pageSize, .{
@@ -196,6 +215,11 @@ pub const AWSCredentials = struct {
                 bun.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
             else
                 "",
+
+            .sessionToken = if (this.sessionToken.len > 0)
+                bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
+            else
+                "",
         });
     }
     pub fn deinit(this: *@This()) void {
@@ -213,6 +237,9 @@ pub const AWSCredentials = struct {
         }
         if (this.bucket.len > 0) {
             bun.default_allocator.free(this.bucket);
+        }
+        if (this.sessionToken.len > 0) {
+            bun.default_allocator.free(this.sessionToken);
         }
         this.destroy();
     }
@@ -407,6 +434,9 @@ pub const AWSCredentials = struct {
         if (content_disposition != null and content_disposition.?.len == 0) {
             content_disposition = null;
         }
+        const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
+
+        // TODO: X-Amz-Security-Token
 
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -460,9 +490,17 @@ pub const AWSCredentials = struct {
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
             if (content_disposition != null) {
-                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                if (session_token != null) {
+                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                } else {
+                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                }
             } else {
-                break :brk "host;x-amz-content-sha256;x-amz-date";
+                if (session_token != null) {
+                    break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                } else {
+                    break :brk "host;x-amz-content-sha256;x-amz-date";
+                }
             }
         };
         // detect service name and host from region or endpoint
@@ -511,19 +549,35 @@ pub const AWSCredentials = struct {
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
-                break :brk try std.fmt.allocPrint(
-                    bun.default_allocator,
-                    "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                    .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                );
+                if (session_token) |token| {
+                    break :brk try std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}&X-Amz-Security-Token={s}",
+                        .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower), token },
+                    );
+                } else {
+                    break :brk try std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                        .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                    );
+                }
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
                 const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
                     if (content_disposition != null) {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        if (session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        }
                     } else {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        if (session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        }
                     }
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);

@@ -3264,7 +3264,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, s3_options, globalThis);
+                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, globalThis);
                     }
                 }
             }

@@ -125,6 +125,7 @@ pub const Loader = struct {
         var region: []const u8 = "";
         var endpoint: []const u8 = "";
         var bucket: []const u8 = "";
+        var session_token: []const u8 = "";
 
         if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
@@ -152,12 +153,18 @@ pub const Loader = struct {
         } else if (this.get("AWS_BUCKET")) |bucket_| {
             bucket = bucket_;
         }
+        if (this.get("S3_SESSION_TOKEN")) |token| {
+            session_token = token;
+        } else if (this.get("AWS_SESSION_TOKEN")) |token| {
+            session_token = token;
+        }
         this.aws_credentials = .{
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,
             .endpoint = endpoint,
             .bucket = bucket,
+            .sessionToken = session_token,
         };
 
         return this.aws_credentials.?;

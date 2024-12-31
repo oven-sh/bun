@@ -61,10 +61,10 @@ pub fn unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
-            return try blob.store.?.data.s3.unlink(globalThis, options);
+            return try blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
         },
         .blob => |blob| {
-            return try blob.store.?.data.s3.unlink(globalThis, args.nextEat());
+            return try blob.store.?.data.s3.unlink(blob.store.?, globalThis, args.nextEat());
         },
     }
 }
@@ -198,15 +198,22 @@ fn constructS3FileInternalStore(
     return constructS3FileWithAWSCredentials(globalObject, path, options, existing_credentials);
 }
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
-pub fn constructS3FileWithAWSCredentialsNoCloneIfPossible(
+pub fn constructS3FileWithAWSCredentialsAndOptions(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
-    existing_credentials: *AWS.AWSCredentials,
+    default_credentials: *AWS,
+    default_options: bun.S3.MultiPartUpload.MultiPartUploadOptions,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, options, globalObject);
+    var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, globalObject);
     defer aws_options.deinit();
-    const store = if (aws_options.credentials.changed_credentials) Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory() else Blob.Store.initS3WithReferencedCredentials(path, null, existing_credentials);
+    const store = brk: {
+        if (aws_options.changed_credentials) {
+            break :brk Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
+        } else {
+            break :brk Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.default_allocator) catch bun.outOfMemory();
+        }
+    };
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
 
@@ -236,13 +243,14 @@ pub fn constructS3FileWithAWSCredentialsNoCloneIfPossible(
     }
     return blob;
 }
+
 pub fn constructS3FileWithAWSCredentials(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
     existing_credentials: AWS,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, options, globalObject);
+    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();

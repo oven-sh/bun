@@ -233,10 +233,13 @@ JSValue constructS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* cal
 
     return JSS3Bucket::create(vm, defaultGlobalObject(globalObject), ptr);
 }
-SYSV_ABI JSValue BUN__createJSS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+
+extern "C" {
+SYSV_ABI EncodedJSValue BUN__createJSS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
-    return constructS3Bucket(globalObject, callframe);
+    return JSValue::encode(constructS3Bucket(globalObject, callframe));
 };
+}
 
 Structure* createJSS3BucketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {

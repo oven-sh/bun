@@ -1717,8 +1717,10 @@ pub const Subprocess = struct {
 
         var actual_argv0: [:0]const u8 = "";
 
-        if (PATH.len == 0) {
+        if (PATH.len == 0 and argv0 == null) {
             actual_argv0 = try allocator.dupeZ(u8, arg0.slice());
+        } else if (PATH.len > 0 and argv0 != null) {
+            actual_argv0 = try allocator.dupeZ(u8, bun.sliceTo(argv0.?, 0));
         } else if (argv0 == null) {
             const resolved = Which.which(path_buf, PATH, cwd, arg0.slice()) orelse {
                 return throwCommandNotFound(globalThis, arg0.slice());

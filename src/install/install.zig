@@ -2392,7 +2392,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
             switch (comptime kind) {
                 .regular => {
-
                     const tracer = bun.perf.trace("PackageInstaller.install");
                     defer tracer.end();
                     return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
@@ -2412,7 +2411,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     defer _ = bun.sys.close(tag_fd);
                     if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .{ .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = Step.patching } };
                     return result;
-                }
+                },
             }
         }
 

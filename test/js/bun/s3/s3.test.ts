@@ -482,6 +482,15 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         expect(e?.name).toBe("S3Error");
       }
     });
+
+    it("should allow special characters in the path", async () => {
+      const options = { ...s3Options, bucket: S3Bucket };
+      const s3file = s3("🌈🦄.txt", options);
+      await s3file.write("Hello Bun!");
+      await s3file.exists();
+      await s3file.unlink();
+      expect().pass();
+    });
   });
   describe("credentials", () => {
     it("should error with invalid access key id", async () => {

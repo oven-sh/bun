@@ -1,3 +1,4 @@
+
 #include "root.h"
 
 #include "JavaScriptCore/ExceptionHelpers.h"
@@ -55,7 +56,6 @@
 #include "NodeValidator.h"
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
-#include "wtf/StdLibExtras.h"
 #include <JavaScriptCore/JSBase.h>
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
@@ -1292,26 +1292,11 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     if (thisLength < valueLength + byteOffset)
         return -1;
     auto start = thisPtr + byteOffset;
-    const auto haystack = std::span<const uint8_t>(start, static_cast<size_t>(thisLength - byteOffset));
-    const auto needle = std::span<const uint8_t>(valuePtr, static_cast<size_t>(valueLength));
-#if !OS(WINDOWS)
-    auto it = WTF::memmemSpan(haystack, needle);
-    if (it == WTF::notFound) {
-        return -1;
+    auto it = reinterpret_cast<uint8_t*>(const_cast<void*>(memmem(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength))));
+    if (it != NULL) {
+        return it - thisPtr;
     }
-    return static_cast<int64_t>(it);
-#else
-    if (byteOffset < 0) {
-        byteOffset = std::max(thisLength + byteOffset, int64_t(0));
-    }
-
-    // Fallback to std::search since Windows doesn't support memmem
-    auto searcher = std::boyer_moore_horspool_searcher(valuePtr, valuePtr + valueLength);
-    auto result = std::search(thisPtr + byteOffset, thisPtr + thisLength, searcher);
-
-    if (result == thisPtr + thisLength) return -1;
-    return result - thisPtr;
-#endif
+    return -1;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)

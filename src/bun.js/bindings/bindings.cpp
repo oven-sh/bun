@@ -1952,7 +1952,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
         result->putDirect(vm, names.codePublicName(), code,
-            JSC::PropertyAttribute::DontDelete | 0);
+            JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
 
         result->putDirect(vm, vm.propertyNames->name, code, JSC::PropertyAttribute::DontEnum | 0);
     } else {

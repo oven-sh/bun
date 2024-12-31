@@ -1717,7 +1717,9 @@ pub const Subprocess = struct {
 
         var actual_argv0: [:0]const u8 = "";
 
-        if (argv0 == null) {
+        if (PATH.len == 0) {
+            actual_argv0 = try allocator.dupeZ(u8, arg0.slice());
+        } else if (argv0 == null) {
             const resolved = Which.which(path_buf, PATH, cwd, arg0.slice()) orelse {
                 return throwCommandNotFound(globalThis, arg0.slice());
             };
@@ -1733,6 +1735,41 @@ pub const Subprocess = struct {
             .argv0 = actual_argv0,
             .arg0 = try allocator.dupeZ(u8, arg0.slice()),
         };
+    }
+
+    fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
+        var cmds_array = args.arrayIterator(globalThis);
+        // + 1 for argv0
+        // + 1 for null terminator
+        argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
+
+        if (args.isEmptyOrUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+        }
+
+        if (cmds_array.len == 0) {
+            return globalThis.throwInvalidArguments("cmd must not be empty", .{});
+        }
+
+        const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+
+        argv0.* = argv0_result.argv0.ptr;
+        argv.appendAssumeCapacity(argv0_result.arg0.ptr);
+
+        while (cmds_array.next()) |value| {
+            const arg = try value.toBunString2(globalThis);
+            defer arg.deref();
+
+            // if the string is empty, ignore it, don't add it to the argv
+            if (arg.isEmpty()) {
+                continue;
+            }
+            argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+        }
+
+        if (argv.items.len == 0) {
+            return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+        }
     }
 
     pub fn spawnMaybeSync(
@@ -1900,45 +1937,10 @@ pub const Subprocess = struct {
                     var envp_managed = env_array.toManaged(allocator);
                     try appendEnvpFromJS(globalThis, object, &envp_managed, &NEW_PATH);
                     env_array = envp_managed.moveToUnmanaged();
-                    if (NEW_PATH.len > 0) {
-                        PATH = NEW_PATH;
-                    }
+                    PATH = NEW_PATH;
                 }
 
-                // Assign argv *after* PATH to use the updated PATH
-                {
-                    var cmds_array = cmd_value.arrayIterator(globalThis);
-                    // + 1 for argv0
-                    // + 1 for null terminator
-                    argv = try @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2);
-
-                    if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                        return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    }
-
-                    if (cmds_array.len == 0) {
-                        return globalThis.throwInvalidArguments("cmd must not be empty", .{});
-                    }
-
-                    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0, cmds_array.next().?, allocator);
-                    argv0 = argv0_result.argv0.ptr;
-                    argv.appendAssumeCapacity(argv0_result.arg0.ptr);
-
-                    while (cmds_array.next()) |value| {
-                        const arg = try value.toBunString2(globalThis);
-                        defer arg.deref();
-
-                        // if the string is empty, ignore it, don't add it to the argv
-                        if (arg.isEmpty()) {
-                            continue;
-                        }
-                        argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
-                    }
-
-                    if (argv.items.len == 0) {
-                        return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    }
-                }
+                try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
 
                 if (try args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
@@ -2012,6 +2014,8 @@ pub const Subprocess = struct {
                         }
                     }
                 }
+            } else {
+                try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
             }
         }
 

@@ -684,8 +684,9 @@ pub const AWSCredentials = struct {
 
         pub fn init(code: []const u8, message: []const u8, path: ?[]const u8) @This() {
             return .{
-                .code = bun.String.init(code),
-                .message = bun.String.init(message),
+                // lets make sure we can reuse code and message and keep it service independent
+                .code = bun.String.createAtomIfPossible(code),
+                .message = bun.String.createAtomIfPossible(message),
                 .path = if (path) |p| bun.String.init(p) else bun.String.empty,
             };
         }

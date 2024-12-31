@@ -60,7 +60,10 @@ export default [
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
-  //NET
+  // DNS
+  ["ERR_DNS_SET_SERVERS_FAILED", Error],
+
+  // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],
   ["ERR_SOCKET_CLOSED", Error],
   //HTTP2

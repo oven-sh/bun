@@ -206,11 +206,7 @@ pub const struct_hostent = extern struct {
             if (this.h_name == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-            const array = JSC.JSValue.createEmptyArray(globalThis, 1);
-            const h_name_len = bun.len(this.h_name);
-            const h_name_slice = this.h_name[0..h_name_len];
-            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toJS(globalThis));
-            return array;
+            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.fromUTF8(this.h_name[0..bun.len(this.h_name)])});
         }
 
         if (this.h_aliases == null) {
@@ -514,10 +510,7 @@ pub const AddrInfo = extern struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         var node = addr_info.node orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
-        const array = JSC.JSValue.createEmptyArray(
-            globalThis,
-            node.count(),
-        );
+        const array = JSC.JSValue.createEmptyArray(globalThis, node.count());
 
         {
             var j: u32 = 0;

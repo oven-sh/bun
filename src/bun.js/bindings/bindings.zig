@@ -4170,14 +4170,23 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    extern fn JSC__JSValue__toNumber(v: JSValue, global: *JSGlobalObject, val: *f64) bool;
+    pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
+        if (this.isNumber()) {
+            // const double = try this.toNumber(global);
+            const double = this.coerceToDouble(global);
+            if (std.math.isNan(double)) {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+            }
 
-    pub fn toNumber(this: JSValue, global: *JSGlobalObject) !f64 {
-        var x: f64 = 0;
-        if (JSC__JSValue__toNumber(this, global, &x)) {
-            return x;
+            const port = this.to(i64);
+            if (0 <= port and port <= 65535) {
+                return @as(u16, @truncate(@max(0, port)));
+            } else {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+            }
         }
-        return error.JSError;
+
+        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
     }
 
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {

@@ -101,7 +101,7 @@ const LibInfo = struct {
             query,
             globalThis,
             "pending_host_cache_native",
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
         const promise_value = request.head.promise.value();
 
         const hints = query.options.toLibC();
@@ -149,7 +149,7 @@ const LibC = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch unreachable;
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
 
             cache.inflight.append(dns_lookup);
 
@@ -160,19 +160,15 @@ const LibC = struct {
 
         var request = GetAddrInfoRequest.init(
             cache,
-            .{
-                .libc = .{
-                    .query = query,
-                },
-            },
+            .{ .libc = .{ .query = query } },
             this,
             query,
             globalThis,
             "pending_host_cache_native",
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
         const promise_value = request.head.promise.value();
 
-        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch unreachable;
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch bun.outOfMemory();
 
         io.schedule();
         this.requestSent(globalThis.bunVM());
@@ -200,7 +196,7 @@ const LibUVBackend = struct {
             }
         };
 
-        var holder = bun.default_allocator.create(Holder) catch unreachable;
+        var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
         holder.* = .{
             .uv_info = uv_info,
             .task = undefined,
@@ -368,6 +364,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
 
         pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*cares_type) void {
             if (this.resolver_for_caching) |resolver| {
+                defer resolver.requestCompleted();
                 if (this.cache.pending_cache) {
                     resolver.drainPendingCares(
                         this.cache.pos_in_pending,
@@ -626,6 +623,7 @@ pub const GetNameInfoRequest = struct {
 
     pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) void {
         if (this.resolver_for_caching) |resolver| {
+            defer resolver.requestCompleted();
             if (this.cache.pending_cache) {
                 resolver.drainPendingNameInfoCares(
                     this.cache.pos_in_pending,
@@ -799,7 +797,7 @@ pub const GetAddrInfoRequest = struct {
                     // https://github.com/ziglang/zig/pull/14242
                     defer std.c.freeaddrinfo(addrinfo.?);
 
-                    this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch unreachable };
+                    this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch bun.outOfMemory() };
                 }
             },
 
@@ -952,6 +950,9 @@ pub const CAresReverse = struct {
         const globalThis = this.globalThis;
         this.promise = .{};
         promise.resolveTask(globalThis, result);
+        if (this.resolver) |resolver| {
+            resolver.requestCompleted();
+        }
         this.deinit();
     }
 
@@ -1027,6 +1028,9 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             const globalThis = this.globalThis;
             this.promise = .{};
             promise.resolveTask(globalThis, result);
+            if (this.resolver) |resolver| {
+                resolver.requestCompleted();
+            }
             this.deinit();
         }
 
@@ -1119,6 +1123,9 @@ pub const DNSLookup = struct {
         this.promise = .{};
         const globalThis = this.globalThis;
         promise.resolveTask(globalThis, result);
+        if (this.resolver) |resolver| {
+            resolver.requestCompleted();
+        }
         this.deinit();
     }
 
@@ -1810,9 +1817,7 @@ pub const DNSResolver = struct {
         poll: bun.windows.libuv.uv_poll_t,
 
         pub fn fromPoll(poll: *bun.windows.libuv.uv_poll_t) *UvDnsPoll {
-            const poll_bytes: [*]u8 = @ptrCast(poll);
-            const result: [*]u8 = poll_bytes - @offsetOf(UvDnsPoll, "poll");
-            return @alignCast(@ptrCast(result));
+            return @fieldParentPtr("poll", poll);
         }
 
         pub usingnamespace bun.New(@This());
@@ -1887,51 +1892,73 @@ pub const DNSResolver = struct {
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
     pub fn checkTimeouts(this: *DNSResolver, now: *const timespec, vm: *JSC.VirtualMachine) EventLoopTimer.Arm {
-        vm.timer.incrementTimerRef(-1);
-
-        defer this.deref();
-
-        const channel = this.getChannelOrError(vm.global) catch {
-            this.event_loop_timer.state = .PENDING;
-            return .disarm;
-        };
-
-        const any_remaining = blk: {
-            inline for (@typeInfo(DNSResolver).Struct.fields) |field| {
-                if (comptime std.mem.startsWith(u8, field.name, "pending_")) {
-                    const set = @field(this, field.name).available;
-                    if (set.count() < set.capacity()) {
-                        break :blk true;
-                    }
-                }
-            }
-            break :blk false;
-        };
-
-        if (any_remaining) {
-            c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
-            this.ref();
-            this.event_loop_timer.next = now.addMs(1000);
-            vm.timer.incrementTimerRef(1);
-            vm.timer.insert(&this.event_loop_timer);
-            return .{ .rearm = this.event_loop_timer.next };
+        defer {
+            vm.timer.incrementTimerRef(-1);
+            this.deref();
         }
 
         this.event_loop_timer.state = .PENDING;
+
+        if (this.getChannelOrError(vm.global)) |channel| {
+            if (this.anyRequestsPending()) {
+                c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
+                if (this.addTimer(now)) {
+                    return .{ .rearm = this.event_loop_timer.next };
+                }
+            }
+        } else |_| {}
+
         return .disarm;
     }
 
-    fn requestSent(this: *DNSResolver, vm: *JSC.VirtualMachine) void {
-        const timer = &this.event_loop_timer;
+    fn anyRequestsPending(this: *DNSResolver) bool {
+        inline for (@typeInfo(DNSResolver).Struct.fields) |field| {
+            if (comptime std.mem.startsWith(u8, field.name, "pending_")) {
+                const set = &@field(this, field.name).available;
+                if (set.count() < set.capacity()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
-        if (timer.state == .ACTIVE) {
-            return;
+    fn requestSent(this: *DNSResolver, _: *JSC.VirtualMachine) void {
+        _ = this.addTimer(null);
+    }
+
+    fn requestCompleted(this: *DNSResolver) void {
+        if (this.anyRequestsPending()) {
+            _ = this.addTimer(null);
+        } else {
+            this.removeTimer();
+        }
+    }
+
+    fn addTimer(this: *DNSResolver, now: ?*const timespec) bool {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            return false;
         }
 
         this.ref();
-        timer.next = timespec.now();
-        vm.timer.incrementTimerRef(1);
-        vm.timer.insert(timer);
+        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
+        this.vm.timer.incrementTimerRef(1);
+        this.vm.timer.insert(&this.event_loop_timer);
+        return true;
+    }
+
+    fn removeTimer(this: *DNSResolver) void {
+        if (this.event_loop_timer.state != .ACTIVE) {
+            return;
+        }
+
+        // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
+        defer {
+            this.vm.timer.incrementTimerRef(-1);
+            this.deref();
+        }
+
+        this.vm.timer.remove(&this.event_loop_timer);
     }
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
@@ -2287,6 +2314,8 @@ pub const DNSResolver = struct {
         const vm = poll.parent.vm;
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
+        poll.parent.ref();
+        defer poll.parent.deref();
         // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
         const channel = poll.parent.channel.?;
         if (status < 0) {
@@ -2319,6 +2348,9 @@ pub const DNSResolver = struct {
             poll.deinit();
             return;
         };
+
+        this.ref();
+        defer this.deref();
 
         channel.process(
             poll.fd.int(),
@@ -2569,7 +2601,7 @@ pub const DNSResolver = struct {
             "pending_addr_cache_cares",
         );
         if (cache == .inflight) {
-            var cares_reverse = CAresReverse.init(this, globalThis, globalThis.allocator(), ip) catch unreachable;
+            var cares_reverse = CAresReverse.init(this, globalThis, globalThis.allocator(), ip) catch bun.outOfMemory();
             cache.inflight.append(cares_reverse);
             return cares_reverse.promise.value();
         }
@@ -2580,7 +2612,7 @@ pub const DNSResolver = struct {
             ip,
             globalThis,
             "pending_addr_cache_cares",
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
 
         const promise = request.tail.promise.value();
         channel.getHostByAddr(
@@ -2620,15 +2652,13 @@ pub const DNSResolver = struct {
         if (arguments.len > 1 and arguments.ptr[1].isCell()) {
             const optionsObject = arguments.ptr[1];
 
-            if (try optionsObject.get(globalThis, "port")) |port_value| {
-                if (port_value.isNumber()) {
-                    port = port_value.to(u16);
-                }
+            if (try optionsObject.getTruthy(globalThis, "port")) |port_value| {
+                port = try port_value.toPortNumber(globalThis);
             }
 
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
-                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.get(globalThis, "flags") orelse .undefined),
+                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
                     else => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
                 };
             };
@@ -2972,7 +3002,7 @@ pub const DNSResolver = struct {
         var cache = this.getOrPutIntoResolvePendingCache(ResolveInfoRequest(cares_type, type_name), key, cache_name);
         if (cache == .inflight) {
             // CAresLookup will have the name ownership
-            var cares_lookup = CAresLookup(cares_type, type_name).init(this, globalThis, globalThis.allocator(), name) catch unreachable;
+            var cares_lookup = CAresLookup(cares_type, type_name).init(this, globalThis, globalThis.allocator(), name) catch bun.outOfMemory();
             cache.inflight.append(cares_lookup);
             return cares_lookup.promise.value();
         }
@@ -2983,7 +3013,7 @@ pub const DNSResolver = struct {
             name, // CAresLookup will have the ownership
             globalThis,
             cache_name,
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
         const promise = request.tail.promise.value();
 
         channel.resolve(
@@ -3012,7 +3042,7 @@ pub const DNSResolver = struct {
                     .syscall = syscall,
                 };
 
-                return globalThis.throwValue(system_error.toErrorInstance(globalThis)) catch .zero;
+                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
             },
         };
 
@@ -3020,7 +3050,7 @@ pub const DNSResolver = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_cares);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch unreachable;
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
             cache.inflight.append(dns_lookup);
             return dns_lookup.promise.value();
         }
@@ -3028,14 +3058,12 @@ pub const DNSResolver = struct {
         const hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
         var request = GetAddrInfoRequest.init(
             cache,
-            .{
-                .c_ares = {},
-            },
+            .{ .c_ares = {} },
             this,
             query,
             globalThis,
             "pending_host_cache_cares",
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
         const promise = request.tail.promise.value();
 
         channel.getAddrInfo(
@@ -3162,7 +3190,7 @@ pub const DNSResolver = struct {
         var addr: [16]u8 = undefined;
 
         if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
-            const ip = std.mem.readInt(u32, addr[0..4], std.builtin.Endian.big);
+            const ip = std.mem.readInt(u32, addr[0..4], .big);
             c_ares.ares_set_local_ip4(channel, ip);
             return c_ares.AF.INET;
         }
@@ -3178,10 +3206,7 @@ pub const DNSResolver = struct {
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if (channel != try getChannelFromVM(globalThis) and c_ares.ares_queue_active_queries(channel) != 0) {
-            return globalThis.throwValue((JSC.SystemError{
-                .code = bun.String.static("ERR_DNS_SET_SERVERS_FAILED"),
-                .message = bun.String.createFormat("Failed to set servers: there are pending queries", .{}) catch bun.outOfMemory(),
-            }).toErrorInstance(globalThis));
+            return globalThis.ERR_DNS_SET_SERVERS_FAILED("Failed to set servers: there are pending queries", .{}).throw();
         }
 
         const arguments = callframe.arguments();
@@ -3205,8 +3230,10 @@ pub const DNSResolver = struct {
             return .undefined;
         }
 
-        const entries = bun.default_allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch bun.outOfMemory();
-        defer bun.default_allocator.free(entries);
+        const allocator = bun.default_allocator;
+
+        const entries = allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch bun.outOfMemory();
+        defer allocator.free(entries);
 
         var i: u32 = 0;
 
@@ -3225,9 +3252,12 @@ pub const DNSResolver = struct {
             const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString2(globalThis);
             defer addressString.deref();
 
-            const addressSlice = addressString.toSlice(bun.default_allocator).slice();
-            var addressBuffer = bun.default_allocator.alloc(u8, addressSlice.len + 1) catch bun.outOfMemory();
-            defer bun.default_allocator.free(addressBuffer);
+            const addressSlice = try addressString.toOwnedSlice(allocator);
+            defer allocator.free(addressSlice);
+
+            var addressBuffer = allocator.alloc(u8, addressSlice.len + 1) catch bun.outOfMemory();
+            defer allocator.free(addressBuffer);
+
             _ = strings.copy(addressBuffer[0..], addressSlice);
             addressBuffer[addressSlice.len] = 0;
 
@@ -3272,11 +3302,11 @@ pub const DNSResolver = struct {
 
         const options = callframe.argument(0);
         if (options.isObject()) {
-            if (try options.get(globalThis, "timeout")) |timeout| {
+            if (try options.getTruthy(globalThis, "timeout")) |timeout| {
                 resolver.options.timeout = timeout.coerceToInt32(globalThis);
             }
 
-            if (try options.get(globalThis, "tries")) |tries| {
+            if (try options.getTruthy(globalThis, "tries")) |tries| {
                 resolver.options.tries = tries.coerceToInt32(globalThis);
             }
         }
@@ -3301,7 +3331,6 @@ pub const DNSResolver = struct {
         }
 
         const addr_value = arguments.ptr[0];
-        const port_value = arguments.ptr[1];
         if (addr_value.isEmptyOrUndefinedOrNull() or !addr_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "string");
         }
@@ -3311,25 +3340,10 @@ pub const DNSResolver = struct {
         if (addr_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "non-empty string");
         }
-
         const addr_s = addr_str.getZigString(globalThis).slice();
-        const port: u16 = blk: {
-            if (port_value.isNumber()) {
-                const double = try port_value.toNumber(globalThis);
-                if (std.math.isNan(double)) {
-                    return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Invalid port number", .{});
-                }
 
-                const port = port_value.to(i64);
-                if (0 <= port and port <= 65535) {
-                    break :blk @as(u16, @truncate(@max(0, port)));
-                } else {
-                    return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Port number out of range: {d}", .{port});
-                }
-            }
-
-            return JSC.Error.ERR_SOCKET_BAD_PORT.throw(globalThis, "Invalid port number", .{});
-        };
+        const port_value = arguments.ptr[1];
+        const port: u16 = try port_value.toPortNumber(globalThis);
 
         var sa: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         if (c_ares.getSockaddr(addr_s, port, @as(*std.posix.sockaddr, @ptrCast(&sa))) != 0) {
@@ -3338,21 +3352,10 @@ pub const DNSResolver = struct {
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
-        var channel: *c_ares.Channel = switch (resolver.getChannel()) {
-            .result => |res| res,
-            .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
-
-                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
-            },
-        };
+        var channel = try resolver.getChannelOrError(globalThis);
 
         // This string will be freed in `CAresNameInfo.deinit`
-        const cache_name = std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }) catch unreachable;
+        const cache_name = std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }) catch bun.outOfMemory();
 
         const key = GetNameInfoRequest.PendingCacheKey.init(cache_name);
         var cache = resolver.getOrPutIntoResolvePendingCache(
@@ -3362,7 +3365,7 @@ pub const DNSResolver = struct {
         );
 
         if (cache == .inflight) {
-            var info = CAresNameInfo.init(globalThis, globalThis.allocator(), cache_name) catch unreachable;
+            var info = CAresNameInfo.init(globalThis, globalThis.allocator(), cache_name) catch bun.outOfMemory();
             cache.inflight.append(info);
             return info.promise.value();
         }
@@ -3373,7 +3376,7 @@ pub const DNSResolver = struct {
             cache_name, // transfer ownership here
             globalThis,
             "pending_nameinfo_cache_cares",
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(
@@ -3428,7 +3431,5 @@ pub const DNSResolver = struct {
         @export(js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
         const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
         @export(js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
-        const js_newResolver = JSC.toJSHostFunction(newResolver);
-        @export(js_newResolver, .{ .name = "Bun__DNSResolver__new" });
     }
 };

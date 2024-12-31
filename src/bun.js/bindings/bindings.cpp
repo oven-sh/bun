@@ -4066,14 +4066,6 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     return value.toStringOrNull(arg1);
 }
 
-bool JSC__JSValue__toNumber(JSC::EncodedJSValue value, JSC::JSGlobalObject* global, double* result)
-{
-    VM& vm = global->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    *result = JSC::JSValue::decode(value).toNumber(global);
-    return !scope.exception();
-}
-
 bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);

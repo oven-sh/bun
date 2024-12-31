@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/CatchScope.h"
@@ -386,8 +387,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
-        JSC::throwTypeError(globalObject, scope, msg);
-        return {};
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {

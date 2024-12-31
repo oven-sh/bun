@@ -54,6 +54,7 @@ export default [
   ["ERR_UNHANDLED_ERROR", Error],
   ["ERR_UNKNOWN_CREDENTIAL", Error],
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
+  ["ERR_DLOPEN_FAILED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

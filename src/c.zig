@@ -398,7 +398,6 @@ pub fn getRelease(buf: []u8) []const u8 {
     }
 }
 
-pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub extern fn cfmakeraw(*std.posix.termios) void;
 
 const LazyStatus = enum {

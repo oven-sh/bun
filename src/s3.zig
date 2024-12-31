@@ -458,9 +458,13 @@ pub const AWSCredentials = struct {
 
         const region = if (this.region.len > 0) this.region else guessRegion(this.endpoint);
         var full_path = request_path;
+        // handle \\ on bucket name
         if (strings.startsWith(full_path, "/")) {
             full_path = full_path[1..];
+        } else if (strings.startsWith(full_path, "\\")) {
+            full_path = full_path[1..];
         }
+
         var path: []const u8 = full_path;
         var bucket: []const u8 = this.bucket;
 
@@ -469,16 +473,29 @@ pub const AWSCredentials = struct {
 
             // guess bucket using path
             if (strings.indexOf(full_path, "/")) |end| {
+                if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                    if (backslash_index < end) {
+                        bucket = full_path[0..backslash_index];
+                        path = full_path[backslash_index + 1 ..];
+                    }
+                }
                 bucket = full_path[0..end];
                 path = full_path[end + 1 ..];
+            } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                bucket = full_path[0..backslash_index];
+                path = full_path[backslash_index + 1 ..];
             } else {
                 return error.InvalidPath;
             }
         }
         if (strings.endsWith(path, "/")) {
             path = path[0..path.len];
+        } else if (strings.endsWith(path, "\\")) {
+            path = path[0 .. path.len - 1];
         }
         if (strings.startsWith(path, "/")) {
+            path = path[1..];
+        } else if (strings.startsWith(path, "\\")) {
             path = path[1..];
         }
 

@@ -5,6 +5,7 @@ const Blob = JSC.WebCore.Blob;
 const PathOrBlob = JSC.Node.PathOrBlob;
 const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
+const strings = bun.strings;
 
 pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
@@ -425,56 +426,4 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     defer result.deinit();
     var str = bun.String.fromUTF8(result.url);
     return str.transferToJS(this.globalThis);
-}
-
-pub const exports = struct {
-    pub const JSS3File__exists = JSC.toJSHostFunction(exists);
-    pub const JSS3File__size = JSC.toJSHostFunction(size);
-    pub const JSS3File__upload = JSC.toJSHostFunction(upload);
-    pub const JSS3File__unlink = JSC.toJSHostFunction(unlink);
-    pub const JSS3File__presign = JSC.toJSHostFunction(presign);
-
-    pub fn JSS3File__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
-        JSC.markBinding(@src());
-        const blob = value.as(Blob) orelse return false;
-        return blob.isS3();
-    }
-
-    pub fn JSS3File__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*Blob {
-        const vm = globalThis.bunVM();
-        const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
-        defer args.deinit();
-
-        const path_or_fd = (JSC.Node.PathLike.fromJS(globalThis, &args)) catch |err| switch (err) {
-            error.JSError => null,
-            error.OutOfMemory => {
-                globalThis.throwOutOfMemory() catch {};
-                return null;
-            },
-        };
-        if (path_or_fd == null) {
-            globalThis.throwInvalidArguments("Expected file path string", .{}) catch return null;
-            return null;
-        }
-        return constructS3FileInternal(globalThis, path_or_fd.?, args.nextEat()) catch |err| switch (err) {
-            error.JSError => null,
-            error.OutOfMemory => {
-                globalThis.throwOutOfMemory() catch {};
-                return null;
-            },
-        };
-    }
-};
-
-const strings = bun.strings;
-
-comptime {
-    @export(exports.JSS3File__exists, .{ .name = "JSS3File__exists" });
-    @export(exports.JSS3File__size, .{ .name = "JSS3File__size" });
-    @export(exports.JSS3File__upload, .{ .name = "JSS3File__upload" });
-    @export(exports.JSS3File__unlink, .{ .name = "JSS3File__unlink" });
-    @export(exports.JSS3File__hasInstance, .{ .name = "JSS3File__hasInstance" });
-    @export(exports.JSS3File__construct, .{ .name = "JSS3File__construct" });
-    @export(exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
 }

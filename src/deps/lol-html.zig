@@ -796,6 +796,8 @@ pub const DocType = opaque {
     extern fn lol_html_doctype_system_id_get(doctype: *const DocType) HTMLString;
     extern fn lol_html_doctype_user_data_set(doctype: *const DocType, user_data: ?*anyopaque) void;
     extern fn lol_html_doctype_user_data_get(doctype: *const DocType) ?*anyopaque;
+    extern fn lol_html_doctype_remove(doctype: *DocType) void;
+    extern fn lol_html_doctype_is_removed(doctype: *const DocType) bool;
 
     pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.C) Directive;
 
@@ -810,6 +812,14 @@ pub const DocType = opaque {
     pub fn getSystemId(this: *const DocType) HTMLString {
         auto_disable();
         return this.lol_html_doctype_system_id_get();
+    }
+    pub fn remove(this: *DocType) void {
+        auto_disable();
+        return this.lol_html_doctype_remove();
+    }
+    pub fn isRemoved(this: *const DocType) bool {
+        auto_disable();
+        return this.lol_html_doctype_is_removed();
     }
 };
 

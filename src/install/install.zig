@@ -2757,6 +2757,44 @@ pub const PackageManager = struct {
 
     patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, void, ArrayIdentityContext.U64, false) = .{},
 
+    active_lifecycle_scripts: LifecycleScriptSubprocess.List,
+    last_reported_slow_lifecycle_script_at: u64 = 0,
+    cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
+
+    pub fn reportSlowLifecycleScripts(this: *PackageManager, log_level: Options.LogLevel) void {
+        if (log_level == .silent) return;
+        if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
+            return;
+        }
+
+        if (this.active_lifecycle_scripts.peek()) |active_lifecycle_script_running_for_the_longest_amount_of_time| {
+            if (this.cached_tick_for_slow_lifecycle_script_logging == this.event_loop.iterationNumber()) {
+                return;
+            }
+            this.cached_tick_for_slow_lifecycle_script_logging = this.event_loop.iterationNumber();
+            const current_time = bun.timespec.now().ns();
+            const time_running = current_time -| active_lifecycle_script_running_for_the_longest_amount_of_time.started_at;
+            const interval: u64 = if (log_level.isVerbose()) std.time.ns_per_s * 5 else std.time.ns_per_s * 30;
+            if (time_running > interval and current_time -| this.last_reported_slow_lifecycle_script_at > interval) {
+                this.last_reported_slow_lifecycle_script_at = current_time;
+                const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
+
+                if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
+                    Output.warn("{s}'s postinstall has costed you {}\n", .{
+                        package_name,
+                        bun.fmt.fmtDurationOneDecimal(time_running),
+                    });
+                } else {
+                    Output.warn("{s}' postinstall has costed you {}\n", .{
+                        package_name,
+                        bun.fmt.fmtDurationOneDecimal(time_running),
+                    });
+                }
+                Output.flush();
+            }
+        }
+    }
+
     pub const PackageUpdateInfo = struct {
         original_version_literal: string,
         is_alias: bool,
@@ -3064,7 +3102,7 @@ pub const PackageManager = struct {
     }
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
-        return this.env.getHttpProxy(url);
+        return this.env.getHttpProxyFor(url);
     }
 
     pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
@@ -3116,6 +3154,7 @@ pub const PackageManager = struct {
     }
 
     fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
+        this.reportSlowLifecycleScripts(this.options.log_level);
         return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
     }
 
@@ -3129,6 +3168,7 @@ pub const PackageManager = struct {
     }
 
     pub fn sleep(this: *PackageManager) void {
+        this.reportSlowLifecycleScripts(this.options.log_level);
         Output.flush();
         this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
@@ -8789,6 +8829,9 @@ pub const PackageManager = struct {
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
             .options = options,
+            .active_lifecycle_scripts = .{
+                .context = manager,
+            },
             .network_task_fifo = NetworkQueue.init(),
             .patch_task_fifo = PatchTaskFifo.init(),
             .allocator = ctx.allocator,
@@ -8954,6 +8997,9 @@ pub const PackageManager = struct {
         manager.* = PackageManager{
             .options = .{
                 .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
+            },
+            .active_lifecycle_scripts = .{
+                .context = manager,
             },
             .network_task_fifo = NetworkQueue.init(),
             .allocator = allocator,
@@ -12574,10 +12620,6 @@ pub const PackageManager = struct {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
-                    if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
-                    }
-
                     this.manager.sleep();
                 }
 
@@ -12609,9 +12651,7 @@ pub const PackageManager = struct {
             }
 
             while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                if (PackageManager.verbose_install) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
-                }
+                this.manager.reportSlowLifecycleScripts(log_level);
 
                 if (comptime log_level.showProgress()) {
                     if (this.manager.scripts_node) |scripts_node| {
@@ -14003,8 +14043,8 @@ pub const PackageManager = struct {
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
                     }
-
                     this.tickLifecycleScripts();
+                    this.reportSlowLifecycleScripts(log_level);
                 }
 
                 for (remaining) |dependency_id| {
@@ -14027,6 +14067,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
 
                 this.tickLifecycleScripts();
+                this.reportSlowLifecycleScripts(log_level);
             }
 
             while (this.pendingTaskCount() > 0 and installer.options.do.install_packages) {
@@ -14056,6 +14097,8 @@ pub const PackageManager = struct {
                             return true;
                         }
 
+                        closure.manager.reportSlowLifecycleScripts(log_level);
+
                         if (PackageManager.verbose_install and closure.manager.pendingTaskCount() > 0) {
                             const pending_task_count = closure.manager.pendingTaskCount();
                             if (pending_task_count > 0 and PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) {
@@ -14082,6 +14125,7 @@ pub const PackageManager = struct {
                 }
             } else {
                 this.tickLifecycleScripts();
+                this.reportSlowLifecycleScripts(log_level);
             }
 
             for (installer.trees) |tree| {
@@ -14107,9 +14151,7 @@ pub const PackageManager = struct {
             installer.completeRemainingScripts(log_level);
 
             while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                if (PackageManager.verbose_install) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.monotonic)});
-                }
+                this.reportSlowLifecycleScripts(log_level);
 
                 this.sleep();
             }
@@ -14972,9 +15014,7 @@ pub const PackageManager = struct {
                 try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, log_level, output_in_foreground);
 
                 while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                    if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.monotonic)});
-                    }
+                    manager.reportSlowLifecycleScripts(log_level);
 
                     manager.sleep();
                 }

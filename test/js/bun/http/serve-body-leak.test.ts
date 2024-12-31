@@ -9,9 +9,15 @@ const totalCount = 10_000;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
-async function getURL() {
-  let defer = Promise.withResolvers<string>();
-  const process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
+let url: URL;
+let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
+beforeEach(async () => {
+  if (process) {
+    process?.kill();
+  }
+
+  let defer = Promise.withResolvers();
+  process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
     env: bunEnv,
     stdout: "inherit",
     stderr: "inherit",
@@ -20,17 +26,19 @@ async function getURL() {
       defer.resolve(message);
     },
   });
-  const url: URL = new URL(await defer.promise);
+  url = new URL(await defer.promise);
   process.unref();
-  await warmup(url);
-  return { url, process };
-}
+  await warmup();
+});
+afterEach(() => {
+  process?.kill();
+});
 
-async function getMemoryUsage(url: URL): Promise<number> {
+async function getMemoryUsage(): Promise<number> {
   return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
 }
 
-async function warmup(url: URL) {
+async function warmup() {
   var remaining = totalCount;
 
   while (remaining > 0) {
@@ -46,17 +54,17 @@ async function warmup(url: URL) {
     remaining -= batchSize;
   }
   // clean up memory before first test
-  await getMemoryUsage(url);
+  await getMemoryUsage();
 }
 
-async function callBuffering(url: URL) {
+async function callBuffering() {
   const result = await fetch(`${url.origin}/buffering`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callJSONBuffering(url: URL) {
+async function callJSONBuffering() {
   const result = await fetch(`${url.origin}/json-buffering`, {
     method: "POST",
     body: zeroCopyJSONPayload,
@@ -64,35 +72,35 @@ async function callJSONBuffering(url: URL) {
   expect(result).toBe("Ok");
 }
 
-async function callBufferingBodyGetter(url: URL) {
+async function callBufferingBodyGetter() {
   const result = await fetch(`${url.origin}/buffering+body-getter`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callStreaming(url: URL) {
+async function callStreaming() {
   const result = await fetch(`${url.origin}/streaming`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callIncompleteStreaming(url: URL) {
+async function callIncompleteStreaming() {
   const result = await fetch(`${url.origin}/incomplete-streaming`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callStreamingEcho(url: URL) {
+async function callStreamingEcho() {
   const result = await fetch(`${url.origin}/streaming-echo`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe(payload);
 }
-async function callIgnore(url: URL) {
+async function callIgnore() {
   const result = await fetch(url, {
     method: "POST",
     body: zeroCopyPayload,
@@ -100,8 +108,8 @@ async function callIgnore(url: URL) {
   expect(result).toBe("Ok");
 }
 
-async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
-  const start_memory = await getMemoryUsage(url);
+async function calculateMemoryLeak(fn: () => Promise<void>) {
+  const start_memory = await getMemoryUsage();
   const memory_examples: Array<number> = [];
   let peak_memory = start_memory;
 
@@ -109,14 +117,14 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
   while (remaining > 0) {
     const batch = new Array(batchSize);
     for (let j = 0; j < batchSize; j++) {
-      batch[j] = fn(url);
+      batch[j] = fn();
     }
     await Promise.all(batch);
     remaining -= batchSize;
 
     // garbage collect and check memory usage every 1000 requests
     if (remaining > 0 && remaining % 1000 === 0) {
-      const report = await getMemoryUsage(url);
+      const report = await getMemoryUsage();
       if (report > peak_memory) {
         peak_memory = report;
       }
@@ -125,7 +133,7 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
   }
 
   // wait for the last memory usage to be stable
-  const end_memory = await getMemoryUsage(url);
+  const end_memory = await getMemoryUsage();
   if (end_memory > peak_memory) {
     peak_memory = end_memory;
   }
@@ -152,9 +160,7 @@ for (const test_info of [
   it.todoIf(skip)(
     testName,
     async () => {
-      const { url, process } = await getURL();
-      await using processHandle = process;
-      const report = await calculateMemoryLeak(fn, url);
+      const report = await calculateMemoryLeak(fn);
       // peak memory is too high
       expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
       // acceptable memory leak

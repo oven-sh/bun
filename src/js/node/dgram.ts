@@ -173,7 +173,7 @@ function newHandle(type, lookup) {
   } else if (type === "udp6") {
     handle.lookup = FunctionPrototypeBind(lookup6, handle, lookup);
   } else {
-    throw new ERR_SOCKET_BAD_TYPE();
+    throw ERR_SOCKET_BAD_TYPE();
   }
 
   return handle;

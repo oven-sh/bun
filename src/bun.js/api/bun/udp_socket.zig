@@ -319,15 +319,19 @@ pub const UDPSocket = struct {
             this.socket = socket;
         } else {
             this.closed = true;
-            this.deinit();
+            defer this.deinit();
             if (err != 0) {
                 const code = @tagName(@as(bun.C.E, @enumFromInt(err)));
                 const sys_err = JSC.SystemError{
                     .errno = err,
                     .code = bun.String.createFormat("E{s}", .{code}) catch bun.outOfMemory(),
-                    .message = bun.String.static("Failed to bind socket"),
+                    .message = bun.String.createFormat("bind E{s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
                 };
-                return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+                const address = bun.String.createUTF8(config.hostname);
+                defer address.deref();
+                const error_value = sys_err.toErrorInstance(globalThis);
+                error_value.put(globalThis, "address", address.toJS(globalThis));
+                return globalThis.throwValue(error_value);
             }
             return globalThis.throw("Failed to bind socket", .{});
         }

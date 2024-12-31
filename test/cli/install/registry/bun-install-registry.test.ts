@@ -2146,7 +2146,7 @@ cache = "${join(packageDir, ".bun-cache")}"
       await check();
     });
 
-    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) workspace dependencies are not bundled`, async () => {
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) workspace dependencies bundle correctly`, async () => {
       await Promise.all([
         write(
           packageJson,
@@ -2161,6 +2161,7 @@ cache = "${join(packageDir, ".bun-cache")}"
             name: "pkg-one-one-one",
             dependencies: {
               "no-deps": "1.0.0",
+              "bundled-1": "1.0.0",
             },
             bundledDependencies: ["no-deps"],
           }),
@@ -2183,8 +2184,9 @@ cache = "${join(packageDir, ".bun-cache")}"
           await Promise.all([
             exists(join(packageDir, "node_modules", "no-deps", "package.json")),
             exists(join(packageDir, "packages", "pkg-one-one-one", "node_modules", "no-deps", "package.json")),
+            exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
           ]),
-        ).toEqual([true, false]);
+        ).toEqual([true, false, true]);
       }
 
       await check();

@@ -63,6 +63,7 @@
 #endif
 
 #if OS(WINDOWS)
+#include "musl-memmem.h"
 #include <windows.h>
 #endif
 

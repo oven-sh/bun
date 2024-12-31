@@ -231,14 +231,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn getErrno(this: @This()) posix.E {
+        pub fn getErrno(this: @This()) posix.E {
             return switch (this) {
                 .result => posix.E.SUCCESS,
                 .err => |e| @enumFromInt(e.errno),
             };
         }
 
-        pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+        pub fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -256,7 +256,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+        pub fn errno(err: anytype, syscall: Syscall.Tag) @This() {
             return @This(){
                 // always truncate
                 .err = .{
@@ -266,7 +266,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
+        pub fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -285,7 +285,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
+        pub fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
             if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
@@ -302,6 +302,29 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .errno = translateToErrInt(e),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
+        pub fn errnoSysPD(rc: anytype, syscall: Syscall.Tag, path: anytype, dest: anytype) ?@This() {
+            if (bun.meta.Item(@TypeOf(path)) == u16) {
+                @compileError("Do not pass WString path to errnoSysPD, it needs the path encoded as utf8");
+            }
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .path = bun.asByteSlice(path),
+                        .dest = bun.asByteSlice(dest),
                     },
                 },
             };
@@ -2081,22 +2104,21 @@ pub const Process = struct {
         if (to.len == 0) {
             return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
         }
+        const vm = globalObject.bunVM();
+        const fs = vm.transpiler.fs;
 
         var buf: bun.PathBuffer = undefined;
-        const slice = to.sliceZBuf(&buf) catch {
-            return globalObject.throw("Invalid path", .{});
-        };
+        const slice = to.sliceZBuf(&buf) catch return globalObject.throw("Invalid path", .{});
 
-        switch (Syscall.chdir(slice)) {
+        switch (Syscall.chdir(fs.top_level_dir, slice)) {
             .result => {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                const fs = JSC.VirtualMachine.get().transpiler.fs;
                 const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
                     .err => |err| {
-                        _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
+                        _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
                         return globalObject.throwValue(err.toJSC(globalObject));
                     },
                 };

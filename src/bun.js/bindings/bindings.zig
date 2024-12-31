@@ -1712,6 +1712,7 @@ pub const SystemError = extern struct {
     path: String = String.empty,
     syscall: String = String.empty,
     fd: bun.FileDescriptor = bun.toFD(-1),
+    dest: String = String.empty,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -1735,6 +1736,7 @@ pub const SystemError = extern struct {
         this.code.deref();
         this.message.deref();
         this.syscall.deref();
+        this.dest.deref();
     }
 
     pub fn ref(this: *SystemError) void {
@@ -1742,6 +1744,7 @@ pub const SystemError = extern struct {
         this.code.ref();
         this.message.ref();
         this.syscall.ref();
+        this.dest.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
@@ -1750,6 +1753,7 @@ pub const SystemError = extern struct {
             this.code.deref();
             this.message.deref();
             this.syscall.deref();
+            this.dest.deref();
         }
 
         return shim.cppFn("toErrorInstance", .{ this, global });
@@ -1780,6 +1784,7 @@ pub const SystemError = extern struct {
             this.code.deref();
             this.message.deref();
             this.syscall.deref();
+            this.dest.deref();
         }
 
         return SystemError__toErrorInstanceWithInfoObject(this, global);

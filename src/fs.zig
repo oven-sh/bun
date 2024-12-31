@@ -115,15 +115,7 @@ pub const FileSystem = struct {
     pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
-
-        // Ensure there's a trailing separator in the top level directory
-        // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
-            const tld = try allocator.allocSentinel(u8, top_level_dir.len + 1, 0);
-            bun.copy(u8, tld, top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
-            top_level_dir = tld;
-        }
+        _ = &top_level_dir;
 
         if (!instance_loaded or force) {
             instance = FileSystem{

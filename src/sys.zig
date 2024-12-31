@@ -296,10 +296,12 @@ pub const Error = struct {
     from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
     path: []const u8 = "",
     syscall: Syscall.Tag = Syscall.Tag.TODO,
+    dest: []const u8 = "",
 
     pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
         var copy = this.*;
         copy.path = try allocator.dupe(u8, copy.path);
+        copy.dest = try allocator.dupe(u8, copy.dest);
         return copy;
     }
 
@@ -426,6 +428,10 @@ pub const Error = struct {
             err.path = bun.String.createUTF8(this.path);
         }
 
+        if (this.dest.len > 0) {
+            err.dest = bun.String.createUTF8(this.dest);
+        }
+
         if (this.fd != bun.invalid_fd) {
             err.fd = this.fd;
         }
@@ -505,12 +511,12 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
-pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
+pub fn chdirOSPath(path: bun.OSPathSliceZ, destination: bun.OSPathSliceZ) Maybe(void) {
     assertIsValidWindowsPath(bun.OSPathChar, destination);
 
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
-        return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
+        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isWindows) {
@@ -527,12 +533,16 @@ pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     @compileError("Not implemented yet");
 }
 
-pub fn chdir(destination: anytype) Maybe(void) {
+pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
     const Type = @TypeOf(destination);
 
     if (comptime Environment.isPosix) {
         if (comptime Type == []u8 or Type == []const u8) {
             return chdirOSPath(
+                &(std.posix.toPosixPath(path) catch return .{ .err = .{
+                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .syscall = .chdir,
+                } }),
                 &(std.posix.toPosixPath(destination) catch return .{ .err = .{
                     .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
                     .syscall = .chdir,
@@ -540,7 +550,7 @@ pub fn chdir(destination: anytype) Maybe(void) {
             );
         }
 
-        return chdirOSPath(destination);
+        return chdirOSPath(path, destination);
     }
 
     if (comptime Environment.isWindows) {

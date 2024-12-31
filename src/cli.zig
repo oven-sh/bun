@@ -500,7 +500,7 @@ pub const Arguments = struct {
             cwd = brk: {
                 var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
-                bun.sys.chdir(out).unwrap() catch |err| {
+                bun.sys.chdir("", out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };

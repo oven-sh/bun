@@ -86,7 +86,6 @@
 #include "JSDOMConvertUnion.h"
 #include "JSDOMException.h"
 #include "JSDOMFile.h"
-#include "JSS3File.h"
 #include "JSDOMFormData.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
@@ -2837,11 +2836,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(fileConstructor);
         });
 
-    m_JSS3FileConstructor.initLater(
-        [](const Initializer<JSObject>& init) {
-            init.set(Bun::createJSS3FileStaticObject(init.vm, init.owner));
-        });
-
     m_cryptoObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
@@ -3821,7 +3815,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
-    thisObject->m_JSS3FileConstructor.visit(visitor);
     thisObject->m_JSS3BucketStructure.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);

@@ -10,7 +10,6 @@
 #include "JSS3Bucket.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "JSS3File.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "ErrorCode.h"
 
@@ -146,7 +145,7 @@ JSS3Bucket* JSS3Bucket::create(JSC::VM& vm, Zig::GlobalObject* globalObject, voi
 {
     auto* structure = globalObject->m_JSS3BucketStructure.getInitializedOnMainThread(globalObject);
     NativeExecutable* executable = vm.getHostFunction(&JSS3Bucket::call, ImplementationVisibility::Public, &JSS3Bucket::construct, String("S3Bucket"_s));
-    JSS3Bucket* functionObject = new (NotNull, JSC::allocateCell<JSS3Bucket>(vm)) JSS3Bucket(vm, globalObject, structure, executable, ptr);
+    JSS3Bucket* functionObject = new (NotNull, JSC::allocateCell<JSS3Bucket>(vm)) JSS3Bucket(vm, executable, globalObject, structure, ptr);
     functionObject->finishCreation(vm, executable, 1, "S3Bucket"_s);
     return functionObject;
 }

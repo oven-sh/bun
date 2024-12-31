@@ -14,8 +14,11 @@ class JSS3Bucket : public JSC::JSFunction {
 public:
     static constexpr bool needsDestruction = true;
 
-    JSS3Bucket(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, NativeExecutable* executable, void* ptr);
-
+    JSS3Bucket(JSC::VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, void* ptr)
+        : Base(vm, executable, globalObject, structure)
+    {
+        this->ptr = ptr;
+    }
     DECLARE_INFO;
 
     static void destroy(JSCell* cell);

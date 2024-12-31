@@ -179,15 +179,6 @@ pub fn exists(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 }
 
-extern fn BUN__createJSS3FileConstructor(*JSC.JSGlobalObject) JSValue;
-
-pub fn getJSS3FileConstructor(
-    globalObject: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) callconv(JSC.conv) JSValue {
-    return BUN__createJSS3FileConstructor(globalObject);
-}
-
 fn constructS3FileInternalStore(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,

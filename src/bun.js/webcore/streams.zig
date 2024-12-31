@@ -709,6 +709,8 @@ pub const StreamResult = union(Tag) {
         switch (this.*) {
             .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .temporary => |*temporary| temporary.deinitWithAllocator(bun.default_allocator),
+            .temporary_and_done => |*temporary_and_done| temporary_and_done.deinitWithAllocator(bun.default_allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -1021,6 +1023,12 @@ pub const StreamResult = union(Tag) {
                 const value = result.toJS(globalThis);
                 value.ensureStillAlive();
 
+                switch (result.*) {
+                    .temporary, .temporary_and_done => {
+                        result.deinit();
+                    },
+                    else => {},
+                }
                 result.* = .{ .temporary = .{} };
                 promise.resolve(globalThis, value);
             },

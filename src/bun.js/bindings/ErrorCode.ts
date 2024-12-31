@@ -53,6 +53,7 @@ export default [
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
   ["ERR_UNHANDLED_ERROR", Error],
   ["ERR_UNKNOWN_CREDENTIAL", Error],
+  ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

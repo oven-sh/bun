@@ -598,16 +598,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_getBuiltinModule, (JSC::JSGlobalObject * lexica
     return JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, fn, JSC::getCallData(fn), moduleObject, args));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isCallable() && !arg0.isNull()) {
-        throwTypeError(globalObject, throwScope, "The \"callback\" argument must be callable or null"_s);
-        return {};
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto arg0 = callFrame->argument(0);
+    auto process = jsCast<Process*>(globalObject->processObject());
+
+    if (arg0.isNull()) {
+        process->setUncaughtExceptionCaptureCallback(arg0);
+        process->m_reportOnUncaughtException = false;
+        return JSC::JSValue::encode(jsUndefined());
     }
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    jsCast<Process*>(zigGlobal->processObject())->setUncaughtExceptionCaptureCallback(arg0);
+    if (!arg0.isCallable()) {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "fn"_s, "function or null"_s, arg0);
+    }
+    if (process->m_reportOnUncaughtException) {
+        return Bun::ERR::UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(throwScope, globalObject);
+    }
+
+    process->setUncaughtExceptionCaptureCallback(arg0);
+    process->m_reportOnUncaughtException = true;
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -1950,10 +1962,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "getReport"_s), JSC::JSFunction::create(vm, globalObject, 0, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public), 0);
+    // auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto process = jsCast<Process*>(processObject);
+
+    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsEmptyString(vm), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "getReport"_s), JSC::JSFunction::create(vm, globalObject, 0, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnFatalError"_s), JSC::jsBoolean(false), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnSignal"_s), JSC::jsBoolean(false), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnUncaughtException"_s), JSC::jsBoolean(process->m_reportOnUncaughtException), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
     return report;
 }

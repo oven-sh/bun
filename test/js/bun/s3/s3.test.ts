@@ -478,6 +478,8 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         expect.unreachable();
       } catch (e: any) {
         expect(e?.code).toBe("NoSuchKey");
+        expect(e?.path).toBe("do-not-exist.txt");
+        expect(e?.name).toBe("S3Error");
       }
     });
   });

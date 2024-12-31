@@ -655,10 +655,14 @@ pub const AWSCredentials = struct {
         code: []const u8,
         message: []const u8,
 
-        pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject, path: ?[]const u8) JSC.JSValue {
+            //TODO: cache the structure of the error
             const js_err = globalObject.createErrorInstance("{s}", .{err.message});
             js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
             js_err.put(globalObject, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalObject));
+            if (path) |p| {
+                js_err.put(globalObject, JSC.ZigString.static("path"), JSC.ZigString.init(p).withEncoding().toJS(globalObject));
+            }
             return js_err;
         }
     };
@@ -1054,7 +1058,7 @@ pub const AWSCredentials = struct {
                         }
                         if (state.status_code == 404) {
                             if (!has_body_code) {
-                                code = "FileNotFound";
+                                code = "NoSuchKey";
                             }
                             if (!has_body_message) {
                                 message = "File not found";
@@ -1402,12 +1406,14 @@ pub const AWSCredentials = struct {
                 .ptr = .{ .Bytes = &reader.context },
                 .value = readable_value,
             }, globalThis),
+            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         }));
         return readable_value;
     }
 
     const S3DownloadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        path: []const u8,
         pub usingnamespace bun.New(@This());
 
         pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?S3Error, this: *@This()) void {
@@ -1422,7 +1428,7 @@ pub const AWSCredentials = struct {
 
                         readable.ptr.Bytes.onData(
                             .{
-                                .err = .{ .JSValue = err.toJS(globalThis) },
+                                .err = .{ .JSValue = err.toJS(globalThis, this.path) },
                             },
                             bun.default_allocator,
                         );
@@ -1455,6 +1461,7 @@ pub const AWSCredentials = struct {
 
         pub fn deinit(this: *@This()) void {
             this.readable_stream_ref.deinit();
+            bun.default_allocator.free(this.path);
             this.destroy();
         }
     };
@@ -1484,6 +1491,7 @@ pub const AWSCredentials = struct {
         callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
         ref_count: u32 = 1,
+        path: []const u8, // this is owned by the task not by the wrapper
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
         pub fn resolve(result: S3UploadResult, self: *@This()) void {
             const sink = self.sink;
@@ -1497,7 +1505,7 @@ pub const AWSCredentials = struct {
                                 sink.abort();
                                 return;
                             }
-                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
+                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.path));
                         },
                     }
                 }
@@ -1600,6 +1608,7 @@ pub const AWSCredentials = struct {
             .sink = &response_stream.sink,
             .callback = callback,
             .callback_context = callback_context,
+            .path = task.path,
         });
         task.callback_context = @ptrCast(ctx);
         var signal = &response_stream.sink.signal;
@@ -1703,7 +1712,7 @@ pub const AWSCredentials = struct {
                                     return;
                                 }
 
-                                sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
+                                sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, sink.path()));
                             },
                         }
                     }
@@ -2294,8 +2303,12 @@ pub const MultiPartUpload = struct {
     }
 };
 pub fn createNotFoundError(globalThis: *JSC.JSGlobalObject, path: []const u8) JSC.JSValue {
+    //TODO: cache the structure of the error
     const js_err = globalThis
-        .ERR_S3_FILE_NOT_FOUND("File {} not found", .{bun.fmt.quote(path)}).toJS();
+        .createErrorInstance("File {} not found", .{bun.fmt.quote(path)}).toJS(globalThis);
+    // make it consistent with S3 services
+    js_err.put(globalThis, JSC.ZigString.static("code"), JSC.ZigString.static("NoSuchKey").toJS(globalThis));
     js_err.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.static("S3Error").toJS(globalThis));
+    js_err.put(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(path).withEncoding().toJS(globalThis));
     return js_err;
 }

@@ -2676,6 +2676,16 @@ pub const FetchTaskletChunkedRequestSink = struct {
             AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
     }
 
+    pub fn path(this: *@This()) ?[]const u8 {
+        if (this.task) |task| {
+            return switch (task) {
+                .s3_upload => |s3| s3.path,
+                else => null,
+            };
+        }
+        return null;
+    }
+
     pub fn onAutoFlush(this: *@This()) bool {
         if (this.done) {
             this.auto_flusher.registered = false;

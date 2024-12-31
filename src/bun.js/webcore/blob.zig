@@ -905,6 +905,7 @@ pub const Blob = struct {
 
                 const Wrapper = struct {
                     promise: JSC.JSPromise.Strong,
+                    store: *Store,
                     pub usingnamespace bun.New(@This());
 
                     pub fn resolve(result: AWS.S3UploadResult, this: *@This()) void {
@@ -912,7 +913,7 @@ pub const Blob = struct {
                             switch (result) {
                                 .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
                                 .failure => |err| {
-                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
+                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.data.s3.path()));
                                 },
                             }
                         }
@@ -921,6 +922,8 @@ pub const Blob = struct {
 
                     fn deinit(this: *@This()) void {
                         this.promise.deinit();
+                        this.store.deref();
+                        this.destroy();
                     }
                 };
 
@@ -928,8 +931,10 @@ pub const Blob = struct {
                 const promise_value = promise.value();
                 const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
+                destination_blob.store.?.ref();
                 aws_options.credentials.s3Upload(s3.path(), "", destination_blob.contentTypeOrMimeType(), proxy_url, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                     .promise = promise,
+                    .store = destination_blob.store.?,
                 }));
                 return promise_value;
             }
@@ -1061,7 +1066,7 @@ pub const Blob = struct {
                                     switch (result) {
                                         .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
                                         .failure => |err| {
-                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
+                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.data.s3.path()));
                                         },
                                     }
                                 }
@@ -3487,7 +3492,7 @@ pub const Blob = struct {
                             self.promise.reject(globalObject, bun.S3.createNotFoundError(globalObject, self.store.data.s3.path()));
                         },
                         .failure => |err| {
-                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject));
+                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.store.data.s3.path()));
                         },
                     }
                 }
@@ -3841,7 +3846,7 @@ pub const Blob = struct {
                     this.promise.reject(this.globalThis, bun.S3.createNotFoundError(this.globalThis, this.blob.store.?.data.s3.path()));
                 },
                 .failure => |err| {
-                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis));
+                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.data.s3.path()));
                 },
             }
         }

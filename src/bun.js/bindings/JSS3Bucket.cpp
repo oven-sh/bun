@@ -121,7 +121,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSS3Bucket::call(JSGlobalObject* lexical
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->jsCallee();
     auto* thisObject = jsDynamicCast<JSS3Bucket*>(thisValue);
     if (UNLIKELY(!thisObject)) {
         Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3Bucket instance"_s);

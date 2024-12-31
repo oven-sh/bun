@@ -198,6 +198,7 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
 ) bun.JSError!Blob {
     var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, globalObject);
     defer aws_options.deinit();
+
     const store = brk: {
         if (aws_options.changed_credentials) {
             break :brk Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();

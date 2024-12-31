@@ -27,9 +27,9 @@ pub fn call(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..presign(path, options) expects a path to presign", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options);
+    var blob = Blob.new(try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options));
     blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
@@ -41,7 +41,7 @@ pub fn presign(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..presign(path, options) expects a path to presign", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
 
     const options = args.nextEat();
     var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options);
@@ -56,7 +56,7 @@ pub fn exists(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..exists(path) expects a path to check if it exists", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
     const options = args.nextEat();
     var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options);
     defer blob.detach();
@@ -70,7 +70,7 @@ pub fn size(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..size(path) expects a path to check the size of", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
     const options = args.nextEat();
     var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options);
     defer blob.detach();
@@ -84,7 +84,7 @@ pub fn write(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: 
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..write(path, data) expects a path to write to", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..write(path, data) expects a Blob-y thing to write", .{});
     };
@@ -106,7 +106,7 @@ pub fn unlink(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         return globalThis.throwInvalidArguments("S3Bucket.prototype..unlink(path) expects a path to unlink", .{});
     };
-    defer path.deinit();
+    errdefer path.deinit();
     const options = args.nextEat();
     var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options);
     defer blob.detach();
@@ -119,6 +119,9 @@ pub fn construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     const options = args.nextEat() orelse {
         globalThis.throwInvalidArguments("S3Bucket.prototype..constructor(options) expects AWS options", .{}) catch return null;
     };
+    if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
+        globalThis.throwInvalidArguments("S3Bucket.prototype..constructor(options) expects AWS options", .{}) catch return null;
+    }
     var aws_options = AWSCredentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getAWSCredentials(), .{}, options, globalThis) catch return null;
     defer aws_options.deinit();
     return S3BucketOptions.new(.{

@@ -1726,15 +1726,17 @@ pub const Subprocess = struct {
 
         // This mimicks libuv's behavior, which mimicks execvpe
         // Only resolve from $PATH when the command is not an absolute path
-        const PATH_to_use = if (strings.containsChar(argv0_to_use, '/'))
+        const PATH_to_use: []const u8 = if (strings.containsChar(argv0_to_use, '/'))
             ""
             // If no $PATH is provided, we fallback to the one from environ
             // This is already the behavior of the PATH passed in here.
         else if (PATH.len > 0)
             PATH
-        else
+        else if (comptime Environment.isPosix)
             // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
-            bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0);
+            bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+        else
+            "";
 
         if (PATH_to_use.len == 0) {
             actual_argv0 = try allocator.dupeZ(u8, argv0_to_use);

@@ -307,7 +307,7 @@ await import("my-object-virtual-module"); // { baz: "quix" }
 Plugins can read and write to the [build config](https://bun.sh/docs/bundler#api) with `build.config`.
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -324,6 +324,7 @@ Bun.build({
       },
     },
   ],
+  throw: true,
 });
 ```
 
@@ -332,7 +333,7 @@ Bun.build({
 **NOTE**: Plugin lifcycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -350,6 +351,7 @@ Bun.build({
       },
     },
   ],
+  throw: true,
 });
 ```
 

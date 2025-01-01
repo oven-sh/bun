@@ -50,6 +50,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
         case JSC::ErrorType::URIError:
             prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
             break;
+        case JSC::ErrorType::SyntaxError:
+            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
+            break;
         default: {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
             break;
@@ -175,6 +178,10 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
+// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
+extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+
+//
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
     ASSERT(!arg.isEmpty());
@@ -187,7 +194,6 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
         return arg.toWTFStringForConsole(globalObject);
     }
     case JSC::JSType::SymbolType: {
-
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
         if (result.has_value())
@@ -201,14 +207,14 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
         auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
         if (catchScope.exception()) {
             catchScope.clearException();
-            name = "Function"_s;
+            name = ""_s;
         }
 
         if (!name.isNull() && name.length() > 0) {
             return makeString("[Function: "_s, name, ']');
         }
 
-        return "Function"_s;
+        return "[Function: (anonymous)]"_s;
         break;
     }
 
@@ -217,47 +223,142 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    return arg.toWTFStringForConsole(globalObject);
+    ZigString zstring = Bun__inspect(globalObject, arg);
+    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
+    return bstring.toWTFString();
+}
+
+WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    ASSERT(!value.isEmpty());
+
+    if (value.isNull()) {
+        return String("null"_s);
+    }
+    if (value.isUndefined()) {
+        return String("undefined"_s);
+    }
+    if (value.isNumber()) {
+        double d = value.asNumber();
+        double infinity = std::numeric_limits<double>::infinity();
+        if (value == 0) return (1 / d == -infinity) ? String("type number (-0)"_s) : String("type number (0)"_s);
+        if (d != d) return String("type number (NaN)"_s);
+        if (d == infinity) return String("type number (Infinity)"_s);
+        if (d == -infinity) return String("type number (-Infinity)"_s);
+        auto str = value.toStringOrNull(globalObject);
+        if (!str) return {};
+        return makeString("type number ("_s, str->getString(globalObject), ")"_s);
+    }
+    if (value.isBoolean()) {
+        return value.asBoolean() ? String("type boolean (true)"_s) : String("type boolean (false)"_s);
+    }
+    if (value.isBigInt()) {
+        auto str = value.toString(globalObject);
+        if (!str) return {};
+        return makeString("type bigint ("_s, str->getString(globalObject), "n)"_s);
+    }
+
+    ASSERT(value.isCell());
+    auto cell = value.asCell();
+
+    if (cell->isSymbol()) {
+        auto symbol = jsCast<Symbol*>(cell);
+        auto result = symbol->tryGetDescriptiveString();
+        auto description = result.has_value() ? result.value() : String("Symbol()"_s);
+        return makeString("type symbol ("_s, description, ")"_s);
+    }
+    if (cell->isCallable()) {
+        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
+        if (scope.exception()) {
+            scope.clearException();
+            name = String(""_s);
+        }
+        if (!name.isNull() && name.length() > 0) {
+            return makeString("function "_s, name);
+        }
+        return String("function"_s);
+    }
+    if (cell->isString()) {
+        auto str = value.toString(globalObject)->getString(globalObject);
+        if (str.length() > 28) {
+            str = str.substring(0, 25);
+            str = makeString(str, "..."_s);
+            if (!str.contains('\'')) {
+                return makeString("type string ('"_s, str, "')"_s);
+            }
+        }
+        //       return `type string (${JSONStringify(value)})`;
+        str = value.toWTFStringForConsole(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return makeString("type string ("_s, str, ")"_s);
+    }
+    if (cell->isObject()) {
+        auto constructor = value.get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (constructor.toBoolean(globalObject)) {
+            auto name = constructor.get(globalObject, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str = name.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return makeString("an instance of "_s, str->getString(globalObject));
+        }
+        // return `${lazyInternalUtilInspect().inspect(value, { depth: -1 })}`;
+        auto str = JSValueToStringSafe(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        return str;
+    }
+
+    //       value = lazyInternalUtilInspect().inspect(value, { colors: false });
+    auto str = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return str;
 }
 
 namespace Message {
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
-    auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
+    auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received: "_s, actual_value_string);
+    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value_string);
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
 {
     WTF::StringBuilder result;
 
-    auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
+    auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    result.append("The \""_s, arg_name, "\" argument must be of type "_s);
+    result.append("The "_s);
+
+    if (arg_name.contains(' ')) {
+        result.append(arg_name);
+    } else {
+        result.append("\""_s);
+        result.append(arg_name);
+        result.append("\" argument"_s);
+    }
+    result.append(" must be of type "_s);
 
     unsigned length = expected_types.size();
     if (length == 1) {
         result.append(expected_types.at(0).toWTFString(globalObject));
-    } else if (length == 2) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
-        result.append(" or "_s);
-        result.append(expected_types.at(1).toWTFString(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
-            if (i > 0)
-                result.append(", "_s);
             JSValue expected_type = expected_types.at(i);
             result.append(expected_type.toWTFString(globalObject));
+            result.append(", "_s);
         }
-        result.append(" or "_s);
+        result.append("or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 
-    result.append(". Received: "_s, actual_value_string);
+    result.append(". Received "_s, actual_value_string);
 
     return result.toString();
 }
@@ -295,7 +396,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     auto input = JSValueToStringSafe(globalObject, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: "_s, input);
+    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
 }
 
 }
@@ -308,7 +409,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
-    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    auto actual_value = determineSpecificType(globalObject, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
@@ -324,7 +425,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
-    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    auto actual_value = determineSpecificType(globalObject, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
@@ -598,6 +699,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_ZLIB_INITIALIZATION_FAILED, (JSC::JSGlob
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto err = callFrame->argument(0);
+
+    if (err.isUndefined()) {
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, "Unhandled error."_s));
+    }
+    if (err.isString()) {
+        auto err_str = err.getString(globalObject);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
+    }
+    if (err.isCell()) {
+        auto cell = err.asCell();
+        if (cell->inherits<JSC::Exception>()) {
+            return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
+        }
+    }
+    auto err_str = err.toWTFString(globalObject);
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
 }
 
 } // namespace Bun

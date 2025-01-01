@@ -155,11 +155,6 @@ for (const [name, inspect] of process.versions.bun
       },
     };
 
-    if (Bun.inspect === inspect) {
-      // make sure this doesnt crash
-      expect(inspect(obj)).toBeString();
-    } else {
-      expect(() => inspect(obj)).toThrow();
-    }
+    expect(() => inspect(obj)).toThrow();
   });
 }

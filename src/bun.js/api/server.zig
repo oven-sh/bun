@@ -16,12 +16,12 @@ const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const Sys = @import("../../sys.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -32,7 +32,7 @@ const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -1154,7 +1154,7 @@ pub const ServerConfig = struct {
         allow_bake_config: bool,
     ) bun.JSError!void {
         const vm = arguments.vm;
-        const env = vm.bundler.env;
+        const env = vm.transpiler.env;
 
         args.* = .{
             .address = .{
@@ -1175,7 +1175,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        if (arguments.vm.bundler.options.production) {
+        if (arguments.vm.transpiler.options.production) {
             args.development = false;
         }
 
@@ -1190,7 +1190,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arguments.vm.bundler.options.transform_options.port) |port| {
+            if (arguments.vm.transpiler.options.transform_options.port) |port| {
                 break :brk port;
             }
 
@@ -1198,7 +1198,7 @@ pub const ServerConfig = struct {
         };
         var port = args.address.tcp.port;
 
-        if (arguments.vm.bundler.options.transform_options.origin) |origin| {
+        if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
             args.base_uri = origin;
         }
 
@@ -2218,7 +2218,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
-                .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
+                .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,
                 .problems = Api.Problems{
                     .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
@@ -6754,7 +6754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
-                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
+                bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
                 &source,
                 .{},
             ) catch unreachable;
@@ -6780,7 +6780,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
+            ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
             const line: ?string = req.header("editor-line");
             const column: ?string = req.header("editor-column");
 

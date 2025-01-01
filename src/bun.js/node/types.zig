@@ -307,6 +307,26 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
+        pub fn errnoSysFP(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor, path: anytype) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .fd = fd,
+                        .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
         pub fn errnoSysPD(rc: anytype, syscall: Syscall.Tag, path: anytype, dest: anytype) ?@This() {
             if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysPD, it needs the path encoded as utf8");

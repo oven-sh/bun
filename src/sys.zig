@@ -475,7 +475,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
         var wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, wbuf);
-        if (Result.errnoSys(len, .getcwd)) |err| return err;
+        if (Result.errnoSysP(len, .getcwd, buf)) |err| return err;
         return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
     }
 
@@ -483,7 +483,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     return if (rc != null)
         Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
     else
-        Result.errnoSys(@as(c_int, 0), .getcwd).?;
+        Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
@@ -491,14 +491,14 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
         return sys_uv.fchmod(fd, mode);
     }
 
-    return Maybe(void).errnoSys(C.fchmod(fd.cast(), mode), .fchmod) orelse
+    return Maybe(void).errnoSysFd(C.fchmod(fd.cast(), mode), .fchmod, fd) orelse
         Maybe(void).success;
 }
 
 pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
-    return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+    return Maybe(void).errnoSysFd(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat, fd) orelse
         Maybe(void).success;
 }
 
@@ -522,7 +522,7 @@ pub fn chdirOSPath(path: bun.OSPathSliceZ, destination: bun.OSPathSliceZ) Maybe(
     if (comptime Environment.isWindows) {
         if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
             log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), kernel32.GetLastError() });
-            return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
         }
 
         log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), 0 });
@@ -556,7 +556,7 @@ pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (comptime Type == *[*:0]u16) {
             if (kernel32.SetCurrentDirectory(destination) != 0) {
-                return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
             }
 
             return Maybe(void).success;
@@ -602,7 +602,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-        if (Maybe(bun.Stat).errnoSys(rc, .stat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -612,7 +612,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSysP(C.lstat(path, &stat_), .lstat, path)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -633,7 +633,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });
 
-    if (Maybe(bun.Stat).errnoSys(rc, .fstat)) |err| return err;
+    if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
@@ -686,7 +686,7 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSys(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat, fd, path)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
@@ -752,9 +752,10 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
         .windows => {
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
-            if (Maybe(void).errnoSys(
+            if (Maybe(void).errnoSysP(
                 rc,
                 .mkdir,
+                file_path,
             )) |err| {
                 log("CreateDirectoryW({}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
                 return err;
@@ -770,7 +771,7 @@ const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
     while (true) {
         const result = fcntl_symbol(fd.cast(), cmd, arg);
-        if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| {
+        if (Maybe(fnctl_int).errnoSysFd(result, .fcntl, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1290,7 +1291,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
-        return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = bun.toFD(rc) };
+        return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = bun.toFD(rc) };
     } else if (comptime Environment.isWindows) {
         return openatWindowsT(bun.OSPathChar, dirfd, file_path, flags);
     }
@@ -1632,7 +1633,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd.cast(), buf.ptr, adjusted_len, ioffset);
-        if (Maybe(usize).errnoSys(rc, .pread)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .pread, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1744,7 +1745,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = syscall.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
-        if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
             log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
@@ -1775,7 +1776,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = syscall.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-        if (Maybe(usize).errnoSys(rc, .send)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
             syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
             return err;
         }
@@ -1787,7 +1788,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
         while (true) {
             const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-            if (Maybe(usize).errnoSys(rc, .send)) |err| {
+            if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
                 syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
                 return err;
@@ -1802,7 +1803,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
     while (true) {
         const rc = syscall.lseek(fd.cast(), offset, whence);
-        if (Maybe(usize).errnoSys(rc, .lseek)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .lseek, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1819,7 +1820,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     while (true) {
         const rc = syscall.readlink(in, buf.ptr, buf.len);
 
-        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSysP(rc, .readlink, in)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1832,7 +1833,7 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
     while (true) {
         const rc = syscall.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSysFP(rc, .readlink, fd, in)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1844,14 +1845,14 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .ftruncate, fd) orelse Maybe(void).success;
         }
 
         return Maybe(void).success;
     }
 
     return while (true) {
-        if (Maybe(void).errnoSys(syscall.ftruncate(fd.cast(), size), .ftruncate)) |err| {
+        if (Maybe(void).errnoSysFd(syscall.ftruncate(fd.cast(), size), .ftruncate, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2025,7 +2026,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
 
 pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
+        if (Maybe(void).errnoSysP(C.chown(path, uid, gid), .chown, path)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2035,7 +2036,7 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
 
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
+        if (Maybe(void).errnoSysPD(syscall.symlink(target, dest), .symlink, target, dest)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2196,7 +2197,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errnoSysP(syscall.unlink(from), .unlink, from)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2225,7 +2226,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
+        if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2243,7 +2244,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return unlinkatWithFlags(dirfd, to, 0);
     }
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2363,7 +2364,7 @@ pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
 pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
     while (true) {
         const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
-        if (Maybe(i32).errnoSys(rc, .setsockopt)) |err| {
+        if (Maybe(i32).errnoSysFd(rc, .setsockopt, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });
             return err;
@@ -2509,12 +2510,12 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
     // We don't use glibc here
     // It didn't work. Always returned 0.
     const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
-    if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
+    if (Maybe(usize).errnoSysFd(pipe_len, .fcntl, fd)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
     const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
-    if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
+    if (Maybe(usize).errnoSysFd(new_pipe_len, .fcntl, fd)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
 
@@ -2904,7 +2905,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             windows.FILE_BEGIN,
         );
         if (rc == windows.FALSE) {
-            return Maybe(void).errnoSys(0, .lseek) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse Maybe(void).success;
         }
         return Maybe(void).success;
     }
@@ -2915,7 +2916,7 @@ pub fn setFileOffsetToEndWindows(fd: bun.FileDescriptor) Maybe(usize) {
         var new_ptr: std.os.windows.LARGE_INTEGER = undefined;
         const rc = kernel32.SetFilePointerEx(fd.cast(), 0, &new_ptr, windows.FILE_END);
         if (rc == windows.FALSE) {
-            return Maybe(usize).errnoSys(0, .lseek) orelse Maybe(usize){ .result = 0 };
+            return Maybe(usize).errnoSysFd(0, .lseek, fd) orelse Maybe(usize){ .result = 0 };
         }
         return Maybe(usize){ .result = @intCast(new_ptr) };
     }
@@ -2934,10 +2935,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
 
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
-    if (Maybe([2]bun.FileDescriptor).errnoSys(
-        rc,
-        .pipe,
-    )) |err| {
+    if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });

@@ -3538,7 +3538,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         0,
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
-    if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+    if (bun.JSC.Maybe(void).errnoSysP(rc, .open, sub_path_w)) |err| {
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);

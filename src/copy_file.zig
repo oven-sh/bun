@@ -67,7 +67,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
             .OPNOTSUPP => {},
-            else => return CopyFileReturnType.errnoSys(rc, .copyfile).?,
+            else => return CopyFileReturnType.errnoSysFd(rc, .copyfile, in).?,
         }
     }
 
@@ -118,7 +118,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
     }
 
     if (comptime Environment.isWindows) {
-        if (CopyFileReturnType.errnoSys(bun.windows.CopyFileW(in.ptr, out.ptr, 0), .copyfile)) |err| {
+        if (CopyFileReturnType.errnoSysP(bun.windows.CopyFileW(in.ptr, out.ptr, 0), .copyfile, in)) |err| {
             return err;
         }
 

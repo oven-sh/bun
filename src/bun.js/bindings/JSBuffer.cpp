@@ -251,11 +251,11 @@ static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lex
 {
     auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto arg_s = arg_->getString(lexicalGlobalObject);
+    const auto& view = arg_->view(lexicalGlobalObject);
 
-    std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, arg_s);
+    std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, view);
     if (UNLIKELY(!encoded)) {
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg_s);
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -322,7 +322,7 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     if (UNLIKELY(str->length() == 0))
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
-    const auto& view = str->value(lexicalGlobalObject);
+    const auto& view = str->view(lexicalGlobalObject);
     if (view->isNull()) {
         return {};
     }
@@ -444,7 +444,9 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const auto& view = str->tryGetValue(lexicalGlobalObject);
+    // Use ->view() here instead of ->value() as that will avoid flattening ropestrings from .slice()
+    const auto& view = str->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::EncodedJSValue result;
 
     if (view->is8Bit()) {
@@ -524,7 +526,10 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
-            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg1.getString(lexicalGlobalObject));
+            auto* encodingString = arg1.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto& view = encodingString->view(lexicalGlobalObject);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
         }
 
         encoding = encoded.value();
@@ -569,13 +574,15 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
                 }
             }
             auto startPtr = uint8Array->typedVector() + start;
-            auto str_ = value.toWTFString(lexicalGlobalObject);
-            if (str_.isEmpty()) {
+            auto str_ = value.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto& view = str_->view(lexicalGlobalObject);
+            if (view->isEmpty()) {
                 memset(startPtr, 0, length);
                 RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
             }
 
-            ZigString str = Zig::toZigString(str_);
+            ZigString str = Zig::toZigString(view);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
                 throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);

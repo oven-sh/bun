@@ -32,7 +32,7 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
         const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
 
         try formatter.writeIndent(Writer, writer);
-        try writer.writeAll(comptime bun.Output.prettyFmt("<r>endPoint<d>:<r> \"", enable_ansi_colors));
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{endpoint});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");

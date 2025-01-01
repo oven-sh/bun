@@ -511,12 +511,16 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     if (!globalObject->hasProcessObject()) {
         return;
     }
-
+    auto& vm = globalObject->vm();
     auto* process = jsCast<Process*>(globalObject->processObject());
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    Bun__VirtualMachine__exitDuringUncaughtException(bunVM(globalObject->vm()));
-    process->wrapped().emit(Identifier::fromString(globalObject->vm(), "beforeExit"_s), arguments);
+    Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
+    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    if (fired) {
+        auto nextTickQueue = jsCast<JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+        nextTickQueue->drain(vm, globalObject);
+    }
 }
 
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
@@ -3013,7 +3017,8 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
 {
     JSValue nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        nextTickQueueObject = Bun::JSNextTickQueue::create(globalObject);
+        auto nextTickQueue = Bun::JSNextTickQueue::create(globalObject);
+        nextTickQueueObject = nextTickQueue;
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());

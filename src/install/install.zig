@@ -8537,6 +8537,7 @@ pub const PackageManager = struct {
         pub fn supportsWorkspaceFiltering(this: Subcommand) bool {
             return switch (this) {
                 .outdated => true,
+                .install => true,
                 // .pack => true,
                 else => false,
             };
@@ -9516,6 +9517,7 @@ pub const PackageManager = struct {
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 

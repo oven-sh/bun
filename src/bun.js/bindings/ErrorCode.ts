@@ -55,6 +55,7 @@ export default [
   ["ERR_UNKNOWN_CREDENTIAL", Error],
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
   ["ERR_DLOPEN_FAILED", Error],
+  ["ERR_ASSERTION", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

@@ -592,6 +592,21 @@ JSC::EncodedJSValue UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(JSC::ThrowScope& thro
     return {};
 }
 
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue msg)
+{
+    auto msg_string = msg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto message = msg_string;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_ASSERTION, message));
+    return {};
+}
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral msg)
+{
+    auto message = msg;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_ASSERTION, message));
+    return {};
+}
+
 }
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

@@ -2479,13 +2479,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue arg1 = callFrame->argument(1);
-    String message = arg1.isUndefined() ? String() : arg1.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto error = createError(globalObject, makeString("Assertion failed: "_s, message));
-    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, makeString("ERR_ASSERTION"_s)));
-    throwException(globalObject, throwScope, error);
-    return {};
+    auto msg = callFrame->argument(1);
+    auto msgb = msg.toBoolean(globalObject);
+    if (msgb) {
+        return Bun::ERR::ASSERTION(throwScope, globalObject, msg);
+    }
+    return Bun::ERR::ASSERTION(throwScope, globalObject, "assertion error"_s);
 }
 
 extern "C" uint64_t Bun__Os__getFreeMemory(void);

@@ -222,6 +222,7 @@ pub const ResolvedSource = extern struct {
     already_bundled: bool = false,
     bytecode_cache: ?[*]u8 = null,
     bytecode_cache_size: usize = 0,
+    source_map_memory_cost: usize = 0,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };

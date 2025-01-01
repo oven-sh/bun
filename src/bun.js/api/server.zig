@@ -5383,10 +5383,17 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("sendText expects a string", .{});
         }
 
-        var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
-        defer string_slice.deinit();
+        var js_string = message_value.toString(globalThis);
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+        const view = js_string.view(globalThis);
+        const slice = view.toSlice(bun.default_allocator);
+        defer slice.deinit();
 
-        const buffer = string_slice.slice();
+        defer js_string.ensureStillAlive();
+
+        const buffer = slice.slice();
         switch (this.websocket().send(buffer, .text, compress, true)) {
             .backpressure => {
                 log("sendText() backpressure ({d} bytes string)", .{buffer.len});
@@ -6007,10 +6014,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             {
-                var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
-                defer string_slice.deinit();
+                var js_string = message_value.toString(globalThis);
+                if (globalThis.hasException()) {
+                    return .zero;
+                }
+                const view = js_string.view(globalThis);
+                const slice = view.toSlice(bun.default_allocator);
+                defer slice.deinit();
 
-                const buffer = string_slice.slice();
+                defer js_string.ensureStillAlive();
+
+                const buffer = slice.slice();
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent

@@ -25,7 +25,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -152,7 +152,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -279,7 +279,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -406,7 +406,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "dist_tag": {
@@ -533,7 +533,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -660,7 +660,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -787,7 +787,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -944,7 +944,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -1101,7 +1101,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -1258,7 +1258,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.1
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -1415,7 +1415,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -1572,7 +1572,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "id": 2,
@@ -1729,7 +1729,7 @@ exports[`dependency on workspace without version in package.json: version: lates
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "dist_tag": {
@@ -1886,7 +1886,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "dist_tag": {
@@ -2043,7 +2043,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
     },
     {
       "behavior": {
-        "normal": true,
+        "prod": true,
         "workspace": true,
       },
       "dist_tag": {

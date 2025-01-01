@@ -6,7 +6,32 @@ const PathOrBlob = JSC.Node.PathOrBlob;
 const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const strings = bun.strings;
+const Output = bun.Output;
+const S3Bucket = @import("./S3Bucket.zig");
 
+pub fn writeFormat(s3: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
+    const credentials = s3.getCredentials();
+
+    if (credentials.bucket.len > 0) {
+        try writer.print(
+            comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r>", enable_ansi_colors),
+            .{
+                credentials.bucket,
+                s3.path(),
+            },
+        );
+    } else {
+        try writer.print(
+            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+            .{
+                s3.pathlike.slice(),
+            },
+        );
+    }
+
+    try S3Bucket.writeFormatCredentials(credentials, s3.options, Formatter, formatter, writer, enable_ansi_colors);
+}
 pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);

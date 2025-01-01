@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows, isMusl, isBroken } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows, isMusl, isBroken, nodeExe } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { join, basename } from "path";
@@ -288,7 +288,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
       : buildMode == BuildMode.debug
         ? directories.bunDebug
         : directories.bunRelease;
-  const exe = runtime == Runtime.node ? "node" : bunExe();
+  const exe = runtime == Runtime.node ? (nodeExe() ?? "node") : bunExe();
 
   const cmd = [
     exe,

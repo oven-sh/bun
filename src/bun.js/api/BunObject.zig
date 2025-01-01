@@ -31,6 +31,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const s3 = toJSCallback(WebCore.Blob.constructS3File);
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -56,6 +57,7 @@ pub const BunObject = struct {
     pub const SHA384 = toJSGetter(Crypto.SHA384.getter);
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
+    pub const S3 = toJSGetter(JSC.WebCore.Blob.getJSS3FileConstructor);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
@@ -108,12 +110,14 @@ pub const BunObject = struct {
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(BunObject.MD4, .{ .name = getterName("MD4") });
         @export(BunObject.MD5, .{ .name = getterName("MD5") });
+        @export(BunObject.S3, .{ .name = getterName("S3") });
         @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
         @export(BunObject.SHA224, .{ .name = getterName("SHA224") });
         @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
         @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
@@ -155,6 +159,7 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
+        @export(BunObject.s3, .{ .name = callbackName("s3") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
@@ -1149,11 +1154,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2324,8 +2329,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {

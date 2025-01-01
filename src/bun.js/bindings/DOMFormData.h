@@ -65,10 +65,10 @@ public:
 
     void append(const String& name, const String& value);
     void append(const String& name, RefPtr<Blob>, const String& filename = {});
-    void remove(const String& name);
-    std::optional<FormDataEntryValue> get(const String& name);
-    Vector<FormDataEntryValue> getAll(const String& name);
-    bool has(const String& name);
+    void remove(const StringView name);
+    std::optional<FormDataEntryValue> get(const StringView name);
+    Vector<FormDataEntryValue> getAll(const StringView name);
+    bool has(const StringView name);
     void set(const String& name, const String& value);
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
     Ref<DOMFormData> clone() const;

@@ -512,8 +512,6 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
 }
 
 pub fn chdirOSPath(path: bun.OSPathSliceZ, destination: bun.OSPathSliceZ) Maybe(void) {
-    assertIsValidWindowsPath(bun.OSPathChar, destination);
-
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
         return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;

@@ -1920,11 +1920,17 @@ pub const JSString = extern struct {
         return shim.cppFn("toZigString", .{ this, global, zig_str });
     }
 
+    pub fn ensureStillAlive(this: *JSString) void {
+        std.mem.doNotOptimizeAway(this);
+    }
+
     pub fn getZigString(this: *JSString, global: *JSGlobalObject) JSC.ZigString {
         var out = JSC.ZigString.init("");
         this.toZigString(global, &out);
         return out;
     }
+
+    pub const view = getZigString;
 
     // doesn't always allocate
     pub fn toSlice(
@@ -2463,6 +2469,14 @@ pub const JSPromise = extern struct {
 
         pub fn valueOrEmpty(this: *const Strong) JSValue {
             return this.strong.get() orelse .zero;
+        }
+
+        pub fn hasValue(this: *const Strong) bool {
+            return this.strong.has();
+        }
+
+        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
+            return this.strong.globalThis;
         }
 
         pub fn swap(this: *Strong) *JSC.JSPromise {
@@ -4342,6 +4356,15 @@ pub const JSValue = enum(i64) {
 
         return buf[0..@as(usize, @intCast(count))];
     }
+    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, f64) JSValue;
+    pub fn getDateNowISOString(globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
+        const count = JSC__JSValue__DateNowISOString(globalObject, buf);
+        if (count < 0) {
+            return "";
+        }
+
+        return buf[0..@as(usize, @intCast(count))];
+    }
 
     /// Return the pointer to the wrapped object only if it is a direct instance of the type.
     /// If the object does not match the type, return null.
@@ -4401,6 +4424,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__dateInstanceFromNumber(*JSGlobalObject, f64) JSValue;
+
     pub fn fromDateNumber(globalObject: *JSGlobalObject, value: f64) JSValue {
         JSC.markBinding(@src());
         return JSC__JSValue__dateInstanceFromNumber(globalObject, value);
@@ -4603,15 +4627,6 @@ pub const JSValue = enum(i64) {
         var str = ZigString.init("");
         this.getClassName(globalThis, &str);
         return str;
-    }
-
-    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]const ZigString, strings_count: usize, clone: bool) JSValue {
-        return cppFn("createStringArray", .{
-            globalThis,
-            str,
-            strings_count,
-            clone,
-        });
     }
 
     pub fn print(
@@ -5625,6 +5640,7 @@ pub const JSValue = enum(i64) {
                 }
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "string", prop);
             },
+            i32 => return prop.coerce(i32, global),
             else => @compileError("TODO:" ++ @typeName(T)),
         }
     }
@@ -6725,10 +6741,10 @@ pub const CallFrame = opaque {
     /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const slice = self.arguments();
-        comptime bun.assert(max <= 10);
+        comptime bun.assert(max <= 13);
         return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
+            inline 1...13 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
             else => unreachable,
         };
     }

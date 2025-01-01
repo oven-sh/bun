@@ -3966,7 +3966,7 @@ pub const VirtualMachine = struct {
                 defer iterator.deinit();
                 const longest_name = @min(iterator.getLongestPropertyName(), 10);
                 var is_first_property = true;
-                while (iterator.next()) |field| {
+                while (iterator.next() orelse iterator.getCodeProperty()) |field| {
                     const value = iterator.value;
                     if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
                         continue;
@@ -3976,6 +3976,7 @@ pub const VirtualMachine = struct {
                     if (field.eqlComptime("code")) {
                         if (value.isString()) {
                             const str = value.toBunString(this.global);
+                            defer str.deref();
                             if (!str.isEmpty()) {
                                 if (str.eql(name)) {
                                     continue;

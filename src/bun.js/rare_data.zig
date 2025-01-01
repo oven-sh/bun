@@ -48,7 +48,58 @@ listening_sockets_for_watch_mode_lock: bun.Lock = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
+aws_signature_cache: AWSSignatureCache = .{},
+
 const PipeReadBuffer = [256 * 1024]u8;
+const DIGESTED_HMAC_256_LEN = 32;
+pub const AWSSignatureCache = struct {
+    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
+    date: u64 = 0,
+    lock: bun.Lock = .{},
+
+    pub fn clean(this: *@This()) void {
+        for (this.cache.keys()) |cached_key| {
+            bun.default_allocator.free(cached_key);
+        }
+        this.cache.clearRetainingCapacity();
+    }
+
+    pub fn get(this: *@This(), numeric_day: u64, key: []const u8) ?[]const u8 {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.date == 0) {
+            return null;
+        }
+        if (this.date == numeric_day) {
+            if (this.cache.getKey(key)) |cached| {
+                return cached;
+            }
+        }
+        return null;
+    }
+
+    pub fn set(this: *@This(), numeric_day: u64, key: []const u8, value: [DIGESTED_HMAC_256_LEN]u8) void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.date == 0) {
+            this.cache = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
+        } else if (this.date != numeric_day) {
+            // day changed so we clean the old cache
+            this.clean();
+        }
+        this.date = numeric_day;
+        this.cache.put(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
+    }
+    pub fn deinit(this: *@This()) void {
+        this.date = 0;
+        this.clean();
+        this.cache.deinit();
+    }
+};
+
+pub fn awsCache(this: *RareData) *AWSSignatureCache {
+    return &this.aws_signature_cache;
+}
 
 pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     return this.temp_pipe_read_buffer orelse {
@@ -388,6 +439,8 @@ pub fn deinit(this: *RareData) void {
         this.temp_pipe_read_buffer = null;
         bun.default_allocator.destroy(pipe);
     }
+
+    this.aws_signature_cache.deinit();
 
     if (this.boring_ssl_engine) |engine| {
         _ = bun.BoringSSL.ENGINE_free(engine);

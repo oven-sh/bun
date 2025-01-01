@@ -453,10 +453,10 @@ pub const OutdatedCommand = struct {
         for (workspace_pkg_ids) |workspace_pkg_id| {
             inline for (
                 .{
-                    Behavior{ .normal = true },
-                    Behavior{ .dev = true },
-                    Behavior{ .peer = true },
-                    Behavior{ .optional = true },
+                    Behavior.prod,
+                    Behavior.dev,
+                    Behavior.peer,
+                    Behavior.optional,
                 },
             ) |group_behavior| {
                 for (outdated_ids.items) |ids| {
@@ -465,7 +465,7 @@ pub const OutdatedCommand = struct {
                     const dep_id = ids.dep_id;
 
                     const dep = dependencies[dep_id];
-                    if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+                    if (!dep.behavior.includes(group_behavior)) continue;
 
                     const package_name = pkg_names[package_id].slice(string_buf);
                     const resolution = pkg_resolutions[package_id];

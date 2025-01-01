@@ -2143,6 +2143,7 @@ pub const Process = struct {
                     },
                 };
                 @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
+                fs.top_level_dir_buf[into_cwd_buf.len] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len :0];
 
                 const len = fs.top_level_dir.len;

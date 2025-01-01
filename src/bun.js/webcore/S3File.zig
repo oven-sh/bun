@@ -15,7 +15,7 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
 
     if (credentials.bucket.len > 0) {
         try writer.print(
-            comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r>", enable_ansi_colors),
+            comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r> {{", enable_ansi_colors),
             .{
                 credentials.bucket,
                 s3.path(),
@@ -23,7 +23,7 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
         );
     } else {
         try writer.print(
-            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
             .{
                 s3.path(),
             },
@@ -31,6 +31,9 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
     }
 
     try S3Bucket.writeFormatCredentials(credentials, s3.options, Formatter, formatter, writer, enable_ansi_colors);
+    try formatter.writeIndent(@TypeOf(writer), writer);
+    try writer.writeAll("}");
+    formatter.resetLine();
 }
 pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();

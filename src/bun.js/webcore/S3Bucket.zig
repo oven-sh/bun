@@ -47,7 +47,7 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
         if (credentials.accessKeyId.len > 0) {
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
 
             try writer.writeAll("\n");
@@ -55,7 +55,7 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
 
         if (credentials.secretAccessKey.len > 0) {
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll(comptime bun.Output.prettyFmt("<r>secretAccessKey<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
 
             try writer.writeAll("\n");
@@ -63,7 +63,7 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
 
         if (credentials.sessionToken.len > 0) {
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll(comptime bun.Output.prettyFmt("<r>sessionToken<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
 
             try writer.writeAll("\n");
@@ -92,14 +92,19 @@ pub fn writeFormat(this: *S3BucketOptions, comptime Formatter: type, formatter: 
     try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Bucket<r>", enable_ansi_colors));
     if (this.credentials.bucket.len > 0) {
         try writer.print(
-            comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+            comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
             .{
                 this.credentials.bucket,
             },
         );
+    } else {
+        try writer.writeAll(comptime bun.Output.prettyFmt(" {{", enable_ansi_colors));
     }
 
     try writeFormatCredentials(this.credentials, this.options, Formatter, formatter, writer, enable_ansi_colors);
+    try formatter.writeIndent(@TypeOf(writer), writer);
+    try writer.writeAll("}");
+    formatter.resetLine();
 }
 extern fn BUN__getJSS3Bucket(value: JSValue) callconv(JSC.conv) ?*S3BucketOptions;
 

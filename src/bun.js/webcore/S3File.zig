@@ -212,24 +212,26 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
-        if (try opts.getTruthy(globalObject, "type")) |file_type| {
-            inner: {
-                if (file_type.isString()) {
-                    var allocator = bun.default_allocator;
-                    var str = file_type.toSlice(globalObject, bun.default_allocator);
-                    defer str.deinit();
-                    const slice = str.slice();
-                    if (!strings.isAllASCII(slice)) {
-                        break :inner;
+        if (opts.isObject()) {
+            if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
+                inner: {
+                    if (file_type.isString()) {
+                        var allocator = bun.default_allocator;
+                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        defer str.deinit();
+                        const slice = str.slice();
+                        if (!strings.isAllASCII(slice)) {
+                            break :inner;
+                        }
+                        blob.content_type_was_set = true;
+                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
+                            blob.content_type = entry.value;
+                            break :inner;
+                        }
+                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                        blob.content_type_allocated = true;
                     }
-                    blob.content_type_was_set = true;
-                    if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                        blob.content_type = entry.value;
-                        break :inner;
-                    }
-                    const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
-                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                    blob.content_type_allocated = true;
                 }
             }
         }
@@ -251,24 +253,26 @@ pub fn constructS3FileWithAWSCredentials(
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
-        if (try opts.getTruthy(globalObject, "type")) |file_type| {
-            inner: {
-                if (file_type.isString()) {
-                    var allocator = bun.default_allocator;
-                    var str = file_type.toSlice(globalObject, bun.default_allocator);
-                    defer str.deinit();
-                    const slice = str.slice();
-                    if (!strings.isAllASCII(slice)) {
-                        break :inner;
+        if (opts.isObject()) {
+            if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
+                inner: {
+                    if (file_type.isString()) {
+                        var allocator = bun.default_allocator;
+                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        defer str.deinit();
+                        const slice = str.slice();
+                        if (!strings.isAllASCII(slice)) {
+                            break :inner;
+                        }
+                        blob.content_type_was_set = true;
+                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
+                            blob.content_type = entry.value;
+                            break :inner;
+                        }
+                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                        blob.content_type_allocated = true;
                     }
-                    blob.content_type_was_set = true;
-                    if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                        blob.content_type = entry.value;
-                        break :inner;
-                    }
-                    const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
-                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                    blob.content_type_allocated = true;
                 }
             }
         }

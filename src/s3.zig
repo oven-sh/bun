@@ -690,12 +690,15 @@ pub const AWSCredentials = struct {
                 .path = if (path) |p| bun.String.init(p) else bun.String.empty,
             };
         }
+
+        pub fn deinit(this: *const @This()) void {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+        }
+
         pub fn toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) JSC.JSValue {
-            defer {
-                this.path.deref();
-                this.code.deref();
-                this.message.deref();
-            }
+            defer this.deinit();
 
             return S3Error__toErrorInstance(this, global);
         }
@@ -1557,6 +1560,7 @@ pub const AWSCredentials = struct {
     const S3UploadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
+        task: *MultiPartUpload,
         callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
         ref_count: u32 = 1,
@@ -1588,6 +1592,7 @@ pub const AWSCredentials = struct {
             self.readable_stream_ref.deinit();
             self.sink.finalize();
             self.sink.destroy();
+            self.task.deref();
             self.destroy();
         }
     };
@@ -1595,6 +1600,7 @@ pub const AWSCredentials = struct {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
+
         if (this.sink.endPromise.hasValue()) {
             this.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
         }
@@ -1602,6 +1608,7 @@ pub const AWSCredentials = struct {
             stream.done(globalThis);
         }
         this.readable_stream_ref.deinit();
+        this.task.continueStream();
 
         return .undefined;
     }
@@ -1610,6 +1617,7 @@ pub const AWSCredentials = struct {
         const args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
+
         const err = args.ptr[0];
         if (this.sink.endPromise.hasValue()) {
             this.sink.endPromise.rejectOnNextTick(globalThis, err);
@@ -1627,6 +1635,8 @@ pub const AWSCredentials = struct {
                 });
             }
         }
+        this.task.continueStream();
+
         return .undefined;
     }
     pub const shim = JSC.Shimmer("Bun", "S3UploadStream", @This());
@@ -1647,6 +1657,30 @@ pub const AWSCredentials = struct {
         this.ref(); // ref the credentials
         const proxy_url = (proxy orelse "");
 
+        if (readable_stream.isDisturbed(globalThis)) {
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        }
+
+        switch (readable_stream.ptr) {
+            .Invalid => {
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            },
+            inline .File, .Bytes => |stream| {
+                if (stream.pending.result == .err) {
+                    // we got an error, fail early
+                    const err = stream.pending.result.err;
+                    stream.pending = .{ .result = .{ .done = {} } };
+                    const js_err, const was_strong = err.toJSWeak(globalThis);
+                    if (was_strong == .Strong) {
+                        js_err.unprotect();
+                    }
+                    js_err.ensureStillAlive();
+                    return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                }
+            },
+            else => {},
+        }
+
         const task = MultiPartUpload.new(.{
             .credentials = this,
             .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
@@ -1662,7 +1696,7 @@ pub const AWSCredentials = struct {
 
         task.poll_ref.ref(task.vm);
 
-        task.ref(); // + 1 for the stream
+        task.ref(); // + 1 for the stream sink
 
         var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
             .task = .{ .s3_upload = task },
@@ -1671,6 +1705,8 @@ pub const AWSCredentials = struct {
             .encoded = false,
             .endPromise = JSC.JSPromise.Strong.init(globalThis),
         }).toSink();
+        task.ref(); // + 1 for the stream wrapper
+
         const endPromise = response_stream.sink.endPromise.value();
         const ctx = S3UploadStreamWrapper.new(.{
             .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
@@ -1678,8 +1714,13 @@ pub const AWSCredentials = struct {
             .callback = callback,
             .callback_context = callback_context,
             .path = task.path,
+            .task = task,
         });
         task.callback_context = @ptrCast(ctx);
+        // keep the task alive until we are done configuring the signal
+        task.ref();
+        defer task.deref();
+
         var signal = &response_stream.sink.signal;
 
         signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
@@ -1706,6 +1747,7 @@ pub const AWSCredentials = struct {
             if (response_stream.sink.endPromise.hasValue()) {
                 response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
             }
+
             task.fail(.{
                 .code = "UnknownError",
                 .message = "ReadableStream ended with an error",
@@ -1722,7 +1764,6 @@ pub const AWSCredentials = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status(globalThis.vm())) {
                     .pending => {
-                        task.continueStream();
                         ctx.ref();
                         assignment_result.then(
                             globalThis,
@@ -1730,18 +1771,22 @@ pub const AWSCredentials = struct {
                             onUploadStreamResolveRequestStream,
                             onUploadStreamRejectRequestStream,
                         );
+                        if (!task.ended)
+                            task.continueStream();
                     },
                     .fulfilled => {
                         task.continueStream();
                         if (response_stream.sink.endPromise.hasValue()) {
                             response_stream.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
                         }
+
                         readable_stream.done(globalThis);
                     },
                     .rejected => {
                         if (response_stream.sink.endPromise.hasValue()) {
                             response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
                         }
+
                         task.fail(.{
                             .code = "UnknownError",
                             .message = "ReadableStream ended with an error",
@@ -1753,6 +1798,7 @@ pub const AWSCredentials = struct {
                 if (response_stream.sink.endPromise.hasValue()) {
                     response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
                 }
+
                 task.fail(.{
                     .code = "UnknownError",
                     .message = "ReadableStream ended with an error",
@@ -2191,10 +2237,7 @@ pub const MultiPartUpload = struct {
 
     pub fn onCommitMultiPartRequest(result: AWS.S3CommitResult, this: *@This()) void {
         log("onCommitMultiPartRequest {s}", .{this.upload_id});
-        if (this.state == .finished) {
-            this.deinit();
-            return;
-        }
+
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
@@ -2238,7 +2281,6 @@ pub const MultiPartUpload = struct {
         const searchParams = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
         }) catch unreachable;
-        this.ref();
 
         this.credentials.executeSimpleS3Request(.{
             .path = this.path,
@@ -2254,7 +2296,6 @@ pub const MultiPartUpload = struct {
         const search_params = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
         }) catch unreachable;
-        this.ref();
 
         this.credentials.executeSimpleS3Request(.{
             .path = this.path,

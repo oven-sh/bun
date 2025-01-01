@@ -30,7 +30,7 @@ Bun statically links these libraries:
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
-| [`zlib-cloudflare`](https://github.com/cloudflare/zlib) | zlib |
+| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
 | [`libicu`](https://github.com/unicode-org/icu) 72 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |

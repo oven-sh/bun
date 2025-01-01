@@ -3272,7 +3272,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".
-        // Each HTTP request or TCP socket connection is effectively a "task".
         //
         // However, unlike the regular task queue, we don't drain the microtask
         // queue at the end.

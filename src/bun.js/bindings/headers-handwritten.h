@@ -72,6 +72,8 @@ typedef struct BunString {
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 
+    size_t memoryCost() const;
+
 } BunString;
 
 typedef struct ZigErrorType {
@@ -107,6 +109,7 @@ typedef struct ResolvedSource {
     bool already_bundled;
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
+    size_t source_map_memory_cost;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

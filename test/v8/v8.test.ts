@@ -38,7 +38,7 @@ const directories = {
 };
 
 async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promise<void> {
-  await fs.cp(srcDir, tmpDir, { recursive: true });
+  await fs.cp(srcDir, tmpDir, { recursive: true, force: true });
   const install = spawn({
     cmd: [bunExe(), "install", "--ignore-scripts"],
     cwd: tmpDir,
@@ -47,9 +47,9 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
     stdout: "inherit",
     stderr: "inherit",
   });
-  await install.exited;
-  if (install.exitCode != 0) {
-    throw new Error("build failed");
+  const exitCode = await install.exited;
+  if (exitCode !== 0) {
+    throw new Error(`install failed: ${exitCode}`);
   }
 }
 
@@ -70,13 +70,17 @@ async function build(
     stdout: "pipe",
     stderr: "pipe",
   });
-  await build.exited;
-  const out = await new Response(build.stdout).text();
-  const err = await new Response(build.stderr).text();
-  if (build.exitCode != 0) {
-    console.error(err);
-    throw new Error("build failed");
+  const [exitCode, out, err] = await Promise.all([
+    build.exited,
+    new Response(build.stdout).text(),
+    new Response(build.stderr).text(),
+  ]);
+  if (exitCode !== 0) {
+    console.error(exitCode);
+    console.log(out);
+    throw new Error(`build failed: ${exitCode}`);
   }
+
   return {
     out,
     err,

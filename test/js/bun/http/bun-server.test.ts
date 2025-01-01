@@ -317,8 +317,7 @@ describe("Server", () => {
     }
   });
 
-
-  test('server should return a body for a OPTIONS Request', async () => {
+  test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -327,15 +326,16 @@ describe("Server", () => {
     });
     {
       const url = `http://${server.hostname}:${server.port}/`;
-      const response = await fetch(new Request(url, {
-        method: 'OPTIONS',
-      }));
+      const response = await fetch(
+        new Request(url, {
+          method: "OPTIONS",
+        }),
+      );
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
       expect(response.url).toBe(url);
     }
   });
-
 
   test("abort signal on server with stream", async () => {
     {
@@ -456,7 +456,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr.toString('utf-8')).toBeEmpty();
+    expect(stderr.toString("utf-8")).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });
@@ -768,3 +768,130 @@ test.skip("should be able to stream huge amounts of data", async () => {
   expect(written).toBe(CONTENT_LENGTH);
   expect(received).toBe(CONTENT_LENGTH);
 }, 30_000);
+
+describe("HEAD requests #15355", () => {
+  test("should be able to make HEAD requests with content-length or transfer-encoding (async)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await Bun.sleep(1);
+        if (req.method === "HEAD") {
+          if (req.url.endsWith("/content-length")) {
+            return new Response(null, {
+              headers: {
+                "Content-Length": "11",
+              },
+            });
+          }
+          return new Response(null, {
+            headers: {
+              "Transfer-Encoding": "chunked",
+            },
+          });
+        }
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World");
+        }
+        return new Response(async function* () {
+          yield "Hello";
+          await Bun.sleep(1);
+          yield " ";
+          await Bun.sleep(1);
+          yield "World";
+        });
+      },
+    });
+
+    {
+      const response = await fetch(server.url + "/content-length");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    {
+      const response = await fetch(server.url + "/chunked");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("Hello World");
+    }
+
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("");
+    }
+  });
+
+  test("should be able to make HEAD requests with content-length or transfer-encoding (sync)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.method === "HEAD") {
+          if (req.url.endsWith("/content-length")) {
+            return new Response(null, {
+              headers: {
+                "Content-Length": "11",
+              },
+            });
+          }
+          return new Response(null, {
+            headers: {
+              "Transfer-Encoding": "chunked",
+            },
+          });
+        }
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World");
+        }
+        return new Response(async function* () {
+          yield "Hello";
+          await Bun.sleep(1);
+          yield " ";
+          await Bun.sleep(1);
+          yield "World";
+        });
+      },
+    });
+
+    {
+      const response = await fetch(server.url + "/content-length");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    {
+      const response = await fetch(server.url + "/chunked");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("Hello World");
+    }
+
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("");
+    }
+  });
+});

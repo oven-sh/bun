@@ -317,8 +317,7 @@ describe("Server", () => {
     }
   });
 
-
-  test('server should return a body for a OPTIONS Request', async () => {
+  test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -327,15 +326,16 @@ describe("Server", () => {
     });
     {
       const url = `http://${server.hostname}:${server.port}/`;
-      const response = await fetch(new Request(url, {
-        method: 'OPTIONS',
-      }));
+      const response = await fetch(
+        new Request(url, {
+          method: "OPTIONS",
+        }),
+      );
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
       expect(response.url).toBe(url);
     }
   });
-
 
   test("abort signal on server with stream", async () => {
     {
@@ -456,7 +456,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr.toString('utf-8')).toBeEmpty();
+    expect(stderr.toString("utf-8")).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });
@@ -768,3 +768,33 @@ test.skip("should be able to stream huge amounts of data", async () => {
   expect(written).toBe(CONTENT_LENGTH);
   expect(received).toBe(CONTENT_LENGTH);
 }, 30_000);
+
+test("should be able to redirect when using empty streams #15320", async () => {
+  using server = Bun.serve({
+    port: 0,
+    websocket: void 0,
+    async fetch(req, server2) {
+      const url = new URL(req.url);
+      if (url.pathname === "/redirect") {
+        const emptyStream = new ReadableStream({
+          start(controller) {
+            // Immediately close the stream to make it empty
+            controller.close();
+          },
+        });
+
+        return new Response(emptyStream, {
+          status: 307,
+          headers: {
+            location: "/",
+          },
+        });
+      }
+
+      return new Response("Hello, World");
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}/redirect`);
+  expect(await response.text()).toBe("Hello, World");
+});

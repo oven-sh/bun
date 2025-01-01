@@ -2488,6 +2488,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
     return {};
 }
 
+extern "C" uint64_t Bun__Os__getFreeMemory(void);
+JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsDoubleNumber(Bun__Os__getFreeMemory()));
+}
+
 #define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \
     {                                                                                                                                                                                                                                    \
         throwScope.throwException(globalObject, createError(globalObject, String("process.binding(\"" str "\") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" issue ""_s))); \
@@ -3315,6 +3321,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   argv                             constructArgv                                       PropertyCallback
   argv0                            constructArgv0                                      PropertyCallback
   assert                           Process_functionAssert                              Function 1
+  availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
   chdir                            Process_functionChdir                               Function 1

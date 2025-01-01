@@ -894,4 +894,61 @@ describe("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
   });
+
+  test("HEAD requests should not have body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Hello World");
+      },
+    });
+
+    {
+      const response = await fetch(server.url + "/content-length");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    function doHead(server: Server, path: string): Promise<{ headers: string; body: string }> {
+      const { promise, resolve } = Promise.withResolvers();
+      // use node net to make a HEAD request
+      const net = require("net");
+      const url = new URL(server.url);
+      const socket = net.createConnection(url.port, url.hostname);
+      socket.write(`HEAD ${path} HTTP/1.1\r\nHost: ${url.hostname}:${url.port}\r\n\r\n`);
+      let body = "";
+      let headers = "";
+      socket.on("data", data => {
+        body += data.toString();
+        if (!headers) {
+          const headerIndex = body.indexOf("\r\n\r\n");
+          if (headerIndex !== -1) {
+            headers = body.slice(0, headerIndex);
+            body = body.slice(headerIndex + 4);
+
+            setTimeout(() => {
+              // wait to see if we get extra data
+              resolve({ headers, body });
+              socket.destroy();
+            }, 100);
+          }
+        }
+      });
+      return promise;
+    }
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+
+    {
+      const { headers, body } = await doHead(server, "/content-length");
+      expect(headers.toLowerCase()).toContain("content-length: 11");
+      expect(body).toBe("");
+    }
+  });
 });

@@ -983,17 +983,20 @@ pub const FFI = struct {
             return val;
         }
         JSC.markBinding(@src());
-        var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
-        for (symbols.values(), 0..) |*function, i| {
+        var strs = std.ArrayList(bun.String).initCapacity(allocator, symbols.count()) catch bun.outOfMemory();
+        defer {
+            for (strs.items) |str| {
+                str.deref();
+            }
+            strs.deinit();
+        }
+        for (symbols.values()) |*function| {
             var arraylist = std.ArrayList(u8).init(allocator);
             var writer = arraylist.writer();
             function.printSourceCode(&writer) catch {
                 // an error while generating source code
                 for (symbols.keys()) |key| {
                     allocator.free(@constCast(key));
-                }
-                for (zig_strings) |zig_string| {
-                    allocator.free(@constCast(zig_string.slice()));
                 }
                 for (symbols.values()) |*function_| {
                     function_.arg_types.deinit(allocator);
@@ -1002,16 +1005,13 @@ pub const FFI = struct {
                 symbols.clearAndFree(allocator);
                 return ZigString.init("Error while printing code").toErrorInstance(global);
             };
-            zig_strings[i] = ZigString.init(arraylist.items);
+            strs.appendAssumeCapacity(bun.String.createUTF8(arraylist.items));
         }
 
-        const ret = JSC.JSValue.createStringArray(global, zig_strings.ptr, zig_strings.len, true);
+        const ret = bun.String.toJSArray(global, strs.items);
 
         for (symbols.keys()) |key| {
             allocator.free(@constCast(key));
-        }
-        for (zig_strings) |zig_string| {
-            allocator.free(@constCast(zig_string.slice()));
         }
         for (symbols.values()) |*function_| {
             function_.arg_types.deinit(allocator);

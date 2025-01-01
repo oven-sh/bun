@@ -438,6 +438,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
             if(eof && s) {
+                if (UNLIKELY(us_socket_is_closed(0, s))) {
+                    // Do not call on_end after the socket has been closed
+                    return;
+                }
                 if (us_socket_is_shut_down(0, s)) {
                     /* We got FIN back after sending it */
                     s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);

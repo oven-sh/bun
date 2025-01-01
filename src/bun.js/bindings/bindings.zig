@@ -4618,15 +4618,6 @@ pub const JSValue = enum(i64) {
         return str;
     }
 
-    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]const ZigString, strings_count: usize, clone: bool) JSValue {
-        return cppFn("createStringArray", .{
-            globalThis,
-            str,
-            strings_count,
-            clone,
-        });
-    }
-
     pub fn print(
         this: JSValue,
         globalObject: *JSGlobalObject,

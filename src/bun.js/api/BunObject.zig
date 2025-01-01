@@ -1154,11 +1154,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2329,8 +2329,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {

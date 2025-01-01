@@ -1559,7 +1559,7 @@ pub const AWSCredentials = struct {
 
     const S3UploadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
-        sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
+        sink: *JSC.WebCore.NetworkSink,
         task: *MultiPartUpload,
         callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
@@ -1698,7 +1698,7 @@ pub const AWSCredentials = struct {
 
         task.ref(); // + 1 for the stream sink
 
-        var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
+        var response_stream = JSC.WebCore.NetworkSink.new(.{
             .task = .{ .s3_upload = task },
             .buffer = .{},
             .globalThis = globalThis,
@@ -1723,7 +1723,7 @@ pub const AWSCredentials = struct {
 
         var signal = &response_stream.sink.signal;
 
-        signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
+        signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1731,7 +1731,7 @@ pub const AWSCredentials = struct {
         bun.assert(signal.isDead());
 
         // We are already corked!
-        const assignment_result: JSC.JSValue = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.assignToStream(
+        const assignment_result: JSC.JSValue = JSC.WebCore.NetworkSink.JSSink.assignToStream(
             globalThis,
             readable_stream.value,
             response_stream,
@@ -1811,7 +1811,7 @@ pub const AWSCredentials = struct {
     /// returns a writable stream that writes to the s3 path
     pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
-            pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
+            pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
                 if (sink.endPromise.hasValue()) {
                     if (sink.endPromise.globalObject()) |globalObject| {
                         const event_loop = globalObject.bunVM().eventLoop();
@@ -1853,7 +1853,7 @@ pub const AWSCredentials = struct {
         task.poll_ref.ref(task.vm);
 
         task.ref(); // + 1 for the stream
-        var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
+        var response_stream = JSC.WebCore.NetworkSink.new(.{
             .task = .{ .s3_upload = task },
             .buffer = .{},
             .globalThis = globalThis,
@@ -1864,7 +1864,7 @@ pub const AWSCredentials = struct {
         task.callback_context = @ptrCast(response_stream);
         var signal = &response_stream.sink.signal;
 
-        signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
+        signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent

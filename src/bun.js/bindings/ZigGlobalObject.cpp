@@ -3141,7 +3141,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSFetchTaskletChunkedRequestControllerPrototype.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FetchTaskletChunkedRequestSink);
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
             init.set(prototype);
         });
 
@@ -3273,11 +3273,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSFetchTaskletChunkedRequestSinkClassStructure.initLater(
+    m_JSNetworkSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchTaskletChunkedRequestSink);
-            auto* structure = JSFetchTaskletChunkedRequestSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFetchTaskletChunkedRequestSinkConstructor::create(init.vm, init.global, JSFetchTaskletChunkedRequestSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
+            auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3829,7 +3829,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSFetchTaskletChunkedRequestSinkClassStructure.visit(visitor);
+    thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
     thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);

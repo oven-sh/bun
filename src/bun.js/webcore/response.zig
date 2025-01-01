@@ -804,7 +804,7 @@ pub const Fetch = struct {
     };
 
     pub const FetchTasklet = struct {
-        pub const FetchTaskletStream = JSC.WebCore.FetchTaskletChunkedRequestSink;
+        pub const FetchTaskletStream = JSC.WebCore.NetworkSink;
 
         const log = Output.scoped(.FetchTasklet, false);
         sink: ?*FetchTaskletStream.JSSink = null,

@@ -210,10 +210,10 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
-    JSC::Structure* FetchTaskletChunkedRequestSinkStructure() const { return m_JSFetchTaskletChunkedRequestSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* FetchTaskletChunkedRequestSink() { return m_JSFetchTaskletChunkedRequestSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue FetchTaskletChunkedRequestSinkPrototype() const { return m_JSFetchTaskletChunkedRequestSinkClassStructure.prototypeInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableFetchTaskletChunkedRequestSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
+    JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
@@ -523,7 +523,7 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSFetchTaskletChunkedRequestSinkClassStructure;
+    LazyClassStructure m_JSNetworkSinkClassStructure;
 
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;

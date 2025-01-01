@@ -482,7 +482,7 @@ pub const StreamStart = union(Tag) {
     FileSink: FileSinkOptions,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
-    FetchTaskletChunkedRequestSink: void,
+    NetworkSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
     done: bun.ByteList,
@@ -509,7 +509,7 @@ pub const StreamStart = union(Tag) {
         FileSink,
         HTTPSResponseSink,
         HTTPResponseSink,
-        FetchTaskletChunkedRequestSink,
+        NetworkSink,
         ready,
         owned_and_done,
         done,
@@ -660,7 +660,7 @@ pub const StreamStart = union(Tag) {
                     },
                 };
             },
-            .FetchTaskletChunkedRequestSink, .HTTPSResponseSink, .HTTPResponseSink => {
+            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
@@ -2637,7 +2637,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 }
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
-pub const FetchTaskletChunkedRequestSink = struct {
+pub const NetworkSink = struct {
     task: ?HTTPWritableStream = null,
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
@@ -2651,7 +2651,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
 
     auto_flusher: AutoFlusher = AutoFlusher{},
 
-    pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
+    pub usingnamespace bun.New(NetworkSink);
     const HTTPWritableStream = union(enum) {
         fetch: *JSC.WebCore.Fetch.FetchTasklet,
         s3_upload: *S3MultiPartUpload,
@@ -2960,7 +2960,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
         return this.buffer.memoryCost();
     }
 
-    const name = "FetchTaskletChunkedRequestSink";
+    const name = "NetworkSink";
     pub const JSSink = NewJSSink(@This(), name);
 };
 pub const BufferedReadableStreamAction = enum {

@@ -1226,6 +1226,22 @@ declare module "bun" {
      */
     unlink(): Promise<void>;
   }
+  interface NetworkSink extends FileSink {
+    /**
+     * Write a chunk of data to the network.
+     *
+     * If the network is not writable yet, the data is buffered.
+     */
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    /**
+     * Flush the internal buffer, committing the data to the network.
+     */
+    flush(): number | Promise<number>;
+    /**
+     * Finish the upload. This also flushes the internal buffer.
+     */
+    end(error?: Error): number | Promise<number>;
+  }
 
   interface S3Options extends BlobPropertyBag {
     /**
@@ -1327,9 +1343,9 @@ declare module "bun" {
     slice(contentType?: string): S3File;
 
     /**
-     * Incremental writer to stream writes to S3, this is equivalent of using MultipartUpload and is suitable for large files.
+     * Incremental writer to stream writes to the network, this is equivalent of using MultipartUpload and is suitable for large files.
      */
-    writer(options?: S3Options): FileSink;
+    writer(options?: S3Options): NetworkSink;
 
     /**
      * The readable stream of the file.

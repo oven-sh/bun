@@ -5323,10 +5323,17 @@ pub const ServerWebSocket = struct {
         }
 
         {
-            var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
-            defer string_slice.deinit();
+            var js_string = message_value.toString(globalThis);
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+            const view = js_string.view(globalThis);
+            const slice = view.toSlice(bun.default_allocator);
+            defer slice.deinit();
 
-            const buffer = string_slice.slice();
+            defer js_string.ensureStillAlive();
+
+            const buffer = slice.slice();
             switch (this.websocket().send(buffer, .text, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes string)", .{buffer.len});

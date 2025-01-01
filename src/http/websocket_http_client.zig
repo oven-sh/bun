@@ -1997,14 +1997,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return cost;
         }
 
-        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
-            var cost: usize = @sizeOf(WebSocket);
-            cost += this.send_buffer.buf.len;
-            cost += this.receive_buffer.buf.len;
-            // This is under-estimated a little, as we don't include usockets context.
-            return cost;
-        }
-
         pub const Export = shim.exportFunctions(.{
             .writeBinaryData = writeBinaryData,
             .writeString = writeString,

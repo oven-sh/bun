@@ -3115,6 +3115,7 @@ pub const JSGlobalObject = opaque {
         value: JSValue,
     ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
+        defer formatter.deinit();
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, value.toFmt(&formatter) }).throw();
     }
 
@@ -3125,6 +3126,7 @@ pub const JSGlobalObject = opaque {
         value: JSValue,
     ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
+        defer formatter.deinit();
         return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
     }
 
@@ -6817,6 +6819,7 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                     if (value != .zero) {
                         if (globalThis.hasException()) {
                             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                            defer formatter.deinit();
                             bun.Output.prettyErrorln(
                                 \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
                                 \\

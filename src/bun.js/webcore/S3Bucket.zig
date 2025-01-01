@@ -20,6 +20,93 @@ const S3BucketOptions = struct {
     }
 };
 
+pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUpload.MultiPartUploadOptions, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    try writer.writeAll("\n");
+
+    {
+        const Writer = @TypeOf(writer);
+
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
+
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>endPoint<d>:<r> \"", enable_ansi_colors));
+        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{endpoint});
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try writer.writeAll("\n");
+
+        const region = if (credentials.region.len > 0) credentials.region else AWSCredentials.guessRegion(credentials.endpoint);
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>region<d>:<r> \"", enable_ansi_colors));
+        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{region});
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try writer.writeAll("\n");
+
+        // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
+        if (credentials.accessKeyId.len > 0) {
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+
+            try writer.writeAll("\n");
+        }
+
+        if (credentials.secretAccessKey.len > 0) {
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>secretAccessKey<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+
+            try writer.writeAll("\n");
+        }
+
+        if (credentials.sessionToken.len > 0) {
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime bun.Output.prettyFmt("<r>sessionToken<d>:<r> \"<r><b>********<r>\"", enable_ansi_colors));
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+
+            try writer.writeAll("\n");
+        }
+
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>partSize<d>:<r> ", enable_ansi_colors));
+        try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(options.partSize), .NumberObject, enable_ansi_colors);
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+
+        try writer.writeAll("\n");
+
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>queueSize<d>:<r> ", enable_ansi_colors));
+        try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(options.queueSize), .NumberObject, enable_ansi_colors);
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try writer.writeAll("\n");
+
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime bun.Output.prettyFmt("<r>retry<d>:<r> ", enable_ansi_colors));
+        try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(options.retry), .NumberObject, enable_ansi_colors);
+        try writer.writeAll("\n");
+    }
+}
+pub fn writeFormat(this: *S3BucketOptions, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Bucket<r>", enable_ansi_colors));
+    if (this.credentials.bucket.len > 0) {
+        try writer.print(
+            comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+            .{
+                this.credentials.bucket,
+            },
+        );
+    }
+
+    try writeFormatCredentials(this.credentials, this.options, Formatter, formatter, writer, enable_ansi_colors);
+}
+extern fn BUN__getJSS3Bucket(value: JSValue) callconv(JSC.conv) ?*S3BucketOptions;
+
+pub fn fromJS(value: JSValue) ?*S3BucketOptions {
+    return BUN__getJSS3Bucket(value);
+}
+
 pub fn call(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);

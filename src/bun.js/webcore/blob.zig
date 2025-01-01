@@ -54,6 +54,9 @@ const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
 const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
 const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
 
+const S3File = @import("./S3File.zig");
+const S3Bucket = @import("./S3Bucket.zig");
+
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
@@ -702,12 +705,26 @@ pub const Blob = struct {
             switch (store.data) {
                 .s3 => |s3| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
-                    try writer.print(
-                        comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
-                        .{
-                            s3.pathlike.slice(),
-                        },
-                    );
+                    const credentials = s3.getCredentials();
+
+                    if (credentials.bucket.len > 0) {
+                        try writer.print(
+                            comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r>", enable_ansi_colors),
+                            .{
+                                credentials.bucket,
+                                s3.pathlike.slice(),
+                            },
+                        );
+                    } else {
+                        try writer.print(
+                            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+                            .{
+                                s3.pathlike.slice(),
+                            },
+                        );
+                    }
+
+                    try S3Bucket.writeFormatCredentials(credentials, s3.options, Formatter, formatter, writer, enable_ansi_colors);
                 },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
@@ -6180,5 +6197,3 @@ pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, val
     const blob = value.as(Blob) orelse return false;
     return blob.is_jsdom_file;
 }
-
-const S3File = @import("./S3File.zig");

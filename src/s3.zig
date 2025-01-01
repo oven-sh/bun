@@ -338,7 +338,7 @@ pub const AWSCredentials = struct {
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
     };
-    fn guessRegion(endpoint: []const u8) []const u8 {
+    pub fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
             if (strings.indexOf(endpoint, ".amazonaws.com")) |end| {

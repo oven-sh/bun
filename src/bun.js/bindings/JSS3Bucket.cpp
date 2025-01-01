@@ -238,6 +238,12 @@ SYSV_ABI EncodedJSValue BUN__createJSS3Bucket(JSC::JSGlobalObject* globalObject,
 {
     return JSValue::encode(constructS3Bucket(globalObject, callframe));
 };
+SYSV_ABI void* BUN__getJSS3Bucket(JSC::EncodedJSValue value)
+{
+    JSValue thisValue = JSC::JSValue::decode(value);
+    auto* thisObject = jsDynamicCast<JSS3Bucket*>(thisValue);
+    return thisObject ? thisObject->ptr : nullptr;
+};
 }
 
 Structure* createJSS3BucketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

@@ -517,8 +517,10 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     if (fired) {
-        auto nextTickQueue = jsCast<JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
-        nextTickQueue->drain(vm, globalObject);
+        if (auto ntq = globalObject->m_nextTickQueue) {
+            auto nextTickQueue = jsDynamicCast<JSNextTickQueue*>(ntq.get());
+            if (nextTickQueue) nextTickQueue->drain(vm, globalObject);
+        }
     }
 }
 

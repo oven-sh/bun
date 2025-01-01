@@ -2149,6 +2149,20 @@ pub const Subprocess = struct {
         }) {
             .err => |err| {
                 spawn_options.deinit();
+                switch (err.getErrno()) {
+                    .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => {
+                        const display_path: [:0]const u8 = if (argv0 != null)
+                            std.mem.sliceTo(argv0.?, 0)
+                        else if (argv.items.len > 0 and argv.items[0] != null)
+                            std.mem.sliceTo(argv.items[0].?, 0)
+                        else
+                            "";
+                        if (display_path.len > 0)
+                            return globalThis.throwValue(err.withPath(display_path).toJSC(globalThis));
+                    },
+                    else => {},
+                }
+
                 return globalThis.throwValue(err.toJSC(globalThis));
             },
             .result => |result| result,

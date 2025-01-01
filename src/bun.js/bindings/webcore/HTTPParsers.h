@@ -80,8 +80,7 @@ bool isValidLanguageHeaderValue(const String&);
 #if USE(GLIB)
 WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const String&);
 #endif
-bool isValidHTTPToken(const String&);
-bool isValidHTTPToken(StringView);
+bool isValidHTTPToken(const StringView);
 std::optional<WallTime> parseHTTPDate(const String&);
 StringView filenameFromHTTPContentDisposition(StringView);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);

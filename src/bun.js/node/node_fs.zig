@@ -255,6 +255,14 @@ pub const Async = struct {
                         const args_: Arguments.Writev = task.args;
                         const fd = args_.fd.impl().uv();
                         const bufs = args_.buffers.buffers.items;
+
+                        // https://github.com/nodejs/node/blob/35742a2d0b3ac1a1eff5ab333b5ae2fef009f00b/lib/fs.js#L953
+                        if (bufs.len == 0) {
+                            task.result = Maybe(Return.Writev){ .result = .{ .bytes_written = 0 } };
+                            task.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
+                            return task.promise.value();
+                        }
+
                         const pos: i64 = args_.position orelse -1;
 
                         var sum: u64 = 0;

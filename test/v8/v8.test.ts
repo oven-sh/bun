@@ -76,7 +76,7 @@ async function build(
     new Response(build.stderr).text(),
   ]);
   if (exitCode !== 0) {
-    console.error(exitCode);
+    console.error(err);
     console.log(out);
     throw new Error(`build failed: ${exitCode}`);
   }

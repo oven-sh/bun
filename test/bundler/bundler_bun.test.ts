@@ -87,7 +87,7 @@ describe("bundler", () => {
 5 |   // hello world
 6 |           throw   new
                       ^
-error: Hello World`,
+Error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },

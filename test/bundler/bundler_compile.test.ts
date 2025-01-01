@@ -73,7 +73,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
         import {rmSync} from 'fs';
         // Verify we're not just importing from the filesystem
         rmSync("./worker.ts", {force: true});
-        
+
         console.log("Hello, world!");
         new Worker("./worker");
       `,
@@ -553,7 +553,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
 5 |   // hello world
 6 |           throw   new
                       ^
-error: Hello World`,
+Error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },
@@ -591,7 +591,7 @@ console.log(ReactDom);`,
 7 |   // hello world
 8 |           throw   new
                       ^
-error: Hello World`,
+Error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:8:19");
       },

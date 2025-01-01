@@ -118,7 +118,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
     }
 
     if (comptime Environment.isWindows) {
-        if (CopyFileReturnType.errnoSysP(bun.windows.CopyFileW(in.ptr, out.ptr, 0), .copyfile, in)) |err| {
+        if (CopyFileReturnType.errnoSys(bun.windows.CopyFileW(in.ptr, out.ptr, 0), .copyfile)) |err| {
             return err;
         }
 

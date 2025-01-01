@@ -36,5 +36,5 @@ test("Bun.serve() propagates errors to the parent", async () => {
   });
 
   expect(exitCode).toBe(1);
-  expect(stderr.toString()).toContain("error: Test failed successfully");
+  expect(stderr.toString()).toContain("Error: Test failed successfully");
 });

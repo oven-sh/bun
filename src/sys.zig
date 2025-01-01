@@ -511,19 +511,21 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
-pub fn chdirOSPath(path: bun.OSPathSliceZ, destination: bun.OSPathSliceZ) Maybe(void) {
+pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
         return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isWindows) {
-        if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), kernel32.GetLastError() });
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        if (kernel32.SetCurrentDirectory(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
+            log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
             return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), 0 });
+        log("SetCurrentDirectory({s}) = {d}", .{ destination, 0 });
 
         return Maybe(void).success;
     }
@@ -561,12 +563,10 @@ pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
         }
 
         if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSliceZ, destination));
+            return chdirOSPath(path, @as(bun.OSPathSliceZ, destination));
         }
 
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
-        return chdirOSPath(bun.strings.toWDirPath(wbuf, destination));
+        return chdirOSPath(path, destination);
     }
 
     return Maybe(void).todo();
@@ -750,10 +750,9 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
         .windows => {
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
-            if (Maybe(void).errnoSysP(
+            if (Maybe(void).errnoSys(
                 rc,
                 .mkdir,
-                file_path,
             )) |err| {
                 log("CreateDirectoryW({}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
                 return err;

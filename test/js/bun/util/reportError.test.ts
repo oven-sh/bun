@@ -22,7 +22,7 @@ test("reportError", () => {
     `
 "1 | reportError(new Error("reportError Test!"));
                 ^
-error: reportError Test!
+Error: reportError Test!
       at [file]:1:13
 error: true
 true

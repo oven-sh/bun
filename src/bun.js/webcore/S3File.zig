@@ -9,7 +9,7 @@ const strings = bun.strings;
 const Output = bun.Output;
 const S3Bucket = @import("./S3Bucket.zig");
 
-pub fn writeFormat(s3: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
 
@@ -25,7 +25,7 @@ pub fn writeFormat(s3: *@This(), comptime Formatter: type, formatter: *Formatter
         try writer.print(
             comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
             .{
-                s3.pathlike.slice(),
+                s3.path(),
             },
         );
     }

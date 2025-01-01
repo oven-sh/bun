@@ -703,7 +703,7 @@ pub const Blob = struct {
             const store = this.store.?;
             switch (store.data) {
                 .s3 => |*s3| {
-                    S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors);
+                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors);
                 },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));

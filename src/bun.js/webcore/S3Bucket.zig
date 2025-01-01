@@ -33,14 +33,14 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endPoint<d>:<r> \"", enable_ansi_colors));
-        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{endpoint});
+        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{endpoint});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
         const region = if (credentials.region.len > 0) credentials.region else AWSCredentials.guessRegion(credentials.endpoint);
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>region<d>:<r> \"", enable_ansi_colors));
-        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{region});
+        try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{region});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 

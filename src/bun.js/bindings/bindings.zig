@@ -1915,11 +1915,17 @@ pub const JSString = extern struct {
         return shim.cppFn("toZigString", .{ this, global, zig_str });
     }
 
+    pub fn ensureStillAlive(this: *JSString) void {
+        std.mem.doNotOptimizeAway(this);
+    }
+
     pub fn getZigString(this: *JSString, global: *JSGlobalObject) JSC.ZigString {
         var out = JSC.ZigString.init("");
         this.toZigString(global, &out);
         return out;
     }
+
+    pub const view = getZigString;
 
     // doesn't always allocate
     pub fn toSlice(

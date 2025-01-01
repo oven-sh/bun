@@ -2,7 +2,7 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
-const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED, ERR_IPC_ONE_PIPE } = require("internal/errors");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -76,9 +76,7 @@ var ReadableFromWeb;
 // TODO: Add these params after support added in Bun.spawn
 // uid <number> Sets the user identity of the process (see setuid(2)).
 // gid <number> Sets the group identity of the process (see setgid(2)).
-// detached <boolean> Prepare child to run independently of its parent process. Specific behavior depends on the platform, see options.detached).
 
-// TODO: Add support for ipc option, verify only one IPC channel in array
 // stdio <Array> | <string> Child's stdio configuration (see options.stdio).
 // Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
 // IPC FD passing support
@@ -1432,7 +1430,7 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item, index) {
+function nodeToBun(item: string, index: number): string | number | null {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1501,6 +1499,7 @@ function fdToStdioName(fd) {
 
 function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
+  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw ERR_IPC_ONE_PIPE();
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1527,7 +1526,7 @@ function getBunStdioFromOptions(stdio) {
   return bunStdio;
 }
 
-function normalizeStdio(stdio) {
+function normalizeStdio(stdio): string[] {
   if (typeof stdio === "string") {
     switch (stdio) {
       case "ignore":

@@ -56,6 +56,7 @@ export default [
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_ASSERTION", Error],
+  ["ERR_IPC_ONE_PIPE", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

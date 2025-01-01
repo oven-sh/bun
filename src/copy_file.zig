@@ -67,7 +67,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
             .OPNOTSUPP => {},
-            else => return CopyFileReturnType.errnoSysFd(rc, .copyfile, in).?,
+            else => return CopyFileReturnType.errnoSys(rc, .copyfile).?,
         }
     }
 

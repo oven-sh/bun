@@ -251,11 +251,18 @@ static ZigString toZigString(const WTF::StringView& str)
 
 static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
 {
+    if (str.isSubstring()) {
+        return toZigString(str.view(global));
+    }
+
     return toZigString(str.value(global));
 }
 
 static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
+    if (str->isSubstring()) {
+        return toZigString(str->view(global));
+    }
     return toZigString(str->value(global));
 }
 
@@ -283,7 +290,7 @@ static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlob
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
-    WTF::String str = val.toWTFString(global);
+    auto* str = val.toString(global);
 
     if (scope.exception()) {
         scope.clearException();
@@ -291,9 +298,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
         return ZigStringEmpty;
     }
 
-    scope.release();
+    auto view = str->view(global);
+    if (scope.exception()) {
+        scope.clearException();
+        scope.release();
+        return ZigStringEmpty;
+    }
 
-    return toZigString(str);
+    return toZigString(view);
 }
 
 static const WTF::String toStringStatic(ZigString str)

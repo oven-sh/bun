@@ -2,9 +2,9 @@ register_repository(
   NAME
     zlib
   REPOSITORY
-    cloudflare/zlib
+    zlib-ng/zlib-ng
   COMMIT
-    886098f3f339617b4243b286f5ed364b9989e245
+    cbb6ec1d74e8061efdf7251f8c2dae778bed14fd
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
@@ -33,6 +33,7 @@ register_cmake_command(
     -DBUILD_EXAMPLES=OFF
     "-DCMAKE_C_FLAGS=${ZLIB_CMAKE_C_FLAGS}"
     "-DCMAKE_CXX_FLAGS=${ZLIB_CMAKE_CXX_FLAGS}"
+    -DZLIB_COMPAT=ON
   LIBRARIES
     ${ZLIB_LIBRARY}
   INCLUDES

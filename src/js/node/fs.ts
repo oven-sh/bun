@@ -763,6 +763,12 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
     options = { encoding: options };
   }
 
+  if (options.encoding && options.encoding !== "buffer") {
+    if (!Buffer.isEncoding(options.encoding)) {
+      throw $ERR_INVALID_ARG_VALUE("encoding", options.encoding, "is invalid encoding");
+    }
+  }
+
   if (!$isObject(options) && !$isCallable(options)) {
     throw new TypeError("Expected options to be an object or a string");
   }
@@ -1068,6 +1074,16 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 
   if (!options) {
     throw new TypeError("Expected options to be an object");
+  }
+
+  if (typeof options === "string") {
+    options = { encoding: options };
+  }
+
+  if (options.encoding && options.encoding !== "buffer") {
+    if (!Buffer.isEncoding(options.encoding)) {
+      throw $ERR_INVALID_ARG_VALUE("encoding", options.encoding, "is invalid encoding");
+    }
   }
 
   var {

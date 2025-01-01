@@ -5069,10 +5069,17 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishText requires a non-empty message", .{});
         }
 
-        var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
-        defer string_slice.deinit();
+        var js_string = message_value.toString(globalThis);
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+        const view = js_string.view(globalThis);
+        const slice = view.toSlice(bun.default_allocator);
+        defer slice.deinit();
 
-        const buffer = string_slice.slice();
+        defer js_string.ensureStillAlive();
+
+        const buffer = slice.slice();
 
         const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .text, compress)

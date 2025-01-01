@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, rejectUnauthorizedScope } from "harness";
+import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles } from "harness";
 import path from "path";
 
 describe("Server", () => {
@@ -896,19 +896,34 @@ describe("HEAD requests #15355", () => {
   });
 
   test("HEAD requests should not have body", async () => {
+    const dir = tempDirWithFiles("fsr", {
+      "hello": "Hello World",
+    });
+
+    const filename = path.join(dir, "hello");
     using server = Bun.serve({
       port: 0,
       fetch(req) {
+        if (req.url.endsWith("/file")) {
+          return new Response(Bun.file(filename));
+        }
         return new Response("Hello World");
       },
     });
 
     {
-      const response = await fetch(server.url + "/content-length");
+      const response = await fetch(server.url);
       expect(response.status).toBe(200);
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("Hello World");
     }
+    {
+      const response = await fetch(server.url + "/file");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+
     function doHead(server: Server, path: string): Promise<{ headers: string; body: string }> {
       const { promise, resolve } = Promise.withResolvers();
       // use node net to make a HEAD request
@@ -934,19 +949,31 @@ describe("HEAD requests #15355", () => {
           }
         }
       });
-      return promise;
+      return promise as Promise<{ headers: string; body: string }>;
     }
     {
-      const response = await fetch(server.url + "/content-length", {
+      const response = await fetch(server.url, {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("");
     }
-
     {
-      const { headers, body } = await doHead(server, "/content-length");
+      const response = await fetch(server.url + "/file", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const { headers, body } = await doHead(server, "/");
+      expect(headers.toLowerCase()).toContain("content-length: 11");
+      expect(body).toBe("");
+    }
+    {
+      const { headers, body } = await doHead(server, "/file");
       expect(headers.toLowerCase()).toContain("content-length: 11");
       expect(body).toBe("");
     }

@@ -2728,10 +2728,6 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-
                 const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                 if (length == 0) {
@@ -2762,7 +2758,7 @@ pub const Formatter = struct {
                         },
                     }
                 }
-                if (this.single_line) {
+                if (!this.single_line) {
                     this.writeIndent(Writer, writer_) catch {};
                 }
                 writer.writeAll("}");

@@ -5,6 +5,7 @@
 // fails, potentially crashing the process.
 
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
 

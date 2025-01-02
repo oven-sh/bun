@@ -7,7 +7,6 @@ import {
   bunExe,
   bunEnv as env,
   runBunInstall,
-  tmpdirSync,
   toMatchNodeModulesAt,
   assertManifestsPopulated,
   VerdaccioRegistry,
@@ -33,19 +32,9 @@ afterAll(() => {
   verdaccio.stop();
 });
 
-beforeEach(() => {
-  packageDir = tmpdirSync();
-  packageJson = join(packageDir, "package.json");
-  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+beforeEach(async () => {
+  ({ packageDir, packageJson } = await verdaccio.createTestDir());
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
-  writeFileSync(
-    join(packageDir, "bunfig.toml"),
-    `
-[install]
-cache = "${join(packageDir, ".bun-cache")}"
-registry = "http://localhost:${verdaccio.port}/"
-`,
-  );
 });
 
 test("dependency on workspace without version in package.json", async () => {

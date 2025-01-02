@@ -1,4 +1,4 @@
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -1482,12 +1482,27 @@ export class VerdaccioRegistry {
   }
 
   registryUrl() {
-    return `http://localhost:${this.port}`;
+    return `http://localhost:${this.port}/`;
   }
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
     this.process?.kill();
+  }
+
+  async createTestDir() {
+    const packageDir = tmpdirSync();
+    const packageJson = join(packageDir, "package.json");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `
+      [install]
+      cache = "${join(packageDir, ".bun-cache")}"
+      registry = "${this.registryUrl()}"
+      `,
+    );
+
+    return { packageDir, packageJson };
   }
 }
 

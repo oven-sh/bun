@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 96e45bf863d76d1be2987f04a536b3bf916c3189)
+  set(WEBKIT_VERSION 8a403a9ee358d22c320847dd4ab94dfeaba416b0)
 endif()
 
 if(WEBKIT_LOCAL)

@@ -211,7 +211,7 @@ const LibUVBackend = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch bun.outOfMemory();
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
 
             cache.inflight.append(dns_lookup);
 

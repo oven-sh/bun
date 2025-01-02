@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import * as v8 from "v8";
 import * as v8HeapSnapshot from "v8-heapsnapshot";
 
 test("v8 heap snapshot", async () => {
@@ -20,4 +21,14 @@ test("v8 heap snapshot", async () => {
 
   expect(parsed.nodes.length).toBeGreaterThan(0);
   expect(parsed.edges.length).toBeGreaterThan(0);
+});
+
+test("v8.getHeapSnapshot()", async () => {
+  const snapshot = v8.getHeapSnapshot();
+  let chunks = [];
+  for await (const chunk of snapshot) {
+    expect(chunk.byteLength).toBeGreaterThan(0);
+    chunks.push(chunk);
+  }
+  expect(chunks.length).toBeGreaterThan(0);
 });

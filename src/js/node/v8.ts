@@ -28,8 +28,21 @@ class GCProfiler {
 function cachedDataVersionTag() {
   notimpl("cachedDataVersionTag");
 }
+var HeapSnapshotReadable_;
 function getHeapSnapshot() {
-  notimpl("getHeapSnapshot");
+  if (!HeapSnapshotReadable_) {
+    const Readable = require("node:stream").Readable;
+    class HeapSnapshotReadable extends Readable {
+      constructor() {
+        super();
+        this.push(Bun.generateHeapSnapshot("v8"));
+        this.push(null);
+      }
+    }
+    HeapSnapshotReadable_ = HeapSnapshotReadable;
+  }
+
+  return new HeapSnapshotReadable_();
 }
 
 let totalmem_ = -1;

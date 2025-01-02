@@ -21,7 +21,6 @@
 
 'use strict';
 require('../common');
-<<<<<<<< HEAD:test/js/node/test/parallel/test-dns-resolvens-typeerror.js
 
 // This test ensures `dns.resolveNs()` does not raise a C++-land assertion error
 // and throw a JavaScript TypeError instead.
@@ -54,22 +53,3 @@ assert.throws(
     name: 'TypeError'
   }
 );
-========
-const assert = require('assert');
-const vm = require('vm');
-
-assert.throws(() => {
-  vm.createContext('string is not supported');
-}, {
-  code: 'ERR_INVALID_ARG_TYPE',
-  name: 'TypeError'
-});
-
-// Should not throw.
-vm.createContext({ a: 1 });
-vm.createContext([0, 1, 2, 3]);
-
-const sandbox = {};
-vm.createContext(sandbox);
-vm.createContext(sandbox);
->>>>>>>> origin/main:test/js/node/test/parallel/test-vm-create-context-arg.js

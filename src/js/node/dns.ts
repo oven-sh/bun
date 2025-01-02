@@ -78,11 +78,17 @@ function newResolver(options) {
   return newResolver.zig(options);
 }
 
-let defaultResultOrder = getRuntimeDefaultResultOrderOption();
+function defaultResultOrder() {
+  if (typeof defaultResultOrder.value === "undefined") {
+    defaultResultOrder.value = getRuntimeDefaultResultOrderOption();
+  }
+
+  return defaultResultOrder.value;
+}
 
 function setDefaultResultOrder(order) {
   validateOrder(order);
-  defaultResultOrder = order;
+  defaultResultOrder.value = order;
 }
 
 function getDefaultResultOrder() {
@@ -196,11 +202,11 @@ function validateOrderOption(options) {
 
 function validateResolve(hostname, callback) {
   if (typeof hostname !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
   }
 
   if (typeof callback !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+    throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 }
 
@@ -235,7 +241,7 @@ function translateLookupOptions(options) {
     order = verbatim ? "verbatim" : "ipv4first";
   }
 
-  order ??= defaultResultOrder;
+  order ??= defaultResultOrder();
 
   return {
     family,
@@ -256,7 +262,7 @@ function validateLookupOptions(options) {
 
 function lookup(hostname, options, callback) {
   if (typeof hostname !== "string" && hostname) {
-    throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
   }
 
   if (typeof options === "function") {
@@ -320,7 +326,7 @@ function lookupService(address, port, callback) {
   }
 
   if (typeof callback !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+    throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
   validateString(address);
@@ -343,7 +349,7 @@ function validateResolverOptions(options) {
   for (const key of ["timeout", "tries"]) {
     if (key in options) {
       if (typeof options[key] !== "number") {
-        throw $ERR_INVALID_ARG_TYPE(key, "number", typeof options[key]);
+        throw $ERR_INVALID_ARG_TYPE(key, "number", options[key]);
       }
     }
   }
@@ -383,7 +389,7 @@ var InternalResolver = class Resolver {
     } else if (typeof rrtype === "undefined") {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", typeof rrtype);
+      throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
     validateResolve(hostname, callback);
@@ -555,7 +561,7 @@ var InternalResolver = class Resolver {
 
   resolveCaa(hostname, callback) {
     if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
     Resolver.#getResolver(this)
@@ -572,7 +578,7 @@ var InternalResolver = class Resolver {
 
   resolveTxt(hostname, callback) {
     if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
     Resolver.#getResolver(this)
@@ -588,7 +594,7 @@ var InternalResolver = class Resolver {
   }
   resolveSoa(hostname, callback) {
     if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
     Resolver.#getResolver(this)
@@ -605,7 +611,7 @@ var InternalResolver = class Resolver {
 
   reverse(ip, callback) {
     if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", typeof callback);
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
     Resolver.#getResolver(this)
@@ -711,7 +717,7 @@ const promises = {
 
   lookup(hostname, options) {
     if (typeof hostname !== "string" && hostname) {
-      throw $ERR_INVALID_ARG_TYPE("hostname", "string", typeof hostname);
+      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
     }
 
     if (typeof options === "number") {
@@ -782,7 +788,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder)));
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
     }
@@ -860,7 +866,7 @@ const promises = {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder)),
+            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())),
           );
         default:
           return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));

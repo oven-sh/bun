@@ -21,40 +21,6 @@
 
 'use strict';
 require('../common');
-<<<<<<<< HEAD:test/js/node/test/parallel/test-dns-resolvens-typeerror.js
-
-// This test ensures `dns.resolveNs()` does not raise a C++-land assertion error
-// and throw a JavaScript TypeError instead.
-// Issue https://github.com/nodejs/node-v0.x-archive/issues/7070
-
-const assert = require('assert');
-const dns = require('dns');
-const dnsPromises = dns.promises;
-
-assert.throws(
-  () => dnsPromises.resolveNs([]), // bad name
-  {
-    code: 'ERR_INVALID_ARG_TYPE',
-    name: 'TypeError',
-    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
-  }
-);
-assert.throws(
-  () => dns.resolveNs([]), // bad name
-  {
-    code: 'ERR_INVALID_ARG_TYPE',
-    name: 'TypeError',
-    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
-  }
-);
-assert.throws(
-  () => dns.resolveNs(''), // bad callback
-  {
-    code: 'ERR_INVALID_ARG_TYPE',
-    name: 'TypeError'
-  }
-);
-========
 const assert = require('assert');
 const vm = require('vm');
 
@@ -72,4 +38,3 @@ vm.createContext([0, 1, 2, 3]);
 const sandbox = {};
 vm.createContext(sandbox);
 vm.createContext(sandbox);
->>>>>>>> origin/main:test/js/node/test/parallel/test-vm-create-context-arg.js

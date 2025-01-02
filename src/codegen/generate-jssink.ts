@@ -736,24 +736,35 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
 
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);    
     auto* thisObject = jsCast<${className}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+    
 }
 
 void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);
     auto* thisObject = jsCast<${controller}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+    
+    if (thisObject->m_onPull) {
+        const Identifier& id = Identifier::fromString(vm, "onPull"_s);
+        analyzer.analyzePropertyNameEdge(cell, thisObject->m_onPull.get(), id.impl());
+    }
+
+    if (thisObject->m_onClose) {
+        const Identifier& id = Identifier::fromString(vm, "onClose"_s);
+        analyzer.analyzePropertyNameEdge(cell, thisObject->m_onClose.get(), id.impl());
+    }
 }
 
 
@@ -763,8 +774,11 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${controller}* thisObject = jsCast<${controller}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_onPull);
-    visitor.append(thisObject->m_onClose);
+    
+    // Avoid duplicating in the heap snapshot
+    visitor.appendHidden(thisObject->m_onPull);
+    visitor.appendHidden(thisObject->m_onClose);
+    
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);

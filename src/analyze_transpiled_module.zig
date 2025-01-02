@@ -54,17 +54,16 @@ pub const ModuleInfoDeserialized = struct {
     dead: bool = false,
 
     pub fn deinit(self: *ModuleInfoDeserialized) void {
-        // switch (self.owner) {
-        //     .module_info => {
-        //         const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
-        //         mi.destroy();
-        //     },
-        //     .allocated_slice => |as| {
-        //         as.allocator.free(as.slice);
-        //         as.allocator.destroy(self);
-        //     },
-        // }
-        self.dead = true;
+        switch (self.owner) {
+            .module_info => {
+                const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
+                mi.destroy();
+            },
+            .allocated_slice => |as| {
+                as.allocator.free(as.slice);
+                as.allocator.destroy(self);
+            },
+        }
     }
 
     inline fn eat(rem: *[]const u8, len: usize) ![]const u8 {
@@ -227,7 +226,6 @@ pub const ModuleInfo = struct {
     }
 
     pub fn create(gpa: std.mem.Allocator) !*ModuleInfo {
-        std.log.info("ModuleInfo.create", .{});
         const res = try gpa.create(ModuleInfo);
         res.* = ModuleInfo.init(gpa);
         return res;

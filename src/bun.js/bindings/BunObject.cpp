@@ -565,7 +565,11 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
 
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
-    return JSC::JSValue::encode(jsString(vm, builder.json()));
+    auto json = builder.json();
+    // Returning an object was a bad idea but it's a breaking change
+    // so we'll just keep it for now.
+    JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

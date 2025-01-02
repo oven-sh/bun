@@ -3597,7 +3597,7 @@ declare module "bun" {
    * await Bun.write("heap.heapsnapshot", snapshot);
    * ```
    */
-  function generateHeapSnapshot(format?: "v8"): string;
+  function generateHeapSnapshot(format: "v8"): string;
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.

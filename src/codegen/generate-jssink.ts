@@ -755,6 +755,8 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
+
+    auto& vm = cell->vm();
     
     if (thisObject->m_onPull) {
         JSValue onPull = thisObject->m_onPull.get();

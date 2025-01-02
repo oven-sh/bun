@@ -1602,7 +1602,8 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         ([name, cacheName]) => `
 if (JSValue ${cacheName}Value = thisObject->${cacheName}.get()) {
   if (${cacheName}Value.isCell()) {
-    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), Identifier::fromString(vm, "${name}"_s).impl());
+    const Identifier& id = Identifier::fromString(vm, "${name}"_s);
+    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), id.impl());
   }
 }`,
       )

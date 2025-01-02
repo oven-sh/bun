@@ -48,6 +48,10 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
+
+        // JSC might mess with the stack size.
+        bun.StackCheck.configureThread();
+
         return global;
     }
 

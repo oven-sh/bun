@@ -644,6 +644,14 @@ pub const Loader = enum(u8) {
     bunsh,
     sqlite,
     sqlite_embedded,
+    html,
+
+    pub fn disableHTML(this: Loader) Loader {
+        return switch (this) {
+            .html => .file,
+            else => this,
+        };
+    }
 
     pub inline fn isSQLite(this: Loader) bool {
         return switch (this) {
@@ -652,28 +660,22 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
-        if (experimental_css) {
-            return switch (this) {
-                .file,
-                .napi,
-                .sqlite,
-                .sqlite_embedded,
-                // TODO: loader for reading bytes and creating module or instance
-                .wasm,
-                => true,
-                else => false,
-            };
-        }
+    pub const Experimental = struct {
+        css: bool = bun.FeatureFlags.breaking_changes_1_2,
+        html: bool = bun.FeatureFlags.breaking_changes_1_2,
+    };
+
+    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
         return switch (this) {
             .file,
-            .css,
             .napi,
             .sqlite,
             .sqlite_embedded,
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
+            .css => !experimental.css,
+            .html => !experimental.html,
             else => false,
         };
     }
@@ -684,6 +686,7 @@ pub const Loader = enum(u8) {
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
+            .html => bun.http.MimeType.html,
             else => bun.http.MimeType.other,
         };
     }
@@ -719,6 +722,7 @@ pub const Loader = enum(u8) {
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
+        map.set(.html, "input.html");
         break :brk map;
     };
 
@@ -764,6 +768,7 @@ pub const Loader = enum(u8) {
         .{ "sh", .bunsh },
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
+        .{ "html", .html },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -787,6 +792,7 @@ pub const Loader = enum(u8) {
         .{ "text", .text },
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
+        .{ "html", .html },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -812,6 +818,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .html => .html,
             .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
@@ -840,6 +847,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .html => .html,
             .sqlite => .sqlite,
             _ => .file,
         };
@@ -899,6 +907,7 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+    .{ ".html", .html },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -909,9 +918,9 @@ pub const defaultLoaders = bun.ComptimeStringMap(Loader, default_loaders);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
-    default: ConditionsMap = undefined,
-    import: ConditionsMap = undefined,
-    require: ConditionsMap = undefined,
+    default: ConditionsMap,
+    import: ConditionsMap,
+    require: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
@@ -936,10 +945,25 @@ pub const ESMConditions = struct {
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
 
-        return ESMConditions{
+        return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+        };
+    }
+
+    pub fn clone(self: *const ESMConditions) !ESMConditions {
+        var default = try self.default.clone();
+        errdefer default.deinit();
+        var import = try self.import.clone();
+        errdefer import.deinit();
+        var require = try self.require.clone();
+        errdefer require.deinit();
+
+        return .{
+            .default = default,
+            .import = import,
+            .require = require,
         };
     }
 
@@ -949,9 +973,9 @@ pub const ESMConditions = struct {
         try self.require.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
-            self.default.putAssumeCapacityNoClobber(condition, {});
-            self.import.putAssumeCapacityNoClobber(condition, {});
-            self.require.putAssumeCapacityNoClobber(condition, {});
+            self.default.putAssumeCapacity(condition, {});
+            self.import.putAssumeCapacity(condition, {});
+            self.require.putAssumeCapacity(condition, {});
         }
     }
 };
@@ -1274,6 +1298,11 @@ const default_loader_ext = [_]string{
     ".txt",  ".text",
 };
 
+// Only set it for browsers by default.
+const default_loader_ext_browser = [_]string{
+    ".html",
+};
+
 const node_modules_default_loader_ext_bun = [_]string{".node"};
 const node_modules_default_loader_ext = [_]string{
     ".jsx",
@@ -1290,6 +1319,7 @@ const node_modules_default_loader_ext = [_]string{
     ".cts",
     ".wasm",
     ".text",
+    ".html",
 };
 
 pub const ResolveFileExtensions = struct {
@@ -1340,6 +1370,12 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (target == .browser) {
+        inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
@@ -1498,7 +1534,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
-    experimental_css: bool,
+    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1683,7 +1719,7 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental_css = false,
+            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };
@@ -1713,11 +1749,6 @@ pub const BundleOptions = struct {
         }
 
         opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
-
-        if (bun.FeatureFlags.breaking_changes_1_2) {
-            // This is currently done in DevServer by default, but not in Bun.build
-            @compileError("if (!production) { add \"development\" condition }");
-        }
 
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();

@@ -1797,7 +1797,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = Dependency.Behavior.normal;
+                var dependency_behavior = Dependency.Behavior.prod;
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -1939,7 +1939,7 @@ pub const Resolver = struct {
                                             .root_request_id = 0,
                                         },
                                         null,
-                                    );
+                                    ) catch |enqueue_download_err| return .{ .failure = enqueue_download_err };
 
                                 return .{
                                     .pending = .{
@@ -3307,7 +3307,7 @@ pub const Resolver = struct {
 
         const in_str = argument.toBunString(globalThis);
         defer in_str.deref();
-        const r = &globalThis.bunVM().bundler.resolver;
+        const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 
@@ -3315,7 +3315,7 @@ pub const Resolver = struct {
         bun.JSC.markBinding(@src());
 
         const in_str = bun.String.createUTF8(".");
-        const r = &globalThis.bunVM().bundler.resolver;
+        const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 

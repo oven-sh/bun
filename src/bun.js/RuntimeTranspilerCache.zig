@@ -8,8 +8,9 @@
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
 /// Version 11: Fix \uFFFF printing regression
-/// Version 12: Make JSC only have to parse modules once
-const expected_version = 12;
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+/// Version 13: Make JSC only have to parse modules once
+const expected_version = 13;
 
 const bun = @import("root").bun;
 const std = @import("std");

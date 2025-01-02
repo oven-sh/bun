@@ -4060,6 +4060,37 @@ pub const Expect = struct {
         return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
     }
 
+    pub fn toHaveBeenCalledOnce(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        defer this.postMatch(globalThis);
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledOnce", "<green>expected<r>");
+
+        incrementExpectCallCounter();
+
+        const calls = JSMockFunction__getCalls(value);
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        }
+
+        var pass = @as(i32, @intCast(calls.getLength(globalThis))) == 1;
+
+        const not = this.flags.not;
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        // handle failure
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", true);
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+        }
+
+        const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", false);
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+    }
+
     pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 

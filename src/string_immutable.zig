@@ -1949,9 +1949,10 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: bun.PathBuffer = undefined;
+    const renormalized = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(renormalized);
 
-    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
+    var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
@@ -1961,9 +1962,10 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPath(wbuf, path_to_use);
 }
 pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
-    var renormalized: bun.PathBuffer = undefined;
+    const renormalized = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(renormalized);
 
-    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
+    var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
@@ -1991,17 +1993,20 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: bun.PathBuffer = undefined;
+    var renormalized: ?*bun.PathBuffer = null;
+    defer if (renormalized) |r| bun.PathBufferPool.put(r);
+
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
-        @memcpy(renormalized[0..utf8.len], utf8);
-        for (renormalized[0..utf8.len]) |*c| {
+        renormalized = bun.PathBufferPool.get();
+        @memcpy(renormalized.?[0..utf8.len], utf8);
+        for (renormalized.?[0..utf8.len]) |*c| {
             if (c.* == '/') {
                 c.* = '\\';
             }
         }
-        path_to_use = renormalized[0..utf8.len];
+        path_to_use = renormalized.?[0..utf8.len];
     }
 
     return toWDirPath(wbuf, path_to_use);

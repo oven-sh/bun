@@ -1027,11 +1027,7 @@ void WebSocket::didConnect()
             this->incPendingActivityCount();
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-
-                // m_subprotocol = m_channel->subprotocol();
-                // m_extensions = m_channel->extensions();
                 protectedThis->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
-                // });
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1250,25 +1246,20 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
         if (auto* context = scriptExecutionContext()) {
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->decPendingActivityCount();
+                protectedThis->disablePendingActivity();
             });
-        } else {
-            // we fallback if we don't have a context or we will leak
-            this->decPendingActivityCount();
+            return;
         }
-        return;
-    }
-
-    if (auto* context = scriptExecutionContext()) {
+    } else if (auto* context = scriptExecutionContext()) {
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-            protectedThis->decPendingActivityCount();
+            protectedThis->disablePendingActivity();
         });
-    } else {
-        // we fallback if we don't have a context
-        this->decPendingActivityCount();
+        return;
     }
+
+    this->disablePendingActivity();
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
@@ -1443,13 +1434,19 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->decPendingActivityCount();
+            protectedThis->disablePendingActivity();
         });
     } else {
-        // we fallback if we don't have a context
-        this->decPendingActivityCount();
+        this->deref();
     }
 }
+
+void WebSocket::disablePendingActivity()
+{
+    this->m_pendingActivityCount = 1;
+    this->decPendingActivityCount();
+}
+
 void WebSocket::updateHasPendingActivity()
 {
     std::atomic_thread_fence(std::memory_order_acquire);

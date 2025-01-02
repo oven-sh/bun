@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { ChildProcess, fork } from "child_process";
+import { ChildProcess } from "child_process";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
@@ -25,8 +25,8 @@ import {
   tls,
   isFlaky,
   isMacOS,
-  startVerdaccio,
   readdirSorted,
+  VerdaccioRegistry,
 } from "harness";
 import { join, resolve, sep } from "path";
 const { parseLockfile } = install_test_helpers;
@@ -39,8 +39,8 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var verdaccioServer: ChildProcess | undefined;
-var port: number = randomPort();
+var verdaccio: VerdaccioRegistry;
+var port: number;
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
 var packageJson: string;
@@ -49,12 +49,14 @@ let users: Record<string, string> = {};
 
 beforeAll(async () => {
   setDefaultTimeout(1000 * 60 * 5);
-  ({ verdaccioProcess: verdaccioServer, verdaccioPort: port } = await startVerdaccio());
+  verdaccio = new VerdaccioRegistry();
+  port = verdaccio.port;
+  await verdaccio.start();
 });
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  if (verdaccioServer) verdaccioServer.kill();
+  verdaccio.stop();
 });
 
 beforeEach(async () => {
@@ -76,7 +78,7 @@ registry = "http://localhost:${port}/"
 });
 
 function registryUrl() {
-  return `http://localhost:${port}/`;
+  return verdaccio.registryUrl();
 }
 
 /**
@@ -516,7 +518,7 @@ describe("certificate authority", () => {
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
       if (req.url.includes("no-deps")) {
-        return new Response(Bun.file(join(import.meta.dir, "packages", "no-deps", "no-deps-1.0.0.tgz")));
+        return new Response(Bun.file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")));
       }
       return new Response("OK", { status: 200 });
     };
@@ -1003,7 +1005,7 @@ describe("publish", async () => {
       cache = false
       registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
         await Promise.all([
-          rm(join(import.meta.dir, "packages", "otp-pkg-1"), { recursive: true, force: true }),
+          rm(join(verdaccio.packagesPath, "otp-pkg-1"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
             packageJson,
@@ -1035,7 +1037,7 @@ describe("publish", async () => {
       registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "otp-pkg-2"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "otp-pkg-2"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -1073,7 +1075,7 @@ describe("publish", async () => {
         registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
         await Promise.all([
-          rm(join(import.meta.dir, "packages", "otp-pkg-3"), { recursive: true, force: true }),
+          rm(join(verdaccio.packagesPath, "otp-pkg-3"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
             packageJson,
@@ -1116,7 +1118,7 @@ describe("publish", async () => {
         registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
         await Promise.all([
-          rm(join(import.meta.dir, "packages", "otp-pkg-4"), { recursive: true, force: true }),
+          rm(join(verdaccio.packagesPath, "otp-pkg-4"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
             packageJson,
@@ -1142,7 +1144,7 @@ describe("publish", async () => {
   test("can publish a package then install it", async () => {
     const bunfig = await authBunfig("basic");
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-1"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-1"), { recursive: true, force: true }),
       write(
         packageJson,
         JSON.stringify({
@@ -1174,7 +1176,7 @@ describe("publish", async () => {
       },
     };
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
       write(packageJson, JSON.stringify(json)),
       write(join(packageDir, "bunfig.toml"), bunfig),
     ]);
@@ -1190,7 +1192,7 @@ describe("publish", async () => {
     expect(await exists(join(packageDir, "node_modules", "publish-pkg-2", "package.json"))).toBeTrue();
 
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
       rm(join(packageDir, "bun.lockb"), { recursive: true, force: true }),
       rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
     ]);
@@ -1216,7 +1218,7 @@ describe("publish", async () => {
       console.log({ packageDir, publishDir });
 
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "publish-pkg-bins"), { recursive: true, force: true }),
         write(
           join(publishDir, "package.json"),
           JSON.stringify({
@@ -1280,7 +1282,7 @@ describe("publish", async () => {
     const publishDir = tmpdirSync();
     const bunfig = await authBunfig("manydeps");
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-deps"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-deps"), { recursive: true, force: true }),
       write(
         join(publishDir, "package.json"),
         JSON.stringify(
@@ -1340,7 +1342,7 @@ describe("publish", async () => {
       },
     };
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-3"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-3"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -1365,7 +1367,7 @@ describe("publish", async () => {
     test("does not publish", async () => {
       const bunfig = await authBunfig("dryrun");
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "dry-run-1"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "dry-run-1"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -1382,12 +1384,12 @@ describe("publish", async () => {
       const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
       expect(exitCode).toBe(0);
 
-      expect(await exists(join(import.meta.dir, "packages", "dry-run-1"))).toBeFalse();
+      expect(await exists(join(verdaccio.packagesPath, "dry-run-1"))).toBeFalse();
     });
     test("does not publish from tarball path", async () => {
       const bunfig = await authBunfig("dryruntarball");
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "dry-run-2"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "dry-run-2"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -1406,7 +1408,7 @@ describe("publish", async () => {
       const { out, err, exitCode } = await publish(env, packageDir, "./dry-run-2-2.2.2.tgz", "--dry-run");
       expect(exitCode).toBe(0);
 
-      expect(await exists(join(import.meta.dir, "packages", "dry-run-2"))).toBeFalse();
+      expect(await exists(join(verdaccio.packagesPath, "dry-run-2"))).toBeFalse();
     });
   });
 
@@ -1440,7 +1442,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       test(`should run in order${arg ? " (--dry-run)" : ""}`, async () => {
         const bunfig = await authBunfig("lifecycle" + (arg ? "dry" : ""));
         await Promise.all([
-          rm(join(import.meta.dir, "packages", "publish-pkg-4"), { recursive: true, force: true }),
+          rm(join(verdaccio.packagesPath, "publish-pkg-4"), { recursive: true, force: true }),
           write(packageJson, JSON.stringify(json)),
           write(join(packageDir, "script.js"), script),
           write(join(packageDir, "bunfig.toml"), bunfig),
@@ -1472,7 +1474,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     test("--ignore-scripts", async () => {
       const bunfig = await authBunfig("ignorescripts");
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "publish-pkg-5"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "publish-pkg-5"), { recursive: true, force: true }),
         write(packageJson, JSON.stringify(json)),
         write(join(packageDir, "script.js"), script),
         write(join(packageDir, "bunfig.toml"), bunfig),
@@ -1497,7 +1499,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   test("attempting to publish a private package should fail", async () => {
     const bunfig = await authBunfig("privatepackage");
     await Promise.all([
-      rm(join(import.meta.dir, "packages", "publish-pkg-6"), { recursive: true, force: true }),
+      rm(join(verdaccio.packagesPath, "publish-pkg-6"), { recursive: true, force: true }),
       write(
         packageJson,
         JSON.stringify({
@@ -1516,7 +1518,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     let { out, err, exitCode } = await publish(env, packageDir);
     expect(exitCode).toBe(1);
     expect(err).toContain("error: attempted to publish a private package");
-    expect(await exists(join(import.meta.dir, "packages", "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
+    expect(await exists(join(verdaccio.packagesPath, "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
 
     // try tarball
     await pack(packageDir, env);
@@ -1530,7 +1532,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     test("--access", async () => {
       const bunfig = await authBunfig("accessflag");
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "publish-pkg-7"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "publish-pkg-7"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -1549,7 +1551,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       ({ out, err, exitCode } = await publish(env, packageDir, "--access", "public"));
       expect(exitCode).toBe(0);
 
-      expect(await exists(join(import.meta.dir, "packages", "publish-pkg-7"))).toBeTrue();
+      expect(await exists(join(verdaccio.packagesPath, "publish-pkg-7"))).toBeTrue();
     });
 
     for (const access of ["restricted", "public"]) {
@@ -1568,7 +1570,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         };
 
         await Promise.all([
-          rm(join(import.meta.dir, "packages", "@secret", "publish-pkg-8"), { recursive: true, force: true }),
+          rm(join(verdaccio.packagesPath, "@secret", "publish-pkg-8"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(packageJson, JSON.stringify(pkgJson)),
         ]);
@@ -1596,7 +1598,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         },
       };
       await Promise.all([
-        rm(join(import.meta.dir, "packages", "publish-pkg-9"), { recursive: true, force: true }),
+        rm(join(verdaccio.packagesPath, "publish-pkg-9"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(packageJson, JSON.stringify(pkgJson)),
       ]);
@@ -5236,616 +5238,6 @@ describe("hoisting", async () => {
       lockfile,
     );
   });
-});
-
-describe("workspaces", async () => {
-  test("adding packages in a subdirectory of a workspace", async () => {
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "root",
-        workspaces: ["foo"],
-      }),
-    );
-
-    await mkdir(join(packageDir, "folder1"));
-    await mkdir(join(packageDir, "foo", "folder2"), { recursive: true });
-    await writeFile(
-      join(packageDir, "foo", "package.json"),
-      JSON.stringify({
-        name: "foo",
-      }),
-    );
-
-    // add package to root workspace from `folder1`
-    let { stdout, exited } = spawn({
-      cmd: [bunExe(), "add", "no-deps"],
-      cwd: join(packageDir, "folder1"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    });
-    let out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun add v1."),
-      "",
-      "installed no-deps@2.0.0",
-      "",
-      "2 packages installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await file(packageJson).json()).toEqual({
-      name: "root",
-      workspaces: ["foo"],
-      dependencies: {
-        "no-deps": "^2.0.0",
-      },
-    });
-
-    // add package to foo from `folder2`
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "add", "what-bin"],
-      cwd: join(packageDir, "foo", "folder2"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun add v1."),
-      "",
-      "installed what-bin@1.5.0 with binaries:",
-      " - what-bin",
-      "",
-      "1 package installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
-      name: "foo",
-      dependencies: {
-        "what-bin": "^1.5.0",
-      },
-    });
-
-    // now delete node_modules and bun.lockb and install
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lockb"));
-
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(packageDir, "folder1"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ no-deps@2.0.0",
-      "",
-      "3 packages installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
-
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lockb"));
-
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(packageDir, "foo", "folder2"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ what-bin@1.5.0",
-      "",
-      "3 packages installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
-  });
-  test("adding packages in workspaces", async () => {
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        workspaces: ["packages/*"],
-        dependencies: {
-          "bar": "workspace:*",
-        },
-      }),
-    );
-
-    await mkdir(join(packageDir, "packages", "bar"), { recursive: true });
-    await mkdir(join(packageDir, "packages", "boba"));
-    await mkdir(join(packageDir, "packages", "pkg5"));
-
-    await writeFile(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar" }));
-    await writeFile(
-      join(packageDir, "packages", "boba", "package.json"),
-      JSON.stringify({ name: "boba", version: "1.0.0", dependencies: { "pkg5": "*" } }),
-    );
-    await writeFile(
-      join(packageDir, "packages", "pkg5", "package.json"),
-      JSON.stringify({
-        name: "pkg5",
-        version: "1.2.3",
-        dependencies: {
-          "bar": "workspace:*",
-        },
-      }),
-    );
-
-    let { stdout, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    });
-
-    let out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ bar@workspace:packages/bar",
-      "",
-      "3 packages installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await exists(join(packageDir, "node_modules", "bar"))).toBeTrue();
-    expect(await exists(join(packageDir, "node_modules", "boba"))).toBeTrue();
-    expect(await exists(join(packageDir, "node_modules", "pkg5"))).toBeTrue();
-
-    // add a package to the root workspace
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "add", "no-deps"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun add v1."),
-      "",
-      "installed no-deps@2.0.0",
-      "",
-      "1 package installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await file(packageJson).json()).toEqual({
-      name: "foo",
-      workspaces: ["packages/*"],
-      dependencies: {
-        bar: "workspace:*",
-        "no-deps": "^2.0.0",
-      },
-    });
-
-    // add a package in a workspace
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "add", "two-range-deps"],
-      cwd: join(packageDir, "packages", "boba"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun add v1."),
-      "",
-      "installed two-range-deps@1.0.0",
-      "",
-      "3 packages installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
-      name: "boba",
-      version: "1.0.0",
-      dependencies: {
-        "pkg5": "*",
-        "two-range-deps": "^1.0.0",
-      },
-    });
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      "@types",
-      "bar",
-      "boba",
-      "no-deps",
-      "pkg5",
-      "two-range-deps",
-    ]);
-
-    // add a dependency to a workspace with the same name as another workspace
-    ({ stdout, exited } = spawn({
-      cmd: [bunExe(), "add", "bar@0.0.7"],
-      cwd: join(packageDir, "packages", "boba"),
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    }));
-
-    out = await Bun.readableStreamToText(stdout);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun add v1."),
-      "",
-      "installed bar@0.0.7",
-      "",
-      "1 package installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
-      name: "boba",
-      version: "1.0.0",
-      dependencies: {
-        "pkg5": "*",
-        "two-range-deps": "^1.0.0",
-        "bar": "0.0.7",
-      },
-    });
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      "@types",
-      "bar",
-      "boba",
-      "no-deps",
-      "pkg5",
-      "two-range-deps",
-    ]);
-    expect(await file(join(packageDir, "node_modules", "boba", "node_modules", "bar", "package.json")).json()).toEqual({
-      name: "bar",
-      version: "0.0.7",
-      description: "not a workspace",
-    });
-  });
-  test("it should detect duplicate workspace dependencies", async () => {
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        workspaces: ["packages/*"],
-      }),
-    );
-
-    await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
-    await writeFile(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" }));
-    await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
-    await writeFile(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" }));
-
-    var { stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-
-    var err = await new Response(stderr).text();
-    expect(err).toContain('Workspace name "pkg1" already exists');
-    expect(await exited).toBe(1);
-
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lockb"), { force: true });
-
-    ({ stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(packageDir, "packages", "pkg1"),
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    }));
-
-    err = await new Response(stderr).text();
-    expect(err).toContain('Workspace name "pkg1" already exists');
-    expect(await exited).toBe(1);
-  });
-
-  const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
-
-  for (const rootVersion of versions) {
-    for (const packageVersion of versions) {
-      test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
-        await writeFile(
-          packageJson,
-          JSON.stringify({
-            name: "foo",
-            version: "1.0.0",
-            workspaces: ["packages/*"],
-            dependencies: {
-              pkg2: rootVersion,
-            },
-          }),
-        );
-
-        await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
-        await writeFile(
-          join(packageDir, "packages", "pkg1", "package.json"),
-          JSON.stringify({
-            name: "pkg1",
-            version: "1.0.0",
-            dependencies: {
-              pkg2: packageVersion,
-            },
-          }),
-        );
-
-        await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
-        await writeFile(
-          join(packageDir, "packages", "pkg2", "package.json"),
-          JSON.stringify({ name: "pkg2", version: "1.0.0" }),
-        );
-
-        var { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
-        });
-
-        var err = await new Response(stderr).text();
-        var out = await new Response(stdout).text();
-        expect(err).toContain("Saved lockfile");
-        expect(err).not.toContain("not found");
-        expect(err).not.toContain("error:");
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          `+ pkg2@workspace:packages/pkg2`,
-          "",
-          "2 packages installed",
-        ]);
-        expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-        ({ stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: join(packageDir, "packages", "pkg1"),
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
-        }));
-
-        err = await new Response(stderr).text();
-        out = await new Response(stdout).text();
-        expect(err).not.toContain("Saved lockfile");
-        expect(err).not.toContain("not found");
-        expect(err).not.toContain("error:");
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          "Checked 2 installs across 3 packages (no changes)",
-        ]);
-        expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-        await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
-
-        ({ stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: join(packageDir, "packages", "pkg1"),
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
-        }));
-
-        err = await new Response(stderr).text();
-        out = await new Response(stdout).text();
-        expect(err).toContain("Saved lockfile");
-        expect(err).not.toContain("not found");
-        expect(err).not.toContain("error:");
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          `+ pkg2@workspace:packages/pkg2`,
-          "",
-          "2 packages installed",
-        ]);
-        expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-        ({ stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
-        }));
-
-        err = await new Response(stderr).text();
-        out = await new Response(stdout).text();
-        expect(err).not.toContain("Saved lockfile");
-        expect(err).not.toContain("not found");
-        expect(err).not.toContain("error:");
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          "Checked 2 installs across 3 packages (no changes)",
-        ]);
-        expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-      });
-    }
-  }
-
-  for (const version of versions) {
-    test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          workspaces: ["packages/*"],
-          dependencies: {
-            "workspace-1": version,
-          },
-        }),
-      );
-
-      await mkdir(join(packageDir, "packages", "workspace-1"), { recursive: true });
-      await writeFile(
-        join(packageDir, "packages", "workspace-1", "package.json"),
-        JSON.stringify({
-          name: "workspace-1",
-          version: "1.0.0",
-        }),
-      );
-      // install first from the root, the workspace package
-      var { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-
-      var err = await new Response(stderr).text();
-      var out = await new Response(stdout).text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("already exists");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("Duplicate dependency");
-      expect(err).not.toContain('workspace dependency "workspace-1" not found');
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        `+ workspace-1@workspace:packages/workspace-1`,
-        "",
-        "1 package installed",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-        name: "workspace-1",
-        version: "1.0.0",
-      });
-
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: join(packageDir, "packages", "workspace-1"),
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      }));
-
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("already exists");
-      expect(err).not.toContain("Duplicate dependency");
-      expect(err).not.toContain('workspace dependency "workspace-1" not found');
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "Checked 1 install across 2 packages (no changes)",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-        name: "workspace-1",
-        version: "1.0.0",
-      });
-
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
-
-      // install from workspace package then from root
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: join(packageDir, "packages", "workspace-1"),
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      }));
-
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("already exists");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("Duplicate dependency");
-      expect(err).not.toContain('workspace dependency "workspace-1" not found');
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "1 package installed",
-      ]);
-      expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-        name: "workspace-1",
-        version: "1.0.0",
-      });
-
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      }));
-
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("already exists");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("Duplicate dependency");
-      expect(err).not.toContain('workspace dependency "workspace-1" not found');
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "Checked 1 install across 2 packages (no changes)",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-        name: "workspace-1",
-        version: "1.0.0",
-      });
-    });
-  }
 });
 
 describe("transitive file dependencies", () => {
@@ -13053,7 +12445,7 @@ it("$npm_command is accurate during publish", async () => {
     }),
   );
   await write(join(packageDir, "bunfig.toml"), await authBunfig("npm_command"));
-  await rm(join(import.meta.dir, "packages", "publish-pkg-10"), { recursive: true, force: true });
+  await rm(join(verdaccio.packagesPath, "publish-pkg-10"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo $npm_command\n`);
   expect(out.split("\n")).toEqual([
@@ -13092,7 +12484,7 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     `,
   );
   await write(join(packageDir, "bunfig.toml"), await authBunfig("npm_lifecycle_event"));
-  await rm(join(import.meta.dir, "packages", "publish-pkg-11"), { recursive: true, force: true });
+  await rm(join(verdaccio.packagesPath, "publish-pkg-11"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo 2 $npm_lifecycle_event\n$ echo 3 $npm_lifecycle_event\n`);
   expect(out.split("\n")).toEqual([

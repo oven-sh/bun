@@ -2,8 +2,8 @@ import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
 import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile, readdir } from "fs/promises";
-import fs, { closeSync, openSync } from "node:fs";
+import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
+import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 import detectLibc from "detect-libc";
@@ -1436,47 +1436,59 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
-export async function startVerdaccio(): Promise<{ verdaccioPort: number; verdaccioProcess: ChildProcess }> {
-  const verdaccioPort = randomPort();
-  const verdaccioProcess = fork(
-    require.resolve("verdaccio/bin/verdaccio"),
-    ["-c", join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml"), "-l", `${verdaccioPort}`],
-    {
-      silent: true,
+export class VerdaccioRegistry {
+  port: number;
+  process: ChildProcess | undefined;
+  configPath: string;
+  packagesPath: string;
+
+  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
+    this.port = randomPort();
+    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
+    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
+  }
+
+  async start(silent: boolean = true) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+      silent,
       // Prefer using a release build of Bun since it's faster
       execPath: Bun.which("bun") || bunExe(),
-    },
-  );
+    });
 
-  verdaccioProcess.stderr?.on("data", data => {
-    console.error(`[verdaccio] stderr: ${data}`);
-  });
+    this.process.stderr?.on("data", data => {
+      console.error(`[verdaccio] stderr: ${data}`);
+    });
 
-  verdaccioProcess.on("error", error => {
-    console.error(`Failed to start verdaccio: ${error}`);
-  });
+    this.process.on("error", error => {
+      console.error(`Failed to start verdaccio: ${error}`);
+    });
 
-  verdaccioProcess.on("exit", (code, signal) => {
-    if (code !== 0) {
-      console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-    } else {
-      console.log("Verdaccio exited successfully");
-    }
-  });
-
-  await new Promise<void>(done => {
-    verdaccioProcess.on("message", (msg: { verdaccio_started: boolean }) => {
-      if (msg.verdaccio_started) {
-        console.log("[verdaccio] started on port", verdaccioPort);
-        done();
+    this.process.on("exit", (code, signal) => {
+      if (code !== 0) {
+        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+      } else {
+        console.log("Verdaccio exited successfully");
       }
     });
-  });
 
-  return {
-    verdaccioPort,
-    verdaccioProcess,
-  };
+    await new Promise<void>(resolve => {
+      this.process?.on("message", (message: { verdaccio_started: boolean }) => {
+        if (message.verdaccio_started) {
+          resolve();
+        }
+      });
+    });
+  }
+
+  registryUrl() {
+    return `http://localhost:${this.port}`;
+  }
+
+  stop() {
+    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process?.kill();
+  }
 }
 
 export async function readdirSorted(path: string): Promise<string[]> {

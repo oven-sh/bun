@@ -1559,20 +1559,14 @@ pub fn nonASCIISequenceLength(first_byte: u8) u3 {
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) ?[:0]u16 else ?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
-            const trimmed = bun.simdutf.trim.utf8(bytes);
-
-            if (trimmed.len == 0)
-                break :simd null;
-
-            const out_length = bun.simdutf.length.utf16.from.utf8(trimmed);
-
+            const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
             if (out_length == 0)
                 break :simd null;
 
             var out = try allocator.alloc(u16, out_length + if (sentinel) 1 else 0);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
@@ -1776,104 +1770,6 @@ pub fn toUTF16AllocMaybeBuffered(
 
     log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, output.items.len });
     return .{ output.items, .{0} ** 3, 0 };
-}
-
-pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime _: bool) !?[]u16 {
-    if (strings.firstNonASCII(bytes)) |i| {
-        const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
-            const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
-
-            if (out_length == 0)
-                break :simd null;
-
-            var out = try allocator.alloc(u16, out_length);
-            log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
-
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
-            if (res.status == .success) {
-                return out;
-            }
-
-            if (comptime fail_if_invalid) {
-                allocator.free(out);
-                return error.InvalidByteSequence;
-            }
-
-            break :simd .{
-                .items = out[0..i],
-                .capacity = out.len,
-                .allocator = allocator,
-            };
-        } else null;
-        var output = output_ orelse fallback: {
-            var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
-            list.items.len = i;
-            strings.copyU8IntoU16(list.items, bytes[0..i]);
-            break :fallback list;
-        };
-        errdefer output.deinit();
-
-        var remaining = bytes[i..];
-
-        {
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
-            if (comptime fail_if_invalid) {
-                if (replacement.fail) {
-                    if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
-                    return error.InvalidByteSequence;
-                }
-            }
-            remaining = remaining[@max(replacement.len, 1)..];
-
-            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-            switch (replacement.code_point) {
-                0...0xffff => |c| {
-                    try output.append(@as(u16, @intCast(c)));
-                },
-                else => |c| {
-                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
-                },
-            }
-        }
-
-        while (strings.firstNonASCII(remaining)) |j| {
-            const end = output.items.len;
-            try output.ensureUnusedCapacity(j);
-            output.items.len += j;
-            strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
-            remaining = remaining[j..];
-
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
-            if (comptime fail_if_invalid) {
-                if (replacement.fail) {
-                    if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
-                    return error.InvalidByteSequence;
-                }
-            }
-            remaining = remaining[@max(replacement.len, 1)..];
-
-            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-            switch (replacement.code_point) {
-                0...0xffff => |c| {
-                    try output.append(@as(u16, @intCast(c)));
-                },
-                else => |c| {
-                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
-                },
-            }
-        }
-
-        if (remaining.len > 0) {
-            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
-
-            output.items.len += remaining.len;
-            strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
-        }
-
-        return output.items;
-    }
-
-    return null;
 }
 
 pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement {

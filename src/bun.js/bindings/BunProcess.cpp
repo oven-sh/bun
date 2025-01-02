@@ -428,12 +428,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
-    // TODO: think about the finalizer here
-    // currently we do not dealloc napi modules so we don't have to worry about it right now
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
-    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    ASSERT(success);
+    if (auto resultObject = resultValue.getObject()) {
+#if OS(DARWIN) || OS(LINUX)
+        // If this is a native bundler plugin we want to store the handle from dlopen
+        // as we are going to call `dlsym()` on it later to get the plugin implementation.
+        const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
+#elif OS(WINDOWS)
+        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
+#endif
+        if (pointer_to_plugin_name) {
+            // TODO: think about the finalizer here
+            // currently we do not dealloc napi modules so we don't have to worry about it right now
+            auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+            bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+            ASSERT(success);
+        }
+    }
 
     RETURN_IF_EXCEPTION(scope, {});
 

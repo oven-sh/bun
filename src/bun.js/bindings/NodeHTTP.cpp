@@ -212,10 +212,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
-        LChar* data = nullptr;
+        std::span<LChar> data;
         auto value = String::createUninitialized(pair.second.length(), data);
         if (pair.second.length() > 0)
-            memcpy(data, pair.second.data(), pair.second.length());
+            memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
         WTF::String nameString;

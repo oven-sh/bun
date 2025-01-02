@@ -4,6 +4,7 @@ const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
+const OOM = bun.OOM;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -328,7 +329,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return @constCast(slice);
         }
 
-        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
+        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]u8 {
             const appended = try @call(bun.callmod_inline, append, .{ self, AppendType, _value });
             return @constCast(appended);
         }
@@ -337,17 +338,17 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.appendMutable(EmptyType, EmptyType{ .len = len });
         }
 
-        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) ![]const u8 {
+        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) OOM![]const u8 {
             var buf = try self.appendMutable(EmptyType, EmptyType{ .len = std.fmt.count(fmt, args) + 1 });
             buf[buf.len - 1] = 0;
             return std.fmt.bufPrint(buf.ptr[0 .. buf.len - 1], fmt, args) catch unreachable;
         }
 
-        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) ![]const u8 {
+        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) OOM![]const u8 {
             return try printWithType(self, fmt, @TypeOf(args), args);
         }
 
-        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -355,7 +356,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
-        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -374,7 +375,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             self: *Self,
             comptime AppendType: type,
             _value: AppendType,
-        ) ![]const u8 {
+        ) OOM![]const u8 {
             const value_len: usize = brk: {
                 switch (comptime AppendType) {
                     EmptyType, []const u8, []u8, [:0]const u8, [:0]u8 => {

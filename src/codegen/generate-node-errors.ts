@@ -67,7 +67,8 @@ pub const Error = enum(u8) {
 
 let i = 0;
 let listForUsingNamespace = "";
-for (const [code, constructor, name] of NodeErrors) {
+for (let [code, constructor, name] of NodeErrors) {
+  if (name == null) name = constructor.name;
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
   zig += `    ${code} = ${i},\n`;

@@ -895,6 +895,28 @@ describe("HEAD requests #15355", () => {
     }
   });
 
+  test("should fallback to the body if content-length is missing in the headers", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Hello World", {
+          headers: {
+            "Content-Type": "text/plain",
+            "X-Bun-Test": "1",
+          },
+        });
+      },
+    });
+
+    const response = await fetch(server.url, {
+      method: "HEAD",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe("11");
+    expect(response.headers.get("x-bun-test")).toBe("1");
+    expect(await response.text()).toBe("");
+  });
+
   test("HEAD requests should not have body", async () => {
     const dir = tempDirWithFiles("fsr", {
       "hello": "Hello World",

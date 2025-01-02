@@ -3213,17 +3213,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             const globalThis = server.globalThis;
+            var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
-                if (headers.get("transfer-encoding", globalThis)) |transfer_encoding| {
-                    resp.writeHeader("transfer-encoding", transfer_encoding);
-                } else if (headers.get("content-length", globalThis)) |content_length| {
-                    const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
+                if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
+                    const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
+                    defer transfer_encoding_str.deinit();
+                    resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
+                    has_content_length_or_transfer_encoding = true;
+                } else if (headers.fastGet(.ContentLength)) |content_length| {
+                    const content_length_str = content_length.toSlice(server.allocator);
+                    defer content_length_str.deinit();
+                    const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
                     resp.writeHeaderInt("content-length", len);
-                } else {
-                    resp.writeHeaderInt("content-length", 0);
+                    has_content_length_or_transfer_encoding = true;
                 }
-            } else {
+            }
+            if (!has_content_length_or_transfer_encoding) {
                 // then respect the body
                 response.body.value.toBlobIfPossible();
                 switch (response.body.value) {
@@ -3267,6 +3273,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     },
                 }
             }
+
             this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
         }

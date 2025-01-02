@@ -757,13 +757,19 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     }
     
     if (thisObject->m_onPull) {
-        const Identifier& id = Identifier::fromString(vm, "onPull"_s);
-        analyzer.analyzePropertyNameEdge(cell, thisObject->m_onPull.get(), id.impl());
+        JSValue onPull = thisObject->m_onPull.get();
+        if (onPull.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onPull"_s);
+            analyzer.analyzePropertyNameEdge(cell, onPull.asCell(), id.impl());
+        }
     }
 
     if (thisObject->m_onClose) {
-        const Identifier& id = Identifier::fromString(vm, "onClose"_s);
-        analyzer.analyzePropertyNameEdge(cell, thisObject->m_onClose.get(), id.impl());
+        JSValue onClose = thisObject->m_onClose.get();
+        if (onClose.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onClose"_s);
+            analyzer.analyzePropertyNameEdge(cell, onClose.asCell(), id.impl());
+        }
     }
 }
 

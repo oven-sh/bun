@@ -6497,6 +6497,18 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
     if (comptime bun.meta.isSimpleEqlType(T)) {
         return hasher.update(std.mem.asBytes(&this));
     }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        const list = switch (result) {
+            .array_list => this.items[0..],
+            .baby_list => this.sliceConst(),
+            .small_list => this.slice(),
+        };
+        bun.writeAnyToHasher(hasher, list.len);
+        for (list) |*item| {
+            generic.hash(tyinfo.Array.child, item, hasher);
+        }
+        return;
+    }
     if (comptime T == []const u8) {
         return hasher.update(this.*);
     }
@@ -6507,11 +6519,21 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
     return switch (tyinfo) {
-        .Optional => unreachable,
-        .Pointer => unreachable,
+        .Optional => {
+            if (this.* == null) {
+                bun.writeAnyToHasher(hasher, "null");
+            } else {
+                bun.writeAnyToHasher(hasher, "some");
+                generic.hash(tyinfo.Optional.child, &this.*.?, hasher);
+            }
+        },
+        .Pointer => {
+            generic.hash(tyinfo.Pointer.child, &this.*, hasher);
+        },
         .Array => {
-            if (comptime @typeInfo(T) == .Optional) {
-                @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+            bun.writeAnyToHasher(hasher, this.len);
+            for (this.*[0..]) |*item| {
+                generic.hash(tyinfo.Array.child, item, hasher);
             }
         },
         .Struct => {
@@ -6526,8 +6548,12 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
             }
             return;
         },
+        .Enum => {
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
+        },
         .Union => {
             if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
                 if (enum_field.value == @intFromEnum(this.*)) {

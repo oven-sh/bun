@@ -84,6 +84,10 @@ pub const MediaList = struct {
         return;
     }
 
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn eql(lhs: *const MediaList, rhs: *const MediaList) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
@@ -152,6 +156,10 @@ pub const MediaQuery = struct {
             .media_type = this.media_type,
             .condition = if (this.condition) |*c| c.deepClone(allocator) else null,
         };
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
@@ -290,6 +298,10 @@ pub const Qualifier = enum {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.enum_property_util.toCss(@This(), this, W, dest);
     }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types) within a media query.
@@ -326,6 +338,10 @@ pub const MediaType = union(enum) {
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -358,23 +374,6 @@ pub const MediaCondition = union(enum) {
     },
 
     const This = @This();
-
-    pub fn deepClone(this: *const MediaCondition, allocator: std.mem.Allocator) MediaCondition {
-        return switch (this.*) {
-            .feature => |*f| MediaCondition{ .feature = f.deepClone(allocator) },
-            .not => |c| MediaCondition{ .not = bun.create(allocator, MediaCondition, c.deepClone(allocator)) },
-            .operation => |op| MediaCondition{
-                .operation = .{
-                    .operator = op.operator,
-                    .conditions = css.deepClone(MediaCondition, allocator, &op.conditions),
-                },
-            },
-        };
-    }
-
-    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
-        return css.implementEql(@This(), lhs, rhs);
-    }
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {
@@ -433,6 +432,27 @@ pub const MediaCondition = union(enum) {
 
     pub fn parseWithFlags(input: *css.Parser, flags: QueryConditionFlags) Result(MediaCondition) {
         return parseQueryCondition(MediaCondition, input, flags);
+    }
+
+    pub fn deepClone(this: *const MediaCondition, allocator: std.mem.Allocator) MediaCondition {
+        return switch (this.*) {
+            .feature => |*f| MediaCondition{ .feature = f.deepClone(allocator) },
+            .not => |c| MediaCondition{ .not = bun.create(allocator, MediaCondition, c.deepClone(allocator)) },
+            .operation => |op| MediaCondition{
+                .operation = .{
+                    .operator = op.operator,
+                    .conditions = css.deepClone(MediaCondition, allocator, &op.conditions),
+                },
+            },
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -746,6 +766,10 @@ pub const MediaFeatureId = enum {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.enum_property_util.toCss(@This(), this, W, dest);
     }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 pub fn QueryFeature(comptime FeatureId: type) type {
@@ -760,6 +784,8 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn __generateHash() void {}
         },
 
         /// A boolean feature, e.g. `(hover)`.
@@ -770,6 +796,8 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn __generateHash() void {}
         },
 
         /// A range, e.g. `(width > 240px)`.
@@ -784,6 +812,8 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn __generateHash() void {}
         },
 
         /// An interval, e.g. `(120px < width < 240px)`.
@@ -802,6 +832,8 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn __generateHash() void {}
         },
 
         const This = @This();
@@ -840,6 +872,10 @@ pub fn QueryFeature(comptime FeatureId: type) type {
 
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn hash(this: *const @This(), hasher: anytype) void {
+            return css.implementHash(@This(), this, hasher);
         }
 
         pub fn needsParens(this: *const This, parent_operator: ?Operator, targets: *const css.Targets) bool {
@@ -1483,6 +1519,10 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
                 },
                 null,
             } };
+        }
+
+        pub fn hash(this: *const @This(), hasher: anytype) void {
+            return css.implementHash(@This(), this, hasher);
         }
     };
 }

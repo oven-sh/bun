@@ -37,6 +37,10 @@ pub const LayerName = struct {
         }, false);
     }
 
+    pub fn hash(this: *const LayerName, hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn cloneWithImportRecords(
         this: *const @This(),
         allocator: std.mem.Allocator,

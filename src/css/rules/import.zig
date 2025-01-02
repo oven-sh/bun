@@ -34,6 +34,10 @@ pub const ImportConditions = struct {
     /// A media query.
     media: css.MediaList = .{},
 
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn hasAnonymousLayer(this: *const @This()) bool {
         return this.layer != null and this.layer.?.v == null;
     }

@@ -85,6 +85,10 @@ pub const SupportsCondition = union(enum) {
         return deepClone(this, allocator);
     }
 
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
         return css.implementEql(SupportsCondition, this, other);
     }

@@ -1550,6 +1550,7 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
+                    .module_info = null,
                 };
             }
         }

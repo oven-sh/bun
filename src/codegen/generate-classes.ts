@@ -1176,7 +1176,23 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   return rows.map(a => a.trim()).join("\n");
 }
+function allCachedValues(obj: ClassDefinition) {
+  let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
+  for (const name in obj.proto) {
+    let cacheName = obj.proto[name].cache;
+    if (cacheName === true) {
+      cacheName = "m_" + name;
+    } else if (cacheName) {
+      cacheName = `m_${cacheName}`;
+    }
 
+    if (cacheName) {
+      values.push([name, cacheName]);
+    }
+  }
+
+  return values;
+}
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
@@ -1364,7 +1380,8 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     .join("\n");
 
   for (const name in callbacks) {
-    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.append(thisObject->m_callback_${name});`;
+    // Use appendHidden so it doesn't show up in the heap snapshot twice.
+    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.appendHidden(thisObject->m_callback_${name});`;
   }
 
   const values = (obj.values || [])
@@ -1578,6 +1595,18 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     }
 
     Base::analyzeHeap(cell, analyzer);
+    ${allCachedValues(obj).length > 0 ? `auto& vm = thisObject->vm();` : ""}
+
+    ${allCachedValues(obj)
+      .map(
+        ([name, cacheName]) => `
+if (JSValue ${cacheName}Value = thisObject->${cacheName}.get()) {
+  if (${cacheName}Value.isCell()) {
+    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), Identifier::fromString(vm, "${name}"_s).impl());
+  }
+}`,
+      )
+      .join("\n  ")}
 }
 
 ${

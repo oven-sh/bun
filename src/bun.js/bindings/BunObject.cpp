@@ -34,6 +34,8 @@
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
 
+#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
+
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
@@ -528,6 +530,14 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    vm.ensureHeapProfiler();
+    JSC::BunV8HeapSnapshotBuilder builder(*vm.heapProfiler());
+    return JSC::JSValue::encode(jsString(vm, builder.json()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -604,7 +614,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
-    generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback

@@ -63,7 +63,7 @@ async function build(
     cmd:
       runtime == Runtime.bun
         ? [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"]
-        : ["npx", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
+        : [bunExe(), "x", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",

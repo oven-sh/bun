@@ -46,6 +46,33 @@ pub const ImportConditions = struct {
         };
     }
 
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (this.layer) |*lyr| {
+            try dest.writeStr(" layer");
+            if (lyr.v) |l| {
+                try dest.writeChar('(');
+                try l.toCss(W, dest);
+                try dest.writeChar(')');
+            }
+        }
+
+        if (this.supports) |*sup| {
+            try dest.writeStr(" supports");
+            if (sup.* == .declaration) {
+                try sup.toCss(W, dest);
+            } else {
+                try dest.writeChar('(');
+                try sup.toCss(W, dest);
+                try dest.writeChar(')');
+            }
+        }
+
+        if (this.media.media_queries.items.len > 0) {
+            try dest.writeChar(' ');
+            try this.media.toCss(W, dest);
+        }
+    }
+
     /// This code does the same thing as `deepClone` right now, but might change in the future so keeping this separate.
     ///
     /// So this code is used when we wrap a CSS file in import conditions in the final output chunk:
@@ -81,19 +108,9 @@ pub const ImportConditions = struct {
     }
 
     pub fn layersEql(lhs: *const @This(), rhs: *const @This()) bool {
-        if (lhs.layer) |ll| {
-            if (rhs.layer) |rl| {
-                if (ll.v) |lv| {
-                    if (rl.v) |rv| {
-                        return lv.eql(&rv);
-                    }
-                    return false;
-                }
-                return true;
-            }
-            return false;
-        }
-        return false;
+        if (lhs.layer == null and rhs.layer == null) return true;
+        if (lhs.layer == null or rhs.layer == null) return false;
+        return lhs.layer.?.v.?.eql(&rhs.layer.?.v.?);
     }
 
     pub fn supportsEql(lhs: *const @This(), rhs: *const @This()) bool {

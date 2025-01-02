@@ -53,8 +53,8 @@ pub const LayerName = struct {
 
     pub fn eql(lhs: *const LayerName, rhs: *const LayerName) bool {
         if (lhs.v.len() != rhs.v.len()) return false;
-        for (lhs.v.slice(), 0..) |part, i| {
-            if (!bun.strings.eql(part, rhs.v.at(@intCast(i)).*)) return false;
+        for (lhs.v.slice(), rhs.v.slice()) |l, r| {
+            if (!bun.strings.eql(l, r)) return false;
         }
         return true;
     }

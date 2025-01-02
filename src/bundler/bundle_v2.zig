@@ -6417,14 +6417,14 @@ pub const LinkerContext = struct {
 
                         // Record external depednencies
                         if (!record.is_internal) {
+                            var all_conditions = wrapping_conditions.deepClone2(visitor.allocator);
+                            var all_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
                             // If this import has conditions, append it to the list of overall
                             // conditions for this external import. Note that an external import
                             // may actually have multiple sets of conditions that can't be
                             // merged. When this happens we need to generate a nested imported
                             // CSS file using a data URL.
                             if (rule.import.hasConditions()) {
-                                var all_conditions = wrapping_conditions.deepClone2(visitor.allocator);
-                                var all_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
                                 all_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)) catch bun.outOfMemory();
                                 visitor.order.push(
                                     visitor.allocator,
@@ -6786,8 +6786,35 @@ pub const LinkerContext = struct {
 
         if (bun.Environment.isDebug) {
             debug("CSS order:\n", .{});
+            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
             for (order.slice(), 0..) |entry, i| {
-                debug("  {d}: {}\n", .{ i, entry });
+                const conditions_str = if (entry.conditions.len > 0) conditions_str: {
+                    var arrlist = std.ArrayListUnmanaged(u8){};
+                    const writer = arrlist.writer(arena.allocator());
+                    const W = @TypeOf(writer);
+                    arrlist.appendSlice(arena.allocator(), "[") catch unreachable;
+                    for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
+                        const condition: *const bun.css.ImportConditions = condition_;
+                        const scratchbuf = std.ArrayList(u8).init(arena.allocator());
+                        var printer = bun.css.Printer(W).new(
+                            arena.allocator(),
+                            scratchbuf,
+                            writer,
+                            bun.css.PrinterOptions.default(),
+                            &entry.condition_import_records,
+                        );
+
+                        condition.toCss(W, &printer) catch unreachable;
+                        if (j != entry.conditions.len - 1) {
+                            arrlist.appendSlice(arena.allocator(), ", ") catch unreachable;
+                        }
+                    }
+                    arrlist.appendSlice(arena.allocator(), " ]") catch unreachable;
+                    break :conditions_str arrlist.items;
+                } else "[]";
+
+                debug("  {d}: {} {s}\n", .{ i, entry, conditions_str });
             }
         }
 
@@ -6844,10 +6871,8 @@ pub const LinkerContext = struct {
 
             // Only compare "@supports" and "@media" if "@layers" is equal
             if (a.layersEql(b)) {
-                // TODO: supports
-                // TODO: media
-                const same_supports = true;
-                const same_media = true;
+                const same_supports = a.supportsEql(b);
+                const same_media = a.media.eql(&b.media);
 
                 // If the import conditions are exactly equal, then only keep
                 // the later one. The earlier one is redundant. Example:
@@ -7163,6 +7188,7 @@ pub const LinkerContext = struct {
             const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
             const tla_checks = this.parse_graph.ast.items(.tla_check);
             const input_files = this.parse_graph.input_files.items(.source);
+            const loaders: []const Loader = this.parse_graph.input_files.items(.loader);
 
             const export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             const exports_refs: []Ref = this.graph.ast.items(.exports_ref);
@@ -7190,11 +7216,34 @@ pub const LinkerContext = struct {
                 if (css_asts[id]) |css| {
                     _ = css; // autofix
                     // Inline URLs for non-CSS files into the CSS file
-                    for (import_records, 0..) |*record, import_record_idx| {
-                        _ = import_record_idx; // autofix
+                    for (import_records) |*record| {
                         if (record.source_index.isValid()) {
                             // Other file is not CSS
                             if (css_asts[record.source_index.get()] == null) {
+                                const source = &input_files[id];
+                                const loader = loaders[record.source_index.get()];
+                                switch (loader) {
+                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .json => {
+                                        this.log.addErrorFmt(
+                                            source,
+                                            Loc.Empty,
+                                            this.allocator,
+                                            "Cannot import a \".{s}\" file into a CSS file",
+                                            .{@tagName(loader)},
+                                        ) catch bun.outOfMemory();
+                                    },
+                                    .sqlite_embedded => {
+                                        this.log.addErrorFmt(
+                                            source,
+                                            Loc.Empty,
+                                            this.allocator,
+                                            "Cannot import a \"sqlite_embedded\" file into a CSS file",
+                                            .{},
+                                        ) catch bun.outOfMemory();
+                                    },
+                                    .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                                }
+
                                 if (urls_for_css[record.source_index.get()]) |url| {
                                     record.path.text = url;
                                 }
@@ -9362,7 +9411,7 @@ pub const LinkerContext = struct {
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
-                    &css_import.condition_import_records,
+                    &c.graph.ast.items(.import_records)[idx.get()],
                 ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
                 };
@@ -9465,6 +9514,7 @@ pub const LinkerContext = struct {
 
     fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.mem.Allocator) void {
         const import_records: []const BabyList(ImportRecord) = c.graph.ast.items(.import_records);
+        _ = import_records; // autofix
         const asts: []const ?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
 
         // Prepare CSS asts
@@ -9515,7 +9565,7 @@ pub const LinkerContext = struct {
                             // imports of data URL stylesheets. This may seem strange but I think
                             // this is the only way to do this in CSS.
                             var j: usize = entry.conditions.len;
-                            while (j != 0) {
+                            while (j != 1) {
                                 j -= 1;
 
                                 const ast_import = bun.css.BundlerStyleSheet{
@@ -9530,7 +9580,7 @@ pub const LinkerContext = struct {
                                             .import_record_idx = entry.condition_import_records.len,
                                             .loc = bun.css.Location.dummy(),
                                         };
-                                        import_rule.conditionsMut().* = entry.conditions.at(i).*;
+                                        import_rule.conditionsMut().* = entry.conditions.at(j).*;
                                         rules.v.append(allocator, bun.css.BundlerCssRule{
                                             .import = import_rule,
                                         }) catch bun.outOfMemory();
@@ -9564,7 +9614,7 @@ pub const LinkerContext = struct {
                         chunk.content.css.asts[i] = bun.css.BundlerStyleSheet{
                             .rules = rules: {
                                 var rules = bun.css.BundlerCssRuleList{};
-                                var import_rule = bun.css.ImportRule.fromUrlAndImportRecordIdx(p.pretty, import_records[i].len);
+                                var import_rule = bun.css.ImportRule.fromUrlAndImportRecordIdx(p.pretty, entry.condition_import_records.len);
                                 import_rule.conditionsMut().* = actual_conditions.*;
                                 rules.v.append(allocator, bun.css.BundlerCssRule{
                                     .import = import_rule,

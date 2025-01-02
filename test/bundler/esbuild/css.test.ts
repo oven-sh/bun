@@ -185,8 +185,9 @@ body {
   });
 });
 
-describe.todo("bundler", () => {
+describe("esbuild-bundler", () => {
   itBundled("css/CSSEntryPoint", {
+    experimentalCss: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -197,14 +198,17 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/CSSAtImportMissing", {
+    experimentalCss: true,
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
     bundleErrors: {
-      "/entry.css": ['Could not resolve "./missing.css"'],
+      "/entry.css": ['Could not resolve: "./missing.css"'],
     },
   });
   itBundled("css/CSSAtImportExternal", {
+    experimentalCss: true,
+    external: ["./external1.css", "./external2.css", "./external3.css", "./external4.css", "./external5.css"],
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -238,8 +242,39 @@ describe.todo("bundler", () => {
         .after { color: blue }
       `,
     },
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `@import "./external1.css";
+@import "./external2.css";
+@import "./external4.css";
+@import "./external5.css";
+@import "https://www.example.com/style2.css";
+@import "./external3.css";
+@import "https://www.example.com/style1.css";
+@import "https://www.example.com/style3.css";
+@import "./external5.css" screen;
+
+/* internal.css */
+.before {
+  color: red;
+}
+
+/* charset1.css */
+.middle {
+  color: green;
+}
+
+/* charset2.css */
+.after {
+  color: #00f;
+}
+
+/* entry.css */`);
+    },
   });
   itBundled("css/CSSAtImport", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -259,6 +294,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/CSSFromJSMissingImport", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -267,11 +304,13 @@ describe.todo("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "a.css" for import "missing"
-  `, */
+    bundleErrors: {
+      "/entry.js": ['No matching export in "a.css" for import "missing"'],
+    },
   });
   itBundled("css/CSSFromJSMissingStarImport", {
-    // GENERATED
+    experimentalCss: true,
+    outdir: "/out",
     files: {
       "/entry.js": /* js */ `
         import * as ns from "./a.css"
@@ -279,9 +318,19 @@ describe.todo("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
+    bundleWarnings: {
+      "/entry.js": ['Import "missing" will always be undefined because there is no matching export in "a.css"'],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `/* a.css */
+        .a{
+          color: red;
+        }`);
+    },
   });
   itBundled("css/ImportCSSFromJS", {
-    // GENERATED
+    experimentalCss: true,
+    outdir: "/out",
     files: {
       "/entry.js": /* js */ `
         import "./a.js"
@@ -299,27 +348,31 @@ describe.todo("bundler", () => {
       "/b.css": `.b { color: blue }`,
     },
   });
-  itBundled("css/ImportCSSFromJSWriteToStdout", {
-    // GENERATED
-    files: {
-      "/entry.js": `import "./entry.css"`,
-      "/entry.css": `.entry { color: red }`,
-    },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Cannot import "entry.css" into a JavaScript file without an output path configured
-  `, */
-  });
+  // itBundled("css/ImportCSSFromJSWriteToStdout", {
+  //   experimentalCss: true,
+  //   files: {
+  //     "/entry.js": `import "./entry.css"`,
+  //     "/entry.css": `.entry { color: red }`,
+  //   },
+  //   bundleErrors: {
+  //     "/entry.js": ['Cannot import "entry.css" into a JavaScript file without an output path configured'],
+  //   },
+  // });
   itBundled("css/ImportJSFromCSS", {
-    // GENERATED
+    experimentalCss: true,
+    outdir: "/out",
     files: {
-      "/entry.js": `export default 123`,
-      "/entry.css": `@import "./entry.js";`,
+      "/entry.ts": `export default 123`,
+      "/entry.css": `@import "./entry.ts";`,
     },
     entryPoints: ["/entry.css"],
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.js" into a CSS file
-  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.js" is not a CSS file (it was loaded with the "js" loader).
-  `, */
+    bundleErrors: {
+      "/entry.css": ['Cannot import a ".ts" file into a CSS file'],
+    },
   });
   itBundled("css/ImportJSONFromCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.json": `{}`,
@@ -331,6 +384,8 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/MissingImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/src/entry.css": /* css */ `
@@ -338,11 +393,13 @@ describe.todo("bundler", () => {
         b { background: url("./two.png"); }
       `,
     },
-    /* TODO FIX expectedScanLog: `src/entry.css: ERROR: Could not resolve "./one.png"
-  src/entry.css: ERROR: Could not resolve "./two.png"
-  `, */
+    bundleErrors: {
+      "/src/entry.css": ['Could not resolve: "./one.png"', 'Could not resolve: "./two.png"'],
+    },
   });
   itBundled("css/ExternalImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/src/entry.css": /* css */ `
@@ -359,8 +416,11 @@ describe.todo("bundler", () => {
         path { fill: url(#filter) }
       `,
     },
+    external: ["/src/external.png"],
   });
   itBundled("css/InvalidImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -395,7 +455,8 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/TextImportURLInCSSText", {
-    // GENERATED
+    experimentalCss: true,
+    outfile: "/out.css",
     files: {
       "/entry.css": /* css */ `
         a {
@@ -404,8 +465,18 @@ describe.todo("bundler", () => {
       `,
       "/example.txt": `This is some text.`,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+a {
+  background: url("data:text/plain;base64,VGhpcyBpcyBzb21lIHRleHQu");
+}
+`);
+    },
   });
   itBundled("css/DataURLImportURLInCSS", {
+    experimentalCss: true,
+    outfile: "/out.css",
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -415,8 +486,18 @@ describe.todo("bundler", () => {
       `,
       "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+a {
+  background: url(data:image/png;base64,iVBORw0KGgo=);
+}
+`);
+    },
   });
   itBundled("css/BinaryImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -428,6 +509,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/Base64ImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -439,6 +522,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/FileImportURLInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -451,6 +536,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/IgnoreURLsInAtRulePrelude", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -462,6 +549,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/PackageURLsInCSS", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -479,6 +568,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/CSSAtImportExtensionOrderCollision", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "./test";`,
@@ -489,6 +580,8 @@ describe.todo("bundler", () => {
     extensionOrder: [".js", ".css"],
   });
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "./test";`,
@@ -502,6 +595,8 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("css/CSSAtImportConditionsNoBundle", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "./print.css" print;`,
@@ -509,18 +604,24 @@ describe.todo("bundler", () => {
     mode: "passthrough",
   });
   itBundled("css/CSSAtImportConditionsBundleExternal", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/print.css" print;`,
     },
   });
   itBundled("css/CSSAtImportConditionsBundleExternalConditionWithURL", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/foo.css" (foo: url("foo.png")) and (bar: url("bar.png"));`,
     },
   });
   itBundled("css/CSSAtImportConditionsBundle", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": `@import "./print.css" print;`,
@@ -530,6 +631,8 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/a.js": /* js */ `
@@ -556,6 +659,8 @@ describe.todo("bundler", () => {
     splitting: true,
   });
   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -571,6 +676,8 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/CSSExternalQueryAndHashMatchESBuildIssue1822", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -581,6 +688,8 @@ describe.todo("bundler", () => {
     outfile: "/out.css",
   });
   itBundled("css/CSSNestingOldBrowser", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/nested-@layer.css": `a { @layer base { color: red; } }`,
@@ -650,6 +759,8 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/MetafileCSSBundleTwoToOne", {
+    experimentalCss: true,
+
     files: {
       "/foo/entry.js": /* js */ `
         import '../common.css'
@@ -667,6 +778,8 @@ describe.todo("bundler", () => {
     outdir: "/",
   });
   itBundled("css/DeduplicateRules", {
+    experimentalCss: true,
+
     // GENERATED
     files: {
       "/yes0.css": `a { color: red; color: green; color: red }`,

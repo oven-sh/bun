@@ -143,8 +143,8 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
 
 pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList(T)) bool {
     if (lhs.items.len != rhs.items.len) return false;
-    for (lhs.items, 0..) |*item, i| {
-        if (!eql(T, item, &rhs.items[i])) return false;
+    for (lhs.items, rhs.items) |*left, *right| {
+        if (!eql(T, left, right)) return false;
     }
     return true;
 }
@@ -175,6 +175,7 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     }
     if (comptime tyinfo == .Optional) {
         const TT = std.meta.Child(T);
+        if (lhs.* == null and rhs.* == null) return true;
         if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
         return false;
     }

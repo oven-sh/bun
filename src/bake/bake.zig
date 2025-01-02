@@ -544,9 +544,9 @@ pub const Framework = struct {
         log: *bun.logger.Log,
         mode: Mode,
         comptime renderer: Graph,
-        out: *bun.bundler.Bundler,
+        out: *bun.transpiler.Transpiler,
     ) !void {
-        out.* = try bun.Bundler.init(
+        out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
@@ -595,7 +595,7 @@ pub const Framework = struct {
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
 
-        out.options.experimental_css = true;
+        out.options.experimental.css = true;
         out.options.css_chunking = true;
 
         out.options.framework = framework;

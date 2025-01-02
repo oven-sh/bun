@@ -250,7 +250,7 @@ const JSONFormatterUTF8 = struct {
 };
 
 /// Expects latin1
-pub fn formatJSONString(text: []const u8) JSONFormatter {
+pub fn formatJSONStringLatin1(text: []const u8) JSONFormatter {
     return .{ .input = text };
 }
 

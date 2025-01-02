@@ -24,7 +24,7 @@ const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
@@ -64,6 +64,7 @@ pub const Run = struct {
                 .log = ctx.log,
                 .args = ctx.args,
                 .graph = graph_ptr,
+                .is_main_thread = true,
             }),
             .arena = arena,
             .ctx = ctx,
@@ -71,7 +72,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -93,7 +94,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.experimental_css = ctx.bundler_options.experimental_css;
+        b.options.experimental = ctx.bundler_options.experimental;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -155,7 +156,7 @@ pub const Run = struct {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
-        var bundle = try bun.Bundler.init(
+        var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
@@ -198,6 +199,7 @@ pub const Run = struct {
                     .smol = ctx.runtime_options.smol,
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
+                    .is_main_thread = true,
                 },
             ),
             .arena = arena,
@@ -206,7 +208,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -262,13 +264,13 @@ pub const Run = struct {
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         // Allow setting a custom timezone
-        if (vm.bundler.env.get("TZ")) |tz| {
+        if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
                 _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
             }
         }
 
-        vm.bundler.env.loadTracy();
+        vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
 
@@ -298,8 +300,8 @@ pub const Run = struct {
             else => {},
         }
 
-        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
-            this.entry_path = vm.bundler.fs.top_level_dir;
+        if (strings.eqlComptime(this.entry_path, ".") and vm.transpiler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.transpiler.fs.top_level_dir;
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {

@@ -1733,17 +1733,14 @@ describe("text lockfile", () => {
       ),
     ]);
 
-    let { stdout, stderr, exited } = spawn({
+    let { exited } = spawn({
       cmd: [bunExe(), "install", "--save-text-lockfile"],
       cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       env,
     });
 
-    let out = await Bun.readableStreamToText(stdout);
-    let err = await Bun.readableStreamToText(stderr);
-    console.log({ out, err });
     expect(await exited).toBe(0);
 
     expect(
@@ -1761,22 +1758,452 @@ describe("text lockfile", () => {
       }),
     );
 
-    ({ stdout, stderr, exited } = spawn({
+    ({ exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       env,
     }));
 
-    out = await Bun.readableStreamToText(stdout);
-    err = await Bun.readableStreamToText(stderr);
-    console.log({ out, err });
     expect(await exited).toBe(0);
 
     const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
     expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
   });
+
+  test("--frozen-lockfile", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "^1.0.0",
+            "a-dep": "^1.0.2",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "package1",
+          dependencies: {
+            "peer-deps-too": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    expect(firstLockfile.replace(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      "a-dep",
+      "no-deps",
+      "package1",
+      "peer-deps-too",
+    ]);
+
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+  });
+
+  for (const omit of ["dev", "peer", "optional"]) {
+    test(`resolvable lockfile with ${omit} dependencies disabled`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            peerDependencies: { "no-deps": "1.0.0" },
+            devDependencies: { "a-dep": "1.0.1" },
+            optionalDependencies: { "basic-1": "1.0.0" },
+          }),
+        ),
+      ]);
+
+      let { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile", `--omit=${omit}`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+
+      expect(await exited).toBe(0);
+
+      const depName = omit === "dev" ? "a-dep" : omit === "peer" ? "no-deps" : "basic-1";
+
+      expect(await exists(join(packageDir, "node_modules", depName))).toBeFalse();
+
+      const lockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+        /localhost:\d+/g,
+        "localhost:1234",
+      );
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", depName))).toBeTrue();
+
+      expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+        lockfile,
+      );
+    });
+  }
+});
+
+describe("bundledDependencies", () => {
+  for (const textLockfile of [true, false]) {
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) basic`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-basic",
+            version: "1.1.1",
+            dependencies: {
+              "bundled-1": "1.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
+        ]),
+      ).toEqual([false, true]);
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
+        ]),
+      ).toEqual([false, true]);
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundledDependencies === true`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-true",
+            version: "1.1.1",
+            dependencies: {
+              "bundled-true": "1.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        return Promise.all([
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "one-dep", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-true", "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "bundled-true", "node_modules", "one-dep", "package.json")),
+          exists(
+            join(
+              packageDir,
+              "node_modules",
+              "bundled-true",
+              "node_modules",
+              "one-dep",
+              "node_modules",
+              "no-deps",
+              "package.json",
+            ),
+          ),
+        ]);
+      }
+
+      expect(await check()).toEqual([false, false, true, true, true]);
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      expect(await check()).toEqual([false, false, true, true, true]);
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) transitive bundled dependency collision`, async () => {
+      // Install a package with one bundled dependency and one regular dependency.
+      // The bundled dependency has a transitive dependency of the same regular dependency,
+      // but at a different version. Test that the regular dependency does not replace the
+      // other version (both should exist).
+
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-collision",
+            dependencies: {
+              "bundled-transitive": "1.0.0",
+              // prevent both transitive dependencies from hoisting
+              "no-deps": "npm:a-dep@1.0.2",
+              "one-dep": "npm:a-dep@1.0.3",
+            },
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+            file(
+              join(packageDir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json"),
+            ).json(),
+            file(
+              join(
+                packageDir,
+                "node_modules",
+                "bundled-transitive",
+                "node_modules",
+                "one-dep",
+                "node_modules",
+                "no-deps",
+                "package.json",
+              ),
+            ).json(),
+            exists(join(packageDir, "node_modules", "bundled-transitive", "node_modules", "one-dep", "package.json")),
+          ]),
+        ).toEqual([
+          { name: "a-dep", version: "1.0.2" },
+          { name: "no-deps", version: "1.0.0" },
+          { name: "no-deps", version: "1.0.1" },
+          true,
+        ]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-git",
+            dependencies: {
+              // bundledDependencies: ["zod"],
+              "install-test1": "dylan-conway/bundled-install-test#7824752",
+              // bundledDependencies: true,
+              "install-test2": "git+ssh://git@github.com/dylan-conway/bundled-install-test#1301309",
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          `
+[install]
+cache = "${join(packageDir, ".bun-cache")}"
+          `,
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "zod", "package.json")),
+            exists(join(packageDir, "node_modules", "install-test1", "node_modules", "zod", "package.json")),
+            exists(join(packageDir, "node_modules", "install-test2", "node_modules", "zod", "package.json")),
+          ]),
+        ).toEqual([false, true, true]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) workspace dependencies bundle correctly`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "bundled-workspace",
+            workspaces: ["packages/*"],
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg-one-one-one", "package.json"),
+          JSON.stringify({
+            name: "pkg-one-one-one",
+            dependencies: {
+              "no-deps": "1.0.0",
+              "bundled-1": "1.0.0",
+            },
+            bundledDependencies: ["no-deps"],
+          }),
+        ),
+      ]);
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+            exists(join(packageDir, "packages", "pkg-one-one-one", "node_modules", "no-deps", "package.json")),
+            exists(join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")),
+          ]),
+        ).toEqual([true, false, true]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+  }
 });
 
 describe("optionalDependencies", () => {
@@ -1911,6 +2338,71 @@ describe("optionalDependencies", () => {
       ]),
     ).toEqual([true, false]);
   });
+});
+
+test("it should ignore peerDependencies within workspaces", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/baz"],
+        peerDependencies: {
+          "no-deps": ">=1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "baz", "package.json"),
+      JSON.stringify({
+        name: "Baz",
+        peerDependencies: {
+          "a-dep": ">=1.0.1",
+        },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), `omit=peer`),
+  ]);
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["Baz"]);
+  expect(
+    (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+  ).toMatchSnapshot();
+
+  // installing with them enabled works
+  await rm(join(packageDir, ".npmrc"));
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["Baz", "a-dep", "no-deps"]);
+});
+
+test("disabled dev/peer/optional dependencies are still included in the lockfile", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        devDependencies: {
+          "no-deps": "1.0.0",
+        },
+        peerDependencies: {
+          "a-dep": "1.0.1",
+        },
+        optionalDependencies: {
+          "basic-1": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall;
 });
 
 test("tarball override does not crash", async () => {
@@ -3218,6 +3710,313 @@ describe("binaries", () => {
     });
   }
 
+  test("each type of binary serializes correctly to text lockfile", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "file-bin": "./file-bin",
+            "named-file-bin": "./named-file-bin",
+            "dir-bin": "./dir-bin",
+            "map-bin": "./map-bin",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "file-bin", "package.json"),
+        JSON.stringify({
+          name: "file-bin",
+          version: "1.1.1",
+          bin: "./file-bin.js",
+        }),
+      ),
+      write(join(packageDir, "file-bin", "file-bin.js"), `#!/usr/bin/env node\nconsole.log("file-bin")`),
+      write(
+        join(packageDir, "named-file-bin", "package.json"),
+        JSON.stringify({
+          name: "named-file-bin",
+          version: "1.1.1",
+          bin: { "named-file-bin": "./named-file-bin.js" },
+        }),
+      ),
+      write(
+        join(packageDir, "named-file-bin", "named-file-bin.js"),
+        `#!/usr/bin/env node\nconsole.log("named-file-bin")`,
+      ),
+      write(
+        join(packageDir, "dir-bin", "package.json"),
+        JSON.stringify({
+          name: "dir-bin",
+          version: "1.1.1",
+          directories: {
+            bin: "./bins",
+          },
+        }),
+      ),
+      write(join(packageDir, "dir-bin", "bins", "dir-bin-1.js"), `#!/usr/bin/env node\nconsole.log("dir-bin-1")`),
+      write(
+        join(packageDir, "map-bin", "package.json"),
+        JSON.stringify({
+          name: "map-bin",
+          version: "1.1.1",
+          bin: {
+            "map-bin-1": "./map-bin-1.js",
+            "map-bin-2": "./map-bin-2.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "map-bin", "map-bin-1.js"), `#!/usr/bin/env node\nconsole.log("map-bin-1")`),
+      write(join(packageDir, "map-bin", "map-bin-2.js"), `#!/usr/bin/env node\nconsole.log("map-bin-2")`),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+
+    expect(join(packageDir, "node_modules", ".bin", "file-bin")).toBeValidBin(join("..", "file-bin", "file-bin.js"));
+    expect(join(packageDir, "node_modules", ".bin", "named-file-bin")).toBeValidBin(
+      join("..", "named-file-bin", "named-file-bin.js"),
+    );
+    expect(join(packageDir, "node_modules", ".bin", "dir-bin-1.js")).toBeValidBin(
+      join("..", "dir-bin", "bins", "dir-bin-1.js"),
+    );
+    expect(join(packageDir, "node_modules", ".bin", "map-bin-1")).toBeValidBin(join("..", "map-bin", "map-bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "map-bin-2")).toBeValidBin(join("..", "map-bin", "map-bin-2.js"));
+
+    await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
+
+    // now install from the lockfile, only linking bins
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Saved lockfile");
+
+    expect(await exited).toBe(0);
+
+    expect(firstLockfile).toBe(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    );
+    expect(firstLockfile).toMatchSnapshot();
+
+    expect(join(packageDir, "node_modules", ".bin", "file-bin")).toBeValidBin(join("..", "file-bin", "file-bin.js"));
+    expect(join(packageDir, "node_modules", ".bin", "named-file-bin")).toBeValidBin(
+      join("..", "named-file-bin", "named-file-bin.js"),
+    );
+    expect(join(packageDir, "node_modules", ".bin", "dir-bin-1.js")).toBeValidBin(
+      join("..", "dir-bin", "bins", "dir-bin-1.js"),
+    );
+    expect(join(packageDir, "node_modules", ".bin", "map-bin-1")).toBeValidBin(join("..", "map-bin", "map-bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "map-bin-2")).toBeValidBin(join("..", "map-bin", "map-bin-2.js"));
+  });
+
+  test.todo("text lockfile updates with new bin entry for folder dependencies", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "change-bin": "./change-bin",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "change-bin", "package.json"),
+        JSON.stringify({
+          name: "change-bin",
+          version: "1.0.0",
+          bin: {
+            "change-bin-1": "./change-bin-1.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "change-bin", "change-bin-1.js"), `#!/usr/bin/env node\nconsole.log("change-bin-1")`),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+
+    expect(join(packageDir, "node_modules", ".bin", "change-bin-1")).toBeValidBin(
+      join("..", "change-bin", "change-bin-1.js"),
+    );
+
+    await Promise.all([
+      write(
+        join(packageDir, "change-bin", "package.json"),
+        JSON.stringify({
+          name: "change-bin",
+          version: "1.0.0",
+          bin: {
+            "change-bin-1": "./change-bin-1.js",
+            "change-bin-2": "./change-bin-2.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "change-bin", "change-bin-2.js"), `#!/usr/bin/env node\nconsole.log("change-bin-2")`),
+    ]);
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+
+    // it should save
+    expect(err).toContain("Saved lockfile");
+
+    expect(await exited).toBe(0);
+
+    const secondLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+    expect(firstLockfile).not.toBe(secondLockfile);
+
+    expect(secondLockfile).toMatchSnapshot();
+
+    expect(join(packageDir, "node_modules", ".bin", "change-bin-1")).toBeValidBin(
+      join("..", "change-bin", "change-bin-1.js"),
+    );
+
+    expect(join(packageDir, "node_modules", ".bin", "change-bin-2")).toBeValidBin(
+      join("..", "change-bin", "change-bin-2.js"),
+    );
+  });
+
+  test("root resolution bins", async () => {
+    // As of writing this test, the only way to get a root resolution
+    // is to migrate a package-lock.json with a root resolution. For now,
+    // we'll just mock the bun.lock.
+
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "fooooo",
+          version: "2.2.2",
+          dependencies: {
+            "fooooo": ".",
+            "no-deps": "1.0.0",
+          },
+          bin: "fooooo.js",
+        }),
+      ),
+      write(join(packageDir, "fooooo.js"), `#!/usr/bin/env node\nconsole.log("fooooo")`),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          "lockfileVersion": 0,
+          "workspaces": {
+            "": {
+              "dependencies": {
+                "fooooo": ".",
+                // out of date, no no-deps
+              },
+            },
+          },
+          "packages": {
+            "fooooo": ["fooooo@root:", { bin: "fooooo.js" }],
+          },
+        }),
+      ),
+    ]);
+
+    let { stderr, stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("no-deps@1.0.0");
+
+    expect(await exited).toBe(0);
+
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+
+    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo", "fooooo.js"));
+
+    await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
+
+    ({ stderr, stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Saved lockfile");
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out).not.toContain("no-deps@1.0.0");
+
+    expect(await exited).toBe(0);
+
+    expect(firstLockfile).toBe(
+      (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+    );
+    expect(firstLockfile).toMatchSnapshot();
+
+    expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo", "fooooo.js"));
+  });
+
   async function runBin(binName: string, expected: string, global: boolean) {
     const args = global ? [`./global-bin-dir/${binName}`] : [bunExe(), binName];
     const result = Bun.spawn({
@@ -4411,6 +5210,64 @@ describe("hoisting", async () => {
         version: "1.0.1",
       });
     });
+  });
+
+  test("text lockfile is hoisted", async () => {
+    // Each dependency depends on 'hoist-lockfile-shared'.
+    // 1 - "*"
+    // 2 - "^1.0.1"
+    // 3 - ">=1.0.1"
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "hoist-lockfile-1": "1.0.0",
+          "hoist-lockfile-2": "1.0.0",
+          "hoist-lockfile-3": "1.0.0",
+        },
+      }),
+    );
+
+    let { exited, stderr } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "ignore",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    const lockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+    expect(lockfile).toMatchSnapshot();
+
+    // second install should not save the lockfile
+    // with a different set of resolutions
+    ({ exited, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "ignore",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+      lockfile,
+    );
   });
 });
 

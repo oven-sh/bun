@@ -80,8 +80,7 @@ bool isValidLanguageHeaderValue(const String&);
 #if USE(GLIB)
 WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const String&);
 #endif
-bool isValidHTTPToken(const String&);
-bool isValidHTTPToken(StringView);
+bool isValidHTTPToken(const StringView);
 std::optional<WallTime> parseHTTPDate(const String&);
 StringView filenameFromHTTPContentDisposition(StringView);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);
@@ -101,15 +100,15 @@ size_t parseHTTPHeader(const uint8_t* data, size_t length, String& failureReason
 size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>& body);
 
 // HTTP Header routine as per https://fetch.spec.whatwg.org/#terminology-headers
-bool isForbiddenHeaderName(const String&);
-bool isNoCORSSafelistedRequestHeaderName(const String&);
-bool isPriviledgedNoCORSRequestHeaderName(const String&);
-bool isForbiddenResponseHeaderName(const String&);
-bool isForbiddenMethod(const String&);
-bool isSimpleHeader(const String& name, const String& value);
+bool isForbiddenHeaderName(const StringView);
+bool isNoCORSSafelistedRequestHeaderName(const StringView);
+bool isPriviledgedNoCORSRequestHeaderName(const StringView);
+bool isForbiddenResponseHeaderName(const StringView);
+bool isForbiddenMethod(const StringView);
+bool isSimpleHeader(const StringView name, const StringView value);
 // bool isCrossOriginSafeHeader(HTTPHeaderName, const HTTPHeaderSet&);
 // bool isCrossOriginSafeHeader(const String&, const HTTPHeaderSet&);
-bool isCrossOriginSafeRequestHeader(HTTPHeaderName, const String&);
+bool isCrossOriginSafeRequestHeader(HTTPHeaderName, const StringView);
 
 String normalizeHTTPMethod(const String&);
 bool isSafeMethod(const String&);

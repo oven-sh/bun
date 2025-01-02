@@ -127,9 +127,6 @@ std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGloba
     case 'h':
     case 'H':
         // hex
-        if (encoding[1] == 'e')
-            if (encoding[2] == 'x' && encoding[3] == '\0')
-                return BufferEncodingType::hex;
         if (WTF::equalIgnoringASCIICase(encoding, "hex"_s))
             return BufferEncodingType::hex;
         break;

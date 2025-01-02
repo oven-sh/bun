@@ -1,4 +1,7 @@
 #include "root.h"
+
+#include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
@@ -534,7 +537,34 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
 {
     auto& vm = globalObject->vm();
     vm.ensureHeapProfiler();
-    JSC::BunV8HeapSnapshotBuilder builder(*vm.heapProfiler());
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSValue arg0 = callFrame->argument(0);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    bool useV8 = false;
+    if (!arg0.isUndefined()) {
+        if (arg0.isString()) {
+            auto str = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (str == "v8"_s) {
+                useV8 = true;
+            } else if (str == "jsc"_s) {
+                // do nothing
+            } else {
+                throwTypeError(globalObject, throwScope, "Expected 'v8' or 'jsc' or undefined"_s);
+                return {};
+            }
+        }
+    }
+
+    if (useV8) {
+        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        return JSC::JSValue::encode(jsString(vm, builder.json()));
+    }
+
+    JSC::HeapSnapshotBuilder builder(heapProfiler);
+    builder.buildSnapshot();
     return JSC::JSValue::encode(jsString(vm, builder.json()));
 }
 

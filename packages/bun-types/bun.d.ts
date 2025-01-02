@@ -3580,9 +3580,24 @@ declare module "bun" {
   function nanoseconds(): number;
 
   /**
-   * Generate a heap snapshot for seeing where the heap is being used
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a heap snapshot in JavaScriptCore's format that can be viewed with `bun --inspect` or Safari's Web Inspector
    */
-  function generateHeapSnapshot(): HeapSnapshot;
+  function generateHeapSnapshot(format?: "jsc"): HeapSnapshot;
+
+  /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot that can be used with Chrome DevTools & Visual Studio Code
+   *
+   * This is a JSON string that can be saved to a file.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format?: "v8"): string;
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.

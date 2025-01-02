@@ -51,19 +51,20 @@ pub const ModuleInfoDeserialized = struct {
             allocator: std.mem.Allocator,
         },
     },
+    dead: bool = false,
 
     pub fn deinit(self: *ModuleInfoDeserialized) void {
-        switch (self.owner) {
-            .module_info => {
-                const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
-                mi.destroy();
-            },
-            .allocated_slice => |as| {
-                as.allocator.free(as.slice);
-                as.allocator.destroy(self);
-            },
-        }
-        self.* = undefined;
+        // switch (self.owner) {
+        //     .module_info => {
+        //         const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
+        //         mi.destroy();
+        //     },
+        //     .allocated_slice => |as| {
+        //         as.allocator.free(as.slice);
+        //         as.allocator.destroy(self);
+        //     },
+        // }
+        self.dead = true;
     }
 
     inline fn eat(rem: *[]const u8, len: usize) ![]const u8 {
@@ -79,6 +80,7 @@ pub const ModuleInfoDeserialized = struct {
         return res;
     }
     pub fn create(source: []const u8, gpa: std.mem.Allocator) !*ModuleInfoDeserialized {
+        std.log.info("ModuleInfoDeserialized.create", .{});
         var rem = try gpa.dupe(u8, source);
         errdefer gpa.free(rem);
         var res = try gpa.create(ModuleInfoDeserialized);
@@ -225,6 +227,7 @@ pub const ModuleInfo = struct {
     }
 
     pub fn create(gpa: std.mem.Allocator) !*ModuleInfo {
+        std.log.info("ModuleInfo.create", .{});
         const res = try gpa.create(ModuleInfo);
         res.* = ModuleInfo.init(gpa);
         return res;
@@ -340,6 +343,9 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: *VariableEnvironment,
     res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
+    if (res.dead) @panic("ModuleInfoDeserialized already deinit()ed");
+    defer res.deinit();
+
     var identifiers = IdentifierArray.create(res.strings_len);
     defer identifiers.destroy();
     {

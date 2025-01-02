@@ -194,6 +194,7 @@ pub fn Errorable(comptime Type: type) type {
     };
 }
 
+/// must be kept in sync with `ResolvedSource` in `headers-handwritten.h`
 pub const ResolvedSource = extern struct {
     pub const shim = Shimmer("Zig", "ResolvedSource", @This());
     pub const name = "ResolvedSource";
@@ -232,13 +233,6 @@ pub const ResolvedSource = extern struct {
     };
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
-
-    pub fn deinit(this: *ResolvedSource) void {
-        if (this.module_info) |module_info| {
-            module_info.deinit();
-        }
-        this.* = undefined;
-    }
 };
 
 pub const SourceProvider = opaque {

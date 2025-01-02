@@ -25,9 +25,10 @@ import {
   tls,
   isFlaky,
   isMacOS,
+  startVerdaccio,
+  readdirSorted,
 } from "harness";
 import { join, resolve, sep } from "path";
-import { readdirSorted } from "../dummy.registry";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -38,7 +39,7 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var verdaccioServer: ChildProcess;
+var verdaccioServer: ChildProcess | undefined;
 var port: number = randomPort();
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
@@ -47,42 +48,8 @@ var packageJson: string;
 let users: Record<string, string> = {};
 
 beforeAll(async () => {
-  console.log("STARTING VERDACCIO");
   setDefaultTimeout(1000 * 60 * 5);
-  verdaccioServer = fork(
-    require.resolve("verdaccio/bin/verdaccio"),
-    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    {
-      silent: true,
-      // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun") || bunExe(),
-    },
-  );
-
-  verdaccioServer.stderr?.on("data", data => {
-    console.error(`Error: ${data}`);
-  });
-
-  verdaccioServer.on("error", error => {
-    console.error(`Failed to start child process: ${error}`);
-  });
-
-  verdaccioServer.on("exit", (code, signal) => {
-    if (code !== 0) {
-      console.error(`Child process exited with code ${code} and signal ${signal}`);
-    } else {
-      console.log("Child process exited successfully");
-    }
-  });
-
-  await new Promise<void>(done => {
-    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-      if (msg.verdaccio_started) {
-        console.log("Verdaccio started");
-        done();
-      }
-    });
-  });
+  ({ verdaccioProcess: verdaccioServer, verdaccioPort: port } = await startVerdaccio());
 });
 
 afterAll(async () => {

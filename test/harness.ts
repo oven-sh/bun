@@ -1,7 +1,8 @@
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
+import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile } from "fs/promises";
+import { readFile, readlink, writeFile, readdir } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -1433,4 +1434,53 @@ export function textLockfile(version: number, pkgs: any): string {
     lockfileVersion: version,
     ...pkgs,
   });
+}
+
+export async function startVerdaccio(): Promise<{ verdaccioPort: number; verdaccioProcess: ChildProcess }> {
+  const verdaccioPort = randomPort();
+  const verdaccioProcess = fork(
+    require.resolve("verdaccio/bin/verdaccio"),
+    ["-c", join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml"), "-l", `${verdaccioPort}`],
+    {
+      silent: true,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
+    },
+  );
+
+  verdaccioProcess.stderr?.on("data", data => {
+    console.error(`[verdaccio] stderr: ${data}`);
+  });
+
+  verdaccioProcess.on("error", error => {
+    console.error(`Failed to start verdaccio: ${error}`);
+  });
+
+  verdaccioProcess.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+    } else {
+      console.log("Verdaccio exited successfully");
+    }
+  });
+
+  await new Promise<void>(done => {
+    verdaccioProcess.on("message", (msg: { verdaccio_started: boolean }) => {
+      if (msg.verdaccio_started) {
+        console.log("[verdaccio] started on port", verdaccioPort);
+        done();
+      }
+    });
+  });
+
+  return {
+    verdaccioPort,
+    verdaccioProcess,
+  };
+}
+
+export async function readdirSorted(path: string): Promise<string[]> {
+  const results = await readdir(path);
+  results.sort();
+  return results;
 }

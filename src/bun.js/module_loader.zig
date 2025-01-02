@@ -564,16 +564,12 @@ pub const RuntimeTranspilerStore = struct {
                     if (entry.metadata.module_type == .cjs) {
                         @panic("TranspilerCache contained cjs module with module info");
                     }
-                    const module_info_data = bun.default_allocator.dupe(u8, entry.esm_record) catch bun.outOfMemory();
-                    // TODO: defer bun.default_allocator.free(module_info_data);
-                    const module_info_deserialized = bun.default_allocator.create(analyze_transpiled_module.ModuleInfoDeserialized) catch bun.outOfMemory();
-                    // TODO: defer bun.default_allocator.destroy(module_info_deserialized);
-                    module_info_deserialized.* = analyze_transpiled_module.ModuleInfoDeserialized.parse(module_info_data) catch {
+                    module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
+                        error.OutOfMemory => bun.outOfMemory(),
                         // uh oh! invalid module info in cache
                         // (not sure what to do here)
-                        @panic("TranspilerCache contained invalid module info");
+                        error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
                     };
-                    module_info = module_info_deserialized;
                 }
 
                 this.resolved_source = ResolvedSource{
@@ -1859,16 +1855,12 @@ pub const ModuleLoader = struct {
                         if (entry.metadata.module_type == .cjs) {
                             @panic("TranspilerCache contained cjs module with module info");
                         }
-                        const module_info_data = bun.default_allocator.dupe(u8, entry.esm_record) catch bun.outOfMemory();
-                        // TODO: defer bun.default_allocator.free(module_info_data);
-                        const module_info_deserialized = bun.default_allocator.create(analyze_transpiled_module.ModuleInfoDeserialized) catch bun.outOfMemory();
-                        // TODO: defer bun.default_allocator.destroy(module_info_deserialized);
-                        module_info_deserialized.* = analyze_transpiled_module.ModuleInfoDeserialized.parse(module_info_data) catch {
+                        module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
+                            error.OutOfMemory => bun.outOfMemory(),
                             // uh oh! invalid module info in cache
                             // (not sure what to do here)
-                            @panic("TranspilerCache contained invalid module info");
+                            error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
                         };
-                        module_info = module_info_deserialized;
                     }
 
                     return ResolvedSource{

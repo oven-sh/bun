@@ -44,40 +44,46 @@ pub const ModuleInfoDeserialized = struct {
     buffer: []align(1) const StringID,
     record_kinds: []align(1) const RecordKind,
     contains_import_meta: bool,
-    // owner: union(enum) {
-    //     module_info,
-    //     allocated_slice: struct {
-    //         slice: []const u8,
-    //         allocator: std.mem.Allocator,
-    //     },
-    // },
+    owner: union(enum) {
+        module_info,
+        allocated_slice: struct {
+            slice: []const u8,
+            allocator: std.mem.Allocator,
+        },
+    },
 
-    // pub fn deinit(self: *ModuleInfoDeserialized) void {
-    //     switch (self.owner) {
-    //         .module_info => {
-    //             const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
-    //             mi.deinit();
-    //         },
-    //         .allocated_slice => |as| {
-    //             as.allocator.free(as.slice);
-    //         },
-    //     }
-    // }
+    pub fn deinit(self: *ModuleInfoDeserialized) void {
+        switch (self.owner) {
+            .module_info => {
+                const mi: *ModuleInfo = @fieldParentPtr("_deserialized", self);
+                mi.destroy();
+            },
+            .allocated_slice => |as| {
+                as.allocator.free(as.slice);
+                as.allocator.destroy(self);
+            },
+        }
+        self.* = undefined;
+    }
 
-    fn eat(rem: *[]const u8, len: usize) ![]const u8 {
+    inline fn eat(rem: *[]const u8, len: usize) ![]const u8 {
         if (rem.*.len < len) return error.BadModuleInfo;
         const res = rem.*[0..len];
         rem.* = rem.*[len..];
         return res;
     }
-    fn eatC(rem: *[]const u8, comptime len: usize) !*const [len]u8 {
+    inline fn eatC(rem: *[]const u8, comptime len: usize) !*const [len]u8 {
         if (rem.*.len < len) return error.BadModuleInfo;
         const res = rem.*[0..len];
         rem.* = rem.*[len..];
         return res;
     }
-    pub fn parse(source: []const u8) !ModuleInfoDeserialized {
-        var rem = source[0..];
+    pub fn create(source: []const u8, gpa: std.mem.Allocator) !*ModuleInfoDeserialized {
+        var rem = try gpa.dupe(u8, source);
+        errdefer gpa.free(rem);
+        var res = try gpa.create(ModuleInfoDeserialized);
+        errdefer res.deinit();
+
         const record_kinds_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
         const record_kinds = std.mem.bytesAsSlice(RecordKind, try eat(&rem, record_kinds_len * @sizeOf(RecordKind)));
         const buffer_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
@@ -89,7 +95,7 @@ pub const ModuleInfoDeserialized = struct {
         const strings_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
         const strings = rem;
 
-        return .{
+        res.* = .{
             .strings_len = strings_len,
             .strings = strings,
             .requested_modules_keys = requested_modules_keys,
@@ -97,7 +103,12 @@ pub const ModuleInfoDeserialized = struct {
             .buffer = buffer,
             .record_kinds = record_kinds,
             .contains_import_meta = contains_import_meta,
+            .owner = .{ .allocated_slice = .{
+                .slice = source,
+                .allocator = gpa,
+            } },
         };
+        return res;
     }
     pub fn serialize(self: *const ModuleInfoDeserialized, writer: anytype) !void {
         try writer.writeInt(u32, @truncate(self.record_kinds.len), .little);
@@ -218,7 +229,7 @@ pub const ModuleInfo = struct {
         res.* = ModuleInfo.init(gpa);
         return res;
     }
-    pub fn init(allocator: std.mem.Allocator) ModuleInfo {
+    fn init(allocator: std.mem.Allocator) ModuleInfo {
         return .{
             .gpa = allocator,
             .strings_map = .{},
@@ -229,7 +240,7 @@ pub const ModuleInfo = struct {
             .contains_import_meta = false,
         };
     }
-    pub fn deinit(self: *ModuleInfo) void {
+    fn deinit(self: *ModuleInfo) void {
         self.strings_map.deinit(self.gpa);
         self.strings_buf.deinit(self.gpa);
         self.requested_modules.deinit();
@@ -299,6 +310,7 @@ pub const ModuleInfo = struct {
             .buffer = self.buffer.items,
             .record_kinds = self.record_kinds.items,
             .contains_import_meta = self.contains_import_meta,
+            .owner = .module_info,
         };
 
         self.finalized = true;

@@ -232,6 +232,13 @@ pub const ResolvedSource = extern struct {
     };
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
+
+    pub fn deinit(this: *ResolvedSource) void {
+        if (this.module_info) |module_info| {
+            module_info.deinit();
+        }
+        this.* = undefined;
+    }
 };
 
 pub const SourceProvider = opaque {

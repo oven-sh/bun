@@ -122,17 +122,18 @@ pub const ResourceUsage = struct {
 };
 
 pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
-    var object_iter = JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
+    var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
+
     try envp.ensureTotalCapacityPrecise(object_iter.len +
         // +1 incase there's IPC
         // +1 for null terminator
         2);
-    while (object_iter.next()) |key| {
+    while (try object_iter.next()) |key| {
         var value = object_iter.value;
         if (value == .undefined) continue;
 
-        var line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
+        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);
@@ -1703,6 +1704,8 @@ pub const Subprocess = struct {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
+    extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
+
     // This is split into a separate function to conserve stack space.
     // On Windows, a single path buffer can take 64 KB.
     fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
@@ -1717,14 +1720,30 @@ pub const Subprocess = struct {
 
         var actual_argv0: [:0]const u8 = "";
 
-        if (argv0 == null) {
-            const resolved = Which.which(path_buf, PATH, cwd, arg0.slice()) orelse {
-                return throwCommandNotFound(globalThis, arg0.slice());
-            };
-            actual_argv0 = try allocator.dupeZ(u8, resolved);
+        const argv0_to_use: []const u8 = if (argv0) |_argv0|
+            bun.sliceTo(_argv0, 0)
+        else
+            arg0.slice();
+
+        // This mimicks libuv's behavior, which mimicks execvpe
+        // Only resolve from $PATH when the command is not an absolute path
+        const PATH_to_use: []const u8 = if (strings.containsChar(argv0_to_use, '/'))
+            ""
+            // If no $PATH is provided, we fallback to the one from environ
+            // This is already the behavior of the PATH passed in here.
+        else if (PATH.len > 0)
+            PATH
+        else if (comptime Environment.isPosix)
+            // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
+            bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+        else
+            "";
+
+        if (PATH_to_use.len == 0) {
+            actual_argv0 = try allocator.dupeZ(u8, argv0_to_use);
         } else {
-            const resolved = Which.which(path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                return throwCommandNotFound(globalThis, arg0.slice());
+            const resolved = Which.which(path_buf, PATH_to_use, cwd, argv0_to_use) orelse {
+                return throwCommandNotFound(globalThis, argv0_to_use);
             };
             actual_argv0 = try allocator.dupeZ(u8, resolved);
         }
@@ -1733,6 +1752,41 @@ pub const Subprocess = struct {
             .argv0 = actual_argv0,
             .arg0 = try allocator.dupeZ(u8, arg0.slice()),
         };
+    }
+
+    fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
+        var cmds_array = args.arrayIterator(globalThis);
+        // + 1 for argv0
+        // + 1 for null terminator
+        argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
+
+        if (args.isEmptyOrUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+        }
+
+        if (cmds_array.len == 0) {
+            return globalThis.throwInvalidArguments("cmd must not be empty", .{});
+        }
+
+        const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+
+        argv0.* = argv0_result.argv0.ptr;
+        argv.appendAssumeCapacity(argv0_result.arg0.ptr);
+
+        while (cmds_array.next()) |value| {
+            const arg = try value.toBunString2(globalThis);
+            defer arg.deref();
+
+            // if the string is empty, ignore it, don't add it to the argv
+            if (arg.isEmpty()) {
+                continue;
+            }
+            argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+        }
+
+        if (argv.items.len == 0) {
+            return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+        }
     }
 
     pub fn spawnMaybeSync(
@@ -1830,40 +1884,6 @@ pub const Subprocess = struct {
                 }
             }
 
-            {
-                var cmds_array = cmd_value.arrayIterator(globalThis);
-                // + 1 for argv0
-                // + 1 for null terminator
-                argv = try @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2);
-
-                if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                }
-
-                if (cmds_array.len == 0) {
-                    return globalThis.throwInvalidArguments("cmd must not be empty", .{});
-                }
-
-                const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0, cmds_array.next().?, allocator);
-                argv0 = argv0_result.argv0.ptr;
-                argv.appendAssumeCapacity(argv0_result.arg0.ptr);
-
-                while (cmds_array.next()) |value| {
-                    const arg = try value.toBunString2(globalThis);
-                    defer arg.deref();
-
-                    // if the string is empty, ignore it, don't add it to the argv
-                    if (arg.isEmpty()) {
-                        continue;
-                    }
-                    argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
-                }
-
-                if (argv.items.len == 0) {
-                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                }
-            }
-
             if (args != .zero and args.isObject()) {
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
@@ -1930,11 +1950,15 @@ pub const Subprocess = struct {
 
                     override_env = true;
                     // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                    PATH = "";
+                    var NEW_PATH: []const u8 = "";
                     var envp_managed = env_array.toManaged(allocator);
-                    try appendEnvpFromJS(globalThis, object, &envp_managed, &PATH);
+                    try appendEnvpFromJS(globalThis, object, &envp_managed, &NEW_PATH);
                     env_array = envp_managed.moveToUnmanaged();
+                    PATH = NEW_PATH;
                 }
+
+                try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
+
                 if (try args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
@@ -2007,6 +2031,8 @@ pub const Subprocess = struct {
                         }
                     }
                 }
+            } else {
+                try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
             }
         }
 
@@ -2124,6 +2150,20 @@ pub const Subprocess = struct {
         }) {
             .err => |err| {
                 spawn_options.deinit();
+                switch (err.getErrno()) {
+                    .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => {
+                        const display_path: [:0]const u8 = if (argv0 != null)
+                            std.mem.sliceTo(argv0.?, 0)
+                        else if (argv.items.len > 0 and argv.items[0] != null)
+                            std.mem.sliceTo(argv.items[0].?, 0)
+                        else
+                            "";
+                        if (display_path.len > 0)
+                            return globalThis.throwValue(err.withPath(display_path).toJSC(globalThis));
+                    },
+                    else => {},
+                }
+
                 return globalThis.throwValue(err.toJSC(globalThis));
             },
             .result => |result| result,

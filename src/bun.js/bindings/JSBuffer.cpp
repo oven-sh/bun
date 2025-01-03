@@ -113,7 +113,7 @@ namespace Bun {
 
 // Use a JSString* here to avoid unnecessarily joining the rope string.
 // If we're only getting the length property, it won't join the rope string.
-std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding)
+std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
     if (str->length() == 0)
         return 0;
@@ -135,7 +135,7 @@ std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url: {
         int64_t length = str->length();
-        const auto& view = str->tryGetValue(true);
+        const auto view = str->view(lexicalGlobalObject);
         if (UNLIKELY(view->isNull())) {
             return std::nullopt;
         }
@@ -167,7 +167,7 @@ std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType
     }
 
     case WebCore::BufferEncodingType::utf8: {
-        const auto& view = str->tryGetValue(true);
+        const auto view = str->view(lexicalGlobalObject);
         if (UNLIKELY(view->isNull())) {
             return std::nullopt;
         }
@@ -657,7 +657,7 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         return {};
     }
 
-    if (auto length = Bun::byteLength(str, encoding)) {
+    if (auto length = Bun::byteLength(str, lexicalGlobalObject, encoding)) {
         return JSValue::encode(jsNumber(*length));
     }
     if (!scope.exception()) {

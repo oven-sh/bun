@@ -530,7 +530,7 @@ pub const IniTestingAPIs = struct {
         const envjs = callframe.argument(1);
         const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
-            var object_iter = JSC.JSPropertyIterator(.{
+            var object_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
             }).init(globalThis, envjs);
@@ -538,7 +538,7 @@ pub const IniTestingAPIs = struct {
 
             try envmap.ensureTotalCapacity(object_iter.len);
 
-            while (object_iter.next()) |key| {
+            while (try object_iter.next()) |key| {
                 const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
                 if (value == .undefined) continue;

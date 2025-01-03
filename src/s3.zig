@@ -494,22 +494,22 @@ pub const AWSCredentials = struct {
     }
     pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (err) {
-            error.MissingCredentials => return globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
-            error.InvalidMethod => return globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
-            error.InvalidPath => return globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
-            error.InvalidEndpoint => return globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
-            error.InvalidSessionToken => return globalThis.ERR_AWS_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
-            else => return globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
+            error.MissingCredentials => return globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
+            error.InvalidMethod => return globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
+            error.InvalidPath => return globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
+            error.InvalidEndpoint => return globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
+            error.InvalidSessionToken => return globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
+            else => return globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
         };
     }
     pub fn throwSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) bun.JSError {
         return switch (err) {
-            error.MissingCredentials => globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
-            error.InvalidMethod => globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
-            error.InvalidPath => globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
-            error.InvalidEndpoint => globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
-            error.InvalidSessionToken => globalThis.ERR_AWS_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
-            else => globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
+            error.MissingCredentials => globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
+            error.InvalidMethod => globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
+            error.InvalidPath => globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
+            error.InvalidEndpoint => globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
+            error.InvalidSessionToken => globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
+            else => globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
         };
     }
     pub fn getSignErrorCodeAndMessage(err: anyerror) ErrorCodeAndMessage {

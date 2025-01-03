@@ -57,6 +57,12 @@ export default [
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_ASSERTION", Error],
   ["ERR_IPC_ONE_PIPE", Error],
+  ["ERR_SOCKET_ALREADY_BOUND", Error],
+  ["ERR_SOCKET_BAD_BUFFER_SIZE", TypeError],
+  ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
+  ["ERR_INVALID_CURSOR_POS", TypeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

@@ -696,7 +696,7 @@ function stdioStringToArray(stdio, channel) {
       options = [0, 1, 2];
       break;
     default:
-      throw ERR_INVALID_ARG_VALUE("stdio", stdio);
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
   if (channel) $arrayPush(options, channel);
@@ -874,7 +874,7 @@ function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
-  if (file.length === 0) throw ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
+  if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
   if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
@@ -1614,7 +1614,7 @@ function validateMaxBuffer(maxBuffer) {
 
 function validateArgumentNullCheck(arg, propName) {
   if (typeof arg === "string" && StringPrototypeIncludes.$call(arg, "\u0000")) {
-    throw ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
+    throw $ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
 
@@ -1647,7 +1647,7 @@ const validateOneOf = (value, name, oneOf) => {
       ", ",
     );
     const reason = "must be one of: " + allowed;
-    throw ERR_INVALID_ARG_VALUE(name, value, reason);
+    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 };
 
@@ -1694,7 +1694,7 @@ function nullCheck(path, propName, throwError = true) {
     return;
   }
 
-  const err = ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
+  const err = $ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
   if (throwError) {
     throw err;
   }
@@ -1932,12 +1932,6 @@ function ERR_UNKNOWN_SIGNAL(name) {
 function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
-  return err;
-}
-
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  const err = new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-  err.code = "ERR_INVALID_ARG_VALUE";
   return err;
 }
 

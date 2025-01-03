@@ -632,6 +632,25 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
+static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason)
+{
+    ASSERT(name.isString());
+    auto name_string = name.toWTFString(globalObject);
+    ASCIILiteral type = name_string.contains('.') ? "property"_s : "argument"_s;
+
+    auto value_string = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    ASSERT(reason.isUndefined() || reason.isString());
+    if (reason.isUndefined()) {
+        auto message = makeString("The "_s, type, " '"_s, name, "' is invalid. Received "_s, value_string);
+        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
+    }
+    auto reason_string = reason.toWTFString(globalObject);
+    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason_string, ". Received "_s, value_string);
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -805,6 +824,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
+        JSValue arg0 = callFrame->argument(1);
+        JSValue arg1 = callFrame->argument(2);
+        JSValue arg2 = callFrame->argument(3);
+        return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -819,6 +845,18 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     case ErrorCode::ERR_IPC_ONE_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_ONE_PIPE, "Child process can have only one IPC pipe"_s));
+    case ErrorCode::ERR_SOCKET_ALREADY_BOUND:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_ALREADY_BOUND, "Socket is already bound"_s));
+    case ErrorCode::ERR_SOCKET_BAD_BUFFER_SIZE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_BUFFER_SIZE, "Buffer size must be a positive integer"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_IS_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_IS_CONNECTED, "Already connected"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED, "Not connected"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Not running"_s));
+    case ErrorCode::ERR_INVALID_CURSOR_POS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
 
     default: {
         break;

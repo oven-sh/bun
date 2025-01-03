@@ -3533,10 +3533,10 @@ pub const PackageManager = struct {
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir: CacheDir = if (this.options.cache_directory.len > 0)
-                    .{ .path = Fs.FileSystem.instance.abs(&.{this.options.cache_directory}), .is_node_modules = false }
-                else
-                    fetchCacheDirectoryPath(this.env);
+                const cache_dir = fetchCacheDirectoryPath(
+                    this.env,
+                    if (this.options.cache_directory.len > 0) this.options.cache_directory else null,
+                );
 
                 this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
@@ -6238,7 +6238,7 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
-    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
+    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, configured_cache_dir: ?string) CacheDir {
         if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
         }
@@ -6246,6 +6246,10 @@ pub const PackageManager = struct {
         if (env.get("BUN_INSTALL")) |dir| {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+        }
+
+        if (configured_cache_dir) |dir| {
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
         }
 
         if (env.get("XDG_CACHE_HOME")) |dir| {
@@ -7368,6 +7372,10 @@ pub const PackageManager = struct {
 
                 if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
+                }
+
+                if (config.cache_directory) |cache_dir| {
+                    this.cache_directory = cache_dir;
                 }
 
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;

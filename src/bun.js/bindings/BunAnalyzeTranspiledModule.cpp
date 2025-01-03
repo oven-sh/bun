@@ -2,29 +2,16 @@
 
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/JSModuleRecord.h"
-// #include "JavaScriptCore/BuiltinNames.h"
-// #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
-// #include "JavaScriptCore/JSCInlines.h"
-// #include "JavaScriptCore/JSInternalPromise.h"
-// #include "JavaScriptCore/JSMap.h"
-// #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleRecord.h"
-// #include "JavaScriptCore/JSScriptFetchParameters.h"
-// #include "JavaScriptCore/JSSourceCode.h"
-// #include "JavaScriptCore/JSWebAssembly.h"
 #include "JavaScriptCore/Nodes.h"
-// #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/SyntheticModuleRecord.h"
-// #include "JavaScriptCore/VMTrapsInlines.h"
 #include <wtf/text/MakeString.h>
-// #include "JavaScriptCore/IdentifierInlines.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/ExceptionScope.h"
-// #include "JavaScriptCore/StrongInlines.h"
 #include "ZigSourceProvider.h"
 #include "BunAnalyzeTranspiledModule.h"
 
@@ -175,8 +162,6 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
     });
 }
 
-#define PROFILE_MODE true
-
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
 {
@@ -203,11 +188,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-#if PROFILE_MODE
+#if ASSERT_ENABLED
+    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
+#else
     promise->fulfillWithNonPromise(globalObject, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
-#else
-    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #endif
 }
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue)

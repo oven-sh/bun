@@ -1953,9 +1953,6 @@ pub const Subprocess = struct {
                     var NEW_PATH: []const u8 = "";
                     var envp_managed = env_array.toManaged(allocator);
                     try appendEnvpFromJS(globalThis, object, &envp_managed, &NEW_PATH);
-                    if (globalThis.hasException()) {
-                        return error.JSError;
-                    }
                     env_array = envp_managed.moveToUnmanaged();
                     PATH = NEW_PATH;
                 }

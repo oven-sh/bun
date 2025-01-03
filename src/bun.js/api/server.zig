@@ -1222,13 +1222,13 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }
 
-                var iter = JSC.JSPropertyIterator(.{
+                var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(global, static);
                 defer iter.deinit();
 
-                while (iter.next()) |key| {
+                while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
 
                     const value = iter.value;

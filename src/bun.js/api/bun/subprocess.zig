@@ -122,17 +122,18 @@ pub const ResourceUsage = struct {
 };
 
 pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
-    var object_iter = JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
+    var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
+
     try envp.ensureTotalCapacityPrecise(object_iter.len +
         // +1 incase there's IPC
         // +1 for null terminator
         2);
-    while (object_iter.next()) |key| {
+    while (try object_iter.next()) |key| {
         var value = object_iter.value;
         if (value == .undefined) continue;
 
-        var line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
+        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);
@@ -1952,6 +1953,9 @@ pub const Subprocess = struct {
                     var NEW_PATH: []const u8 = "";
                     var envp_managed = env_array.toManaged(allocator);
                     try appendEnvpFromJS(globalThis, object, &envp_managed, &NEW_PATH);
+                    if (globalThis.hasException()) {
+                        return error.JSError;
+                    }
                     env_array = envp_managed.moveToUnmanaged();
                     PATH = NEW_PATH;
                 }

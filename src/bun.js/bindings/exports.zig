@@ -362,6 +362,7 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
+    var title_mutex = std.Thread.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
         const str = bun.CLI.Bun__Node__ProcessTitle;
@@ -370,6 +371,8 @@ pub const Process = extern struct {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
+        title_mutex.lock();
+        defer title_mutex.unlock();
         if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
         bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
         return newvalue.toJS(globalObject);

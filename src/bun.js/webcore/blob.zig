@@ -3881,7 +3881,7 @@ pub const Blob = struct {
 
         pub fn deinit(this: *S3BlobDownloadTask) void {
             this.blob.store.?.deref();
-            this.poll_ref.disable();
+            this.poll_ref.unref(this.globalThis.bunVM());
             this.promise.deinit();
             this.destroy();
         }

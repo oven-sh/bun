@@ -135,21 +135,6 @@ export function getStdinStream(fd) {
 
   stream.fd = fd;
 
-  const originalPause = stream.pause;
-  stream.pause = function () {
-    $debug("pause();");
-    let r = originalPause.$call(this);
-    unref();
-    return r;
-  };
-
-  const originalResume = stream.resume;
-  stream.resume = function () {
-    $debug("resume();");
-    ref();
-    return originalResume.$call(this);
-  };
-
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
@@ -205,7 +190,6 @@ export function getStdinStream(fd) {
 
   stream.on("resume", () => {
     $debug('on("resume");');
-    ref();
     stream._undestroy();
     stream_destroyed = false;
   });

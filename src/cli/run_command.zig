@@ -220,6 +220,13 @@ pub const RunCommand = struct {
                             continue;
                         }
 
+                        if (strings.hasPrefixComptime(script[start..], "pnpm dlx ")) {
+                             try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
+                             entry_i += "pnpm dlx ".len;
+                             delimiter = 0;
+                             continue;
+                         }
+
                         if (strings.hasPrefixComptime(script[start..], "pnpx ")) {
                             try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
                             entry_i += "pnpx ".len;

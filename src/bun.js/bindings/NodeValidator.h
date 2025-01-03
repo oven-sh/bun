@@ -3,7 +3,6 @@
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/JSCJSValue.h"
-#include "wtf/text/ASCIILiteral.h"
 
 namespace Bun {
 

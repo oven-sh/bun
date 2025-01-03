@@ -2,7 +2,6 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
-const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED, ERR_IPC_ONE_PIPE } = require("internal/errors");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -554,7 +553,7 @@ function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
     }
   }
 
@@ -795,7 +794,7 @@ function sanitizeKillSignal(killSignal) {
   if (typeof killSignal === "string" || typeof killSignal === "number") {
     return convertToValidSignal(killSignal);
   } else if (killSignal != null) {
-    throw ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
+    throw $ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
   }
 }
 
@@ -882,7 +881,7 @@ function normalizeSpawnArguments(file, args, options) {
   } else if (args == null) {
     args = [];
   } else if (typeof args !== "object") {
-    throw ERR_INVALID_ARG_TYPE("args", "object", args);
+    throw $ERR_INVALID_ARG_TYPE("args", "object", args);
   } else {
     options = args;
     args = [];
@@ -907,17 +906,17 @@ function normalizeSpawnArguments(file, args, options) {
 
   // Validate the uid, if present.
   if (options.uid != null && !isInt32(options.uid)) {
-    throw ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
+    throw $ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
   }
 
   // Validate the gid, if present.
   if (options.gid != null && !isInt32(options.gid)) {
-    throw ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
+    throw $ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
   }
 
   // Validate the shell, if present.
   if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
-    throw ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
+    throw $ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
   }
 
   // Validate argv0, if present.
@@ -1338,7 +1337,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw ERR_INVALID_ARG_TYPE("options", "object", options);
+        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
 
@@ -1371,7 +1370,7 @@ class ChildProcess extends EventEmitter {
       $assert(this.connected);
       this.#handle.disconnect();
     } else if (!ok) {
-      this.emit("error", ERR_IPC_DISCONNECTED());
+      this.emit("error", $ERR_IPC_DISCONNECTED());
       return;
     }
     this.#handle.disconnect();
@@ -1499,7 +1498,7 @@ function fdToStdioName(fd) {
 
 function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
-  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw ERR_IPC_ONE_PIPE();
+  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1674,7 +1673,7 @@ const validateObject = (value, name, options = null) => {
     (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw ERR_INVALID_ARG_TYPE(name, "object", value);
+    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 };
 
@@ -1704,7 +1703,7 @@ function nullCheck(path, propName, throwError = true) {
 
 function validatePath(path, propName = "path") {
   if (typeof path !== "string" && !isUint8Array(path)) {
-    throw ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
+    throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
   }
 
   const err = nullCheck(path, propName, false);
@@ -1750,7 +1749,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "object", options);
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
   }

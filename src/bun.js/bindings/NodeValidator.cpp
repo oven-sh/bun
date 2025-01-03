@@ -16,7 +16,6 @@
 #include "JSBufferEncodingType.h"
 #include "BunProcess.h"
 #include "ErrorCode.h"
-#include "wtf/text/ASCIILiteral.h"
 #include "NodeValidator.h"
 
 namespace Bun {
@@ -528,4 +527,5 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     }
     return JSValue::encode(jsUndefined());
 }
+
 }

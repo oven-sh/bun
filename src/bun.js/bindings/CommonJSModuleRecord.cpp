@@ -156,6 +156,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return true;
     }
 
+    // Report the cost of the sourcemap
+    if (moduleObject->source_map_memory_cost > 0) {
+        vm.heap.reportExtraMemoryAllocated(moduleObject, moduleObject->source_map_memory_cost);
+    }
+
     // This will return 0 if there was a syntax error or an allocation failure
     JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), exception);
 
@@ -757,6 +762,7 @@ size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
             additionalSize *= 2;
         }
     }
+    additionalSize += thisObject->source_map_memory_cost;
     return Base::estimatedSize(cell, vm) + additionalSize;
 }
 
@@ -1021,6 +1027,8 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dirname);
     visitor.append(thisObject->m_paths);
     visitor.append(thisObject->m_overridenParent);
+
+    visitor.reportExtraMemoryVisited(thisObject->source_map_memory_cost);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -1124,7 +1132,7 @@ bool JSCommonJSModule::evaluate(
         return true;
 
     this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
-
+    this->source_map_memory_cost = source.source_map_memory_cost;
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get(), exception);
 
@@ -1189,6 +1197,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    moduleObject->source_map_memory_cost = source.source_map_memory_cost;
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(

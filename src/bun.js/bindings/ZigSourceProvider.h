@@ -44,6 +44,7 @@ public:
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override;
+    size_t memoryCost() const override { return m_resolvedSource.source_map_memory_cost + m_resolvedSource.source_code.memoryCost(); }
 
     RefPtr<JSC::CachedBytecode> cachedBytecode() const final
     {

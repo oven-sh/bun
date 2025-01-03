@@ -588,6 +588,7 @@ pub const RuntimeTranspilerStore = struct {
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .source_map_memory_cost = if (parse_result.runtime_transpiler_cache) |transpiler_cache| transpiler_cache.memoryCost() else 0,
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -689,6 +690,7 @@ pub const RuntimeTranspilerStore = struct {
                 .source_url = duped.createIfDifferent(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
+                .source_map_memory_cost = if (parse_result.runtime_transpiler_cache) |transpiler_cache| transpiler_cache.memoryCost() else 0,
             };
         }
     };
@@ -1451,7 +1453,7 @@ pub const ModuleLoader = struct {
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-
+                .source_map_memory_cost = if (parse_result.runtime_transpiler_cache) |transpiler_cache| transpiler_cache.memoryCost() else 0,
                 .hash = 0,
             };
         }
@@ -1802,6 +1804,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (cache.entry) |*entry| {
+                    const source_map_memory_cost = entry.sourcemap.len;
                     jsc_vm.source_mappings.putMappings(parse_result.source, .{
                         .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                         .allocator = bun.default_allocator,
@@ -1843,6 +1846,7 @@ pub const ModuleLoader = struct {
 
                             break :brk ResolvedSource.Tag.javascript;
                         },
+                        .source_map_memory_cost = source_map_memory_cost,
                     };
                 }
 
@@ -1899,7 +1903,6 @@ pub const ModuleLoader = struct {
                 defer source_code_printer.* = printer;
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
-
                     break :brk try jsc_vm.transpiler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
@@ -1961,6 +1964,7 @@ pub const ModuleLoader = struct {
                     .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                     .hash = 0,
                     .tag = tag,
+                    .source_map_memory_cost = if (parse_result.runtime_transpiler_cache) |transpiler_cache| transpiler_cache.memoryCost() else 0,
                 };
             },
             // provideFetch() should be called

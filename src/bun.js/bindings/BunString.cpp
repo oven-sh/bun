@@ -56,6 +56,15 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
     impl->ref();
 }
 
+size_t BunString::memoryCost() const
+{
+    if (tag == BunStringTag::WTFStringImpl) {
+        return impl.wtf->sizeInBytes();
+    }
+
+    return 0;
+}
+
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);

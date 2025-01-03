@@ -29,6 +29,7 @@ pub const RuntimeTranspilerCache = struct {
     exports_kind: bun.JSAst.ExportsKind = .none,
     output_code: ?bun.String = null,
     entry: ?Entry = null,
+    source_map_memory_cost: usize = 0,
 
     sourcemap_allocator: std.mem.Allocator,
     output_code_allocator: std.mem.Allocator,
@@ -369,6 +370,14 @@ pub const RuntimeTranspilerCache = struct {
         return printed.len;
     }
 
+    pub fn memoryCost(this: *const RuntimeTranspilerCache) usize {
+        if (this.entry) |*entry| {
+            return entry.metadata.sourcemap_byte_length;
+        }
+
+        return this.source_map_memory_cost;
+    }
+
     pub fn getCacheFilePath(
         buf: *bun.PathBuffer,
         input_hash: u64,
@@ -603,6 +612,7 @@ pub const RuntimeTranspilerCache = struct {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
+
         if (comptime bun.Environment.isDebug) {
             if (bun_debug_restore_from_cache) {
                 debug("get(\"{s}\") = {d} bytes, restored", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
@@ -634,6 +644,7 @@ pub const RuntimeTranspilerCache = struct {
         bun.assert(this.entry == null);
         const output_code = bun.String.createLatin1(output_code_bytes);
         this.output_code = output_code;
+        this.source_map_memory_cost = sourcemap.len;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
             debug("put() = {s}", .{@errorName(err)});

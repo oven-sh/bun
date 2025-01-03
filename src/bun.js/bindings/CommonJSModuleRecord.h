@@ -56,6 +56,9 @@ public:
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
+    // Stored separately from SourceCode since we try to free SourceCode sooner.
+    size_t source_map_memory_cost = 0;
+
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
     void setSourceCode(JSC::SourceCode&& sourceCode);

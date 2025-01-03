@@ -3533,7 +3533,7 @@ pub const PackageManager = struct {
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir = fetchCacheDirectoryPath(this.env, this.options);
+                const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
                 this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
@@ -6234,7 +6234,7 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
-    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: *Options) CacheDir {
+    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
         if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
         }
@@ -6243,9 +6243,10 @@ pub const PackageManager = struct {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
-
-        if (options.cache_directory) |dir| {
-            return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        if (options) |opts| {
+            if (opts.cache_directory.len > 0) {
+                return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory}), .is_node_modules = false };
+            }
         }
 
         if (env.get("XDG_CACHE_HOME")) |dir| {

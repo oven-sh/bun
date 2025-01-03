@@ -1,17 +1,14 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { ChildProcess } from "child_process";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
-  isLinux,
   isWindows,
   mergeWindowEnvs,
-  randomPort,
   runBunInstall,
   runBunUpdate,
   pack,
@@ -28,7 +25,7 @@ import {
   readdirSorted,
   VerdaccioRegistry,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -1856,6 +1853,60 @@ describe("text lockfile", () => {
       );
     });
   }
+});
+
+test("--lockfile-only", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "package1",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  let { exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile", "--lockfile-only"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "ignore",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+  expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+  const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+    /localhost:\d+/g,
+    "localhost:1234",
+  );
+
+  // nothing changes with another --lockfile-only
+  ({ exited } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "ignore",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+  expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+    firstLockfile,
+  );
 });
 
 describe("bundledDependencies", () => {

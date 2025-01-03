@@ -14920,16 +14920,40 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
+        const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
+            .text
+        else switch (load_result) {
+            .not_found => .binary,
+            .err => |err| err.format,
+            .ok => |ok| ok.format,
+        };
+
         if (manager.options.lockfile_only) {
-            // save the lockfile and exit
-            try manager.saveLockfile(&load_result, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
+            // save the lockfile and exit. make sure metahash is generated for binary lockfile
+
+            manager.lockfile.meta_hash = try manager.lockfile.generateMetaHash(
+                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+                packages_len_before_install,
+            );
+
+            try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
 
             if (manager.options.do.summary) {
                 // TODO(dylan-conway): packages aren't installed but we can still print
                 // added/removed/updated direct dependencies.
-                Output.pretty("\n", .{});
+                Output.pretty(
+                    \\
+                    \\Saved <green>{s}<r> ({d} package{s}) 
+                , .{
+                    switch (save_format) {
+                        .text => "bun.lock",
+                        .binary => "bun.lockb",
+                    },
+                    manager.lockfile.packages.len,
+                    if (manager.lockfile.packages.len == 1) "" else "s",
+                });
                 Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                Output.prettyln("<d> done<r>", .{});
+                Output.pretty("\n", .{});
             }
             Output.flush();
             return;
@@ -14971,7 +14995,7 @@ pub const PackageManager = struct {
         if (manager.options.do.save_lockfile and
             (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
         {
-            try manager.saveLockfile(&load_result, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
+            try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
         }
 
         if (needs_new_lockfile) {
@@ -15130,6 +15154,7 @@ pub const PackageManager = struct {
     fn saveLockfile(
         this: *PackageManager,
         load_result: *const Lockfile.LoadResult,
+        save_format: Lockfile.LoadResult.LockfileFormat,
         had_any_diffs: bool,
         // TODO(dylan-conway): this and `packages_len_before_install` can most likely be deleted
         // now that git dependnecies don't append to lockfile during installation.
@@ -15180,24 +15205,18 @@ pub const PackageManager = struct {
             this.progress.refresh();
         }
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (this.options.save_text_lockfile)
-            .text
-        else switch (load_result.*) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
-
         this.lockfile.saveToDisk(save_format, this.options.log_level.isVerbose());
 
         if (comptime Environment.allow_assert) {
-            if (load_result.loadedFromTextLockfile()) {
-                if (!try this.lockfile.eql(lockfile_before_install, packages_len_before_install, this.allocator)) {
-                    Output.panic("Lockfile non-deterministic after saving", .{});
-                }
-            } else {
-                if (this.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
-                    Output.panic("Lockfile metahash non-deterministic after saving", .{});
+            if (load_result.* != .not_found) {
+                if (load_result.loadedFromTextLockfile()) {
+                    if (!try this.lockfile.eql(lockfile_before_install, packages_len_before_install, this.allocator)) {
+                        Output.panic("Lockfile non-deterministic after saving", .{});
+                    }
+                } else {
+                    if (this.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
+                        Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                    }
                 }
             }
         }

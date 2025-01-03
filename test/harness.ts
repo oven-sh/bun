@@ -1460,8 +1460,11 @@ export class VerdaccioRegistry {
       console.error(`[verdaccio] stderr: ${data}`);
     });
 
+    const started = Promise.withResolvers();
+
     this.process.on("error", error => {
       console.error(`Failed to start verdaccio: ${error}`);
+      started.reject(error);
     });
 
     this.process.on("exit", (code, signal) => {
@@ -1472,13 +1475,13 @@ export class VerdaccioRegistry {
       }
     });
 
-    await new Promise<void>(resolve => {
-      this.process?.on("message", (message: { verdaccio_started: boolean }) => {
-        if (message.verdaccio_started) {
-          resolve();
-        }
-      });
+    this.process?.on("message", (message: { verdaccio_started: boolean }) => {
+      if (message.verdaccio_started) {
+        started.resolve();
+      }
     });
+
+    await started.promise;
   }
 
   registryUrl() {

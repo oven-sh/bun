@@ -9963,7 +9963,7 @@ pub const PackageManager = struct {
             }
             // Iterate until we have found the command argument
             var next_arg = ((args_iter.next()) orelse return false);
-            while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
+            while (next_arg.len > 0 and next_arg[0] == '-') {
                 next_arg = ((args_iter.next()) orelse return false);
             }
             const first_arg_name = next_arg;

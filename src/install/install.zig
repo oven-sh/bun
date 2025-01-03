@@ -2772,6 +2772,67 @@ pub const PackageManager = struct {
     last_reported_slow_lifecycle_script_at: u64 = 0,
     cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
+    pub const WorkspaceFilter = union(enum) {
+        all,
+        name: []const u32,
+        path: []const u32,
+
+        pub fn init(allocator: std.mem.Allocator, input: string, cwd: string, path_buf: []u8) OOM!WorkspaceFilter {
+            if ((input.len == 1 and input[0] == '*') or strings.eqlComptime(input, "**")) {
+                return .all;
+            }
+
+            var remain = input;
+
+            var prepend_negate = false;
+            while (remain.len > 0 and remain[0] == '!') {
+                prepend_negate = !prepend_negate;
+                remain = remain[1..];
+            }
+
+            const is_path = remain.len > 0 and remain[0] == '.';
+
+            const filter = if (is_path)
+                strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(cwd, path_buf, &.{remain}, .posix))
+            else
+                remain;
+
+            if (filter.len == 0) {
+                // won't match anything
+                return .{ .path = &.{} };
+            }
+
+            // TODO(dylan-conway): finish encoding agnostic glob matcher so we don't
+            // need to convert
+            const len = bun.simdutf.length.utf32.from.utf8.le(filter) + @intFromBool(prepend_negate);
+            const buf = try allocator.alloc(u32, len);
+
+            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(filter, buf[@intFromBool(prepend_negate)..]);
+            if (!result.isSuccessful()) {
+                // won't match anything
+                return .{ .path = &.{} };
+            }
+
+            if (prepend_negate) {
+                buf[0] = '!';
+            }
+
+            const pattern = buf[0..len];
+
+            return if (is_path)
+                .{ .path = pattern }
+            else
+                .{ .name = pattern };
+        }
+
+        pub fn deinit(this: WorkspaceFilter, allocator: std.mem.Allocator) void {
+            switch (this) {
+                .path, .name => |pattern| allocator.free(pattern),
+                .all => {},
+            }
+        }
+    };
+
     pub fn reportSlowLifecycleScripts(this: *PackageManager, log_level: Options.LogLevel) void {
         if (log_level == .silent) return;
         if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
@@ -9363,7 +9424,7 @@ pub const PackageManager = struct {
         } else {
             // bun link lodash
             switch (manager.options.log_level) {
-                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
             }
         }
     }
@@ -10462,7 +10523,7 @@ pub const PackageManager = struct {
         }
 
         switch (manager.options.log_level) {
-            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
         }
 
         if (manager.options.patch_features == .patch) {
@@ -10593,6 +10654,7 @@ pub const PackageManager = struct {
     fn updatePackageJSONAndInstallWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
         var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch bun.outOfMemory();
@@ -10626,6 +10688,7 @@ pub const PackageManager = struct {
             ctx,
             updates,
             manager.subcommand,
+            original_cwd,
             log_level,
         );
     }
@@ -10635,6 +10698,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         updates: []UpdateRequest,
         subcommand: Subcommand,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
         if (manager.log.errors > 0) {
@@ -10900,7 +10964,7 @@ pub const PackageManager = struct {
             break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
         };
 
-        try manager.installWithManager(ctx, root_package_json_source, log_level);
+        try manager.installWithManager(ctx, root_package_json_source, original_cwd, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
             for (updates) |request| {
@@ -12169,7 +12233,7 @@ pub const PackageManager = struct {
 
         // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
         // and cleanup install/add subcommand usage
-        var manager, _ = try init(ctx, cli, .install);
+        var manager, const original_cwd = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (subcommand == .add) {
@@ -12179,7 +12243,7 @@ pub const PackageManager = struct {
                 Output.flush();
             }
             return try switch (manager.options.log_level) {
-                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
             };
         }
 
@@ -12197,7 +12261,7 @@ pub const PackageManager = struct {
         };
 
         try switch (manager.options.log_level) {
-            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, log_level),
+            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, original_cwd, log_level),
         };
 
         if (manager.any_failed_to_install) {
@@ -13831,12 +13895,13 @@ pub const PackageManager = struct {
     pub fn installPackages(
         this: *PackageManager,
         ctx: Command.Context,
+        original_cwd: string,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-        try this.lockfile.hoist(this.log, .filter, this);
+        try this.lockfile.filter(this.log, this, original_cwd);
 
         defer {
             this.lockfile.buffers.trees = original_trees;
@@ -14300,6 +14365,7 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         ctx: Command.Context,
         root_package_json_contents: string,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
 
@@ -14918,6 +14984,7 @@ pub const PackageManager = struct {
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
+                original_cwd,
                 log_level,
             );
         }

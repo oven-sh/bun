@@ -15,6 +15,7 @@ const C = bun.C;
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -688,6 +689,8 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            path_buf: []u8,
 
             pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
                 this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -743,6 +746,13 @@ pub const Tree = struct {
                 }
                 this.queue.deinit();
                 this.sort_buf.deinit(this.allocator);
+
+                if (comptime method == .filter) {
+                    for (this.workspace_filters) |workspace_filter| {
+                        workspace_filter.deinit(this.lockfile.allocator);
+                    }
+                    this.lockfile.allocator.free(this.workspace_filters);
+                }
 
                 // take over the `builder.list` pointer for only trees
                 if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -863,20 +873,55 @@ pub const Tree = struct {
                 if (builder.manager.subcommand == .install) {
                     // only do this when parent is root. workspaces are always dependencies of the root
                     // package, and the root package is always called with `processSubtree`
-                    if (parent_pkg_id == 0 and builder.manager.options.filter_patterns.len > 0) {
-                        const workspace_name = if (builder.dependencies[dep_id].behavior.isWorkspaceOnly())
-                            pkg_names[builder.resolutions[dep_id]].slice(builder.buf())
-                        else
-                            pkg_names[0].slice(builder.buf());
-
+                    if (parent_pkg_id == 0 and builder.workspace_filters.len > 0) {
                         var match = false;
 
-                        for (builder.manager.options.filter_patterns) |pattern| {
-                            // use ascii matcher and let utf8 always fail
-                            switch (bun.glob.Ascii.match(pattern, workspace_name)) {
+                        for (builder.workspace_filters) |workspace_filter| {
+                            const res_id = builder.resolutions[dep_id];
+
+                            const pattern, const path_or_name = switch (workspace_filter) {
+                                .name => |pattern| .{ pattern, if (builder.dependencies[dep_id].behavior.isWorkspaceOnly())
+                                    pkg_names[res_id].slice(builder.buf())
+                                else
+                                    pkg_names[0].slice(builder.buf()) },
+
+                                .path => |pattern| path: {
+                                    const res_path = if (builder.dependencies[dep_id].behavior.isWorkspaceOnly() and pkg_resolutions[res_id].tag == .workspace)
+                                        pkg_resolutions[res_id].value.workspace.slice(builder.buf())
+                                    else
+                                        // dependnecy of the root package.json. use top level dir
+                                        FileSystem.instance.top_level_dir;
+
+                                    // occupy `builder.path_buf`
+                                    break :path .{
+                                        pattern,
+                                        strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
+                                            FileSystem.instance.top_level_dir,
+                                            builder.path_buf,
+                                            &.{res_path},
+                                            .posix,
+                                        )),
+                                    };
+                                },
+
+                                .all => {
+                                    match = true;
+                                    continue;
+                                },
+                            };
+
+                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
                                 .match, .negate_match => match = true,
-                                .negate_no_match => match = false,
-                                .no_match => {},
+
+                                .negate_no_match => {
+                                    // always skip if a pattern specifically says "!<name>"
+                                    match = false;
+                                    break;
+                                },
+
+                                .no_match => {
+                                    // keep current
+                                },
                             }
                         }
 
@@ -1504,7 +1549,7 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            try this.lockfile.hoist(this.log, .resolvable, {});
+            try this.lockfile.resolve(this.log);
         }
 
         // capacity is used for calculating byte size
@@ -1514,15 +1559,35 @@ const Cloner = struct {
     }
 };
 
+pub fn resolve(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .resolvable, {}, {});
+}
+
+pub fn filter(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+    manager: *PackageManager,
+    cwd: string,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .filter, manager, cwd);
+}
+
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
 pub fn hoist(
     lockfile: *Lockfile,
     log: *logger.Log,
     comptime method: Tree.BuilderMethod,
     manager: if (method == .filter) *PackageManager else void,
+    cwd: if (method == .filter) string else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
+
+    var path_buf: bun.PathBuffer = undefined;
+
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = TreeFiller.init(allocator),
@@ -1533,7 +1598,19 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
+        .path_buf = &path_buf,
     };
+
+    if (comptime method == .filter) {
+        if (manager.options.filter_patterns.len > 0) {
+            var filters = try std.ArrayListUnmanaged(WorkspaceFilter).initCapacity(allocator, manager.options.filter_patterns.len);
+            for (manager.options.filter_patterns) |pattern| {
+                try filters.append(allocator, try WorkspaceFilter.init(allocator, pattern, cwd, &path_buf));
+            }
+
+            builder.workspace_filters = filters.items;
+        }
+    }
 
     try (Tree{}).processSubtree(
         Tree.root_dep_id,
@@ -7151,7 +7228,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     return digest;
 }
 
-pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
+pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
     const buf = this.buffers.string_bytes.items;

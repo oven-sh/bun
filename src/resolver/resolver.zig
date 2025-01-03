@@ -1877,7 +1877,7 @@ pub const Resolver = struct {
                             ) orelse break :load_module_from_cache;
                         }
 
-                        if (manager.lockfile.resolve(esm.name, dependency_version)) |id| {
+                        if (manager.lockfile.resolvePackageFromNameAndVersion(esm.name, dependency_version)) |id| {
                             resolved_package_id = id;
                         }
                     }
@@ -2186,7 +2186,7 @@ pub const Resolver = struct {
         var pm = r.getPackageManager();
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
-            assert(pm.lockfile.resolve(esm.name, version) == null);
+            assert(pm.lockfile.resolvePackageFromNameAndVersion(esm.name, version) == null);
         }
 
         // Add the containing package to the lockfile

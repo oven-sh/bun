@@ -243,12 +243,6 @@ pub const exports = struct {
     pub const JSS3Bucket__call = JSC.toJSHostFunctionWithContext(S3BucketOptions, call);
 };
 
-extern fn BUN__createJSS3Bucket(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(JSC.conv) JSValue;
-
-pub fn createJSS3Bucket(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-    return BUN__createJSS3Bucket(globalObject, callframe);
-}
-
 comptime {
     @export(exports.JSS3Bucket__exists, .{ .name = "JSS3Bucket__exists" });
     @export(exports.JSS3Bucket__size, .{ .name = "JSS3Bucket__size" });

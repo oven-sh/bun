@@ -59,6 +59,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/

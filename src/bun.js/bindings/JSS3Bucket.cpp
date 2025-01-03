@@ -113,7 +113,7 @@ JSC::GCClient::IsoSubspace* JSS3Bucket::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSS3Bucket = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForJSS3Bucket.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSS3Bucket = std::forward<decltype(space)>(space); },
-        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSS3Bucket; });
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSS3Bucket::call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -137,7 +137,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSS3Bucket::construct(JSGlobalObject* le
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "S3Bucket is not constructable. To instantiate a bucket, do new Bun.S3()"_s);
+    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "S3Bucket is not constructable. To instantiate a bucket, do Bun.S3()"_s);
     return {};
 }
 
@@ -222,7 +222,15 @@ JSC_DEFINE_HOST_FUNCTION(functionS3Bucket_size, (JSGlobalObject * globalObject, 
     return JSS3Bucket__size(thisObject->ptr, globalObject, callframe);
 }
 
-JSValue constructS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+extern "C" {
+SYSV_ABI void* BUN__getJSS3Bucket(JSC::EncodedJSValue value)
+{
+    JSValue thisValue = JSC::JSValue::decode(value);
+    auto* thisObject = jsDynamicCast<JSS3Bucket*>(thisValue);
+    return thisObject ? thisObject->ptr : nullptr;
+};
+
+BUN_DEFINE_HOST_FUNCTION(Bun__S3Constructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -230,20 +238,8 @@ JSValue constructS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* cal
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(ptr);
 
-    return JSS3Bucket::create(vm, defaultGlobalObject(globalObject), ptr);
+    return JSValue::encode(JSS3Bucket::create(vm, defaultGlobalObject(globalObject), ptr));
 }
-
-extern "C" {
-SYSV_ABI EncodedJSValue BUN__createJSS3Bucket(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
-{
-    return JSValue::encode(constructS3Bucket(globalObject, callframe));
-};
-SYSV_ABI void* BUN__getJSS3Bucket(JSC::EncodedJSValue value)
-{
-    JSValue thisValue = JSC::JSValue::decode(value);
-    auto* thisObject = jsDynamicCast<JSS3Bucket*>(thisValue);
-    return thisObject ? thisObject->ptr : nullptr;
-};
 }
 
 Structure* createJSS3BucketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

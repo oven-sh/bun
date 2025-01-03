@@ -144,11 +144,6 @@ pub const Blob = struct {
         return store.data == .file;
     }
 
-    pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        return S3File.getPresignUrlFrom(this, globalThis, if (args.len > 0) args.ptr[0] else null);
-    }
-
     const ReadFileUV = @import("./blob/ReadFile.zig").ReadFileUV;
     pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFromS3", .{});
@@ -1726,7 +1721,7 @@ pub const Blob = struct {
 
         if (path == .path) {
             if (strings.hasPrefixComptime(path.path.slice(), "s3://")) {
-                return try S3File.constructS3FileInternalJS(globalObject, path.path, options);
+                return try S3File.constructInternalJS(globalObject, path.path, options);
             }
         }
         defer path.deinitAndUnprotect();
@@ -4553,17 +4548,6 @@ pub const Blob = struct {
         return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
     }
 
-    pub fn getBucket(
-        this: *Blob,
-        globalThis: *JSC.JSGlobalObject,
-    ) JSValue {
-        if (this.getBucketName()) |name| {
-            var str = bun.String.createUTF8(name);
-            return str.transferToJS(globalThis);
-        }
-        return .undefined;
-    }
-
     pub fn setName(
         this: *Blob,
         jsThis: JSC.JSValue,
@@ -4612,30 +4596,6 @@ pub const Blob = struct {
         }
 
         return null;
-    }
-
-    pub fn getBucketName(
-        this: *const Blob,
-    ) ?[]const u8 {
-        const store = this.store orelse return null;
-        if (store.data != .s3) return null;
-        const credentials = store.data.s3.getCredentials();
-        var full_path = store.data.s3.path();
-        if (strings.startsWith(full_path, "/")) {
-            full_path = full_path[1..];
-        }
-        var bucket: []const u8 = credentials.bucket;
-
-        if (bucket.len == 0) {
-            if (strings.indexOf(full_path, "/")) |end| {
-                bucket = full_path[0..end];
-                if (bucket.len > 0) {
-                    return bucket;
-                }
-            }
-            return null;
-        }
-        return bucket;
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -5007,8 +4967,12 @@ pub const Blob = struct {
         // if (comptime Environment.allow_assert) {
         //     assert(this.allocator != null);
         // }
-
         this.calculateEstimatedByteSize();
+
+        if (this.isS3()) {
+            return S3File.toJSUnchecked(globalObject, this);
+        }
+
         return Blob.toJSUnchecked(globalObject, this);
     }
 

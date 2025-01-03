@@ -160,6 +160,7 @@
 #include "JSPerformanceTiming.h"
 
 #include "JSS3Bucket.h"
+#include "JSS3File.h"
 #include "S3Error.h"
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2892,6 +2893,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<Structure>& init) {
             init.set(Bun::createJSS3BucketStructure(init.vm, init.owner));
         });
+    m_JSS3FileStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+        });
 
     m_S3ErrorStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3826,6 +3831,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
     thisObject->m_JSS3BucketStructure.visit(visitor);
+    thisObject->m_JSS3FileStructure.visit(visitor);
     thisObject->m_S3ErrorStructure.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);

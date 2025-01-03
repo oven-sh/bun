@@ -456,11 +456,11 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 `;
 }
 
-function generatePrototypeHeader(typename) {
+function generatePrototypeHeader(typename, final = true) {
   const proto = prototypeName(typename);
 
   return `
-class ${proto} final : public JSC::JSNonFinalObject {
+class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
   public:
       using Base = JSC::JSNonFinalObject;
 
@@ -483,7 +483,7 @@ class ${proto} final : public JSC::JSNonFinalObject {
           return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
       }
 
-  private:
+  protected:
       ${proto}(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
           : Base(vm, structure)
       {
@@ -537,7 +537,7 @@ class ${name} final : public JSC::InternalFunction {
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
 
       DECLARE_EXPORT_INFO;
-  private:
+  protected:
       ${name}(JSC::VM& vm, JSC::Structure* structure);
       void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype);
 };
@@ -1234,8 +1234,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
   }
 
+  const final = obj.final ?? true;
+
   return `
-  class ${name} final : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
@@ -1622,7 +1624,12 @@ ${DEFINE_VISIT_CHILDREN}
 }
 
 function generateHeader(typeName, obj) {
-  return generateClassHeader(typeName, obj).trim() + "\n\n";
+  const fields = [
+    generateClassHeader(typeName, obj).trim() + "\n\n",
+    !(obj.final ?? true) ? generatePrototypeHeader(typeName, false) : null,
+  ].filter(Boolean);
+
+  return "\n" + fields.join("\n").trim();
 }
 
 function generateImpl(typeName, obj) {
@@ -1630,7 +1637,7 @@ function generateImpl(typeName, obj) {
 
   const proto = obj.proto;
   return [
-    generatePrototypeHeader(typeName),
+    (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
@@ -2029,7 +2036,7 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zi
   return `
   JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
   JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSValue ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
+  JSC::JSObject* ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
     `.trim();
 }

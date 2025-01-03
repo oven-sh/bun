@@ -1282,3 +1282,167 @@ for (const version of versions) {
     });
   });
 }
+
+describe("install --filter", () => {
+  test("basic", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+      ]),
+    ).toEqual([false, false]);
+
+    // add workspace
+    await write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+      ]),
+    ).toEqual([false, true]);
+  });
+
+  test("all but one or two", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!pkg2"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([true, { name: "no-deps", version: "2.0.0" }, false]);
+  });
+
+  test("matched workspace depends on filtered workspace", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "pkg1")),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([true, { name: "no-deps", version: "2.0.0" }, true, true]);
+  });
+});

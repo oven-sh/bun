@@ -37,8 +37,8 @@ pub const RecordKind = enum(u8) {
 };
 
 pub const ModuleInfoDeserialized = struct {
-    strings_len: u32,
-    strings: []const u8, // null-terminated
+    strings_buf: []const u8,
+    strings_lens: []align(1) const u32,
     requested_modules_keys: []align(1) const StringID,
     requested_modules_values: []align(1) const ModuleInfo.FetchParameters,
     buffer: []align(1) const StringID,
@@ -94,11 +94,12 @@ pub const ModuleInfoDeserialized = struct {
         const requested_modules_values = std.mem.bytesAsSlice(ModuleInfo.FetchParameters, try eat(&rem, requested_modules_len * @sizeOf(ModuleInfo.FetchParameters)));
         const contains_import_meta = (try eatC(&rem, 1))[0] != 0;
         const strings_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
-        const strings = rem;
+        const strings_lens = std.mem.bytesAsSlice(u32, try eat(&rem, strings_len * @sizeOf(u32)));
+        const strings_buf = rem;
 
         res.* = .{
-            .strings_len = strings_len,
-            .strings = strings,
+            .strings_buf = strings_buf,
+            .strings_lens = strings_lens,
             .requested_modules_keys = requested_modules_keys,
             .requested_modules_values = requested_modules_values,
             .buffer = buffer,
@@ -123,8 +124,9 @@ pub const ModuleInfoDeserialized = struct {
 
         try writer.writeInt(u8, @intFromBool(self.contains_import_meta), .little);
 
-        try writer.writeInt(u32, @truncate(self.strings_len), .little);
-        try writer.writeAll(self.strings);
+        try writer.writeInt(u32, @truncate(self.strings_lens.len), .little);
+        try writer.writeAll(std.mem.sliceAsBytes(self.strings_lens));
+        try writer.writeAll(self.strings_buf);
     }
 };
 
@@ -135,25 +137,16 @@ const StringMapKey = enum(u32) {
 pub const StringContext = struct {
     get_or_put_key: []const u8,
     strings_buf: []const u8,
+    strings_lens: []const u32,
 
-    fn getStr(self: @This(), s: StringMapKey) []const u8 {
-        switch (s) {
-            .get_or_put => return self.get_or_put_key,
-            else => {
-                const rem = self.strings_buf[@intFromEnum(s)..];
-                const idx = std.mem.indexOfScalar(u8, rem, 0).?;
-                return rem[0..idx];
-            },
-        }
-    }
     pub fn hash(self: @This(), s: StringMapKey) u32 {
-        return @as(u32, @truncate(std.hash.Wyhash.hash(0, self.getStr(s))));
+        bun.assert(s == .get_or_put);
+        return @as(u32, @truncate(std.hash.Wyhash.hash(0, self.get_or_put_key)));
     }
-    pub fn eql(self: @This(), a: StringMapKey, b: StringMapKey, _: usize) bool {
-        if (a == .get_or_put or b == .get_or_put) {
-            return bun.strings.eqlLong(self.getStr(a), self.getStr(b), true);
-        }
-        return a == b;
+    pub fn eql(self: @This(), fetch_key: StringMapKey, item_key: StringMapKey, item_i: usize) bool {
+        bun.assert(item_key != .get_or_put);
+        bun.assert(fetch_key == .get_or_put);
+        return bun.strings.eqlLong(self.get_or_put_key, self.strings_buf[@intFromEnum(item_key)..][0..self.strings_lens[item_i]], true);
     }
 };
 
@@ -162,6 +155,7 @@ pub const ModuleInfo = struct {
     gpa: std.mem.Allocator,
     strings_map: std.ArrayHashMapUnmanaged(StringMapKey, void, StringContext, true),
     strings_buf: std.ArrayListUnmanaged(u8),
+    strings_lens: std.ArrayListUnmanaged(u32),
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
@@ -235,6 +229,7 @@ pub const ModuleInfo = struct {
             .gpa = allocator,
             .strings_map = .{},
             .strings_buf = .{},
+            .strings_lens = .{},
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .buffer = std.ArrayList(StringID).init(allocator),
             .record_kinds = std.ArrayList(RecordKind).init(allocator),
@@ -244,6 +239,7 @@ pub const ModuleInfo = struct {
     fn deinit(self: *ModuleInfo) void {
         self.strings_map.deinit(self.gpa);
         self.strings_buf.deinit(self.gpa);
+        self.strings_lens.deinit(self.gpa);
         self.requested_modules.deinit();
         self.buffer.deinit();
         self.record_kinds.deinit();
@@ -254,17 +250,19 @@ pub const ModuleInfo = struct {
         alloc.destroy(self);
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
-        if (std.mem.indexOfScalar(u8, value, 0) != null) return error.StrContainsNullByte;
         const gpres = try self.strings_map.getOrPutContext(self.gpa, .get_or_put, .{
             .get_or_put_key = value,
             .strings_buf = self.strings_buf.items,
+            .strings_lens = self.strings_lens.items,
         });
         if (gpres.found_existing) return @enumFromInt(@as(u32, @intCast(gpres.index)));
 
         gpres.key_ptr.* = @enumFromInt(@as(u32, @truncate(self.strings_buf.items.len)));
         gpres.value_ptr.* = {};
-        try self.strings_buf.appendSlice(self.gpa, value);
-        try self.strings_buf.append(self.gpa, 0);
+        try self.strings_buf.ensureUnusedCapacity(self.gpa, value.len);
+        try self.strings_lens.ensureUnusedCapacity(self.gpa, 1);
+        self.strings_buf.appendSliceAssumeCapacity(value);
+        self.strings_lens.appendAssumeCapacity(@as(u32, @truncate(value.len)));
         return @enumFromInt(@as(u32, @intCast(gpres.index)));
     }
     pub const star_default = "*default*";
@@ -304,8 +302,8 @@ pub const ModuleInfo = struct {
         }
 
         self._deserialized = .{
-            .strings_len = @truncate(self.strings_buf.items.len),
-            .strings = self.strings_buf.items,
+            .strings_buf = self.strings_buf.items,
+            .strings_lens = self.strings_lens.items,
             .requested_modules_keys = self.requested_modules.keys(),
             .requested_modules_values = self.requested_modules.values(),
             .buffer = self.buffer.items,
@@ -344,20 +342,18 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     if (res.dead) @panic("ModuleInfoDeserialized already deinit()ed");
     defer res.deinit();
 
-    var identifiers = IdentifierArray.create(res.strings_len);
+    var identifiers = IdentifierArray.create(res.strings_lens.len);
     defer identifiers.destroy();
-    {
-        var strs_rem = res.strings;
-        var i: usize = 0;
-        while (std.mem.indexOfScalar(u8, strs_rem, 0)) |next_zero| : (i += 1) {
-            const sub = strs_rem[0..next_zero];
-            strs_rem = strs_rem[next_zero + 1 ..];
-            if (bun.strings.eqlComptime(sub, ModuleInfo.star_default)) {
-                identifiers.setFromStarDefault(i, vm);
-            } else {
-                identifiers.setFromUtf8(i, vm, sub);
-            }
+    var offset: usize = 0;
+    for (0.., res.strings_lens) |index, len| {
+        if (res.strings_buf.len < offset + len) return null; // error!
+        const sub = res.strings_buf[offset..][0..len];
+        if (bun.strings.eqlComptime(sub, ModuleInfo.star_default)) {
+            identifiers.setFromStarDefault(index, vm);
+        } else {
+            identifiers.setFromUtf8(index, vm, sub);
         }
+        offset += len;
     }
 
     {

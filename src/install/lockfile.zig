@@ -860,27 +860,29 @@ pub const Tree = struct {
                     continue;
                 }
 
-                // only do this when parent is root. workspaces are always dependencies of the root
-                // package, and the root package is always called with `processSubtree`
-                if (parent_pkg_id == 0 and builder.manager.options.filter_patterns.len > 0) {
-                    const workspace_name = if (builder.dependencies[dep_id].behavior.isWorkspaceOnly())
-                        pkg_names[builder.resolutions[dep_id]].slice(builder.buf())
-                    else
-                        pkg_names[0].slice(builder.buf());
+                if (builder.manager.subcommand == .install) {
+                    // only do this when parent is root. workspaces are always dependencies of the root
+                    // package, and the root package is always called with `processSubtree`
+                    if (parent_pkg_id == 0 and builder.manager.options.filter_patterns.len > 0) {
+                        const workspace_name = if (builder.dependencies[dep_id].behavior.isWorkspaceOnly())
+                            pkg_names[builder.resolutions[dep_id]].slice(builder.buf())
+                        else
+                            pkg_names[0].slice(builder.buf());
 
-                    var match = false;
+                        var match = false;
 
-                    for (builder.manager.options.filter_patterns) |pattern| {
-                        // use ascii matcher and let utf8 always fail
-                        switch (bun.glob.Ascii.match(pattern, workspace_name)) {
-                            .match, .negate_match => match = true,
-                            .negate_no_match => match = false,
-                            .no_match => {},
+                        for (builder.manager.options.filter_patterns) |pattern| {
+                            // use ascii matcher and let utf8 always fail
+                            switch (bun.glob.Ascii.match(pattern, workspace_name)) {
+                                .match, .negate_match => match = true,
+                                .negate_no_match => match = false,
+                                .no_match => {},
+                            }
                         }
-                    }
 
-                    if (!match) {
-                        continue;
+                        if (!match) {
+                            continue;
+                        }
                     }
                 }
             }

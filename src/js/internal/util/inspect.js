@@ -1564,7 +1564,7 @@ function getFunctionBase(value, constructor, tag) {
     base += " (null prototype)";
   }
   if (value.name === "") {
-    base += ": (anonymous)";
+    base += " (anonymous)";
   } else {
     base += `: ${value.name}`;
   }

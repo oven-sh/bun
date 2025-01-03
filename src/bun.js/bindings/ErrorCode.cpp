@@ -214,7 +214,7 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
             return makeString("[Function: "_s, name, ']');
         }
 
-        return "[Function: (anonymous)]"_s;
+        return "[Function (anonymous)]"_s;
         break;
     }
 

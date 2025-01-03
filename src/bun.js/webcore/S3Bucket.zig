@@ -228,6 +228,7 @@ pub fn construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     return S3BucketOptions.new(.{
         .credentials = aws_options.credentials.dupe(),
         .options = aws_options.options,
+        .acl = aws_options.acl,
     });
 }
 pub fn finalize(ptr: *S3BucketOptions) callconv(JSC.conv) void {

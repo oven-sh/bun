@@ -6861,7 +6861,7 @@ pub fn toJSHostFunctionWithContext(comptime ContextType: type, comptime Function
                 bun.assert((value == .zero) == globalThis.hasException());
                 return value;
             }
-            return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
+            return @call(.always_inline, Function, .{ ctx, globalThis, callframe }) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };

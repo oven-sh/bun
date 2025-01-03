@@ -321,7 +321,7 @@ function lookup(hostname, options, callback) {
 }
 
 function lookupService(address, port, callback) {
-  if (arguments.length !== 3) {
+  if (arguments.length < 3) {
     throw $ERR_MISSING_ARGS('The "address", "port", and "callback" arguments must be specified');
   }
 

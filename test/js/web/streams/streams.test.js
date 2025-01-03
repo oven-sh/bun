@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { tmpdirSync, isWindows, isMacOS } from "harness";
+import { tmpdirSync, isWindows, isMacOS, bunEnv } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -445,6 +445,7 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
     stdout: "pipe",
     stdin: null,
     env: {
+      ...bunEnv,
       FIFO_TEST: large,
     },
   });

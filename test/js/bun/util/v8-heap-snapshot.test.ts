@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
+import { join } from "node:path";
 import * as v8 from "v8";
 import * as v8HeapSnapshot from "v8-heapsnapshot";
 
@@ -31,4 +33,25 @@ test("v8.getHeapSnapshot()", async () => {
     chunks.push(chunk);
   }
   expect(chunks.length).toBeGreaterThan(0);
+});
+
+test("v8.writeHeapSnapshot()", async () => {
+  const path = v8.writeHeapSnapshot();
+  expect(path).toBeDefined();
+  expect(path).toContain("Heap-");
+
+  const snapshot = await Bun.file(path).json();
+  expect(await v8HeapSnapshot.parseSnapshot(snapshot)).toBeDefined();
+});
+
+test("v8.writeHeapSnapshot() with path", async () => {
+  const dir = tempDirWithFiles("v8-heap-snapshot", {
+    "test.heapsnapshot": "",
+  });
+
+  const path = join(dir, "test.heapsnapshot");
+  v8.writeHeapSnapshot(path);
+
+  const snapshot = await Bun.file(path).json();
+  expect(await v8HeapSnapshot.parseSnapshot(snapshot)).toBeDefined();
 });

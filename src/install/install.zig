@@ -6243,6 +6243,7 @@ pub const PackageManager = struct {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
+
         if (options) |opts| {
             if (opts.cache_directory.len > 0) {
                 return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory}), .is_node_modules = false };

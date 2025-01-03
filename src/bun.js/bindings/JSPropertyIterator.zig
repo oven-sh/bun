@@ -41,13 +41,19 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             this.* = undefined;
         }
 
-        pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) @This() {
+        pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!@This() {
             var iter = @This(){
                 .object = object.asCell(),
                 .globalObject = globalObject,
             };
 
             iter.impl = Bun__JSPropertyIterator__create(globalObject, object, &iter.len, options.own_properties_only, options.only_non_index_properties);
+            if (globalObject.hasException()) {
+                return error.JSError;
+            }
+            if (iter.len > 0) {
+                bun.debugAssert(iter.impl != null);
+            }
             return iter;
         }
 
@@ -58,39 +64,48 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         }
 
         /// The bun.String returned has not incremented it's reference count.
-        pub fn next(this: *@This()) ?bun.String {
-            const i: usize = this.iter_i;
-            if (i >= this.len) {
+        pub fn next(this: *@This()) !?bun.String {
+            // Reuse stack space.
+            while (true) {
+                const i: usize = this.iter_i;
+                if (i >= this.len) {
+                    this.i = this.iter_i;
+                    return null;
+                }
+
                 this.i = this.iter_i;
-                return null;
-            }
-
-            this.i = this.iter_i;
-            this.iter_i += 1;
-            var name = bun.String.dead;
-            if (comptime options.include_value) {
-                const FnToUse = if (options.observable) Bun__JSPropertyIterator__getNameAndValue else Bun__JSPropertyIterator__getNameAndValueNonObservable;
-                const current = FnToUse(this.impl, this.globalObject, this.object, &name, i);
-                if (current == .zero) {
-                    return this.next();
+                this.iter_i += 1;
+                var name = bun.String.dead;
+                if (comptime options.include_value) {
+                    const FnToUse = if (options.observable) Bun__JSPropertyIterator__getNameAndValue else Bun__JSPropertyIterator__getNameAndValueNonObservable;
+                    const current = FnToUse(this.impl, this.globalObject, this.object, &name, i);
+                    if (current == .zero) {
+                        if (this.globalObject.hasException()) {
+                            return error.JSError;
+                        }
+                        continue;
+                    }
+                    current.ensureStillAlive();
+                    this.value = current;
+                } else {
+                    // Exception check is unnecessary here because it won't throw.
+                    Bun__JSPropertyIterator__getName(this.impl, &name, i);
                 }
-                current.ensureStillAlive();
-                this.value = current;
-            } else {
-                Bun__JSPropertyIterator__getName(this.impl, &name, i);
-            }
 
-            if (name.tag == .Dead) {
-                return this.next();
-            }
-
-            if (comptime options.skip_empty_name) {
-                if (name.isEmpty()) {
-                    return this.next();
+                if (name.tag == .Dead) {
+                    continue;
                 }
+
+                if (comptime options.skip_empty_name) {
+                    if (name.isEmpty()) {
+                        continue;
+                    }
+                }
+
+                return name;
             }
 
-            return name;
+            unreachable;
         }
 
         /// "code" is not always an own property, and we want to get it without risking exceptions.

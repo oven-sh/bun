@@ -28,6 +28,8 @@ afterAll(() => {
 
 beforeEach(async () => {
   ({ packageDir, packageJson } = await verdaccio.createTestDir());
+  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 });
 
 // waiter thread is only a thing on Linux.

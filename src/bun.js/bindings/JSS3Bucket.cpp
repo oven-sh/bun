@@ -36,11 +36,11 @@ JSC_DECLARE_HOST_FUNCTION(functionS3Bucket_exists);
 JSC_DECLARE_HOST_FUNCTION(functionS3Bucket_size);
 
 static const HashTableValue JSS3BucketPrototypeTableValues[] = {
-    { "unlink"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_unlink, 0 } },
-    { "write"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_write, 1 } },
-    { "presign"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_presign, 1 } },
-    { "exists"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_exists, 1 } },
-    { "size"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_size, 1 } },
+    { "unlink"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_unlink, 0 } },
+    { "write"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_write, 1 } },
+    { "presign"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_presign, 1 } },
+    { "exists"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_exists, 1 } },
+    { "size"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3Bucket_size, 1 } },
 };
 
 class JSS3BucketPrototype final : public JSC::JSNonFinalObject {

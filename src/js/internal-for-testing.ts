@@ -149,3 +149,5 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
   add: (a: any, b: any) => number;
   requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
 };
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");

@@ -214,6 +214,24 @@ const Omit = struct {
     peer: bool = false,
 };
 
+const ArgsIterator = struct {
+    buf: [][:0]const u8,
+    i: u32 = 0,
+
+    pub fn next(this: *ArgsIterator) ?[]const u8 {
+        if (this.buf.len <= this.i) {
+            return null;
+        }
+        const i = this.i;
+        this.i += 1;
+        return this.buf[i];
+    }
+
+    pub fn skip(this: *ArgsIterator) bool {
+        return this.next() != null;
+    }
+};
+
 pub fn printHelp(subcommand: Subcommand) void {
 
     // the output of --help uses the following syntax highlighting
@@ -611,6 +629,21 @@ pub fn printHelp(subcommand: Subcommand) void {
     }
 }
 
+fn installCommandUsingCiAlias() bool {
+    var args_iter = ArgsIterator{ .buf = bun.argv };
+    // Skip argv0 which should be either `bun` or `bunx`
+    if (!args_iter.skip()) {
+        return false;
+    }
+    // Iterate until we have found the command argument
+    var next_arg = ((args_iter.next()) orelse return false);
+    while (next_arg.len > 0 and next_arg[0] == '-') {
+        next_arg = ((args_iter.next()) orelse return false);
+    }
+    const first_arg_name = next_arg;
+    return std.mem.eql(u8, first_arg_name, "ci");
+}
+
 pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
     Output.is_verbose = Output.isVerbose();
 
@@ -653,7 +686,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     var cli = CommandLineArguments{};
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or installCommandUsingCiAlias();
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");

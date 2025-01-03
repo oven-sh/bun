@@ -6252,6 +6252,51 @@ registry = "${root_url}"
   expect(await exited).toBe(1);
 });
 
+it("should handle ci as an alias to install with --frozen-lockfile", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited).toBe(1);
+});
+
 it("should perform bin-linking across multiple dependencies", async () => {
   const foo_package = JSON.stringify({
     name: "foo",

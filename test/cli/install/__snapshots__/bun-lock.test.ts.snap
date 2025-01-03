@@ -1,0 +1,25 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`should escape names 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {},
+    "packages/\\"": {
+      "name": "\\"",
+    },
+    "packages/pkg1": {
+      "name": "pkg1",
+      "dependencies": {
+        "\\"": "*",
+      },
+    },
+  },
+  "packages": {
+    "\\"": ["\\"@workspace:packages/\\"", {}],
+
+    "pkg1": ["pkg1@workspace:packages/pkg1", { "dependencies": { "\\"": "*" } }],
+  }
+}
+"
+`;

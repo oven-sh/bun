@@ -895,6 +895,74 @@ describe("HEAD requests #15355", () => {
     }
   });
 
+  test("should fallback to the body if content-length is missing in the headers", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World", {
+            headers: {
+              "Content-Type": "text/plain",
+              "X-Bun-Test": "1",
+            },
+          });
+        }
+
+        if (req.url.endsWith("/chunked")) {
+          return new Response(
+            async function* () {
+              yield "Hello";
+              await Bun.sleep(1);
+              yield " ";
+              await Bun.sleep(1);
+              yield "World";
+            },
+            {
+              headers: {
+                "Content-Type": "text/plain",
+                "X-Bun-Test": "1",
+              },
+            },
+          );
+        }
+
+        return new Response(null, {
+          headers: {
+            "Content-Type": "text/plain",
+            "X-Bun-Test": "1",
+          },
+        });
+      },
+    });
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/null", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("0");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+  });
+
   test("HEAD requests should not have body", async () => {
     const dir = tempDirWithFiles("fsr", {
       "hello": "Hello World",

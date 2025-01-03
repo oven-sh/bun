@@ -195,8 +195,8 @@ describe("spawn()", () => {
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {
-        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
-        child.stdout.on("data", data => {
+        const child = spawn(bunExe(), ["-e", "process.stderr.write(JSON.stringify(process.env))"], { env });
+        child.stderr.on("data", data => {
           resolve(data.toString());
         });
       });
@@ -231,6 +231,7 @@ describe("spawn()", () => {
       {
         argv0: bun,
         stdio: ["inherit", "pipe", "inherit"],
+        env: bunEnv,
       },
     );
     delete process.env.NO_COLOR;

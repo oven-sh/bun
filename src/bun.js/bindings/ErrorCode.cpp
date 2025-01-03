@@ -792,7 +792,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    EXPECT_ARG_COUNT(2);
+    EXPECT_ARG_COUNT(1);
 
     JSC::JSValue codeValue = callFrame->argument(0);
     RETURN_IF_EXCEPTION(scope, {});
@@ -820,7 +820,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg0 = callFrame->argument(1);
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
-
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
 

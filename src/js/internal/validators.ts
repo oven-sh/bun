@@ -69,7 +69,7 @@ function validateObject(value, name) {
 }
 hideFromStack(validateObject);
 
-const validateOneOf = hideFromStack((value, name, oneOf) => {
+function validateOneOf(value, name, oneOf) {
   if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
     const allowed = ArrayPrototypeJoin.$call(
       ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
@@ -78,7 +78,8 @@ const validateOneOf = hideFromStack((value, name, oneOf) => {
     const reason = "must be one of: " + allowed;
     throw $ERR_INVALID_ARG_VALUE(name, value, reason);
   }
-});
+}
+hideFromStack(validateOneOf);
 
 export default {
   validateObject: validateObject,

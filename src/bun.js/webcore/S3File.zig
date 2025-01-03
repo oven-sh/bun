@@ -224,7 +224,7 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
     options: ?JSC.JSValue,
     default_credentials: *AWS,
     default_options: bun.S3.MultiPartUpload.MultiPartUploadOptions,
-    default_acl: bun.S3.ACL,
+    default_acl: ?bun.S3.ACL,
 ) bun.JSError!Blob {
     var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
     defer aws_options.deinit();

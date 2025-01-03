@@ -162,7 +162,7 @@ pub fn exists(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
         if (args.len() == 0) {
-            return globalThis.throwMissingArgumentsValue("Expected a path to check if it exists", .{}).throw();
+            return globalThis.ERR_MISSING_ARGS("Expected a path to check if it exists", .{}).throw();
         }
         return globalThis.throwInvalidArguments("Expected a path to check if it exists", .{});
     };

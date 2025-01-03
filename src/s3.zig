@@ -24,7 +24,7 @@ pub const ACL = enum {
     bucket_owner_full_control,
     log_delivery_write,
 
-    pub fn toString(this: @This()) ?[]const u8 {
+    pub fn toString(this: @This()) []const u8 {
         return switch (this) {
             .private => "private",
             .public_read => "public-read",

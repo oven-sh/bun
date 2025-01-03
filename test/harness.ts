@@ -1475,7 +1475,7 @@ export class VerdaccioRegistry {
       }
     });
 
-    this.process?.on("message", (message: { verdaccio_started: boolean }) => {
+    this.process.on("message", (message: { verdaccio_started: boolean }) => {
       if (message.verdaccio_started) {
         started.resolve();
       }

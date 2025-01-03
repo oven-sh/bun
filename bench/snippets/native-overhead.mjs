@@ -1,5 +1,5 @@
-import { bench, run } from "../runner.mjs";
 import { noOpForTesting as noop } from "bun:internal-for-testing";
+import { bench, run } from "../runner.mjs";
 
 // These are no-op C++ functions that are exported to JS.
 const fn = noop.function;

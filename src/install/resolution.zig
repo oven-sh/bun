@@ -10,6 +10,9 @@ const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 const bun = @import("root").bun;
 const Path = bun.path;
+const JSON = bun.JSON;
+const OOM = bun.OOM;
+const Dependency = bun.install.Dependency;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
@@ -32,6 +35,74 @@ pub const Resolution = extern struct {
         return this.tag.canEnqueueInstallTask();
     }
 
+    const FromTextLockfileError = OOM || error{
+        UnexpectedResolution,
+        InvalidSemver,
+    };
+
+    pub fn fromTextLockfile(res_str: string, string_buf: *String.Buf) FromTextLockfileError!Resolution {
+        if (strings.hasPrefixComptime(res_str, "root:")) {
+            return Resolution.init(.{ .root = {} });
+        }
+
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "link:")) |link| {
+            return Resolution.init(.{ .symlink = try string_buf.append(link) });
+        }
+
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "workspace:")) |workspace| {
+            return Resolution.init(.{ .workspace = try string_buf.append(workspace) });
+        }
+
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "file:")) |folder| {
+            return Resolution.init(.{ .folder = try string_buf.append(folder) });
+        }
+
+        return switch (Dependency.Version.Tag.infer(res_str)) {
+            .git => Resolution.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
+            .github => Resolution.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
+            .tarball => {
+                if (Dependency.isRemoteTarball(res_str)) {
+                    return Resolution.init(.{ .remote_tarball = try string_buf.append(res_str) });
+                }
+
+                return Resolution.init(.{ .local_tarball = try string_buf.append(res_str) });
+            },
+            .npm => {
+                const version_literal = try string_buf.append(res_str);
+                const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid) {
+                    return error.UnexpectedResolution;
+                }
+
+                if (parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    return error.UnexpectedResolution;
+                }
+
+                return .{
+                    .tag = .npm,
+                    .value = .{
+                        .npm = .{
+                            .version = parsed.version.min(),
+
+                            // will fill this later
+                            .url = .{},
+                        },
+                    },
+                };
+            },
+
+            // covered above
+            .workspace => error.UnexpectedResolution,
+            .symlink => error.UnexpectedResolution,
+            .folder => error.UnexpectedResolution,
+
+            // should not happen
+            .dist_tag => error.UnexpectedResolution,
+            .uninitialized => error.UnexpectedResolution,
+        };
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,
@@ -52,7 +123,6 @@ pub const Resolution = extern struct {
             .single_file_module => lhs.value.single_file_module.order(&rhs.value.single_file_module, lhs_buf, rhs_buf),
             .git => lhs.value.git.order(&rhs.value.git, lhs_buf, rhs_buf),
             .github => lhs.value.github.order(&rhs.value.github, lhs_buf, rhs_buf),
-            .gitlab => lhs.value.gitlab.order(&rhs.value.gitlab, lhs_buf, rhs_buf),
             else => .eq,
         };
     }
@@ -68,7 +138,6 @@ pub const Resolution = extern struct {
             .single_file_module => builder.count(this.value.single_file_module.slice(buf)),
             .git => this.value.git.count(buf, Builder, builder),
             .github => this.value.github.count(buf, Builder, builder),
-            .gitlab => this.value.gitlab.count(buf, Builder, builder),
             else => {},
         }
     }
@@ -101,9 +170,6 @@ pub const Resolution = extern struct {
                 }),
                 .github => Value.init(.{
                     .github = this.value.github.clone(buf, Builder, builder),
-                }),
-                .gitlab => Value.init(.{
-                    .gitlab = this.value.gitlab.clone(buf, Builder, builder),
                 }),
                 .root => Value.init(.{ .root = {} }),
                 else => {
@@ -180,11 +246,6 @@ pub const Resolution = extern struct {
                 lhs_string_buf,
                 rhs_string_buf,
             ),
-            .gitlab => lhs.value.gitlab.eql(
-                &rhs.value.gitlab,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
             else => unreachable,
         };
     }
@@ -204,7 +265,6 @@ pub const Resolution = extern struct {
                 .remote_tarball => try writer.writeAll(value.remote_tarball.slice(formatter.buf)),
                 .git => try value.git.formatAs("git+", formatter.buf, layout, opts, writer),
                 .github => try value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
                 .workspace => try std.fmt.format(writer, "workspace:{s}", .{value.workspace.slice(formatter.buf)}),
                 .symlink => try std.fmt.format(writer, "link:{s}", .{value.symlink.slice(formatter.buf)}),
                 .single_file_module => try std.fmt.format(writer, "module:{s}", .{value.single_file_module.slice(formatter.buf)}),
@@ -228,7 +288,6 @@ pub const Resolution = extern struct {
                 .remote_tarball => try writer.writeAll(value.remote_tarball.slice(buf)),
                 .git => try value.git.formatAs("git+", buf, layout, opts, writer),
                 .github => try value.github.formatAs("github:", buf, layout, opts, writer),
-                .gitlab => try value.gitlab.formatAs("gitlab:", buf, layout, opts, writer),
                 .workspace => try std.fmt.format(writer, "workspace:{s}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
                     .path_sep = formatter.path_sep,
                 })}),
@@ -256,7 +315,6 @@ pub const Resolution = extern struct {
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
                 .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
                 .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
                 .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
                 .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
                 .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
@@ -282,7 +340,6 @@ pub const Resolution = extern struct {
 
         git: Repository,
         github: Repository,
-        gitlab: Repository,
 
         workspace: String,
 
@@ -306,7 +363,6 @@ pub const Resolution = extern struct {
         local_tarball = 8,
 
         github = 16,
-        gitlab = 24,
 
         git = 32,
 
@@ -338,7 +394,7 @@ pub const Resolution = extern struct {
         _,
 
         pub fn isGit(this: Tag) bool {
-            return this == .git or this == .github or this == .gitlab;
+            return this == .git or this == .github;
         }
 
         pub fn canEnqueueInstallTask(this: Tag) bool {

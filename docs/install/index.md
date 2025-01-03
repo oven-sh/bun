@@ -55,6 +55,13 @@ To install dependencies without allowing changes to lockfile (useful on CI):
 $ bun install --frozen-lockfile
 ```
 
+To exclude dependency types from installing, use `--omit` with `dev`, `optional`, or `peer`:
+
+```bash
+# Disable devDependencies and optionalDependencies
+$ bun install --omit=dev --omit=optional
+```
+
 To perform a dry run (i.e. don't actually install anything):
 
 ```bash
@@ -85,6 +92,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false

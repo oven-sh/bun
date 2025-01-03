@@ -361,12 +361,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
   }
 
-  if (obj.wantsThis) {
-    externs += `
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue);
-`;
-  }
-
   if (obj.structuredClone) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${symbolName(
@@ -652,13 +646,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
   }
 
     auto value = JSValue::encode(instance);
-${
-  obj.wantsThis
-    ? `
-    ${classSymbolName(typeName, "_setThis")}(globalObject, ptr, value);
-`
-    : ""
-}
     RELEASE_AND_RETURN(scope, value);
 }
 
@@ -1206,7 +1193,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
-  const sizeEstimator = obj.estimatedSize ? "static size_t estimatedSize(JSCell* cell, VM& vm);" : "";
+  const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
   var weakOwner = "";
   var weakInit = ``;
@@ -1290,6 +1277,16 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
         static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
+
+        /**
+         * Estimated size of the object from Zig including the JS wrapper.
+         */
+        static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+
+        /**
+         * Memory cost of the object from Zig, without necessarily having a JS wrapper alive.
+         */
+        static size_t memoryCost(void* ptr);
 
         void* m_ctx { nullptr };
 
@@ -1397,6 +1394,8 @@ visitor.reportExtraMemoryVisited(size);
 
 DEFINE_VISIT_CHILDREN(${name});
 
+
+
 template<typename Visitor>
 void ${name}::visitAdditionalChildren(Visitor& visitor)
 {
@@ -1473,9 +1472,39 @@ ${name}::~${name}()
 `;
   }
 
+  if (!obj.estimatedSize && !obj.memoryCost) {
+    externs += `extern "C" const size_t ${symbolName(typeName, "ZigStructSize")};`;
+  } else if (obj.memoryCost) {
+    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "memoryCost")}(void* ptr);`;
+  }
+
+  if (obj.memoryCost) {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "memoryCost")}(ptr) : 0;
+}
+`;
+  } else if (obj.estimatedSize) {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "estimatedSize")}(ptr) : 0;
+}
+  `;
+  } else {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "ZigStructSize")} : 0;
+}
+  `;
+  }
+
   output += `
 
-
+size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
+  auto* thisObject = jsCast<${name}*>(cell);
+  auto* wrapped = thisObject->wrapped();
+  return Base::estimatedSize(cell, vm) + ${name}::memoryCost(wrapped);
+}
 
 void ${name}::destroy(JSCell* cell)
 {
@@ -1539,16 +1568,15 @@ extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr
   return true;
 }
 
-
 extern "C" const size_t ${typeName}__ptrOffset = ${className(typeName)}::offsetOfWrapped();
 
 void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<${name}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
+        analyzer.setWrappedObjectForCell(cell, wrapped);
     }
+
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -1620,10 +1648,10 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
-    wantsThis = false,
     overridesToJS = false,
     estimatedSize,
     call = false,
+    memoryCost,
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
@@ -1695,12 +1723,25 @@ const JavaScriptCoreBindings = struct {
 
 `;
 
+    if (memoryCost) {
+      exports.set("memoryCost", symbolName(typeName, "memoryCost"));
+      output += `
+    pub fn ${symbolName(typeName, "memoryCost")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
+      return @call(.always_inline, ${typeName}.memoryCost, .{thisValue});
+    }
+  `;
+    }
+
     if (estimatedSize) {
       exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
       output += `
         pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
           return @call(.always_inline, ${typeName}.estimatedSize, .{thisValue});
         }
+      `;
+    } else if (!memoryCost && !estimatedSize) {
+      output += `
+        export const ${symbolName(typeName, "ZigStructSize")}: usize = @sizeOf(${typeName});
       `;
     }
 
@@ -1735,16 +1776,6 @@ const JavaScriptCoreBindings = struct {
               return null;
             },
           });
-        }
-      `;
-    }
-
-    if (construct && !noConstructor && wantsThis) {
-      exports.set("_setThis", classSymbolName(typeName, "_setThis"));
-      output += `
-        pub fn ${classSymbolName(typeName, "_setThis")}(globalObject: *JSC.JSGlobalObject, ptr: *anyopaque, this: JSC.JSValue) callconv(JSC.conv) void {
-          const real: *${typeName} = @ptrCast(@alignCast(ptr));
-          real.this_value.set(globalObject, this);
         }
       `;
     }
@@ -2075,6 +2106,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "ZigGeneratedClasses.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include <JavaScriptCore/HeapAnalyzer.h>
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"

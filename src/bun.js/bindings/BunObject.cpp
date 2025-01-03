@@ -428,7 +428,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
@@ -495,7 +495,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false, false);
+    std::set<EncodedJSValue> objVisited;
+    std::set<EncodedJSValue> subsetVisited;
+    MarkedArgumentBuffer gcBuffer;
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, false, false);
+
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }
@@ -572,6 +576,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
     MD4                                            BunObject_getter_wrap_MD4                                           DontDelete|PropertyCallback
     MD5                                            BunObject_getter_wrap_MD5                                           DontDelete|PropertyCallback
+    S3                                             BunObject_getter_wrap_S3                                            DontDelete|PropertyCallback
     SHA1                                           BunObject_getter_wrap_SHA1                                          DontDelete|PropertyCallback
     SHA224                                         BunObject_getter_wrap_SHA224                                        DontDelete|PropertyCallback
     SHA256                                         BunObject_getter_wrap_SHA256                                        DontDelete|PropertyCallback
@@ -633,6 +638,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
     sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1

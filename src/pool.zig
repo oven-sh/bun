@@ -233,5 +233,21 @@ pub fn ObjectPool(
             data().list = LinkedList{ .first = node };
             data().loaded = true;
         }
+
+        pub fn deleteAll() void {
+            var dat = data();
+            if (!dat.loaded) {
+                return;
+            }
+            dat.loaded = false;
+            dat.count = 0;
+            var next = dat.list.first;
+            dat.list.first = null;
+            while (next) |node| {
+                next = node.next;
+                if (std.meta.hasFn(Type, "deinit")) node.data.deinit();
+                node.allocator.destroy(node);
+            }
+        }
     };
 }

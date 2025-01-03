@@ -8,7 +8,7 @@ const string = bun.string;
 const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
-const Bundler = bun.bundler;
+const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
@@ -44,7 +44,7 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
-const debug = bun.Output.scoped(.Bundler, false);
+const debug = bun.Output.scoped(.Transpiler, false);
 
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
@@ -75,10 +75,11 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental_css: bool = false,
+        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
+        throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
 
         env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -102,8 +103,22 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
+            var did_set_target = false;
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                this.target = target;
+                did_set_target = true;
+            }
+
+            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
+                this.experimental.html = enable_html;
+
+                if (enable_html and this.target != .browser) {
+                    return globalThis.throwInvalidArguments("'html' is currently only supported when target is 'browser'. You can still import HTML files via the 'file' loader, just not using the 'html' loader.", .{});
+                }
+            }
+
             if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental_css = if (enable_css.isBoolean())
+                this.experimental.css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
                 else if (enable_css.isObject()) true: {
                     if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
@@ -189,15 +204,10 @@ pub const JSBundler = struct {
                 if (bytecode) {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = .cjs;
+                    if (did_set_target and this.target != .bun and this.bytecode) {
+                        return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    }
                     this.target = .bun;
-                }
-            }
-
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-
-                if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -388,7 +398,7 @@ pub const JSBundler = struct {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -504,6 +514,10 @@ pub const JSBundler = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
+            }
+
+            if (try config.getBooleanLoose(globalThis, "throw")) |flag| {
+                this.throw_on_error = flag;
             }
 
             return this;
@@ -743,7 +757,7 @@ pub const JSBundler = struct {
                 .bv2 = bv2,
                 .parse_task = parse,
                 .source_index = parse.source_index,
-                .default_loader = parse.path.loader(&bv2.bundler.options.loaders) orelse .js,
+                .default_loader = parse.path.loader(&bv2.transpiler.options.loaders) orelse .js,
                 .value = .pending,
                 .path = parse.path.text,
                 .namespace = parse.path.namespace,

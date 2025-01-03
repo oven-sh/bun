@@ -31,6 +31,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const s3 = toJSCallback(WebCore.Blob.constructS3File);
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -56,6 +57,7 @@ pub const BunObject = struct {
     pub const SHA384 = toJSGetter(Crypto.SHA384.getter);
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
+    pub const S3 = toJSGetter(JSC.WebCore.Blob.getJSS3FileConstructor);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
@@ -108,12 +110,14 @@ pub const BunObject = struct {
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(BunObject.MD4, .{ .name = getterName("MD4") });
         @export(BunObject.MD5, .{ .name = getterName("MD5") });
+        @export(BunObject.S3, .{ .name = getterName("S3") });
         @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
         @export(BunObject.SHA224, .{ .name = getterName("SHA224") });
         @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
         @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
@@ -155,6 +159,7 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
+        @export(BunObject.s3, .{ .name = callbackName("s3") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
@@ -186,12 +191,11 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -203,7 +207,7 @@ const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -345,7 +349,8 @@ pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    var path_buf: bun.PathBuffer = undefined;
+    const path_buf = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(path_buf);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -379,10 +384,10 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.env.get("PATH") orelse "",
+        globalThis.bunVM().transpiler.env.get("PATH") orelse "",
     );
     cwd_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.fs.top_level_dir,
+        globalThis.bunVM().transpiler.fs.top_level_dir,
     );
 
     if (arguments.nextEat()) |arg| {
@@ -398,7 +403,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     if (Which.which(
-        &path_buf,
+        path_buf,
         path_str.slice(),
         cwd_str.slice(),
         bin_str.slice(),
@@ -507,6 +512,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
@@ -514,7 +520,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format2(
+    try ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -524,16 +530,28 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
-    buffered_writer.flush() catch {
-        return .undefined;
-    };
+    if (globalThis.hasException()) return error.JSError;
+    buffered_writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.slice()).withEncoding();
     const ret = out.toJS(globalThis);
-    array.deinit();
+
     return ret;
+}
+
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -572,7 +590,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn getCWD(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
+    return ZigString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -696,7 +714,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
                     const prev = edit.*;
                     edit.name = sliced.slice();
-                    edit.detectEditor(VirtualMachine.get().bundler.env);
+                    edit.detectEditor(VirtualMachine.get().transpiler.env);
                     editor_choice = edit.editor;
                     if (editor_choice == null) {
                         edit.* = prev;
@@ -719,7 +737,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
     }
 
     const editor = editor_choice orelse edit.editor orelse brk: {
-        edit.autoDetectEditor(VirtualMachine.get().bundler.env);
+        edit.autoDetectEditor(VirtualMachine.get().transpiler.env);
         if (edit.editor == null) {
             return globalThis.throw("Failed to auto-detect editor", .{});
         }
@@ -741,7 +759,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
     return getPublicPathWithAssetPrefix(
         to,
-        VirtualMachine.get().bundler.fs.top_level_dir,
+        VirtualMachine.get().transpiler.fs.top_level_dir,
         origin,
         "",
         comptime Writer,
@@ -762,7 +780,7 @@ pub fn getPublicPathWithAssetPrefix(
     const relative_path = if (strings.hasPrefix(to, dir))
         strings.withoutTrailingSlash(to[dir.len..])
     else
-        VirtualMachine.get().bundler.fs.relativePlatform(dir, to, platform);
+        VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -770,7 +788,7 @@ pub fn getPublicPathWithAssetPrefix(
             if (std.fs.path.isAbsolute(to)) {
                 writer.writeAll(to) catch return;
             } else {
-                writer.writeAll(VirtualMachine.get().bundler.fs.abs(&[_]string{to})) catch return;
+                writer.writeAll(VirtualMachine.get().transpiler.fs.abs(&[_]string{to})) catch return;
             }
         } else {
             origin.joinWrite(
@@ -1136,11 +1154,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2311,8 +2329,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
@@ -4193,8 +4210,8 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
         const bunVM = globalObject.bunVM();
-        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
-        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+        ptr.* = bunVM.transpiler.env.map.map.keys().ptr;
+        return bunVM.transpiler.env.map.map.unmanaged.entries.len;
     }
 
     pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
@@ -4214,7 +4231,7 @@ pub const EnvironmentVariables = struct {
 
     pub fn getEnvNames(globalObject: *JSC.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
-        const keys = vm.bundler.env.map.map.keys();
+        const keys = vm.transpiler.env.map.map.keys();
         const len = @min(names.len, keys.len);
         for (keys[0..len], names[0..len]) |key, *name| {
             name.* = ZigString.initUTF8(key);
@@ -4226,7 +4243,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.get(sliced.slice()) orelse return null;
+        const value = vm.transpiler.env.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };

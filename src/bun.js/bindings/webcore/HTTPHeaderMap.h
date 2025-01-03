@@ -182,13 +182,13 @@ public:
         m_uncommonHeaders.shrinkToFit();
     }
 
-    WEBCORE_EXPORT String get(const String &name) const;
+    WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String &name, const String &value);
     WEBCORE_EXPORT void add(const String &name, const String &value);
     WEBCORE_EXPORT void append(const String &name, const String &value);
-    WEBCORE_EXPORT bool contains(const String &) const;
-    WEBCORE_EXPORT int64_t indexOf(String &name) const;
-    WEBCORE_EXPORT bool remove(const String &);
+    WEBCORE_EXPORT bool contains(const StringView) const;
+    WEBCORE_EXPORT int64_t indexOf(StringView name) const;
+    WEBCORE_EXPORT bool remove(const StringView);
 
     WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
     WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String &value);
@@ -265,7 +265,7 @@ public:
     void setUncommonHeaderCloneName(const StringView name, const String &value);
 
 private:
-    WEBCORE_EXPORT String getUncommonHeader(const String &name) const;
+    WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;

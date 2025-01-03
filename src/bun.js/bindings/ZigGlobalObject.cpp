@@ -254,6 +254,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useRegExpEscape() = true;
         JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
+#if OS(LINUX)
+        JSC::Options::usePollingTraps() = true;
+#endif
 
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;

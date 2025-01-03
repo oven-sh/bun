@@ -30,7 +30,7 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
         );
     }
 
-    try S3Bucket.writeFormatCredentials(credentials, s3.options, Formatter, formatter, writer, enable_ansi_colors);
+    try S3Bucket.writeFormatCredentials(credentials, s3.options, s3.acl, Formatter, formatter, writer, enable_ansi_colors);
     try formatter.writeIndent(@TypeOf(writer), writer);
     try writer.writeAll("}");
     formatter.resetLine();
@@ -224,8 +224,9 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
     options: ?JSC.JSValue,
     default_credentials: *AWS,
     default_options: bun.S3.MultiPartUpload.MultiPartUploadOptions,
+    default_acl: bun.S3.ACL,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, globalObject);
+    var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -237,7 +238,7 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
     };
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
-
+    store.data.s3.acl = aws_options.acl;
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
         if (opts.isObject()) {
@@ -273,12 +274,12 @@ pub fn constructS3FileWithAWSCredentials(
     options: ?JSC.JSValue,
     existing_credentials: AWS,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, globalObject);
+    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, .not_informed, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
-
+    store.data.s3.acl = aws_options.acl;
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
         if (opts.isObject()) {
@@ -433,6 +434,8 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     defer {
         credentialsWithOptions.deinit();
     }
+    const s3 = &this.store.?.data.s3;
+
     if (extra_options) |options| {
         if (options.isObject()) {
             if (try options.getTruthyComptime(globalThis, "method")) |method_| {
@@ -445,13 +448,14 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
                 expires = @intCast(expires_);
             }
         }
-        credentialsWithOptions = try this.store.?.data.s3.getCredentialsWithOptions(options, globalThis);
+        credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
     }
-    const path = this.store.?.data.s3.path();
+    const path = s3.path();
 
     const result = credentialsWithOptions.credentials.signRequest(.{
         .path = path,
         .method = method,
+        .acl = credentialsWithOptions.acl,
     }, .{ .expires = expires }) catch |sign_err| {
         return AWS.throwSignError(sign_err, globalThis);
     };

@@ -622,7 +622,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
   });
 
-  describe("S3 static methods", () => {
+  describe.only("S3 static methods", () => {
     describe("presign", () => {
       it("should work", async () => {
         const s3file = s3("s3://bucket/credentials-test", s3Options);
@@ -642,6 +642,21 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         });
         expect(url).toBeDefined();
         expect(url.includes("X-Amz-Expires=10")).toBe(true);
+        expect(url.includes("X-Amz-Date")).toBe(true);
+        expect(url.includes("X-Amz-Signature")).toBe(true);
+        expect(url.includes("X-Amz-Credential")).toBe(true);
+        expect(url.includes("X-Amz-Algorithm")).toBe(true);
+        expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+      });
+      it("should work with acl", async () => {
+        const s3file = s3("s3://bucket/credentials-test", s3Options);
+        const url = s3file.presign({
+          expiresIn: 10,
+          acl: "public-read",
+        });
+        expect(url).toBeDefined();
+        expect(url.includes("X-Amz-Expires=10")).toBe(true);
+        expect(url.includes("X-Amz-Acl=public-read")).toBe(true);
         expect(url.includes("X-Amz-Date")).toBe(true);
         expect(url.includes("X-Amz-Signature")).toBe(true);
         expect(url.includes("X-Amz-Credential")).toBe(true);

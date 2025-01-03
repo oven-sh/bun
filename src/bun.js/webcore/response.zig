@@ -3255,6 +3255,7 @@ pub const Fetch = struct {
             var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
                 .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
                 .options = .{},
+                .acl = .not_informed,
             };
             defer {
                 credentialsWithOptions.deinit();
@@ -3264,7 +3265,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, globalThis);
+                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, .not_informed, globalThis);
                     }
                 }
             }
@@ -3338,6 +3339,7 @@ pub const Fetch = struct {
                     body.ReadableStream.get().?,
                     globalThis,
                     credentialsWithOptions.options,
+                    credentialsWithOptions.acl,
                     if (headers) |h| h.getContentType() else null,
                     proxy_url,
                     @ptrCast(&Wrapper.resolve),
@@ -3379,42 +3381,15 @@ pub const Fetch = struct {
             }
 
             const content_type = if (headers) |h| h.getContentType() else null;
+            var header_buffer: [10]picohttp.Header = undefined;
 
             if (range) |range_| {
-                const _headers = result.headers();
-                var headersWithRange: [5]picohttp.Header = .{
-                    _headers[0],
-                    _headers[1],
-                    _headers[2],
-                    _headers[3],
-                    .{ .name = "range", .value = range_ },
-                };
-
-                setHeaders(&headers, &headersWithRange, allocator);
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                setHeaders(&headers, _headers, allocator);
             } else if (content_type) |ct| {
                 if (ct.len > 0) {
-                    const _headers = result.headers();
-                    if (_headers.len > 4) {
-                        var headersWithContentType: [6]picohttp.Header = .{
-                            _headers[0],
-                            _headers[1],
-                            _headers[2],
-                            _headers[3],
-                            _headers[4],
-                            .{ .name = "Content-Type", .value = ct },
-                        };
-                        setHeaders(&headers, &headersWithContentType, allocator);
-                    } else {
-                        var headersWithContentType: [5]picohttp.Header = .{
-                            _headers[0],
-                            _headers[1],
-                            _headers[2],
-                            _headers[3],
-                            .{ .name = "Content-Type", .value = ct },
-                        };
-
-                        setHeaders(&headers, &headersWithContentType, allocator);
-                    }
+                    const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = ct });
+                    setHeaders(&headers, _headers, allocator);
                 } else {
                     setHeaders(&headers, result.headers(), allocator);
                 }

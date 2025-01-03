@@ -1245,6 +1245,38 @@ declare module "bun" {
 
   interface S3Options extends BlobPropertyBag {
     /**
+     * The ACL to used to write the file to S3. by default will omit the ACL header/parameter.
+     */
+    acl?: /**
+     * Owner gets FULL_CONTROL. No one else has access rights (default).
+     */
+    | "private"
+      /**
+       * Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
+       */
+      | "public-read"
+      /**
+       * Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
+       */
+      | "public-read-write"
+      /**
+       * Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
+       */
+      | "aws-exec-read"
+      /**
+       * Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
+       */
+      | "authenticated-read"
+      /**
+       * Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+       */
+      | "bucket-owner-read"
+      /**
+       * Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+       */
+      | "bucket-owner-full-control"
+      | "log-delivery-write";
+    /**
      * The bucket to use for the S3 client. by default will use the `S3_BUCKET` and `AWS_BUCKET` environment variable, or deduce as first part of the path.
      */
     bucket?: string;
@@ -1260,6 +1292,10 @@ declare module "bun" {
      * The secret access key to use for the S3 client. By default, it will use the `S3_SECRET_ACCESS_KEY and `AWS_SECRET_ACCESS_KEY` environment variable.
      */
     secretAccessKey?: string;
+    /**
+     * The session token to use for the S3 client. By default, it will use the `S3_SESSION_TOKEN` and `AWS_SESSION_TOKEN` environment variable.
+     */
+    sessionToken?: string;
 
     /**
      * The endpoint to use for the S3 client. Defaults to `https://s3.{region}.amazonaws.com`, it will also use the `S3_ENDPOINT` and `AWS_ENDPOINT`  environment variable.

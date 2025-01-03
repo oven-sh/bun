@@ -136,4 +136,5 @@ export default [
   ["ERR_AWS_INVALID_PATH", Error],
   ["ERR_AWS_INVALID_ENDPOINT", Error],
   ["ERR_AWS_INVALID_SIGNATURE", Error],
+  ["ERR_AWS_INVALID_SESSION_TOKEN", Error],
 ] as ErrorCodeMapping;

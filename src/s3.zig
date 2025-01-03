@@ -7,6 +7,40 @@ pub const RareData = @import("./bun.js/rare_data.zig");
 const JSC = bun.JSC;
 const strings = bun.strings;
 
+pub const ACL = enum {
+    // not informed means that the user did not specify an ACL
+    not_informed,
+    // Bucket and object	Owner gets FULL_CONTROL. No one else has access rights (default).
+    private,
+    // Bucket and object	Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
+    public_read,
+    // Bucket and object	Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
+    public_read_write,
+    // Bucket and object	Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
+    aws_exec_read,
+    // Bucket and object	Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
+    authenticated_read,
+    // Object	Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    bucket_owner_read,
+    // Object	Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    bucket_owner_full_control,
+    log_delivery_write,
+
+    pub fn toString(this: @This()) ?[]const u8 {
+        return switch (this) {
+            .not_informed => null,
+            .private => "private",
+            .public_read => "public-read",
+            .public_read_write => "public-read-write",
+            .aws_exec_read => "aws-exec-read",
+            .authenticated_read => "authenticated-read",
+            .bucket_owner_read => "bucket-owner-read",
+            .bucket_owner_full_control => "bucket-owner-full-control",
+            .log_delivery_write => "log-delivery-write",
+        };
+    }
+};
+
 pub const AWSCredentials = struct {
     accessKeyId: []const u8,
     secretAccessKey: []const u8,
@@ -25,6 +59,7 @@ pub const AWSCredentials = struct {
     pub const AWSCredentialsWithOptions = struct {
         credentials: AWSCredentials,
         options: MultiPartUpload.MultiPartUploadOptions = .{},
+        acl: ACL = .not_informed,
         /// indicates if the credentials have changed
         changed_credentials: bool = false,
 
@@ -44,11 +79,28 @@ pub const AWSCredentials = struct {
             if (this._sessionTokenSlice) |slice| slice.deinit();
         }
     };
-    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+
+    fn hashConst(acl: []const u8) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        var remain = acl;
+
+        var buf: [@sizeOf(@TypeOf(hasher.buf))]u8 = undefined;
+
+        while (remain.len > 0) {
+            const end = @min(hasher.buf.len, remain.len);
+
+            hasher.update(strings.copyLowercaseIfNeeded(remain[0..end], &buf));
+            remain = remain[end..];
+        }
+
+        return hasher.final();
+    }
+    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
         // get ENV config
         var new_credentials = AWSCredentialsWithOptions{
             .credentials = this,
             .options = default_options,
+            .acl = default_acl,
         };
         errdefer {
             new_credentials.deinit();
@@ -185,6 +237,34 @@ pub const AWSCredentials = struct {
                         new_credentials.options.retry = @intCast(retry);
                     }
                 }
+
+                if (try opts.getTruthyComptime(globalObject, "acl")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                const acl_str = str.toUTF8(bun.default_allocator);
+                                defer acl_str.deinit();
+                                switch (hashConst(acl_str.slice())) {
+                                    hashConst("private") => new_credentials.acl = .private,
+                                    hashConst("public-read") => new_credentials.acl = .public_read,
+                                    hashConst("public-read-write") => new_credentials.acl = .public_read_write,
+                                    hashConst("aws-exec-read") => new_credentials.acl = .aws_exec_read,
+                                    hashConst("authenticated-read") => new_credentials.acl = .authenticated_read,
+                                    hashConst("bucket-owner-read") => new_credentials.acl = .bucket_owner_read,
+                                    hashConst("bucket-owner-full-control") => new_credentials.acl = .bucket_owner_full_control,
+                                    hashConst("log-delivery-write") => new_credentials.acl = .log_delivery_write,
+                                    else => return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value),
+                                }
+                            } else {
+                                return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value);
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value);
+                        }
+                    }
+                }
             }
         }
         return new_credentials;
@@ -296,17 +376,41 @@ pub const AWSCredentials = struct {
         authorization: []const u8,
         url: []const u8,
 
-        content_disposition: []const u8,
-        _headers: [5]picohttp.Header,
-        _headers_len: u8 = 4,
+        content_disposition: []const u8 = "",
+        session_token: []const u8 = "",
+        acl: ACL = .not_informed,
+        _headers: [7]picohttp.Header = .{
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+        },
+        _headers_len: u8 = 0,
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
             return this._headers[0..this._headers_len];
         }
 
+        pub fn mixWithHeader(this: *const @This(), headers_buffer: []picohttp.Header, header: picohttp.Header) []const picohttp.Header {
+            // copy the headers to buffer
+            const len = this._headers_len;
+            for (this._headers[0..len], 0..len) |existing_header, i| {
+                headers_buffer[i] = existing_header;
+            }
+            headers_buffer[len] = header;
+            return headers_buffer[0 .. len + 1];
+        }
+
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
                 bun.default_allocator.free(this.amz_date);
+            }
+
+            if (this.session_token.len > 0) {
+                bun.default_allocator.free(this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
@@ -330,14 +434,15 @@ pub const AWSCredentials = struct {
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
     };
-
     pub const SignOptions = struct {
         path: []const u8,
         method: bun.http.Method,
         content_hash: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
+        acl: ACL = .not_informed,
     };
+
     pub fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
@@ -400,6 +505,7 @@ pub const AWSCredentials = struct {
             error.InvalidMethod => return "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
             error.InvalidPath => return "invalid s3 bucket, key combination",
             error.InvalidEndpoint => return "invalid s3 endpoint",
+            error.InvalidSessionToken => return "invalid session token",
             else => return "failed to retrieve s3 content check your credentials",
         };
     }
@@ -409,6 +515,7 @@ pub const AWSCredentials = struct {
             error.InvalidMethod => return globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
             error.InvalidPath => return globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
             error.InvalidEndpoint => return globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
+            error.InvalidSessionToken => return globalThis.ERR_AWS_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
             else => return globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
         };
     }
@@ -418,6 +525,7 @@ pub const AWSCredentials = struct {
             error.InvalidMethod => globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
             error.InvalidPath => globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
             error.InvalidEndpoint => globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
+            error.InvalidSessionToken => globalThis.ERR_AWS_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
             else => globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
         };
     }
@@ -427,9 +535,11 @@ pub const AWSCredentials = struct {
             error.InvalidMethod => .{ .code = "InvalidMethod", .message = getSignErrorMessage(error.InvalidMethod) },
             error.InvalidPath => .{ .code = "InvalidPath", .message = getSignErrorMessage(error.InvalidPath) },
             error.InvalidEndpoint => .{ .code = "InvalidEndpoint", .message = getSignErrorMessage(error.InvalidEndpoint) },
+            error.InvalidSessionToken => .{ .code = "InvalidSessionToken", .message = getSignErrorMessage(error.InvalidSessionToken) },
             else => .{ .code = "SignError", .message = getSignErrorMessage(error.SignError) },
         };
     }
+
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
@@ -442,7 +552,7 @@ pub const AWSCredentials = struct {
         }
         const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
 
-        // TODO: X-Amz-Security-Token
+        const acl: ?[]const u8 = signOptions.acl.toString();
 
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -515,17 +625,33 @@ pub const AWSCredentials = struct {
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
-            if (content_disposition != null) {
-                if (session_token != null) {
-                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+            if (acl != null) {
+                if (content_disposition != null) {
+                    if (session_token != null) {
+                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                    }
                 } else {
-                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                    if (session_token != null) {
+                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                    }
                 }
             } else {
-                if (session_token != null) {
-                    break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                if (content_disposition != null) {
+                    if (session_token != null) {
+                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                    }
                 } else {
-                    break :brk "host;x-amz-content-sha256;x-amz-date";
+                    if (session_token != null) {
+                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                    }
                 }
             }
         };
@@ -545,7 +671,7 @@ pub const AWSCredentials = struct {
         errdefer bun.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
-        var tmp_buffer: [2048]u8 = undefined;
+        var tmp_buffer: [4096]u8 = undefined;
 
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
@@ -568,41 +694,92 @@ pub const AWSCredentials = struct {
                 break :brk_sign result;
             };
             if (signQuery) {
-                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                var token_encoded_buffer: [2048]u8 = undefined; // token is normaly like 600-700 but can be up to 2k
+                var encoded_session_token: ?[]const u8 = null;
+                if (session_token) |token| {
+                    encoded_session_token = encodeURIComponent(token, &token_encoded_buffer, true) catch return error.InvalidSessionToken;
+                }
+                const canonical = brk_canonical: {
+                    if (acl) |acl_value| {
+                        if (encoded_session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        }
+                    } else {
+                        if (encoded_session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        }
+                    }
+                };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
-                if (session_token) |token| {
-                    break :brk try std.fmt.allocPrint(
-                        bun.default_allocator,
-                        "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}&X-Amz-Security-Token={s}",
-                        .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower), token },
-                    );
+                if (acl) |acl_value| {
+                    if (encoded_session_token) |token| {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    } else {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    }
                 } else {
-                    break :brk try std.fmt.allocPrint(
-                        bun.default_allocator,
-                        "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                        .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                    );
+                    if (encoded_session_token) |token| {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    } else {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    }
                 }
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
                 const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
-                    if (content_disposition != null) {
-                        if (session_token) |token| {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                    if (acl) |acl_value| {
+                        if (content_disposition != null) {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
                         } else {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
                         }
                     } else {
-                        if (session_token) |token| {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                        if (content_disposition != null) {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
                         } else {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
                         }
                     }
                 };
@@ -630,52 +807,49 @@ pub const AWSCredentials = struct {
                 .amz_date = "",
                 .host = "",
                 .authorization = "",
+                .acl = signOptions.acl,
                 .url = authorization,
-                .content_disposition = "",
-                ._headers = .{
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                },
-                ._headers_len = 0,
             };
         }
 
-        if (content_disposition) |cd| {
-            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
-            return SignResult{
-                .amz_date = amz_date,
-                .host = host,
-                .authorization = authorization,
-                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-                .content_disposition = content_disposition_value,
-                ._headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                    .{ .name = "x-amz-date", .value = amz_date },
-                    .{ .name = "Authorization", .value = authorization[0..] },
-                    .{ .name = "Host", .value = host },
-                    .{ .name = "Content-Disposition", .value = content_disposition_value },
-                },
-                ._headers_len = 5,
-            };
-        }
-        return SignResult{
+        var result = SignResult{
             .amz_date = amz_date,
             .host = host,
             .authorization = authorization,
+            .acl = signOptions.acl,
             .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-            .content_disposition = "",
-            ._headers = .{
+            ._headers = [_]picohttp.Header{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = authorization[0..] },
                 .{ .name = "Host", .value = host },
                 .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
             },
             ._headers_len = 4,
         };
+
+        if (acl) |acl_value| {
+            result._headers[result._headers_len] = .{ .name = "x-amz-acl", .value = acl_value };
+            result._headers_len += 1;
+        }
+
+        if (session_token) |token| {
+            const session_token_value = bun.default_allocator.dupe(u8, token) catch bun.outOfMemory();
+            result.session_token = session_token_value;
+            result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
+            result._headers_len += 1;
+        }
+
+        if (content_disposition) |cd| {
+            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            result.content_disposition = content_disposition_value;
+            result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
+            result._headers_len += 1;
+        }
+
+        return result;
     }
     const JSS3Error = extern struct {
         code: bun.String = bun.String.empty,
@@ -1235,6 +1409,7 @@ pub const AWSCredentials = struct {
         body: []const u8,
         proxy_url: ?[]const u8 = null,
         range: ?[]const u8 = null,
+        acl: ACL = .not_informed,
     };
 
     pub fn executeSimpleS3Request(
@@ -1248,6 +1423,7 @@ pub const AWSCredentials = struct {
             .method = options.method,
             .search_params = options.search_params,
             .content_disposition = options.content_disposition,
+            .acl = options.acl,
         }, null) catch |sign_err| {
             if (options.range) |range_| bun.default_allocator.free(range_);
             const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
@@ -1256,40 +1432,15 @@ pub const AWSCredentials = struct {
         };
 
         const headers = brk: {
+            var header_buffer: [10]picohttp.Header = undefined;
             if (options.range) |range_| {
-                const _headers = result.headers();
-                var headersWithRange: [5]picohttp.Header = .{
-                    _headers[0],
-                    _headers[1],
-                    _headers[2],
-                    _headers[3],
-                    .{ .name = "range", .value = range_ },
-                };
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
             } else {
                 if (options.content_type) |content_type| {
                     if (content_type.len > 0) {
-                        const _headers = result.headers();
-                        if (_headers.len > 4) {
-                            var headersWithContentType: [6]picohttp.Header = .{
-                                _headers[0],
-                                _headers[1],
-                                _headers[2],
-                                _headers[3],
-                                _headers[4],
-                                .{ .name = "Content-Type", .value = content_type },
-                            };
-                            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
-                        }
-
-                        var headersWithContentType: [5]picohttp.Header = .{
-                            _headers[0],
-                            _headers[1],
-                            _headers[2],
-                            _headers[3],
-                            .{ .name = "Content-Type", .value = content_type },
-                        };
-                        break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
+                        const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = content_type });
+                        break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
                     }
                 }
 
@@ -1402,17 +1553,11 @@ pub const AWSCredentials = struct {
             return;
         };
 
+        var header_buffer: [10]picohttp.Header = undefined;
         const headers = brk: {
             if (range) |range_| {
-                const _headers = result.headers();
-                var headersWithRange: [5]picohttp.Header = .{
-                    _headers[0],
-                    _headers[1],
-                    _headers[2],
-                    _headers[3],
-                    .{ .name = "range", .value = range_ },
-                };
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
             } else {
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
             }
@@ -1547,13 +1692,14 @@ pub const AWSCredentials = struct {
         }, .{ .delete = callback }, callback_context);
     }
 
-    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
         this.executeSimpleS3Request(.{
             .path = path,
             .method = .PUT,
             .proxy_url = proxy_url,
             .body = content,
             .content_type = content_type,
+            .acl = acl,
         }, .{ .upload = callback }, callback_context);
     }
 
@@ -1653,7 +1799,7 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, acl: ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
         const proxy_url = (proxy orelse "");
 
@@ -1691,6 +1837,7 @@ pub const AWSCredentials = struct {
             .globalThis = globalThis,
             .state = .wait_stream_check,
             .options = options,
+            .acl = acl,
             .vm = JSC.VirtualMachine.get(),
         });
 
@@ -1890,6 +2037,7 @@ pub const MultiPartUpload = struct {
     ended: bool = false,
 
     options: MultiPartUploadOptions = .{},
+    acl: ACL = .not_informed,
     credentials: *AWSCredentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *JSC.VirtualMachine,
@@ -2080,6 +2228,7 @@ pub const MultiPartUpload = struct {
                         .proxy_url = this.proxyUrl(),
                         .body = this.buffered.items,
                         .content_type = this.content_type,
+                        .acl = this.acl,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -2319,6 +2468,7 @@ pub const MultiPartUpload = struct {
                 .body = "",
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
+                .acl = this.acl,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             part.start();
@@ -2364,6 +2514,7 @@ pub const MultiPartUpload = struct {
                 .proxy_url = this.proxyUrl(),
                 .body = this.buffered.items,
                 .content_type = this.content_type,
+                .acl = this.acl,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
         } else {
             // we need to split

@@ -569,42 +569,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     return JSC::JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_getBuiltinModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto id_value = callFrame->argument(0);
-    Bun::V::validateString(throwScope, globalObject, id_value, "id"_s);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto id_str = id_value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto is_valid_bultin_name = Bun::isBuiltinModule(id_str);
-    if (!is_valid_bultin_name) return JSValue::encode(jsUndefined());
-
-    auto require_key = id_value.toString(globalObject);
-
-    JSCommonJSModule* moduleObject = nullptr;
-
-    auto entry = globalObject->requireMap()->get(globalObject, id_value);
-    if (!entry.isUndefined()) moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
-
-    if (!moduleObject) {
-        moduleObject = Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), require_key, require_key, jsEmptyString(vm), SourceCode());
-        // TODO: if this is uncommented and `process.getBuiltinModule` runs before `require` then the function here returns `{}`
-        // but CommonJSModuleRecord.cpp calls it so it seems likely to be necessary, otoh the tests work without it /shrug
-        // globalObject->requireMap()->set(globalObject, require_key, moduleObject);
-    }
-
-    auto fn = globalObject->requireFunctionUnbound();
-    MarkedArgumentBuffer args;
-    args.append(id_value);
-    return JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, fn, JSC::getCallData(fn), moduleObject, args));
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -3357,7 +3321,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
-  getBuiltinModule                 Process_getBuiltinModule                            Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback

@@ -1856,6 +1856,67 @@ describe("text lockfile", () => {
       );
     });
   }
+
+  test("optionalPeers", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          peerDependencies: {
+            "no-deps": "1.0.0",
+          },
+          peerDependenciesMeta: {
+            "no-deps": {
+              optional: true,
+            },
+          },
+        }),
+      ),
+    ]);
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeFalse();
+    const firstLockfile = (await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // another install should recognize the peer dependency as `"optional": true`
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    }));
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeFalse();
+    expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+      firstLockfile,
+    );
+  });
 });
 
 describe("bundledDependencies", () => {

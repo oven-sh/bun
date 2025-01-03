@@ -958,7 +958,7 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\"{s}",
+                    \\{},
                     \\
                 , .{
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),

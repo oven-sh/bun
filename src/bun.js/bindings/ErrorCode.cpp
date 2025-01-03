@@ -643,11 +643,11 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
     ASSERT(reason.isUndefined() || reason.isString());
     if (reason.isUndefined()) {
-        auto message = makeString("The "_s, type, " '"_s, name, "' is invalid. Received "_s, value_string);
+        auto message = makeString("The "_s, type, " '"_s, name_string, "' is invalid. Received "_s, value_string);
         return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
     }
     auto reason_string = reason.toWTFString(globalObject);
-    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason_string, ". Received "_s, value_string);
+    auto message = makeString("The "_s, type, " '"_s, name_string, "' "_s, reason_string, ". Received "_s, value_string);
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
 }
 

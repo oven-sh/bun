@@ -3255,7 +3255,7 @@ pub const Fetch = struct {
             var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
                 .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
                 .options = .{},
-                .acl = .not_informed,
+                .acl = null,
             };
             defer {
                 credentialsWithOptions.deinit();
@@ -3265,7 +3265,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, .not_informed, globalThis);
+                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
                     }
                 }
             }

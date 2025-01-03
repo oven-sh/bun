@@ -11,7 +11,7 @@ const AWSCredentials = bun.AWSCredentials;
 const S3BucketOptions = struct {
     credentials: *AWSCredentials,
     options: bun.S3.MultiPartUpload.MultiPartUploadOptions = .{},
-    acl: bun.S3.ACL = .not_informed,
+    acl: ?bun.S3.ACL = null,
     pub usingnamespace bun.New(@This());
 
     pub fn deinit(this: *@This()) void {
@@ -20,7 +20,7 @@ const S3BucketOptions = struct {
     }
 };
 
-pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUpload.MultiPartUploadOptions, acl: bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUpload.MultiPartUploadOptions, acl: ?bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll("\n");
 
     {
@@ -69,10 +69,10 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
             try writer.writeAll("\n");
         }
 
-        if (acl.toString()) |acl_value| {
+        if (acl) |acl_value| {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>acl<d>:<r> ", enable_ansi_colors));
-            try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{acl_value});
+            try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{acl_value.toString()});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
 
             try writer.writeAll("\n");
@@ -126,7 +126,10 @@ pub fn call(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..presign(path, options) expects a path to presign", .{});
+        if (args.len == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path ", .{});
+        }
+        return globalThis.throwInvalidArguments("Expected a path", .{});
     };
     errdefer path.deinit();
     const options = args.nextEat();
@@ -140,7 +143,10 @@ pub fn presign(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..presign(path, options) expects a path to presign", .{});
+        if (args.len == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path to presign", .{});
+        }
+        return globalThis.throwInvalidArguments("Expected a path to presign", .{});
     };
     errdefer path.deinit();
 
@@ -155,7 +161,10 @@ pub fn exists(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..exists(path) expects a path to check if it exists", .{});
+        if (args.len == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path to check if it exists", .{});
+        }
+        return globalThis.throwInvalidArguments("Expected a path to check if it exists", .{});
     };
     errdefer path.deinit();
     const options = args.nextEat();
@@ -169,7 +178,10 @@ pub fn size(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..size(path) expects a path to check the size of", .{});
+        if (args.len == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path to check the size of", .{});
+        }
+        return globalThis.throwInvalidArguments("Expected a path to check the size of", .{});
     };
     errdefer path.deinit();
     const options = args.nextEat();
@@ -183,11 +195,11 @@ pub fn write(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: 
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..write(path, data) expects a path to write to", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a path to write to", .{});
     };
     errdefer path.deinit();
     const data = args.nextEat() orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..write(path, data) expects a Blob-y thing to write", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to write", .{});
     };
 
     const options = args.nextEat();
@@ -205,7 +217,7 @@ pub fn unlink(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.throwInvalidArguments("S3Bucket.prototype..unlink(path) expects a path to unlink", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a path to unlink", .{});
     };
     errdefer path.deinit();
     const options = args.nextEat();
@@ -218,12 +230,12 @@ pub fn construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const options = args.nextEat() orelse {
-        globalThis.throwInvalidArguments("S3Bucket.prototype..constructor(options) expects AWS options", .{}) catch return null;
+        globalThis.ERR_MISSING_ARGS("Expected S3 options to be passed", .{}) catch return null;
     };
     if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
-        globalThis.throwInvalidArguments("S3Bucket.prototype..constructor(options) expects AWS options", .{}) catch return null;
+        globalThis.throwInvalidArguments("Expected S3 options to be passed", .{}) catch return null;
     }
-    var aws_options = AWSCredentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getAWSCredentials(), .{}, options, .not_informed, globalThis) catch return null;
+    var aws_options = AWSCredentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getAWSCredentials(), .{}, options, null, globalThis) catch return null;
     defer aws_options.deinit();
     return S3BucketOptions.new(.{
         .credentials = aws_options.credentials.dupe(),

@@ -49,13 +49,13 @@ pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
-        return globalThis.throwInvalidArguments("S3.presign(pathOrS3, options) expects a S3 or path to presign", .{});
+        return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
     }
 
     switch (path_or_blob) {
         .path => |path| {
             if (path == .fd) {
-                return globalThis.throwInvalidArguments("S3.presign(pathOrS3, options) expects a S3 or path to presign", .{});
+                return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
             }
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
@@ -79,13 +79,13 @@ pub fn unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         }
     }
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
-        return globalThis.throwInvalidArguments("S3.unlink(pathOrS3) expects a S3 or path to delete", .{});
+        return globalThis.throwInvalidArguments("Expected a S3 or path to delete", .{});
     }
 
     switch (path_or_blob) {
         .path => |path| {
             if (path == .fd) {
-                return globalThis.throwInvalidArguments("S3.unlink(pathOrS3) expects a S3 or path to delete", .{});
+                return globalThis.throwInvalidArguments("Expected a S3 or path to delete", .{});
             }
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
@@ -112,18 +112,18 @@ pub fn upload(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
-        return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a S3 or path to upload", .{});
+        return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
     }
 
     const data = args.nextEat() orelse {
-        return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a Blob-y thing to upload", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{});
     };
 
     switch (path_or_blob) {
         .path => |path| {
             const options = args.nextEat();
             if (path == .fd) {
-                return globalThis.throwInvalidArguments("S3.upload(pathOrS3, blob) expects a S3 or path to upload", .{});
+                return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
@@ -155,14 +155,14 @@ pub fn size(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSEr
     }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
-        return globalThis.throwInvalidArguments("S3.size(pathOrS3) expects a S3 or path to get size", .{});
+        return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
     }
 
     switch (path_or_blob) {
         .path => |path| {
             const options = args.nextEat();
             if (path == .fd) {
-                return globalThis.throwInvalidArguments("S3.size(pathOrS3) expects a S3 or path to get size", .{});
+                return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
@@ -188,14 +188,14 @@ pub fn exists(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
-        return globalThis.throwInvalidArguments("S3.exists(pathOrS3) expects a S3 or path to check if it exists", .{});
+        return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
     }
 
     switch (path_or_blob) {
         .path => |path| {
             const options = args.nextEat();
             if (path == .fd) {
-                return globalThis.throwInvalidArguments("S3.exists(pathOrS3) expects a S3 or path to check if it exists", .{});
+                return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
@@ -274,7 +274,7 @@ pub fn constructS3FileWithAWSCredentials(
     options: ?JSC.JSValue,
     existing_credentials: AWS,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, .not_informed, globalObject);
+    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();

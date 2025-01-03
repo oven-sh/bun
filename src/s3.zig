@@ -8,27 +8,24 @@ const JSC = bun.JSC;
 const strings = bun.strings;
 
 pub const ACL = enum {
-    // not informed means that the user did not specify an ACL
-    not_informed,
-    // Bucket and object	Owner gets FULL_CONTROL. No one else has access rights (default).
+    /// Owner gets FULL_CONTROL. No one else has access rights (default).
     private,
-    // Bucket and object	Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
+    /// Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
     public_read,
-    // Bucket and object	Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
+    /// Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
     public_read_write,
-    // Bucket and object	Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
+    /// Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
     aws_exec_read,
-    // Bucket and object	Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
+    /// Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
     authenticated_read,
-    // Object	Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    /// Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
     bucket_owner_read,
-    // Object	Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    /// Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
     bucket_owner_full_control,
     log_delivery_write,
 
     pub fn toString(this: @This()) ?[]const u8 {
         return switch (this) {
-            .not_informed => null,
             .private => "private",
             .public_read => "public-read",
             .public_read_write => "public-read-write",
@@ -39,6 +36,17 @@ pub const ACL = enum {
             .log_delivery_write => "log-delivery-write",
         };
     }
+
+    pub const Map = bun.ComptimeStringMap(ACL, .{
+        .{ "private", .private },
+        .{ "public-read", .public_read },
+        .{ "public-read-write", .public_read_write },
+        .{ "aws-exec-read", .aws_exec_read },
+        .{ "authenticated-read", .authenticated_read },
+        .{ "bucket-owner-read", .bucket_owner_read },
+        .{ "bucket-owner-full-control", .bucket_owner_full_control },
+        .{ "log-delivery-write", .log_delivery_write },
+    });
 };
 
 pub const AWSCredentials = struct {
@@ -59,7 +67,7 @@ pub const AWSCredentials = struct {
     pub const AWSCredentialsWithOptions = struct {
         credentials: AWSCredentials,
         options: MultiPartUpload.MultiPartUploadOptions = .{},
-        acl: ACL = .not_informed,
+        acl: ?ACL = null,
         /// indicates if the credentials have changed
         changed_credentials: bool = false,
 
@@ -95,7 +103,7 @@ pub const AWSCredentials = struct {
 
         return hasher.final();
     }
-    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
         // get ENV config
         var new_credentials = AWSCredentialsWithOptions{
             .credentials = this,
@@ -237,33 +245,8 @@ pub const AWSCredentials = struct {
                         new_credentials.options.retry = @intCast(retry);
                     }
                 }
-
-                if (try opts.getTruthyComptime(globalObject, "acl")) |js_value| {
-                    if (!js_value.isEmptyOrUndefinedOrNull()) {
-                        if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
-                            defer str.deref();
-                            if (str.tag != .Empty and str.tag != .Dead) {
-                                const acl_str = str.toUTF8(bun.default_allocator);
-                                defer acl_str.deinit();
-                                switch (hashConst(acl_str.slice())) {
-                                    hashConst("private") => new_credentials.acl = .private,
-                                    hashConst("public-read") => new_credentials.acl = .public_read,
-                                    hashConst("public-read-write") => new_credentials.acl = .public_read_write,
-                                    hashConst("aws-exec-read") => new_credentials.acl = .aws_exec_read,
-                                    hashConst("authenticated-read") => new_credentials.acl = .authenticated_read,
-                                    hashConst("bucket-owner-read") => new_credentials.acl = .bucket_owner_read,
-                                    hashConst("bucket-owner-full-control") => new_credentials.acl = .bucket_owner_full_control,
-                                    hashConst("log-delivery-write") => new_credentials.acl = .log_delivery_write,
-                                    else => return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value),
-                                }
-                            } else {
-                                return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value);
-                            }
-                        } else {
-                            return globalObject.throwInvalidArgumentTypeValue("acl", "string", js_value);
-                        }
-                    }
+                if (try opts.getOptionalEnum(globalObject, "acl", ACL)) |acl| {
+                    new_credentials.acl = acl;
                 }
             }
         }
@@ -378,7 +361,7 @@ pub const AWSCredentials = struct {
 
         content_disposition: []const u8 = "",
         session_token: []const u8 = "",
-        acl: ACL = .not_informed,
+        acl: ?ACL = null,
         _headers: [7]picohttp.Header = .{
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
@@ -440,7 +423,7 @@ pub const AWSCredentials = struct {
         content_hash: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
-        acl: ACL = .not_informed,
+        acl: ?ACL = null,
     };
 
     pub fn guessRegion(endpoint: []const u8) []const u8 {
@@ -552,7 +535,7 @@ pub const AWSCredentials = struct {
         }
         const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
 
-        const acl: ?[]const u8 = signOptions.acl.toString();
+        const acl: ?[]const u8 = if (signOptions.acl) |acl_value| acl_value.toString() else null;
 
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -1409,7 +1392,7 @@ pub const AWSCredentials = struct {
         body: []const u8,
         proxy_url: ?[]const u8 = null,
         range: ?[]const u8 = null,
-        acl: ACL = .not_informed,
+        acl: ?ACL = null,
     };
 
     pub fn executeSimpleS3Request(
@@ -1692,7 +1675,7 @@ pub const AWSCredentials = struct {
         }, .{ .delete = callback }, callback_context);
     }
 
-    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ?ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
         this.executeSimpleS3Request(.{
             .path = path,
             .method = .PUT,
@@ -1799,7 +1782,7 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, acl: ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, acl: ?ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
         const proxy_url = (proxy orelse "");
 
@@ -2037,7 +2020,7 @@ pub const MultiPartUpload = struct {
     ended: bool = false,
 
     options: MultiPartUploadOptions = .{},
-    acl: ACL = .not_informed,
+    acl: ?ACL = null,
     credentials: *AWSCredentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *JSC.VirtualMachine,

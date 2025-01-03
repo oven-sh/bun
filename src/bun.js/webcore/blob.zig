@@ -3449,7 +3449,7 @@ pub const Blob = struct {
         mime_type: http.MimeType = http.MimeType.other,
         credentials: ?*AWSCredentials,
         options: S3MultiPartUpload.MultiPartUploadOptions = .{},
-        acl: S3.ACL = .not_informed,
+        acl: ?S3.ACL = null,
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;
         }

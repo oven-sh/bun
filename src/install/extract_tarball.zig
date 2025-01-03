@@ -128,6 +128,9 @@ threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
+    const tracer = bun.perf.trace("ExtractTarball.extract");
+    defer tracer.end();
+
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
     const name = if (this.name.slice().len > 0) this.name.slice() else brk: {

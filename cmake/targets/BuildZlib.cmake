@@ -7,12 +7,6 @@ register_repository(
     cbb6ec1d74e8061efdf7251f8c2dae778bed14fd
 )
 
-# https://gitlab.kitware.com/cmake/cmake/-/issues/25755
-if(APPLE)
-  set(ZLIB_CMAKE_C_FLAGS "-fno-define-target-os-macros")
-  set(ZLIB_CMAKE_CXX_FLAGS "-fno-define-target-os-macros")
-endif()
-
 if(WIN32)
   if(DEBUG)
     set(ZLIB_LIBRARY "zlibd")
@@ -30,12 +24,12 @@ register_cmake_command(
     zlib
   ARGS
     -DBUILD_SHARED_LIBS=OFF
-    -DBUILD_EXAMPLES=OFF
-    "-DCMAKE_C_FLAGS=${ZLIB_CMAKE_C_FLAGS}"
-    "-DCMAKE_CXX_FLAGS=${ZLIB_CMAKE_CXX_FLAGS}"
+    -DWITH_GTEST=OFF
     -DZLIB_COMPAT=ON
+    -DZLIB_ENABLE_TESTS=OFF
+    -DZLIBNG_ENABLE_TESTS=OFF
   LIBRARIES
     ${ZLIB_LIBRARY}
   INCLUDES
-    .
+    ${BUILD_PATH}/zlib
 )

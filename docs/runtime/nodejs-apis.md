@@ -53,7 +53,7 @@ Some methods are not optimized yet.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 `events.addAbortListener` & `events.getMaxListeners` do not support (web api) `EventTarget`
+🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -161,7 +161,7 @@ Some methods are not optimized yet.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet. There is a bug with `this` value for contextified options not having the correct prototype.
+🟡 Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 

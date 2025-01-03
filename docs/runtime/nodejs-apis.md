@@ -157,7 +157,7 @@ Some methods are not optimized yet.
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
-🔴 `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Otherwise, not implemented. For profiling, use [`bun:jsc`](https://bun.sh/docs/project/benchmarking#bunjsc) instead.
+🟡 `writeHeapSnapshot` and `getHeapSnapshot` are implemented. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Other methods are not implemented. For profiling, use [`bun:jsc`](https://bun.sh/docs/project/benchmarking#bunjsc) instead.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 

@@ -126,8 +126,8 @@ pub fn call(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        if (args.len == 0) {
-            return globalThis.ERR_MISSING_ARGS("Expected a path ", .{});
+        if (args.len() == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path ", .{}).throw();
         }
         return globalThis.throwInvalidArguments("Expected a path", .{});
     };
@@ -143,8 +143,8 @@ pub fn presign(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        if (args.len == 0) {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to presign", .{});
+        if (args.len() == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path to presign", .{}).throw();
         }
         return globalThis.throwInvalidArguments("Expected a path to presign", .{});
     };
@@ -161,8 +161,8 @@ pub fn exists(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        if (args.len == 0) {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to check if it exists", .{});
+        if (args.len() == 0) {
+            return globalThis.throwMissingArgumentsValue("Expected a path to check if it exists", .{}).throw();
         }
         return globalThis.throwInvalidArguments("Expected a path to check if it exists", .{});
     };
@@ -178,8 +178,8 @@ pub fn size(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        if (args.len == 0) {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to check the size of", .{});
+        if (args.len() == 0) {
+            return globalThis.ERR_MISSING_ARGS("Expected a path to check the size of", .{}).throw();
         }
         return globalThis.throwInvalidArguments("Expected a path to check the size of", .{});
     };
@@ -195,11 +195,11 @@ pub fn write(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: 
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a path to write to", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a path to write to", .{}).throw();
     };
     errdefer path.deinit();
     const data = args.nextEat() orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to write", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to write", .{}).throw();
     };
 
     const options = args.nextEat();
@@ -217,7 +217,7 @@ pub fn unlink(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a path to unlink", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a path to unlink", .{}).throw();
     };
     errdefer path.deinit();
     const options = args.nextEat();
@@ -230,7 +230,7 @@ pub fn construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const options = args.nextEat() orelse {
-        globalThis.ERR_MISSING_ARGS("Expected S3 options to be passed", .{}) catch return null;
+        globalThis.ERR_MISSING_ARGS("Expected S3 options to be passed", .{}).throw() catch return null;
     };
     if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
         globalThis.throwInvalidArguments("Expected S3 options to be passed", .{}) catch return null;

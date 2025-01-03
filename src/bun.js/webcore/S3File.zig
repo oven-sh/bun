@@ -116,7 +116,7 @@ pub fn upload(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     const data = args.nextEat() orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{});
+        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{}).throw();
     };
 
     switch (path_or_blob) {

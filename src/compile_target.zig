@@ -120,7 +120,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         bun.fs.FileSystem.instance.top_level_dir,
         buf,
         &.{
-            bun.install.PackageManager.fetchCacheDirectoryPath(env).path,
+            bun.install.PackageManager.fetchCacheDirectoryPath(env, null).path,
             version_str,
         },
         .auto,

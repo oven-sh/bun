@@ -6736,7 +6736,7 @@ pub const CallFrame = opaque {
     /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const slice = self.arguments();
-        comptime bun.assert(max <= 15);
+        comptime bun.assert(max <= 13);
         return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
             inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),

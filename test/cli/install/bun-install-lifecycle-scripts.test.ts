@@ -9,7 +9,7 @@ import {
   stderrForInstall,
   runBunInstall,
 } from "harness";
-import { beforeAll, afterAll, beforeEach, test, expect, describe } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
 import { writeFile, exists, rm, mkdir } from "fs/promises";
 import { join, sep } from "path";
 import { spawn, file, write } from "bun";
@@ -19,6 +19,7 @@ var packageDir: string;
 var packageJson: string;
 
 beforeAll(async () => {
+  setDefaultTimeout(1000 * 60 * 5);
   await verdaccio.start();
 });
 

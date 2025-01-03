@@ -41,7 +41,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             this.* = undefined;
         }
 
-        pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) !@This() {
+        pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!@This() {
             var iter = @This(){
                 .object = object.asCell(),
                 .globalObject = globalObject,

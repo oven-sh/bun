@@ -18,7 +18,6 @@ pub const BunObject = struct {
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
-    pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
@@ -145,7 +144,6 @@ pub const BunObject = struct {
         @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -830,10 +828,6 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return .undefined;
 }
 
-pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return globalObject.generateHeapSnapshot();
-}
-
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
@@ -1154,11 +1148,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2329,8 +2323,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {

@@ -297,7 +297,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         auto* str = errorMessage.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (str->length() > 0) {
-            auto value = str->value(lexicalGlobalObject);
+            auto value = str->view(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             sb.append("Error: "_s);
             sb.append(value.data);
@@ -868,7 +868,12 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
+    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
+    if (UNLIKELY(!vmPtr)) {
+        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
+    }
+    vmPtr->refSuppressingSaferCPPChecking();
+    JSC::VM& vm = *vmPtr;
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);

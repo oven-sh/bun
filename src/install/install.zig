@@ -155,18 +155,19 @@ const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 
 pub fn ExternalSlice(comptime Type: type) type {
-    return ExternalSliceAligned(Type, null);
-}
-
-pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type {
     return extern struct {
-        pub const alignment = alignment_ orelse @alignOf(*Type);
         pub const Slice = @This();
 
         pub const Child: type = Type;
 
         off: u32 = 0,
         len: u32 = 0,
+
+        pub const invalid: @This() = .{ .off = std.math.maxInt(u32), .len = std.math.maxInt(u32) };
+
+        pub inline fn isInvalid(this: Slice) bool {
+            return this.off == std.math.maxInt(u32) and this.len == std.math.maxInt(u32);
+        }
 
         pub inline fn contains(this: Slice, id: u32) bool {
             return id >= this.off and id < (this.len + this.off);
@@ -211,10 +212,20 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
 pub const PackageID = u32;
 pub const DependencyID = u32;
+
+// pub const DependencyID = enum(u32) {
+//     root = max - 1,
+//     invalid = max,
+//     _,
+
+//     const max = std.math.maxInt(u32);
+// };
+
 pub const invalid_package_id = std.math.maxInt(PackageID);
 pub const invalid_dependency_id = std.math.maxInt(DependencyID);
 
 pub const ExternalStringList = ExternalSlice(ExternalString);
+pub const ExternalPackageNameHashList = ExternalSlice(PackageNameHash);
 pub const VersionSlice = ExternalSlice(Semver.Version);
 
 pub const ExternalStringMap = extern struct {
@@ -3384,18 +3395,18 @@ pub const PackageManager = struct {
 
     pub fn determinePreinstallState(
         manager: *PackageManager,
-        this: Package,
+        pkg: Package,
         lockfile: *Lockfile,
         out_name_and_version_hash: *?u64,
         out_patchfile_hash: *?u64,
     ) PreinstallState {
-        switch (manager.getPreinstallState(this.meta.id)) {
+        switch (manager.getPreinstallState(pkg.meta.id)) {
             .unknown => {
 
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
-                if (this.isDisabled()) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                if (pkg.isDisabled()) {
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                     return .done;
                 }
 
@@ -3406,37 +3417,37 @@ pub const PackageManager = struct {
                         sfb.get(),
                         "{s}@{}",
                         .{
-                            this.name.slice(manager.lockfile.buffers.string_bytes.items),
-                            this.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
+                            pkg.name.slice(manager.lockfile.buffers.string_bytes.items),
+                            pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
                         },
                     ) catch unreachable;
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     const patched_dep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk null;
                     defer out_name_and_version_hash.* = name_and_version_hash;
                     if (patched_dep.patchfile_hash_is_null) {
-                        manager.setPreinstallState(this.meta.id, manager.lockfile, .calc_patch_hash);
+                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .calc_patch_hash);
                         return .calc_patch_hash;
                     }
                     out_patchfile_hash.* = patched_dep.patchfileHash().?;
                     break :brk patched_dep.patchfileHash().?;
                 };
 
-                const folder_path = switch (this.resolution.tag) {
-                    .git => manager.cachedGitFolderNamePrintAuto(&this.resolution.value.git, patch_hash),
-                    .github => manager.cachedGitHubFolderNamePrintAuto(&this.resolution.value.github, patch_hash),
-                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&this.name), this.resolution.value.npm.version, patch_hash),
-                    .local_tarball => manager.cachedTarballFolderName(this.resolution.value.local_tarball, patch_hash),
-                    .remote_tarball => manager.cachedTarballFolderName(this.resolution.value.remote_tarball, patch_hash),
+                const folder_path = switch (pkg.resolution.tag) {
+                    .git => manager.cachedGitFolderNamePrintAuto(&pkg.resolution.value.git, patch_hash),
+                    .github => manager.cachedGitHubFolderNamePrintAuto(&pkg.resolution.value.github, patch_hash),
+                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&pkg.name), pkg.resolution.value.npm.version, patch_hash),
+                    .local_tarball => manager.cachedTarballFolderName(pkg.resolution.value.local_tarball, patch_hash),
+                    .remote_tarball => manager.cachedTarballFolderName(pkg.resolution.value.remote_tarball, patch_hash),
                     else => "",
                 };
 
                 if (folder_path.len == 0) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                     return .extract;
                 }
 
                 if (manager.isFolderInCache(folder_path)) {
-                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                     return .done;
                 }
 
@@ -3453,16 +3464,16 @@ pub const PackageManager = struct {
                     const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
                     defer manager.lockfile.allocator.free(non_patched_path);
                     if (manager.isFolderInCache(non_patched_path)) {
-                        manager.setPreinstallState(this.meta.id, manager.lockfile, .apply_patch);
+                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .apply_patch);
                         // yay step 1 is already done for us
                         return .apply_patch;
                     }
                     // we need to extract non-patched pkg into the cache
-                    manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                    manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                     return .extract;
                 }
 
-                manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                manager.setPreinstallState(pkg.meta.id, lockfile, .extract);
                 return .extract;
             },
             else => |val| return val,
@@ -3522,7 +3533,7 @@ pub const PackageManager = struct {
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir = fetchCacheDirectoryPath(this.env);
+                const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
                 this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
@@ -6004,6 +6015,10 @@ pub const PackageManager = struct {
             resolution.value.github.resolved = builder.append(String, this.resolved);
             return resolution;
         }
+
+        pub fn checkBundledDependencies() bool {
+            return true;
+        }
     };
 
     const TarballResolver = struct {
@@ -6026,6 +6041,10 @@ pub const PackageManager = struct {
                 else => unreachable,
             }
             return resolution;
+        }
+
+        pub fn checkBundledDependencies() bool {
+            return true;
         }
     };
 
@@ -6060,7 +6079,7 @@ pub const PackageManager = struct {
                             manager.allocator,
                             manager.log,
                             package_json_source,
-                            *GitResolver,
+                            GitResolver,
                             &resolver,
                             Features.npm,
                         ) catch |err| {
@@ -6133,6 +6152,11 @@ pub const PackageManager = struct {
                 );
                 var package = Lockfile.Package{};
 
+                var resolver: TarballResolver = .{
+                    .url = data.url,
+                    .resolution = resolution,
+                };
+
                 package.parse(
                     manager.lockfile,
                     manager,
@@ -6140,10 +6164,7 @@ pub const PackageManager = struct {
                     manager.log,
                     package_json_source,
                     TarballResolver,
-                    TarballResolver{
-                        .url = data.url,
-                        .resolution = resolution,
-                    },
+                    &resolver,
                     Features.npm,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
@@ -6213,9 +6234,15 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
-    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
+    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
         if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        }
+
+        if (options) |opts| {
+            if (opts.cache_directory.len > 0) {
+                return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory}), .is_node_modules = false };
+            }
         }
 
         if (env.get("BUN_INSTALL")) |dir| {
@@ -7253,6 +7280,10 @@ pub const PackageManager = struct {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
             if (bun_install_) |config| {
+                if (config.cache_directory) |cache_directory| {
+                    this.cache_directory = cache_directory;
+                }
+
                 if (config.scoped) |scoped| {
                     for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
                         var registry = registry_.*;
@@ -7339,6 +7370,10 @@ pub const PackageManager = struct {
 
                 if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
+                }
+
+                if (config.cache_directory) |cache_dir| {
+                    this.cache_directory = cache_dir;
                 }
 
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -7442,6 +7477,10 @@ pub const PackageManager = struct {
             if (maybe_cli) |cli| {
                 if (cli.registry.len > 0) {
                     this.scope.url = URL.parse(cli.registry);
+                }
+
+                if (cli.cache_dir) |cache_dir| {
+                    this.cache_directory = cache_dir;
                 }
 
                 if (cli.exact) {
@@ -7691,7 +7730,7 @@ pub const PackageManager = struct {
         const dependency_groups = &.{
             .{ "optionalDependencies", Dependency.Behavior.optional },
             .{ "devDependencies", Dependency.Behavior.dev },
-            .{ "dependencies", Dependency.Behavior.normal },
+            .{ "dependencies", Dependency.Behavior.prod },
             .{ "peerDependencies", Dependency.Behavior.peer },
         };
 
@@ -9177,7 +9216,8 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                var resolver: void = {};
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -9359,7 +9399,8 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                var resolver: void = {};
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -9542,7 +9583,7 @@ pub const PackageManager = struct {
 
     const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-        clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
@@ -9563,7 +9604,7 @@ pub const PackageManager = struct {
     });
 
     pub const CommandLineArguments = struct {
-        cache_dir: string = "",
+        cache_dir: ?string = null,
         lockfile: string = "",
         token: string = "",
         global: bool = false,
@@ -9946,6 +9987,10 @@ pub const PackageManager = struct {
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
             cli.ca = args.options("--ca");
+
+            if (args.option("--cache-dir")) |cache_dir| {
+                cli.cache_dir = cache_dir;
+            }
 
             if (args.option("--cafile")) |ca_file_name| {
                 cli.ca_file_name = ca_file_name;
@@ -11250,8 +11295,9 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
+                var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -11663,8 +11709,9 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
+                var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -14377,6 +14424,7 @@ pub const PackageManager = struct {
                     lockfile.initEmpty(manager.allocator);
                     var maybe_root = Lockfile.Package{};
 
+                    var resolver: void = {};
                     try maybe_root.parse(
                         &lockfile,
                         manager,
@@ -14384,7 +14432,7 @@ pub const PackageManager = struct {
                         manager.log,
                         root_package_json_source,
                         void,
-                        {},
+                        &resolver,
                         Features.main,
                     );
                     const mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
@@ -14610,6 +14658,7 @@ pub const PackageManager = struct {
                 Global.crash();
             }
 
+            var resolver: void = {};
             try root.parse(
                 manager.lockfile,
                 manager,
@@ -14617,7 +14666,7 @@ pub const PackageManager = struct {
                 manager.log,
                 root_package_json_source,
                 void,
-                {},
+                &resolver,
                 Features.main,
             );
 

@@ -11917,6 +11917,8 @@ fn NewParser_(
                     needs_symbol = true;
                 } else {
                     try p.lexer.expect(.t_identifier);
+                    // error early, name is still `undefined`
+                    return error.SyntaxError;
                 }
                 try p.lexer.next();
 

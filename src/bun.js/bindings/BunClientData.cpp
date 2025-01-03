@@ -24,6 +24,7 @@
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "NodeVM.h"
 #include "JSS3Bucket.h"
+#include "../../bake/BakeGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -34,6 +35,7 @@ JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForJSS3Bucket(JSC::IsoHeapCellType::Args<Bun::JSS3Bucket>())
+    , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)

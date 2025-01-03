@@ -209,7 +209,6 @@ pub extern fn JSC__JSValue__createInternalPromise(arg0: *bindings.JSGlobalObject
 pub extern fn JSC__JSValue__createObject2(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString, arg2: [*c]const ZigString, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__createRangeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createRopeString(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn JSC__JSValue__createStringArray(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString, arg2: usize, arg3: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: *bindings.JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__deepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;

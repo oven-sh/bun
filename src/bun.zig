@@ -1871,6 +1871,14 @@ pub const StringSet = struct {
         }
     }
 
+    pub fn contains(self: *StringSet, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    pub fn swapRemove(self: *StringSet, key: []const u8) bool {
+        return self.map.swapRemove(key);
+    }
+
     pub fn deinit(self: *StringSet) void {
         for (self.map.keys()) |key| {
             self.map.allocator.free(key);

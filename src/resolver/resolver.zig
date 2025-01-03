@@ -1797,7 +1797,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = Dependency.Behavior.normal;
+                var dependency_behavior = Dependency.Behavior.prod;
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;

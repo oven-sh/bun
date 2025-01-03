@@ -428,7 +428,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);

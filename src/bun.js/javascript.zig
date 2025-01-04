@@ -2927,10 +2927,17 @@ pub const VirtualMachine = struct {
         writer: Writer,
         comptime allow_side_effects: bool,
     ) void {
+        var formatter = ConsoleObject.Formatter{
+            .globalThis = this.global,
+            .quote_strings = false,
+            .single_line = false,
+            .stack_check = bun.StackCheck.init(),
+        };
+        defer formatter.deinit();
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, allow_side_effects);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, allow_side_effects);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
         }
     }
 
@@ -2960,7 +2967,6 @@ pub const VirtualMachine = struct {
 
         if (result.isException(this.global.vm())) {
             const exception = @as(*Exception, @ptrCast(result.asVoid()));
-
             this.printException(
                 exception,
                 exception_list,
@@ -2968,10 +2974,17 @@ pub const VirtualMachine = struct {
                 writer,
                 true,
             );
-        } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, false, true);
+            var formatter = ConsoleObject.Formatter{
+                .globalThis = this.global,
+                .quote_strings = false,
+                .single_line = false,
+                .stack_check = bun.StackCheck.init(),
+            };
+            defer formatter.deinit();
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
+            }
         }
     }
 
@@ -3276,14 +3289,8 @@ pub const VirtualMachine = struct {
         return promise;
     }
 
-    pub fn printErrorLikeObjectSimple(this: *VirtualMachine, value: JSValue, writer: anytype, comptime escape_codes: bool) void {
-        this.printErrorlikeObject(value, null, null, @TypeOf(writer), writer, escape_codes, false);
-    }
-
     pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
-        switch (Output.enable_ansi_colors_stderr) {
-            inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
-        }
+        this.runErrorHandler(value, null);
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
@@ -3298,6 +3305,7 @@ pub const VirtualMachine = struct {
         value: JSValue,
         exception: ?*Exception,
         exception_list: ?*ExceptionList,
+        formatter: *ConsoleObject.Formatter,
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
@@ -3335,6 +3343,7 @@ pub const VirtualMachine = struct {
             const AggregateErrorIterator = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
+                formatter: *ConsoleObject.Formatter,
 
                 pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
@@ -3344,10 +3353,10 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
                 }
             };
-            var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
+            var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
             if (comptime allow_ansi_color) {
                 value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
             } else {
@@ -3359,6 +3368,7 @@ pub const VirtualMachine = struct {
         was_internal = this.printErrorFromMaybePrivateData(
             value,
             exception_list,
+            formatter,
             Writer,
             writer,
             allow_ansi_color,
@@ -3366,10 +3376,11 @@ pub const VirtualMachine = struct {
         );
     }
 
-    pub fn printErrorFromMaybePrivateData(
+    fn printErrorFromMaybePrivateData(
         this: *VirtualMachine,
         value: JSC.JSValue,
         exception_list: ?*ExceptionList,
+        formatter: *ConsoleObject.Formatter,
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
@@ -3418,6 +3429,7 @@ pub const VirtualMachine = struct {
         this.printErrorInstance(
             value,
             exception_list,
+            formatter,
             Writer,
             writer,
             allow_ansi_color,
@@ -3631,7 +3643,8 @@ pub const VirtualMachine = struct {
                 if (frame.source_url.hasPrefixComptime("bun:") or
                     frame.source_url.hasPrefixComptime("node:") or
                     frame.source_url.isEmpty() or
-                    frame.source_url.eqlComptime("native"))
+                    frame.source_url.eqlComptime("native") or
+                    frame.source_url.eqlComptime("unknown"))
                 {
                     top_frame_is_builtin = true;
                     continue;
@@ -3758,7 +3771,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
+    fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, formatter: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
@@ -3930,32 +3943,6 @@ pub const VirtualMachine = struct {
             try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
         }
 
-        var add_extra_line = false;
-
-        const Show = struct {
-            system_code: bool = false,
-            syscall: bool = false,
-            errno: bool = false,
-            path: bool = false,
-            fd: bool = false,
-        };
-
-        const show = Show{
-            .system_code = !exception.system_code.eql(name) and !exception.system_code.isEmpty(),
-            .syscall = !exception.syscall.isEmpty(),
-            .errno = exception.errno != 0,
-            .path = !exception.path.isEmpty(),
-            .fd = exception.fd != -1,
-        };
-
-        const extra_fields = .{
-            "url",
-            "info",
-            "pkg",
-            "errors",
-            "cause",
-        };
-
         // This is usually unsafe to do, but we are protecting them each time first
         var errors_to_append = std.ArrayList(JSC.JSValue).init(this.allocator);
         defer {
@@ -3965,82 +3952,147 @@ pub const VirtualMachine = struct {
             errors_to_append.deinit();
         }
 
-        if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
-            inline for (extra_fields) |field| {
-                if (try error_instance.getTruthyComptime(this.global, field)) |value| {
-                    const kind = value.jsType();
-                    if (kind.isStringLike()) {
-                        if (value.toStringOrNull(this.global)) |str| {
-                            var zig_str = str.toSlice(this.global, bun.default_allocator);
-                            defer zig_str.deinit();
-                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
-                            add_extra_line = true;
+        var saw_cause = false;
+        if (error_instance != .zero) {
+            const error_instance_type = error_instance.jsType();
+            if (error_instance_type == .ErrorInstance) {
+                const Iterator = JSC.JSPropertyIterator(.{
+                    .include_value = true,
+                    .skip_empty_name = true,
+                    .own_properties_only = true,
+                    .observable = false,
+                    .only_non_index_properties = true,
+                });
+                var iterator = try Iterator.init(this.global, error_instance);
+                defer iterator.deinit();
+                const longest_name = @min(iterator.getLongestPropertyName(), 10);
+                var is_first_property = true;
+                while ((try iterator.next()) orelse iterator.getCodeProperty()) |field| {
+                    const value = iterator.value;
+                    if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
+                        continue;
+                    }
+
+                    // We special-case the code property. Let's avoid printing it twice.
+                    if (field.eqlComptime("code")) {
+                        if (value.isString()) {
+                            const str = value.toBunString(this.global);
+                            defer str.deref();
+                            if (!str.isEmpty()) {
+                                if (str.eql(name)) {
+                                    continue;
+                                }
+                            }
                         }
-                    } else if (kind == .ErrorInstance and
+                    }
+
+                    const kind = value.jsType();
+                    if (kind == .ErrorInstance and
                         // avoid infinite recursion
                         !prev_had_errors)
                     {
+                        if (field.eqlComptime("cause")) {
+                            saw_cause = true;
+                        }
                         value.protect();
                         try errors_to_append.append(value);
-                    } else if (kind.isObject() or kind.isArray()) {
+                    } else if (kind.isObject() or kind.isArray() or value.isPrimitive() or kind.isStringLike()) {
                         var bun_str = bun.String.empty;
                         defer bun_str.deref();
-                        value.jsonStringify(this.global, 2, &bun_str); //2
-                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{}<r>\n", allow_ansi_color), .{ field, bun_str });
-                        add_extra_line = true;
+                        const prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                        const prev_quote_strings = formatter.quote_strings;
+                        const prev_max_depth = formatter.max_depth;
+                        formatter.depth += 1;
+                        defer {
+                            formatter.depth -= 1;
+                            formatter.max_depth = prev_max_depth;
+                            formatter.quote_strings = prev_quote_strings;
+                            formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                        }
+                        formatter.max_depth = 1;
+                        formatter.quote_strings = true;
+                        formatter.disable_inspect_custom = true;
+
+                        const pad_left = longest_name -| field.length();
+                        is_first_property = false;
+                        try writer.writeByteNTimes(' ', pad_left);
+
+                        try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
+
+                        // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                        if (allow_side_effects) {
+                            if (this.global.hasException()) {
+                                this.global.clearException();
+                            }
+                        }
+
+                        formatter.format(
+                            JSC.Formatter.Tag.getAdvanced(
+                                value,
+                                this.global,
+                                .{ .disable_inspect_custom = true, .hide_global = true },
+                            ),
+                            Writer,
+                            writer,
+                            value,
+                            this.global,
+                            allow_ansi_color,
+                        ) catch {};
+
+                        if (allow_side_effects) {
+                            // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                            if (this.global.hasException()) {
+                                this.global.clearException();
+                            }
+                        } else if (this.global.hasException() or formatter.failed) {
+                            return;
+                        }
+
+                        try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>\n", allow_ansi_color));
+                    }
+                }
+
+                if (!is_first_property) {
+                    try writer.writeAll("\n");
+                }
+            } else {
+                // If you do reportError([1,2,3]] we should still show something at least.
+                const tag = JSC.Formatter.Tag.getAdvanced(
+                    error_instance,
+                    this.global,
+                    .{ .disable_inspect_custom = true, .hide_global = true },
+                );
+                if (tag.tag != .NativeCode) {
+                    try formatter.format(
+                        tag,
+                        Writer,
+                        writer,
+                        error_instance,
+                        this.global,
+                        allow_ansi_color,
+                    );
+
+                    // Always include a newline in this case
+                    try writer.writeAll("\n");
+                }
+            }
+
+            // "cause" is not enumerable, so the above loop won't see it.
+            if (!saw_cause and error_instance_type == .ErrorInstance) {
+                if (error_instance.getOwn(this.global, "cause")) |cause| {
+                    if (cause.jsType() == .ErrorInstance) {
+                        cause.protect();
+                        try errors_to_append.append(cause);
                     }
                 }
             }
         }
 
-        if (show.errno) {
-            if (show.syscall) {
-                try writer.writeAll("  ");
-            }
-            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
-            add_extra_line = true;
-        }
-
-        if (show.system_code) {
-            if (show.syscall) {
-                try writer.writeAll("   ");
-            } else if (show.errno) {
-                try writer.writeAll(" ");
-            }
-            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.system_code});
-            add_extra_line = true;
-        }
-
-        if (show.syscall) {
-            try writer.print(comptime Output.prettyFmt(" syscall<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.syscall});
-            add_extra_line = true;
-        }
-
-        if (show.path) {
-            if (show.syscall) {
-                try writer.writeAll("  ");
-            } else if (show.errno) {
-                try writer.writeAll(" ");
-            }
-            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
-        }
-
-        if (show.fd) {
-            if (show.syscall) {
-                try writer.writeAll("     ");
-            } else if (show.errno) {
-                try writer.writeAll("  ");
-            }
-            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.fd});
-        }
-
-        if (add_extra_line) try writer.writeAll("\n");
-
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
 
         for (errors_to_append.items) |err| {
             try writer.writeAll("\n");
-            try this.printErrorInstance(err, exception_list, Writer, writer, allow_ansi_color, allow_side_effects);
+            try this.printErrorInstance(err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
         }
     }
 

@@ -932,7 +932,7 @@ pub const Transpiler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (transpiler.options.experimental_css) {
+                if (transpiler.options.experimental.css) {
                     const alloc = transpiler.allocator;
 
                     const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
@@ -1038,7 +1038,7 @@ pub const Transpiler = struct {
                 }
             },
 
-            .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
+            .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);

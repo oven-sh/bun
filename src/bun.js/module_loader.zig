@@ -1505,6 +1505,19 @@ pub const ModuleLoader = struct {
     ) !ResolvedSource {
         const disable_transpilying = comptime flags.disableTranspiling();
 
+        if (comptime disable_transpilying) {
+            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json)) {
+                // Don't print "export default <file path>"
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.empty,
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                };
+            }
+        }
+
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;

@@ -690,6 +690,7 @@ pub const Tree = struct {
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
             workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            install_root_dependencies: if (method == .filter) bool else void,
             path_buf: []u8,
 
             pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
@@ -746,13 +747,6 @@ pub const Tree = struct {
                 }
                 this.queue.deinit();
                 this.sort_buf.deinit(this.allocator);
-
-                if (comptime method == .filter) {
-                    for (this.workspace_filters) |workspace_filter| {
-                        workspace_filter.deinit(this.lockfile.allocator);
-                    }
-                    this.lockfile.allocator.free(this.workspace_filters);
-                }
 
                 // take over the `builder.list` pointer for only trees
                 if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -870,27 +864,32 @@ pub const Tree = struct {
                     continue;
                 }
 
-                if (builder.manager.subcommand == .install) {
+                if (builder.manager.subcommand == .install) dont_skip: {
                     // only do this when parent is root. workspaces are always dependencies of the root
                     // package, and the root package is always called with `processSubtree`
                     if (parent_pkg_id == 0 and builder.workspace_filters.len > 0) {
+                        if (!builder.dependencies[dep_id].behavior.isWorkspaceOnly()) {
+                            if (builder.install_root_dependencies) {
+                                break :dont_skip;
+                            }
+
+                            continue;
+                        }
+
                         var match = false;
 
                         for (builder.workspace_filters) |workspace_filter| {
                             const res_id = builder.resolutions[dep_id];
 
                             const pattern, const path_or_name = switch (workspace_filter) {
-                                .name => |pattern| .{ pattern, if (builder.dependencies[dep_id].behavior.isWorkspaceOnly())
-                                    pkg_names[res_id].slice(builder.buf())
-                                else
-                                    pkg_names[0].slice(builder.buf()) },
+                                .name => |pattern| .{ pattern, pkg_names[res_id].slice(builder.buf()) },
 
                                 .path => |pattern| path: {
-                                    const res_path = if (builder.dependencies[dep_id].behavior.isWorkspaceOnly() and pkg_resolutions[res_id].tag == .workspace)
-                                        pkg_resolutions[res_id].value.workspace.slice(builder.buf())
-                                    else
-                                        // dependnecy of the root package.json. use top level dir
-                                        FileSystem.instance.top_level_dir;
+                                    const res = pkg_resolutions[res_id];
+                                    if (res.tag != .workspace) {
+                                        break :dont_skip;
+                                    }
+                                    const res_path = res.value.workspace.slice(builder.buf());
 
                                     // occupy `builder.path_buf`
                                     var abs_res_path = strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
@@ -1570,16 +1569,17 @@ pub fn resolve(
     lockfile: *Lockfile,
     log: *logger.Log,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .resolvable, {}, {});
+    return lockfile.hoist(log, .resolvable, {}, {}, {});
 }
 
 pub fn filter(
     lockfile: *Lockfile,
     log: *logger.Log,
     manager: *PackageManager,
-    cwd: string,
+    install_root_dependencies: bool,
+    workspace_filters: []const WorkspaceFilter,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .filter, manager, cwd);
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
 }
 
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
@@ -1588,7 +1588,8 @@ pub fn hoist(
     log: *logger.Log,
     comptime method: Tree.BuilderMethod,
     manager: if (method == .filter) *PackageManager else void,
-    cwd: if (method == .filter) string else void,
+    install_root_dependencies: if (method == .filter) bool else void,
+    workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
@@ -1606,18 +1607,9 @@ pub fn hoist(
         .lockfile = lockfile,
         .manager = manager,
         .path_buf = &path_buf,
+        .install_root_dependencies = install_root_dependencies,
+        .workspace_filters = workspace_filters,
     };
-
-    if (comptime method == .filter) {
-        if (manager.options.filter_patterns.len > 0) {
-            var filters = try std.ArrayListUnmanaged(WorkspaceFilter).initCapacity(allocator, manager.options.filter_patterns.len);
-            for (manager.options.filter_patterns) |pattern| {
-                try filters.append(allocator, try WorkspaceFilter.init(allocator, pattern, cwd, &path_buf));
-            }
-
-            builder.workspace_filters = filters.items;
-        }
-    }
 
     try (Tree{}).processSubtree(
         Tree.root_dep_id,

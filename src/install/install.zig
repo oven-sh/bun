@@ -13903,13 +13903,14 @@ pub const PackageManager = struct {
     pub fn installPackages(
         this: *PackageManager,
         ctx: Command.Context,
-        original_cwd: string,
+        workspace_filters: []const WorkspaceFilter,
+        install_root_dependencies: bool,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-        try this.lockfile.filter(this.log, this, original_cwd);
+        try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
 
         defer {
             this.lockfile.buffers.trees = original_trees;
@@ -15027,11 +15028,60 @@ pub const PackageManager = struct {
             return;
         }
 
+        var path_buf: bun.PathBuffer = undefined;
+        var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+        // only populated when subcommand is `.install`
+        if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
+            try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
+            for (manager.options.filter_patterns) |pattern| {
+                try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
+            }
+        }
+        defer workspace_filters.deinit(manager.allocator);
+
+        var install_root_dependencies = workspace_filters.items.len == 0;
+        if (!install_root_dependencies) {
+            const pkg_names = manager.lockfile.packages.items(.name);
+
+            const abs_root_path = abs_root_path: {
+                if (comptime !Environment.isWindows) {
+                    break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+                }
+
+                var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
+                break :abs_root_path abs_path[Path.windowsVolumeNameLen(abs_path)[0]..];
+            };
+
+            for (workspace_filters.items) |filter| {
+                const pattern, const path_or_name = switch (filter) {
+                    .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
+                    .path => |pattern| .{ pattern, abs_root_path },
+                    .all => {
+                        install_root_dependencies = true;
+                        continue;
+                    },
+                };
+
+                switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                    .match, .negate_match => install_root_dependencies = true,
+
+                    .negate_no_match => {
+                        // always skip if a pattern specifically says "!<name>"
+                        install_root_dependencies = false;
+                        break;
+                    },
+
+                    .no_match => {},
+                }
+            }
+        }
+
         var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
-                original_cwd,
+                workspace_filters.items,
+                install_root_dependencies,
                 log_level,
             );
         }
@@ -15091,7 +15141,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.do.run_scripts) {
+        if (manager.options.do.run_scripts and install_root_dependencies) {
             if (manager.root_lifecycle_scripts) |scripts| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(scripts.total > 0);

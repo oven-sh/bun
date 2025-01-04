@@ -27,7 +27,7 @@ pub const S3HttpDownloadStreamingTask = struct {
             .capacity = 0,
         },
     },
-    reported_response_lock: bun.Lock = .{},
+    mutex: bun.Lock = .{},
     reported_response_buffer: bun.MutableString = .{
         .allocator = bun.default_allocator,
         .list = .{
@@ -148,13 +148,13 @@ pub const S3HttpDownloadStreamingTask = struct {
     /// this is the task callback from the last task result and is always in the main thread
     pub fn onResponse(this: *@This()) void {
         // lets lock and unlock the reported response buffer
-        this.reported_response_lock.lock();
+        this.mutex.lock();
         // the state is atomic let's load it once
         const state = this.getState();
         const has_more = state.has_more;
         defer {
             // always unlock when done
-            this.reported_response_lock.unlock();
+            this.mutex.unlock();
             // if we dont have more we should deinit at the end of the function
             if (!has_more) this.deinit();
         }
@@ -198,8 +198,8 @@ pub const S3HttpDownloadStreamingTask = struct {
     /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
     fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
-        this.reported_response_lock.lock();
-        defer this.reported_response_lock.unlock();
+        this.mutex.lock();
+        defer this.mutex.unlock();
 
         // remember the state is atomic load it once, and store it again
         var state = this.getState();

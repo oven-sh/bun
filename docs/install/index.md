@@ -62,10 +62,16 @@ To exclude dependency types from installing, use `--omit` with `dev`, `optional`
 $ bun install --omit=dev --omit=optional
 ```
 
-To perform a dry run (i.e. don't actually install anything):
+To perform a dry run (i.e. don't actually install anything or update the lockfile):
 
 ```bash
 $ bun install --dry-run
+```
+
+To generate a lockfile without install packages:
+
+```bash
+$ bun install --lockfile-only
 ```
 
 To modify logging verbosity:

@@ -12975,7 +12975,7 @@ pub const LinkerContext = struct {
                 );
 
                 switch (c.options.source_maps) {
-                    .external, .linked => |tag| {
+                    .external, .linked => |tag| blk: {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
@@ -12987,14 +12987,16 @@ pub const LinkerContext = struct {
                             else
                                 .{ "", std.fs.path.basename(source_map_final_rel_path) };
 
-                            const source_map_start = "//# sourceMappingURL=";
-                            const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
+                            const comment_start, const comment_end = chunk.content.commentStartEnd() orelse break :blk;
+                            const source_map_start = " sourceMappingURL=";
+                            const total_len = code_result.buffer.len + comment_start.len + source_map_start.len + a.len + b.len + comment_end.len;
                             var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
                             buf.appendSliceAssumeCapacity(code_result.buffer);
+                            buf.appendSliceAssumeCapacity(comment_start);
                             buf.appendSliceAssumeCapacity(source_map_start);
                             buf.appendSliceAssumeCapacity(a);
                             buf.appendSliceAssumeCapacity(b);
-                            buf.appendAssumeCapacity('\n');
+                            buf.appendSliceAssumeCapacity(comment_end);
 
                             Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
                             code_result.buffer = buf.items;
@@ -13018,21 +13020,23 @@ pub const LinkerContext = struct {
                             .is_executable = false,
                         });
                     },
-                    .@"inline" => {
+                    .@"inline" => blk: {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         const encode_len = base64.encodeLen(output_source_map);
 
-                        const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
-                        const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
+                        const comment_start, const comment_end = chunk.content.commentStartEnd() orelse break :blk;
+                        const source_map_start = " sourceMappingURL=data:application/json;base64,";
+                        const total_len = code_result.buffer.len + comment_start.len + source_map_start.len + encode_len + comment_end.len;
                         var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                         buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(comment_start);
                         buf.appendSliceAssumeCapacity(source_map_start);
 
                         buf.items.len += encode_len;
                         _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
 
-                        buf.appendAssumeCapacity('\n');
+                        buf.appendSliceAssumeCapacity(comment_end);
                         Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
                         code_result.buffer = buf.items;
                     },
@@ -15476,6 +15480,16 @@ pub const Chunk = struct {
                 .javascript => "js",
                 .css => "css",
                 .html => "html",
+            };
+        }
+
+        /// Start and end of a comment. Used for sourcemaps, so HTML
+        /// intentionally returns null.
+        pub fn commentStartEnd(this: *const Content) ?[2][]const u8 {
+            return switch (this.*) {
+                .javascript => [2][]const u8{ "//#", "\n" },
+                .css => [2][]const u8{ "/*#", "*/\n" },
+                .html => null,
             };
         }
     };

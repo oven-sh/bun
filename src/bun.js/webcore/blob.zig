@@ -45,7 +45,6 @@ const libuv = bun.windows.libuv;
 
 const S3 = bun.S3;
 const S3Credentials = S3.S3Credentials;
-const S3MultiPartUpload = S3.MultiPartUpload;
 const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
@@ -1011,7 +1010,7 @@ pub const Blob = struct {
             if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                 ctx,
                 source_blob,
-                @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
+                @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
             ), ctx)) |stream| {
                 return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
             } else {
@@ -1045,11 +1044,11 @@ pub const Blob = struct {
             const proxy_url = if (proxy) |p| p.href else null;
             switch (store.data) {
                 .bytes => |bytes| {
-                    if (bytes.len > S3MultiPartUpload.MAX_SINGLE_UPLOAD_SIZE) {
+                    if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                         if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                             ctx,
                             source_blob,
-                            @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
+                            @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
                         ), ctx)) |stream| {
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -1114,7 +1113,7 @@ pub const Blob = struct {
                     if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                         ctx,
                         source_blob,
-                        @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
+                        @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
                     ), ctx)) |stream| {
                         return S3.uploadStream(
                             (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -3509,7 +3508,7 @@ pub const Blob = struct {
         pathlike: JSC.Node.PathLike,
         mime_type: http.MimeType = http.MimeType.other,
         credentials: ?*S3Credentials,
-        options: S3MultiPartUpload.MultiPartUploadOptions = .{},
+        options: bun.S3.MultiPartUploadOptions = .{},
         acl: ?S3.ACL = null,
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;

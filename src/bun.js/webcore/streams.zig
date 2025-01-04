@@ -43,7 +43,6 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
-const S3MultiPartUpload = bun.S3.MultiPartUpload;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -2668,7 +2667,7 @@ pub const NetworkSink = struct {
     pub usingnamespace bun.New(NetworkSink);
     const HTTPWritableStream = union(enum) {
         fetch: *JSC.WebCore.Fetch.FetchTasklet,
-        s3_upload: *S3MultiPartUpload,
+        s3_upload: *bun.S3.MultiPartUpload,
     };
 
     fn getHighWaterMark(this: *@This()) Blob.SizeType {

@@ -1,16 +1,16 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
-const picohttp = JSC.WebCore.picohttp;
+const picohttp = bun.picohttp;
 
 pub const ACL = @import("./acl.zig").ACL;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
 
-pub const S3Error = @import("./error.zig");
-pub const throwSignError = S3Error.throwSignError;
-pub const getJSSignError = S3Error.getJSSignError;
+pub const Error = @import("./error.zig");
+pub const throwSignError = Error.throwSignError;
+pub const getJSSignError = Error.getJSSignError;
 
 const Credentials = @import("./credentials.zig");
 pub const S3Credentials = Credentials.S3Credentials;
@@ -411,7 +411,7 @@ const S3DownloadStreamWrapper = struct {
     path: []const u8,
     pub usingnamespace bun.New(@This());
 
-    pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?S3Error, this: *@This()) void {
+    pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, this: *@This()) void {
         defer if (!has_more) this.deinit();
 
         if (this.readable_stream_ref.get()) |readable| {
@@ -455,7 +455,7 @@ const S3DownloadStreamWrapper = struct {
     }
 };
 
-pub fn downloadStream(this: *S3Credentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void, callback_context: *anyopaque) void {
+pub fn downloadStream(this: *S3Credentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, *anyopaque) void, callback_context: *anyopaque) void {
     const range = brk: {
         if (size) |size_| {
             if (offset == 0) break :brk null;
@@ -475,8 +475,11 @@ pub fn downloadStream(this: *S3Credentials, path: []const u8, offset: usize, siz
         .method = .GET,
     }, null) catch |sign_err| {
         if (range) |range_| bun.default_allocator.free(range_);
-        const error_code_and_message = S3Error.getSignErrorCodeAndMessage(sign_err);
-        callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{ .code = error_code_and_message.code, .message = error_code_and_message.message }, callback_context);
+        const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
+        callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{
+            .code = error_code_and_message.code,
+            .message = error_code_and_message.message,
+        }, callback_context);
         return;
     };
 

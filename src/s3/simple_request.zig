@@ -4,6 +4,7 @@ const JSC = bun.JSC;
 const strings = bun.strings;
 const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
 const S3Error = @import("./error.zig").S3Error;
+const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
@@ -342,7 +343,7 @@ pub fn executeSimpleS3Request(
         .acl = options.acl,
     }, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
-        const error_code_and_message = S3Error.getSignErrorCodeAndMessage(sign_err);
+        const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
         callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
         return;
     };

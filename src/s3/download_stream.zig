@@ -41,7 +41,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     range: ?[]const u8,
     proxy_url: []const u8,
 
-    usingnamespace bun.New(@This());
+    pub usingnamespace bun.New(@This());
     pub const State = packed struct(u64) {
         pub const AtomicType = std.atomic.Value(u64);
         status_code: u32 = 0,

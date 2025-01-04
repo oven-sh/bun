@@ -1093,7 +1093,7 @@ pub const Blob = struct {
                         const promise_value = promise.value();
 
                         S3.upload(
-                            aws_options.credentials,
+                            &aws_options.credentials,
                             s3.path(),
                             bytes.slice(),
                             destination_blob.contentTypeOrMimeType(),

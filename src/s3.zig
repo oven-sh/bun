@@ -1459,7 +1459,7 @@ pub const AWSCredentials = struct {
             .follow,
             .{
                 .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
-                .verbose = .none,
+                .verbose = task.vm.getVerboseFetch(),
                 .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
             },
         );
@@ -1579,7 +1579,7 @@ pub const AWSCredentials = struct {
             .follow,
             .{
                 .http_proxy = if (owned_proxy.len > 0) bun.URL.parse(owned_proxy) else null,
-                .verbose = .none,
+                .verbose = task.vm.getVerboseFetch(),
                 .signals = task.signals,
                 .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
             },

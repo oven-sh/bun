@@ -1262,15 +1262,13 @@ pub const AWSCredentials = struct {
             this.destroy();
         }
 
-        fn reportProgress(this: *@This()) bool {
-            var has_more = true;
+        fn reportProgress(this: *@This(), state: State) void {
+            const has_more = state.has_more;
             var err: ?S3Error = null;
             var failed = false;
             this.reported_response_lock.lock();
             defer this.reported_response_lock.unlock();
             const chunk = brk: {
-                const state = this.getState();
-                has_more = state.has_more;
                 switch (state.status_code) {
                     200, 204, 206 => {
                         failed = state.request_error != 0;
@@ -1333,14 +1331,17 @@ pub const AWSCredentials = struct {
                     this.reported_response_buffer.reset();
                 }
             }
-
-            return has_more;
         }
 
         pub fn onResponse(this: *@This()) void {
-            this.has_schedule_callback.store(false, .monotonic);
-            const has_more = this.reportProgress();
-            if (!has_more) this.deinit();
+            // the state is atomic let's load it once
+            const state = this.getState();
+            const has_more = state.has_more;
+            // if we dont have more we should deinit at the end of the function
+            defer if (!has_more) this.deinit();
+            // lets never signal that we can schedule another callback if we dont have more data to read
+            if (has_more) this.has_schedule_callback.store(false, .monotonic);
+            this.reportProgress(state);
         }
 
         pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {

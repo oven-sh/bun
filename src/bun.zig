@@ -1871,6 +1871,14 @@ pub const StringSet = struct {
         }
     }
 
+    pub fn contains(self: *StringSet, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    pub fn swapRemove(self: *StringSet, key: []const u8) bool {
+        return self.map.swapRemove(key);
+    }
+
     pub fn deinit(self: *StringSet) void {
         for (self.map.keys()) |key| {
             self.map.allocator.free(key);
@@ -4213,3 +4221,6 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
     pub fn deleteAll() void {}
 };
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3.zig");
+pub const AWSCredentials = S3.AWSCredentials;

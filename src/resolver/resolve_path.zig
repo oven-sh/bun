@@ -583,10 +583,10 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
 // This function is based on Go's volumeNameLen function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path_windows.go;l=57
 // volumeNameLen returns length of the leading volume name on Windows.
-fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
+pub fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
     return windowsVolumeNameLenT(u8, path);
 }
-fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usize } {
+pub fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usize } {
     if (path.len < 2) return .{ 0, 0 };
     // with drive letter
     const c = path[0];

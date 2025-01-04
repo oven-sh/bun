@@ -1,5 +1,6 @@
 const conv = std.builtin.CallingConvention.Unspecified;
-
+const S3File = @import("../webcore/S3File.zig");
+const S3Bucket = @import("../webcore/S3Bucket.zig");
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -18,7 +19,6 @@ pub const BunObject = struct {
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
-    pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
@@ -31,7 +31,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
-    pub const s3 = toJSCallback(WebCore.Blob.constructS3File);
+    pub const s3 = S3File.createJSS3File;
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -57,7 +57,6 @@ pub const BunObject = struct {
     pub const SHA384 = toJSGetter(Crypto.SHA384.getter);
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
-    pub const S3 = toJSGetter(JSC.WebCore.Blob.getJSS3FileConstructor);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
@@ -110,7 +109,6 @@ pub const BunObject = struct {
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(BunObject.MD4, .{ .name = getterName("MD4") });
         @export(BunObject.MD5, .{ .name = getterName("MD5") });
-        @export(BunObject.S3, .{ .name = getterName("S3") });
         @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
         @export(BunObject.SHA224, .{ .name = getterName("SHA224") });
         @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
@@ -145,7 +143,6 @@ pub const BunObject = struct {
         @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -830,10 +827,6 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return .undefined;
 }
 
-pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return globalObject.generateHeapSnapshot();
-}
-
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
@@ -1154,11 +1147,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2329,8 +2322,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {

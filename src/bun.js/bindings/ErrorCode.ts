@@ -130,10 +130,11 @@ export default [
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
 
-  // AWS
-  ["ERR_AWS_MISSING_CREDENTIALS", Error],
-  ["ERR_AWS_INVALID_METHOD", Error],
-  ["ERR_AWS_INVALID_PATH", Error],
-  ["ERR_AWS_INVALID_ENDPOINT", Error],
-  ["ERR_AWS_INVALID_SIGNATURE", Error],
+  // S3
+  ["ERR_S3_MISSING_CREDENTIALS", Error],
+  ["ERR_S3_INVALID_METHOD", Error],
+  ["ERR_S3_INVALID_PATH", Error],
+  ["ERR_S3_INVALID_ENDPOINT", Error],
+  ["ERR_S3_INVALID_SIGNATURE", Error],
+  ["ERR_S3_INVALID_SESSION_TOKEN", Error],
 ] as ErrorCodeMapping;

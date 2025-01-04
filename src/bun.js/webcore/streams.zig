@@ -2658,6 +2658,7 @@ pub const NetworkSink = struct {
     buffer: bun.io.StreamBuffer,
     ended: bool = false,
     done: bool = false,
+    cancel: bool = false,
     encoded: bool = true,
 
     endPromise: JSC.JSPromise.Strong = .{},
@@ -2829,6 +2830,7 @@ pub const NetworkSink = struct {
         this.ended = true;
         this.done = true;
         this.signal.close(null);
+        this.cancel = true;
         this.finalize();
     }
 

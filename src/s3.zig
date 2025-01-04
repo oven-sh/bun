@@ -1730,9 +1730,6 @@ pub const AWSCredentials = struct {
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
 
-        if (this.sink.endPromise.hasValue()) {
-            this.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
-        }
         if (this.readable_stream_ref.get()) |stream| {
             stream.done(globalThis);
         }
@@ -1894,21 +1891,29 @@ pub const AWSCredentials = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status(globalThis.vm())) {
                     .pending => {
+                        // if we eended and its not canceled the promise is the endPromise
+                        // because assignToStream can return the sink.end() promise
+                        // we set the endPromise in the NetworkSink so we need to resolve it
+                        if (response_stream.sink.ended and !response_stream.sink.cancel) {
+                            task.continueStream();
+
+                            readable_stream.done(globalThis);
+                            return endPromise;
+                        }
                         ctx.ref();
+
                         assignment_result.then(
                             globalThis,
                             task.callback_context,
                             onUploadStreamResolveRequestStream,
                             onUploadStreamRejectRequestStream,
                         );
+                        // we need to wait the promise to resolve because can be an error/cancel here
                         if (!task.ended)
                             task.continueStream();
                     },
                     .fulfilled => {
                         task.continueStream();
-                        if (response_stream.sink.endPromise.hasValue()) {
-                            response_stream.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
-                        }
 
                         readable_stream.done(globalThis);
                     },

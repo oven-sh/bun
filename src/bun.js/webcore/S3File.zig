@@ -227,7 +227,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
 ) bun.JSError!Blob {
-    var aws_options = try S3.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -275,7 +275,7 @@ pub fn constructS3FileWithS3Credentials(
     options: ?JSC.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();

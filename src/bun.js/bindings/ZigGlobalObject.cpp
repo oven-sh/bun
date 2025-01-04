@@ -690,7 +690,38 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         framesCount = framesCount > 64 ? 64 : framesCount;
         for (int i = 0; i < framesCount; i++) {
             remappedFrames[i] = {};
-            remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+
+            String sourceURLForFrame = stackFrames.at(i).sourceURL(vm);
+
+            if (sourceURLForFrame.isEmpty()) {
+                const auto& source = stackFrames.at(i).codeBlock()->source();
+
+                if (!source.isNull()) {
+                    auto* provider = source.provider();
+                    // I'm not 100% sure we should show sourceURLDirective here.
+                    if (!provider->sourceURLDirective().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURLDirective();
+                    } else if (!provider->sourceURL().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURL();
+                    } else {
+                        const auto& origin = provider->sourceOrigin();
+                        if (!origin.isNull()) {
+                            sourceURLForFrame = origin.string();
+                        }
+                    }
+                }
+            }
+
+            if (!sourceURLForFrame.isEmpty()) {
+                remappedFrames[i].source_url = Bun::toStringRef(sourceURLForFrame);
+
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, &remappedFrames[i], 1);
+
+                sourceURLForFrame = remappedFrames[i].source_url.toWTFString();
+            }
+
+            remappedFrames[i].source_url = Bun::toStringRef(sourceURLForFrame.isolatedCopy());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -700,14 +731,13 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
         }
 
-        Bun__remapStackFramePositions(globalObject, remappedFrames, framesCount);
-
         for (size_t i = 0; i < framesCount; i++) {
             JSC::JSValue callSiteValue = callSites.at(i);
             if (remappedFrames[i].remapped) {
                 CallSite* callSite = JSC::jsCast<CallSite*>(callSiteValue);
                 callSite->setColumnNumber(remappedFrames[i].position.column());
                 callSite->setLineNumber(remappedFrames[i].position.line());
+                callSite->setSourceURL(vm, jsString(vm, remappedFrames[i].source_url.toWTFString()));
             }
         }
     }

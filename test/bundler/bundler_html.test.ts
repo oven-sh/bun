@@ -777,4 +777,107 @@ body {
       expect(jsBundle).toContain("App loaded");
     },
   });
+
+  // Test that sourcemap comments are not included in HTML and CSS files
+  itBundled("html/no-sourcemap-comments", {
+    outdir: "out/",
+    sourceMap: "linked",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>No Sourcemap Comments</h1>
+  </body>
+</html>`,
+      "/styles.css": `
+body {
+  background-color: red;
+}
+/* This is a comment */`,
+      "/script.js": "console.log('Hello World')",
+    },
+    experimentalHtml: true,
+    experimentalCss: true,
+    sourceMap: "linked",
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check HTML file doesn't contain sourcemap comments
+      const htmlContent = api.readFile("out/index.html");
+      api.expectFile("out/index.html").not.toContain("sourceMappingURL");
+      api.expectFile("out/index.html").not.toContain("debugId");
+
+      // Get the CSS filename from the HTML
+      const cssMatch = htmlContent.match(/href="(.*\.css)"/);
+      expect(cssMatch).not.toBeNull();
+      const cssFile = cssMatch![1];
+
+      // Check CSS file doesn't contain sourcemap comments
+      api.expectFile("out/" + cssFile).not.toContain("sourceMappingURL");
+      api.expectFile("out/" + cssFile).not.toContain("debugId");
+
+      // Get the JS filename from the HTML
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      expect(jsMatch).not.toBeNull();
+      const jsFile = jsMatch![1];
+
+      // JS file SHOULD contain sourcemap comment since it's supported
+      api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
+    },
+  });
+
+  // Also test with inline sourcemaps
+  itBundled("html/no-sourcemap-comments-inline", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>No Sourcemap Comments</h1>
+  </body>
+</html>`,
+      "/styles.css": `
+body {
+  background-color: red;
+}
+/* This is a comment */`,
+      "/script.js": "console.log('Hello World')",
+    },
+    experimentalHtml: true,
+    experimentalCss: true,
+    sourceMap: "inline",
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check HTML file doesn't contain sourcemap comments
+      const htmlContent = api.readFile("out/index.html");
+      api.expectFile("out/index.html").not.toContain("sourceMappingURL");
+      api.expectFile("out/index.html").not.toContain("debugId");
+
+      // Get the CSS filename from the HTML
+      const cssMatch = htmlContent.match(/href="(.*\.css)"/);
+      expect(cssMatch).not.toBeNull();
+      const cssFile = cssMatch![1];
+
+      // Check CSS file doesn't contain sourcemap comments
+      api.expectFile("out/" + cssFile).not.toContain("sourceMappingURL");
+      api.expectFile("out/" + cssFile).not.toContain("debugId");
+
+      // Get the JS filename from the HTML
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      expect(jsMatch).not.toBeNull();
+      const jsFile = jsMatch![1];
+
+      // JS file SHOULD contain sourcemap comment since it's supported
+      api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
+    },
+  });
 });

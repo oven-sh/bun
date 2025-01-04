@@ -893,14 +893,21 @@ pub const Tree = struct {
                                         FileSystem.instance.top_level_dir;
 
                                     // occupy `builder.path_buf`
+                                    var abs_res_path = strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
+                                        FileSystem.instance.top_level_dir,
+                                        builder.path_buf,
+                                        &.{res_path},
+                                        .auto,
+                                    ));
+
+                                    if (comptime Environment.isWindows) {
+                                        abs_res_path = abs_res_path[Path.windowsVolumeNameLen(abs_res_path)[0]..];
+                                        Path.dangerouslyConvertPathToPosixInPlace(u8, builder.path_buf[0..abs_res_path.len]);
+                                    }
+
                                     break :path .{
                                         pattern,
-                                        strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
-                                            FileSystem.instance.top_level_dir,
-                                            builder.path_buf,
-                                            &.{res_path},
-                                            .posix,
-                                        )),
+                                        abs_res_path,
                                     };
                                 },
 

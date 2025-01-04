@@ -33,6 +33,38 @@ describe("bundler", () => {
     },
   });
 
+  // Test relative paths without "./" in script src
+  itBundled("html/implicit-relative-paths", {
+    outdir: "out/",
+    files: {
+      "/src/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js"></script>
+  </head>
+  <body>
+    <h1>Hello World</h1>
+  </body>
+</html>`,
+      "/src/styles.css": "body { background-color: red; }",
+      "/src/script.js": "console.log('Hello World')",
+    },
+    experimentalHtml: true,
+    experimentalCss: true,
+    root: "/src",
+    entryPoints: ["/src/index.html"],
+
+    onAfterBundle(api) {
+      // Check that output HTML references hashed filenames
+      api.expectFile("out/index.html").not.toContain("styles.css");
+      api.expectFile("out/index.html").not.toContain("script.js");
+      api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
+      api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
+    },
+  });
+
   // Test multiple script and style bundling
   itBundled("html/multiple-assets", {
     outdir: "out/",

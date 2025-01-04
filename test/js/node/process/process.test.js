@@ -412,7 +412,7 @@ describe("process.onBeforeExit", () => {
       stdio: ["inherit", "pipe", "pipe"],
     });
     expect(proc.exitCode).toBe(1);
-    expect(proc.stderr.toString("utf8")).toInclude("Error: boom");
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
     expect(proc.stdout.toString("utf8")).toBeEmpty();
   });
 });
@@ -425,7 +425,7 @@ describe("process.onExit", () => {
       stdio: ["inherit", "pipe", "pipe"],
     });
     expect(proc.exitCode).toBe(1);
-    expect(proc.stderr.toString("utf8")).toInclude("Error: boom");
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
     expect(proc.stdout.toString("utf8")).toBeEmpty();
   });
 });

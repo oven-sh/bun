@@ -811,7 +811,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       expect(await Bun.readableStreamToText(stdout)).toEqual(expect.stringContaining("bun install v1."));
       const err = await Bun.readableStreamToText(stderr);
-      expect(err).toContain("Error: Oops!");
+      expect(err).toContain("error: Oops!");
       expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
     });
 

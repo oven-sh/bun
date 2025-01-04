@@ -1266,8 +1266,7 @@ pub const AWSCredentials = struct {
             const has_more = state.has_more;
             var err: ?S3Error = null;
             var failed = false;
-            this.reported_response_lock.lock();
-            defer this.reported_response_lock.unlock();
+
             const chunk = brk: {
                 switch (state.status_code) {
                     200, 204, 206 => {
@@ -1334,11 +1333,18 @@ pub const AWSCredentials = struct {
         }
 
         pub fn onResponse(this: *@This()) void {
+            // lets lock and unlock the reported response buffer
+            this.reported_response_lock.lock();
             // the state is atomic let's load it once
             const state = this.getState();
             const has_more = state.has_more;
-            // if we dont have more we should deinit at the end of the function
-            defer if (!has_more) this.deinit();
+            defer {
+                // always unlock when done
+                this.reported_response_lock.unlock();
+                // if we dont have more we should deinit at the end of the function
+                if (!has_more) this.deinit();
+            }
+
             // lets never signal that we can schedule another callback if we dont have more data to read
             if (has_more) this.has_schedule_callback.store(false, .monotonic);
             this.reportProgress(state);
@@ -1346,7 +1352,12 @@ pub const AWSCredentials = struct {
 
         pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
             const is_done = !result.has_more;
+            // lets lock and unlock to be safe we now the state is not in the middle of a callback
+            this.reported_response_lock.lock();
+
             var state = this.getState();
+            // old state should have more
+            bun.assert(state.has_more);
 
             var wait_until_done = false;
             {
@@ -1375,25 +1386,34 @@ pub const AWSCredentials = struct {
             log("state err: {} status_code: {} has_more: {} should_enqueue: {}", .{ state.request_error, state.status_code, state.has_more, should_enqueue });
             if (should_enqueue) {
                 if (result.body) |body| {
-                    this.reported_response_lock.lock();
-                    defer this.reported_response_lock.unlock();
                     this.response_buffer = body.*;
                     if (body.list.items.len > 0) {
                         _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
                     }
                     this.response_buffer.reset();
                     if (this.reported_response_buffer.list.items.len == 0 and !is_done) {
+                        // we did not enqueue lets unlock
+                        this.reported_response_lock.unlock();
                         return;
                     }
                 } else if (!is_done) {
+                    // we did not enqueue lets unlock
+                    this.reported_response_lock.unlock();
                     return;
                 }
                 if (this.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                     if (has_schedule_callback) {
+                        // we did not enqueue lets unlock
+                        this.reported_response_lock.unlock();
                         return;
                     }
                 }
+                // lets unlock before we enqueue
+                this.reported_response_lock.unlock();
                 this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+            } else {
+                // we did not enqueue lets unlock
+                this.reported_response_lock.unlock();
             }
         }
     };

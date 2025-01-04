@@ -1,12 +1,14 @@
 const bun = @import("root").bun;
 const picohttp = bun.picohttp;
 const std = @import("std");
-const DotEnv = @import("./env_loader.zig");
+
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 const ACL = @import("./acl.zig").ACL;
 const JSC = bun.JSC;
 const RareData = JSC.RareData;
 const strings = bun.strings;
+const DotEnv = bun.DotEnv;
+
 pub const S3Credentials = struct {
     accessKeyId: []const u8,
     secretAccessKey: []const u8,

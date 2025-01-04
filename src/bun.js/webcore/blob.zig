@@ -3571,7 +3571,7 @@ pub const Blob = struct {
             const proxy = if (proxy_url) |url| url.href else null;
             var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
             defer aws_options.deinit();
-            S3.delete(aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+            S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
             }), proxy);

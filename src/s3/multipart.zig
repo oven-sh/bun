@@ -5,7 +5,7 @@ const S3Credentials = @import("./credentials.zig").S3Credentials;
 const ACL = @import("./acl.zig").ACL;
 const JSC = bun.JSC;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3SimpleRequest = @import("./simple_request.zig").S3SimpleRequest;
+const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
 const S3Error = @import("./error.zig").S3Error;
 

@@ -3141,7 +3141,7 @@ pub const Fetch = struct {
             prepare_body: {
                 // is a S3 file we can use chunked here
 
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                     var old = body;
                     defer old.detach();
                     body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };

@@ -1017,7 +1017,7 @@ pub fn migrateNPMLockfile(
         return error.NotAllPackagesGotResolved;
     }
 
-    try this.hoist(log, .resolvable, {});
+    try this.resolve(log);
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

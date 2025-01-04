@@ -14,7 +14,7 @@ test("error.cause", () => {
 4 |   const err = new Error("error 1");
 5 |   const err2 = new Error("error 2", { cause: err });
                    ^
-Error: error 2
+error: error 2
       at [dir]/inspect-error.test.js:5:16
 
 1 | import { expect, test, describe, jest } from "bun:test";
@@ -22,7 +22,7 @@ Error: error 2
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
                   ^
-Error: error 1
+error: error 1
       at [dir]/inspect-error.test.js:4:15
 "
 `);
@@ -42,7 +42,7 @@ test("Error", () => {
 31 | test("Error", () => {
 32 |   const err = new Error("my message");
                    ^
-Error: my message
+error: my message
       at [dir]/inspect-error.test.js:32:15
 "
 `);
@@ -117,7 +117,7 @@ test("Error inside minified file (no color) ", () => {
 25 | for(var m=0;m<k;m++)h[m]=arguments[m+2];f.children=h}return{$$typeof:l,type:a.type,key:d,ref:e,props:f,_owner:g}};exports.createContext=function(a){a={$$typeof:u,_currentValue:a,_currentValue2:a,_threadCount:0,Provider:null,Consumer:null,_defaultValue:null,_globalName:null};a.Provider={$$typeof:t,_context:a};return a.Consumer=a};exports.createElement=M;exports.createFactory=function(a){var b=M.bind(null,a);b.type=a;return b};exports.createRef=function(){return{current:null}};
 26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
-Error: error inside long minified file!
+error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2846
       at [dir]/inspect-error-fixture.min.js:26:2890
       at [dir]/inspect-error.test.js:102:5"
@@ -148,7 +148,7 @@ test("Error inside minified file (color) ", () => {
 25 | for(var m=0;m<k;m++)h[m]=arguments[m+2];f.children=h}return{$$typeof:l,type:a.type,key:d,ref:e,props:f,_owner:g}};exports.createContext=function(a){a={$$typeof:u,_currentValue:a,_currentValue2:a,_threadCount:0,Provider:null,Consumer:null,_defaultValue:null,_globalName:null};a.Provider={$$typeof:t,_context:a};return a.Consumer=a};exports.createElement=M;exports.createFactory=function(a){var b=M.bind(null,a);b.type=a;return b};exports.createRef=function(){return{current:null}};
 26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
-Error: error inside long minified file!
+error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2846
       at [dir]/inspect-error-fixture.min.js:26:2890
       at [dir]/inspect-error.test.js:130:5"

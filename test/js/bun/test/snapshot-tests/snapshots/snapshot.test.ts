@@ -421,7 +421,7 @@ class InlineSnapshotTester {
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
-      expect(spawnres.stderr.toString()).toInclude("Error:");
+      expect(spawnres.stderr.toString()).toInclude("error:");
       expect(spawnres.exitCode).not.toBe(0);
       expect(this.readfile(thefile)).toEqual(before_value);
     }

@@ -12,7 +12,7 @@ my-test.test.js:
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage beforeAll ##');
               ^
-Error: ## stage beforeAll ##
+error: ## stage beforeAll ##
       at <dir>/my-test.test.js:5:11
 -------------------------------
 
@@ -34,7 +34,7 @@ my-test.test.js:
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage beforeEach ##');
               ^
-Error: ## stage beforeEach ##
+error: ## stage beforeEach ##
       at <dir>/my-test.test.js:5:11
 (fail) my-test
 
@@ -57,7 +57,7 @@ my-test.test.js:
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage afterEach ##');
               ^
-Error: ## stage afterEach ##
+error: ## stage afterEach ##
       at <dir>/my-test.test.js:5:11
 -------------------------------
 
@@ -82,7 +82,7 @@ my-test.test.js:
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage afterAll ##');
               ^
-Error: ## stage afterAll ##
+error: ## stage afterAll ##
       at <dir>/my-test.test.js:5:11
 -------------------------------
 
@@ -106,7 +106,7 @@ my-test.test.js:
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage describe ##');
               ^
-Error: ## stage describe ##
+error: ## stage describe ##
       at <dir>/my-test.test.js:5:11
       at <dir>/my-test.test.js:3:1
 -------------------------------

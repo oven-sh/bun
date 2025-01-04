@@ -3277,7 +3277,7 @@ pub const Fetch = struct {
                     url_proxy_buffer: []const u8,
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: s3.S3Credentials.S3UploadResult, self: *@This()) void {
+                    pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                         if (self.promise.globalObject()) |global| {
                             switch (result) {
                                 .success => {

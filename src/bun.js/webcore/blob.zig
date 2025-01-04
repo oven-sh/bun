@@ -923,7 +923,7 @@ pub const Blob = struct {
                 const proxy_url = if (proxy) |p| p.href else null;
                 destination_blob.store.?.ref();
                 S3.upload(
-                    aws_options.credentials,
+                    &aws_options.credentials,
                     s3.path(),
                     "",
                     destination_blob.contentTypeOrMimeType(),

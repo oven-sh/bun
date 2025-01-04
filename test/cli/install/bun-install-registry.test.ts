@@ -3974,6 +3974,7 @@ describe("binaries", () => {
           "lockfileVersion": 0,
           "workspaces": {
             "": {
+              "name": "fooooo",
               "dependencies": {
                 "fooooo": ".",
                 // out of date, no no-deps

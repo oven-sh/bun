@@ -43,10 +43,9 @@ const Request = JSC.WebCore.Request;
 
 const libuv = bun.windows.libuv;
 
-const S3 = @import("../../s3.zig");
+const S3 = bun.S3;
 const AWSCredentials = S3.AWSCredentials;
 const S3MultiPartUpload = S3.MultiPartUpload;
-const AWS = AWSCredentials;
 const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
@@ -900,7 +899,7 @@ pub const Blob = struct {
                     store: *Store,
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: AWS.S3UploadResult, this: *@This()) void {
+                    pub fn resolve(result: S3.S3UploadResult, this: *@This()) void {
                         if (this.promise.globalObject()) |globalObject| {
                             switch (result) {
                                 .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
@@ -924,10 +923,19 @@ pub const Blob = struct {
                 const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
                 destination_blob.store.?.ref();
-                aws_options.credentials.s3Upload(s3.path(), "", destination_blob.contentTypeOrMimeType(), aws_options.acl, proxy_url, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
-                    .promise = promise,
-                    .store = destination_blob.store.?,
-                }));
+                S3.s3Upload(
+                    aws_options.credentials,
+                    s3.path(),
+                    "",
+                    destination_blob.contentTypeOrMimeType(),
+                    aws_options.acl,
+                    proxy_url,
+                    @ptrCast(&Wrapper.resolve),
+                    Wrapper.new(.{
+                        .promise = promise,
+                        .store = destination_blob.store.?,
+                    }),
+                );
                 return promise_value;
             }
 
@@ -1043,7 +1051,18 @@ pub const Blob = struct {
                             source_blob,
                             @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                         ), ctx)) |stream| {
-                            return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), stream, ctx, aws_options.options, aws_options.acl, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
+                            return S3.s3UploadStream(
+                                (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
+                                s3.path(),
+                                stream,
+                                ctx,
+                                aws_options.options,
+                                aws_options.acl,
+                                destination_blob.contentTypeOrMimeType(),
+                                proxy_url,
+                                null,
+                                undefined,
+                            );
                         } else {
                             return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                         }
@@ -1053,7 +1072,7 @@ pub const Blob = struct {
                             promise: JSC.JSPromise.Strong,
                             pub usingnamespace bun.New(@This());
 
-                            pub fn resolve(result: AWS.S3UploadResult, this: *@This()) void {
+                            pub fn resolve(result: S3.S3UploadResult, this: *@This()) void {
                                 if (this.promise.globalObject()) |globalObject| {
                                     switch (result) {
                                         .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
@@ -1074,10 +1093,19 @@ pub const Blob = struct {
                         const promise = JSC.JSPromise.Strong.init(ctx);
                         const promise_value = promise.value();
 
-                        aws_options.credentials.s3Upload(s3.path(), bytes.slice(), destination_blob.contentTypeOrMimeType(), aws_options.acl, proxy_url, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
-                            .store = store,
-                            .promise = promise,
-                        }));
+                        S3.s3Upload(
+                            aws_options.credentials,
+                            s3.path(),
+                            bytes.slice(),
+                            destination_blob.contentTypeOrMimeType(),
+                            aws_options.acl,
+                            proxy_url,
+                            @ptrCast(&Wrapper.resolve),
+                            Wrapper.new(.{
+                                .store = store,
+                                .promise = promise,
+                            }),
+                        );
                         return promise_value;
                     }
                 },
@@ -1088,7 +1116,18 @@ pub const Blob = struct {
                         source_blob,
                         @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                     ), ctx)) |stream| {
-                        return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), stream, ctx, s3.options, aws_options.acl, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
+                        return S3.s3UploadStream(
+                            (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
+                            s3.path(),
+                            stream,
+                            ctx,
+                            s3.options,
+                            aws_options.acl,
+                            destination_blob.contentTypeOrMimeType(),
+                            proxy_url,
+                            null,
+                            undefined,
+                        );
                     } else {
                         return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                     }
@@ -1266,7 +1305,18 @@ pub const Blob = struct {
                                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
 
-                                return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), readable, globalThis, aws_options.options, aws_options.acl, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
+                                return S3.s3UploadStream(
+                                    (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
+                                    s3.path(),
+                                    readable,
+                                    globalThis,
+                                    aws_options.options,
+                                    aws_options.acl,
+                                    destination_blob.contentTypeOrMimeType(),
+                                    proxy_url,
+                                    null,
+                                    undefined,
+                                );
                             }
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1314,7 +1364,18 @@ pub const Blob = struct {
                                 }
                                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
-                                return (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(s3.path(), readable, globalThis, aws_options.options, aws_options.acl, destination_blob.contentTypeOrMimeType(), proxy_url, null, undefined);
+                                return S3.s3UploadStream(
+                                    (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
+                                    s3.path(),
+                                    readable,
+                                    globalThis,
+                                    aws_options.options,
+                                    aws_options.acl,
+                                    destination_blob.contentTypeOrMimeType(),
+                                    proxy_url,
+                                    null,
+                                    undefined,
+                                );
                             }
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1898,7 +1959,7 @@ pub const Blob = struct {
             var this = bun.cast(*Store, ptr);
             this.deref();
         }
-        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS, allocator: std.mem.Allocator) !*Store {
+        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWSCredentials, allocator: std.mem.Allocator) !*Store {
             var path = pathlike;
             // this actually protects/refs the pathlike
             path.toThreadSafe();
@@ -3459,8 +3520,8 @@ pub const Blob = struct {
             return this.credentials.?;
         }
 
-        pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWS.AWSCredentialsWithOptions {
-            return AWS.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, globalObject);
+        pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!S3.AWSCredentialsWithOptions {
+            return AWSCredentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, globalObject);
         }
 
         pub fn path(this: *@This()) []const u8 {
@@ -3486,7 +3547,7 @@ pub const Blob = struct {
 
                 pub usingnamespace bun.New(@This());
 
-                pub fn resolve(result: AWS.S3DeleteResult, self: *@This()) void {
+                pub fn resolve(result: S3.S3DeleteResult, self: *@This()) void {
                     defer self.deinit();
                     const globalObject = self.promise.globalObject().?;
                     switch (result) {
@@ -3511,7 +3572,7 @@ pub const Blob = struct {
             const proxy = if (proxy_url) |url| url.href else null;
             var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
             defer aws_options.deinit();
-            aws_options.credentials.s3Delete(this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+            S3.s3Delete(aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
             }), proxy);
@@ -3519,7 +3580,7 @@ pub const Blob = struct {
 
             return value;
         }
-        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWS) S3Store {
+        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWSCredentials) S3Store {
             credentials.ref();
             return .{
                 .credentials = credentials,
@@ -3834,7 +3895,7 @@ pub const Blob = struct {
         pub fn callHandler(this: *S3BlobDownloadTask, raw_bytes: []u8) JSValue {
             return this.handler(&this.blob, this.globalThis, raw_bytes);
         }
-        pub fn onS3DownloadResolved(result: AWS.S3DownloadResult, this: *S3BlobDownloadTask) void {
+        pub fn onS3DownloadResolved(result: S3.S3DownloadResult, this: *S3BlobDownloadTask) void {
             defer this.deinit();
             switch (result) {
                 .success => |response| {
@@ -3868,13 +3929,13 @@ pub const Blob = struct {
             if (blob.offset > 0) {
                 const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.s3DownloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else if (blob.size == Blob.max_size) {
-                credentials.s3Download(path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.s3Download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else {
                 const len: usize = @intCast(blob.size);
                 const offset: usize = @intCast(blob.offset);
-                credentials.s3DownloadSlice(path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.s3DownloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             }
             return promise;
         }
@@ -4038,7 +4099,18 @@ pub const Blob = struct {
             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
-            return (if (extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()).s3UploadStream(path, readable_stream, globalThis, aws_options.options, aws_options.acl, this.contentTypeOrMimeType(), proxy_url, null, undefined);
+            return S3.s3UploadStream(
+                (if (extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
+                path,
+                readable_stream,
+                globalThis,
+                aws_options.options,
+                aws_options.acl,
+                this.contentTypeOrMimeType(),
+                proxy_url,
+                null,
+                undefined,
+            );
         }
 
         if (store.data != .file) {
@@ -4264,10 +4336,24 @@ pub const Blob = struct {
                         }
                     }
                     const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
-                    return try credentialsWithOptions.credentials.dupe().s3WritableStream(path, globalThis, credentialsWithOptions.options, this.contentTypeOrMimeType(), proxy_url);
+                    return try S3.s3WritableStream(
+                        credentialsWithOptions.credentials.dupe(),
+                        path,
+                        globalThis,
+                        credentialsWithOptions.options,
+                        this.contentTypeOrMimeType(),
+                        proxy_url,
+                    );
                 }
             }
-            return try s3.getCredentials().s3WritableStream(path, globalThis, .{}, this.contentTypeOrMimeType(), proxy_url);
+            return try S3.s3WritableStream(
+                s3.getCredentials(),
+                path,
+                globalThis,
+                .{},
+                this.contentTypeOrMimeType(),
+                proxy_url,
+            );
         }
         if (store.data != .file) {
             return globalThis.throwInvalidArguments("Blob is read-only", .{});

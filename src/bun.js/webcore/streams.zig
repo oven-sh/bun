@@ -43,7 +43,7 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
-const S3MultiPartUpload = @import("../../s3.zig").MultiPartUpload;
+const S3MultiPartUpload = @import("../../s3/multipart.zig").MultiPartUpload;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -379,7 +379,7 @@ pub const ReadableStream = struct {
                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
 
-                return credentials.s3ReadableStream(path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
+                return bun.S3.s3ReadableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
             },
         }
     }

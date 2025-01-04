@@ -17,7 +17,7 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
-const s3 = @import("./s3.zig");
+const s3 = bun.S3;
 
 const DotEnvFileSuffix = enum {
     development,

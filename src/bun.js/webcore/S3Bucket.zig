@@ -10,7 +10,7 @@ const AWSCredentials = bun.AWSCredentials;
 
 const S3BucketOptions = struct {
     credentials: *AWSCredentials,
-    options: bun.S3.MultiPartUpload.MultiPartUploadOptions = .{},
+    options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     pub usingnamespace bun.New(@This());
 
@@ -20,7 +20,7 @@ const S3BucketOptions = struct {
     }
 };
 
-pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUpload.MultiPartUploadOptions, acl: ?bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUploadOptions, acl: ?bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll("\n");
 
     {

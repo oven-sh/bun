@@ -55,7 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const s3 = @import("../../s3.zig");
+const s3 = bun.S3;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -3250,7 +3250,7 @@ pub const Fetch = struct {
 
         if (url.isS3()) {
             // get ENV config
-            var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
+            var credentialsWithOptions: s3.AWSCredentialsWithOptions = .{
                 .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
                 .options = .{},
                 .acl = null,
@@ -3332,7 +3332,8 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(
+                _ = bun.S3.s3UploadStream(
+                    credentialsWithOptions.credentials.dupe(),
                     url.s3Path(),
                     body.ReadableStream.get().?,
                     globalThis,

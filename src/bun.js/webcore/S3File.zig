@@ -8,6 +8,7 @@ const Method = bun.http.Method;
 const strings = bun.strings;
 const Output = bun.Output;
 const S3Bucket = @import("./S3Bucket.zig");
+const S3 = bun.S3;
 
 pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
@@ -222,11 +223,11 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
-    default_credentials: *AWS,
-    default_options: bun.S3.MultiPartUpload.MultiPartUploadOptions,
+    default_credentials: *S3.AWSCredentials,
+    default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
+    var aws_options = try S3.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -272,9 +273,9 @@ pub fn constructS3FileWithAWSCredentials(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
-    existing_credentials: AWS,
+    existing_credentials: S3.AWSCredentials,
 ) bun.JSError!Blob {
-    var aws_options = try AWS.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
+    var aws_options = try S3.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();
@@ -318,14 +319,12 @@ fn constructS3FileInternal(
     return ptr;
 }
 
-const AWS = bun.S3.AWSCredentials;
-
 pub const S3BlobStatTask = struct {
     promise: JSC.JSPromise.Strong,
     store: *Blob.Store,
     usingnamespace bun.New(S3BlobStatTask);
 
-    pub fn onS3ExistsResolved(result: AWS.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
         const globalThis = this.promise.globalObject().?;
         switch (result) {
@@ -346,7 +345,7 @@ pub const S3BlobStatTask = struct {
         }
     }
 
-    pub fn onS3SizeResolved(result: AWS.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
         const globalThis = this.promise.globalObject().?;
 
@@ -371,7 +370,7 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        credentials.s3Stat(path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        S3.s3Stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
 
@@ -386,7 +385,7 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        credentials.s3Stat(path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        S3.s3Stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
 
@@ -405,7 +404,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
 
-    var credentialsWithOptions: AWS.AWSCredentialsWithOptions = .{
+    var credentialsWithOptions: S3.AWSCredentialsWithOptions = .{
         .credentials = this.store.?.data.s3.getCredentials().*,
     };
     defer {
@@ -434,7 +433,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
     }, .{ .expires = expires }) catch |sign_err| {
-        return AWS.throwSignError(sign_err, globalThis);
+        return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
     var str = bun.String.fromUTF8(result.url);

@@ -659,7 +659,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             await s3file.write("Hello Bun!");
             expect.unreachable();
           } catch (e: any) {
-            expect(e?.code).toBe("InvalidAccessKeyId");
+            expect(e?.code).toBeOneOf(["FailedToOpenSocket", "ConnectionRefused"]);
           }
         }),
       );
@@ -676,7 +676,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             await s3file.write("Hello Bun!");
             expect.unreachable();
           } catch (e: any) {
-            expect(e?.code).toBe("InvalidAccessKeyId");
+            expect(e?.code).toBeOneOf(["FailedToOpenSocket", "ConnectionRefused"]);
           }
         }),
       );

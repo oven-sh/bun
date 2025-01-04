@@ -446,7 +446,8 @@ pub const AWSCredentials = struct {
                 }
             }
         }
-        return "us-east-1";
+
+        return "auto";
     }
     fn toHexChar(value: u8) !u8 {
         return switch (value) {

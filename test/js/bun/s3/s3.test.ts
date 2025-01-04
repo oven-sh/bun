@@ -515,13 +515,20 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   describe("errors", () => {
     it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
       try {
-        await Bun.write(s3("test.txt", s3Options), file("./do-not-exist.txt"));
+        await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), file("./do-not-exist.txt"));
         expect.unreachable();
       } catch (e: any) {
         expect(e?.code).toBe("ENOENT");
         expect(e?.path).toBe("./do-not-exist.txt");
         expect(e?.syscall).toBe("open");
       }
+    });
+
+    it("Bun.write(s3file, file) should work with empty file", async () => {
+      const dir = tempDirWithFiles("fsr", {
+        "hello.txt": "",
+      });
+      await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
     });
     it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
       try {
@@ -531,7 +538,6 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         );
         expect.unreachable();
       } catch (e: any) {
-        console.error(e);
         expect(e?.code).toBe("NoSuchKey");
         expect(e?.path).toBe("do-not-exist.txt");
         expect(e?.name).toBe("S3Error");
@@ -555,7 +561,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         await Bun.write(s3("test.txt", s3Options), "Hello Bun!");
         expect.unreachable();
       } catch (e: any) {
-        expect(e?.code).toBe("InvalidPath");
+        expect(e?.code).toBe("ERR_S3_INVALID_PATH");
         expect(e?.name).toBe("S3Error");
       }
     });
@@ -565,64 +571,205 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), s3("test2.txt", s3Options));
         expect.unreachable();
       } catch (e: any) {
-        expect(e?.code).toBe("InvalidPath");
+        expect(e?.code).toBe("ERR_S3_INVALID_PATH");
         expect(e?.path).toBe("test2.txt");
         expect(e?.name).toBe("S3Error");
       }
     });
+
+    it("should error when invalid method", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+          const s3file = fn("method-test", {
+            ...s3Options,
+            bucket: S3Bucket,
+          });
+
+          try {
+            await s3file.presign({ method: "OPTIONS" });
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_S3_INVALID_METHOD");
+          }
+        }),
+      );
+    });
+
+    it("should error when path is too long", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+          try {
+            const s3file = fn("test" + "a".repeat(4096), {
+              ...s3Options,
+              bucket: S3Bucket,
+            });
+
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ENAMETOOLONG");
+          }
+        }),
+      );
+    });
   });
   describe("credentials", () => {
     it("should error with invalid access key id", async () => {
-      [s3, (...args) => new S3(...args), file].forEach(fn => {
-        const s3file = fn("s3://bucket/credentials-test", {
-          ...s3Options,
-          accessKeyId: "invalid",
-        });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow();
-      });
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://bucket/credentials-test", {
+            ...s3Options,
+            accessKeyId: "invalid",
+          });
+
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("InvalidArgument");
+          }
+        }),
+      );
     });
     it("should error with invalid secret key id", async () => {
-      [s3, (...args) => new S3(...args), file].forEach(fn => {
-        const s3file = fn("s3://bucket/credentials-test", {
-          ...s3Options,
-          secretAccessKey: "invalid",
-        });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow();
-      });
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://bucket/credentials-test", {
+            ...s3Options,
+            secretAccessKey: "invalid",
+          });
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("AccessDenied");
+          }
+        }),
+      );
     });
 
     it("should error with invalid endpoint", async () => {
-      [s3, (...args) => new S3(...args), file].forEach(fn => {
-        const s3file = fn("s3://bucket/credentials-test", {
-          ...s3Options,
-          endpoint: "🙂.🥯",
-        });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow();
-      });
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://bucket/credentials-test", {
+            ...s3Options,
+            endpoint: "🙂.🥯",
+          });
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("InvalidAccessKeyId");
+          }
+        }),
+      );
     });
 
     it("should error with invalid endpoint", async () => {
-      [s3, (...args) => new S3(...args), file].forEach(fn => {
-        const s3file = fn("s3://bucket/credentials-test", {
-          ...s3Options,
-          endpoint: "..asd.@%&&&%%",
-        });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow();
-      });
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://bucket/credentials-test", {
+            ...s3Options,
+            endpoint: "..asd.@%&&&%%",
+          });
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("InvalidAccessKeyId");
+          }
+        }),
+      );
     });
 
     it("should error with invalid bucket", async () => {
-      [s3, (...args) => new S3(...args), file].forEach(fn => {
-        const s3file = fn("s3://credentials-test", {
-          ...s3Options,
-          bucket: "invalid",
-        });
-        expect(s3file.write("Hello Bun!")).rejects.toThrow();
-      });
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://credentials-test", {
+            ...s3Options,
+            bucket: "invalid",
+          });
+
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("AccessDenied");
+            expect(e?.name).toBe("S3Error");
+          }
+        }),
+      );
+    });
+
+    it("should error when missing credentials", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          const s3file = fn("s3://credentials-test", {
+            bucket: "invalid",
+          });
+
+          try {
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_S3_MISSING_CREDENTIALS");
+          }
+        }),
+      );
+    });
+    it("should error when presign missing credentials", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+          const s3file = fn("method-test", {
+            bucket: S3Bucket,
+          });
+
+          try {
+            await s3file.presign();
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_S3_MISSING_CREDENTIALS");
+          }
+        }),
+      );
+    });
+
+    it("should error when presign with invalid endpoint", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+          let options = { ...s3Options, bucket: S3Bucket };
+          options.endpoint = Buffer.alloc(1024, "a").toString();
+
+          try {
+            const s3file = fn(randomUUID(), options);
+
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_S3_INVALID_ENDPOINT");
+          }
+        }),
+      );
+    });
+    it("should error when presign with invalid token", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+          let options = { ...s3Options, bucket: S3Bucket };
+          options.sessionToken = Buffer.alloc(4096, "a").toString();
+
+          try {
+            const s3file = fn(randomUUID(), options);
+            await s3file.presign();
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_S3_INVALID_SESSION_TOKEN");
+          }
+        }),
+      );
     });
   });
 
-  describe.only("S3 static methods", () => {
+  describe("S3 static methods", () => {
     describe("presign", () => {
       it("should work", async () => {
         const s3file = s3("s3://bucket/credentials-test", s3Options);

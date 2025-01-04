@@ -513,13 +513,14 @@ pub const AWSCredentials = struct {
         };
     }
     pub fn getSignErrorCodeAndMessage(err: anyerror) ErrorCodeAndMessage {
+        // keep error codes consistent for internal errors
         return switch (err) {
-            error.MissingCredentials => .{ .code = "MissingCredentials", .message = getSignErrorMessage(error.MissingCredentials) },
-            error.InvalidMethod => .{ .code = "InvalidMethod", .message = getSignErrorMessage(error.InvalidMethod) },
-            error.InvalidPath => .{ .code = "InvalidPath", .message = getSignErrorMessage(error.InvalidPath) },
-            error.InvalidEndpoint => .{ .code = "InvalidEndpoint", .message = getSignErrorMessage(error.InvalidEndpoint) },
-            error.InvalidSessionToken => .{ .code = "InvalidSessionToken", .message = getSignErrorMessage(error.InvalidSessionToken) },
-            else => .{ .code = "SignError", .message = getSignErrorMessage(error.SignError) },
+            error.MissingCredentials => .{ .code = "ERR_S3_MISSING_CREDENTIALS", .message = getSignErrorMessage(error.MissingCredentials) },
+            error.InvalidMethod => .{ .code = "ERR_S3_INVALID_METHOD", .message = getSignErrorMessage(error.InvalidMethod) },
+            error.InvalidPath => .{ .code = "ERR_S3_INVALID_PATH", .message = getSignErrorMessage(error.InvalidPath) },
+            error.InvalidEndpoint => .{ .code = "ERR_S3_INVALID_ENDPOINT", .message = getSignErrorMessage(error.InvalidEndpoint) },
+            error.InvalidSessionToken => .{ .code = "ERR_S3_INVALID_SESSION_TOKEN", .message = getSignErrorMessage(error.InvalidSessionToken) },
+            else => .{ .code = "ERR_S3_INVALID_SIGNATURE", .message = getSignErrorMessage(error.SignError) },
         };
     }
 

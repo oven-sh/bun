@@ -1723,7 +1723,7 @@ pub const AWSCredentials = struct {
                                 sink.abort();
                                 return;
                             }
-                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.path));
+                            sink.endPromise.reject(globalObject, err.toJS(globalObject, self.path));
                         },
                     }
                 }
@@ -1762,7 +1762,7 @@ pub const AWSCredentials = struct {
 
         const err = args.ptr[0];
         if (this.sink.endPromise.hasValue()) {
-            this.sink.endPromise.rejectOnNextTick(globalThis, err);
+            this.sink.endPromise.reject(globalThis, err);
         }
 
         if (this.readable_stream_ref.get()) |stream| {
@@ -1888,7 +1888,7 @@ pub const AWSCredentials = struct {
 
         if (assignment_result.toError()) |err| {
             if (response_stream.sink.endPromise.hasValue()) {
-                response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
+                response_stream.sink.endPromise.reject(globalThis, err);
             }
 
             task.fail(.{
@@ -1900,8 +1900,6 @@ pub const AWSCredentials = struct {
         }
 
         if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-            task.vm.drainMicrotasks();
-
             assignment_result.ensureStillAlive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if (assignment_result.asAnyPromise()) |promise| {
@@ -1935,7 +1933,7 @@ pub const AWSCredentials = struct {
                     },
                     .rejected => {
                         if (response_stream.sink.endPromise.hasValue()) {
-                            response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
+                            response_stream.sink.endPromise.reject(globalThis, promise.result(globalThis.vm()));
                         }
 
                         task.fail(.{
@@ -1947,7 +1945,7 @@ pub const AWSCredentials = struct {
                 }
             } else {
                 if (response_stream.sink.endPromise.hasValue()) {
-                    response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
+                    response_stream.sink.endPromise.reject(globalThis, assignment_result);
                 }
 
                 task.fail(.{
@@ -1978,7 +1976,7 @@ pub const AWSCredentials = struct {
                                     return;
                                 }
 
-                                sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, sink.path()));
+                                sink.endPromise.reject(globalObject, err.toJS(globalObject, sink.path()));
                             },
                         }
                     }

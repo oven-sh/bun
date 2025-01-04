@@ -905,7 +905,7 @@ pub const Blob = struct {
                             switch (result) {
                                 .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
                                 .failure => |err| {
-                                    this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.getPath()));
+                                    this.promise.reject(globalObject, err.toJS(globalObject, this.store.getPath()));
                                 },
                             }
                         }
@@ -1058,7 +1058,7 @@ pub const Blob = struct {
                                     switch (result) {
                                         .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
                                         .failure => |err| {
-                                            this.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, this.store.getPath()));
+                                            this.promise.reject(globalObject, err.toJS(globalObject, this.store.getPath()));
                                         },
                                     }
                                 }
@@ -3494,7 +3494,7 @@ pub const Blob = struct {
                             self.promise.resolve(globalObject, .true);
                         },
                         inline .not_found, .failure => |err| {
-                            self.promise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.store.getPath()));
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                         },
                     }
                 }
@@ -3845,7 +3845,7 @@ pub const Blob = struct {
                     JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
                 },
                 inline .not_found, .failure => |err| {
-                    this.promise.rejectOnNextTick(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
+                    this.promise.reject(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
                 },
             }
         }
@@ -3985,10 +3985,12 @@ pub const Blob = struct {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
         defer this.deinit();
-        if (this.readable_stream_ref.get()) |stream| {
+        var strong = this.readable_stream_ref;
+        defer strong.deinit();
+        this.readable_stream_ref = .{};
+        if (strong.get()) |stream| {
             stream.done(globalThis);
         }
-        this.readable_stream_ref.deinit();
         this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
         return .undefined;
     }
@@ -3999,11 +4001,14 @@ pub const Blob = struct {
         defer this.sink.deinit();
         const err = args.ptr[0];
 
-        this.promise.rejectOnNextTick(globalThis, err);
+        var strong = this.readable_stream_ref;
+        defer strong.deinit();
+        this.readable_stream_ref = .{};
 
-        if (this.readable_stream_ref.get()) |stream| {
+        this.promise.reject(globalThis, err);
+
+        if (strong.get()) |stream| {
             stream.cancel(globalThis);
-            this.readable_stream_ref.deinit();
         }
         return .undefined;
     }

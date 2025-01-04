@@ -1173,8 +1173,6 @@ pub const Fetch = struct {
                 }
 
                 if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                    this.javascript_vm.drainMicrotasks();
-
                     assignment_result.ensureStillAlive();
                     // it returns a Promise when it goes through ReadableStreamDefaultReader
                     if (assignment_result.asAnyPromise()) |promise| {

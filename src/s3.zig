@@ -1350,16 +1350,9 @@ pub const AWSCredentials = struct {
             this.reportProgress(state);
         }
 
-        /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
-        fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
-            // lets lock and unlock to be safe we now the state is not in the middle of a callback
-            this.reported_response_lock.lock();
-            defer this.reported_response_lock.unlock();
-
-            // remember the state is atomic load it once, and store it again
-            var state = this.getState();
-            // old state should have more
-            bun.assert(state.has_more);
+        /// this function is only called from the http callback in the HTTPThread and returns true if we should wait until we are done buffering the response body to report
+        /// should only be called when already locked
+        fn updateState(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult, state: *State) bool {
             const is_done = !result.has_more;
             // if we got a error or fail wait until we are done buffering the response body to report
             var wait_until_done = false;
@@ -1385,6 +1378,21 @@ pub const AWSCredentials = struct {
                 this.setState(state);
                 this.http = async_http.*;
             }
+            return wait_until_done;
+        }
+
+        /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
+        fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
+            // lets lock and unlock to be safe we now the state is not in the middle of a callback
+            this.reported_response_lock.lock();
+            defer this.reported_response_lock.unlock();
+
+            // remember the state is atomic load it once, and store it again
+            var state = this.getState();
+            // old state should have more
+            bun.assert(state.has_more);
+            const is_done = !result.has_more;
+            const wait_until_done = updateState(this, async_http, result, &state);
             const should_enqueue = !wait_until_done or is_done;
             log("state err: {} status_code: {} has_more: {} should_enqueue: {}", .{ state.request_error, state.status_code, state.has_more, should_enqueue });
 

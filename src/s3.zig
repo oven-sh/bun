@@ -484,12 +484,12 @@ pub const AWSCredentials = struct {
     };
     fn getSignErrorMessage(comptime err: anyerror) [:0]const u8 {
         return switch (err) {
-            error.MissingCredentials => return "missing s3 credentials",
-            error.InvalidMethod => return "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
-            error.InvalidPath => return "invalid s3 bucket, key combination",
-            error.InvalidEndpoint => return "invalid s3 endpoint",
-            error.InvalidSessionToken => return "invalid session token",
-            else => return "failed to retrieve s3 content check your credentials",
+            error.MissingCredentials => return "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
+            error.InvalidMethod => return "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+            error.InvalidPath => return "Invalid S3 bucket, key combination",
+            error.InvalidEndpoint => return "Invalid S3 endpoint",
+            error.InvalidSessionToken => return "Invalid session token",
+            else => return "Failed to retrieve S3 content. Are the credentials correct?",
         };
     }
     pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

@@ -204,8 +204,6 @@ void JSEventEmitterPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSEventEmitter::info(), JSEventEmitterPrototypeTableValues, *this);
-    // this->putDirect(vm, Identifier::fromString(vm, "_eventsCount"_s), jsNumber(0), 0);
-    // this->putDirect(vm, Identifier::fromString(vm, "_maxListeners"_s), jsUndefined(), 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

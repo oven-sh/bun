@@ -7184,6 +7184,7 @@ pub const PackageManager = struct {
         pub const Update = struct {
             development: bool = false,
             optional: bool = false,
+            peer: bool = false,
         };
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
@@ -7598,8 +7599,13 @@ pub const PackageManager = struct {
                     this.enable.force_save_lockfile = true;
                 }
 
-                this.update.development = cli.development;
-                if (!this.update.development) this.update.optional = cli.optional;
+                if (cli.development) {
+                    this.update.development = cli.development;
+                } else if (cli.optional) {
+                    this.update.optional = cli.optional;
+                } else if (cli.peer) {
+                    this.update.peer = cli.peer;
+                }
 
                 switch (cli.patch) {
                     .nothing => {},
@@ -9538,6 +9544,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
@@ -9559,6 +9566,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
@@ -9642,6 +9650,7 @@ pub const PackageManager = struct {
 
         development: bool = false,
         optional: bool = false,
+        peer: bool = false,
 
         omit: ?Omit = null,
 
@@ -10118,6 +10127,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add or subcommand == .install) {
                 cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
+                cli.peer = args.flag("--peer");
                 cli.exact = args.flag("--exact");
             }
 
@@ -10704,6 +10714,8 @@ pub const PackageManager = struct {
             "devDependencies"
         else if (manager.options.update.optional)
             "optionalDependencies"
+        else if (manager.options.update.peer)
+            "peerDependencies"
         else
             "dependencies";
         var any_changes = false;

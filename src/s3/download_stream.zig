@@ -35,7 +35,7 @@ pub const S3HttpDownloadStreamingTask = struct {
             .capacity = 0,
         },
     },
-    state: State.AtomicType = State.AtomicType.init(0),
+    state: State.AtomicType = State.AtomicType.init(@bitCast(State{})),
 
     concurrent_task: JSC.ConcurrentTask = .{},
     range: ?[]const u8,

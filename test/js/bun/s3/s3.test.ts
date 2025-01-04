@@ -819,7 +819,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         const s3file = s3("s3://bucket/credentials-test", options);
         const url = s3file.presign();
         expect(url).toBeDefined();
-        expect(url.includes("https://s3.us-east-1.amazonaws.com")).toBe(true);
+        expect(url.includes("https://s3.us-west-1.amazonaws.com")).toBe(true);
         expect(url.includes("X-Amz-Expires=86400")).toBe(true);
         expect(url.includes("X-Amz-Date")).toBe(true);
         expect(url.includes("X-Amz-Signature")).toBe(true);

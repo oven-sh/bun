@@ -885,7 +885,7 @@ pub const Tree = struct {
                                 .name => |pattern| .{ pattern, pkg_names[res_id].slice(builder.buf()) },
 
                                 .path => |pattern| path: {
-                                    const res = pkg_resolutions[res_id];
+                                    const res = &pkg_resolutions[res_id];
                                     if (res.tag != .workspace) {
                                         break :dont_skip;
                                     }

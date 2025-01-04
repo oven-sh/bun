@@ -379,7 +379,7 @@ pub const ReadableStream = struct {
                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
 
-                return bun.S3.s3ReadableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
+                return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
             },
         }
     }

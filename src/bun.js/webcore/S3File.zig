@@ -370,7 +370,7 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.s3Stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
 
@@ -385,7 +385,7 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.s3Stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
 

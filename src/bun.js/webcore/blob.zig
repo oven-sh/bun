@@ -274,7 +274,7 @@ pub const Blob = struct {
                         switch (store.data) {
                             .s3 => |_| {
                                 // TODO: s3
-                                // we need to make this async and use s3Download/s3DownloadSlice
+                                // we need to make this async and use download/downloadSlice
                             },
                             .file => |file| {
 
@@ -923,7 +923,7 @@ pub const Blob = struct {
                 const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
                 destination_blob.store.?.ref();
-                S3.s3Upload(
+                S3.upload(
                     aws_options.credentials,
                     s3.path(),
                     "",
@@ -1051,7 +1051,7 @@ pub const Blob = struct {
                             source_blob,
                             @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                         ), ctx)) |stream| {
-                            return S3.s3UploadStream(
+                            return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                                 s3.path(),
                                 stream,
@@ -1093,7 +1093,7 @@ pub const Blob = struct {
                         const promise = JSC.JSPromise.Strong.init(ctx);
                         const promise_value = promise.value();
 
-                        S3.s3Upload(
+                        S3.upload(
                             aws_options.credentials,
                             s3.path(),
                             bytes.slice(),
@@ -1116,7 +1116,7 @@ pub const Blob = struct {
                         source_blob,
                         @truncate(s3.options.partSize * S3MultiPartUpload.OneMiB),
                     ), ctx)) |stream| {
-                        return S3.s3UploadStream(
+                        return S3.uploadStream(
                             (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                             s3.path(),
                             stream,
@@ -1305,7 +1305,7 @@ pub const Blob = struct {
                                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
 
-                                return S3.s3UploadStream(
+                                return S3.uploadStream(
                                     (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                                     s3.path(),
                                     readable,
@@ -1364,7 +1364,7 @@ pub const Blob = struct {
                                 }
                                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                                 const proxy_url = if (proxy) |p| p.href else null;
-                                return S3.s3UploadStream(
+                                return S3.uploadStream(
                                     (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                                     s3.path(),
                                     readable,
@@ -3572,7 +3572,7 @@ pub const Blob = struct {
             const proxy = if (proxy_url) |url| url.href else null;
             var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
             defer aws_options.deinit();
-            S3.s3Delete(aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+            S3.delete(aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
             }), proxy);
@@ -3929,13 +3929,13 @@ pub const Blob = struct {
             if (blob.offset > 0) {
                 const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
                 const offset: usize = @intCast(blob.offset);
-                S3.s3DownloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else if (blob.size == Blob.max_size) {
-                S3.s3Download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             } else {
                 const len: usize = @intCast(blob.size);
                 const offset: usize = @intCast(blob.offset);
-                S3.s3DownloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
             }
             return promise;
         }
@@ -4099,7 +4099,7 @@ pub const Blob = struct {
             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
-            return S3.s3UploadStream(
+            return S3.uploadStream(
                 (if (extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                 path,
                 readable_stream,
@@ -4336,7 +4336,7 @@ pub const Blob = struct {
                         }
                     }
                     const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
-                    return try S3.s3WritableStream(
+                    return try S3.writableStream(
                         credentialsWithOptions.credentials.dupe(),
                         path,
                         globalThis,
@@ -4346,7 +4346,7 @@ pub const Blob = struct {
                     );
                 }
             }
-            return try S3.s3WritableStream(
+            return try S3.writableStream(
                 s3.getCredentials(),
                 path,
                 globalThis,

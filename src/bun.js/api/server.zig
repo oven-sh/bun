@@ -3254,7 +3254,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             const path = blob.store.?.data.s3.path();
                             const env = globalThis.bunVM().transpiler.env;
 
-                            S3.s3Stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                            S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
 
                             return;
                         }

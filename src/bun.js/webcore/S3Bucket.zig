@@ -6,7 +6,7 @@ const PathOrBlob = JSC.Node.PathOrBlob;
 const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const S3File = @import("./S3File.zig");
-const AWSCredentials = bun.AWSCredentials;
+const AWSCredentials = bun.S3.AWSCredentials;
 
 const S3BucketOptions = struct {
     credentials: *AWSCredentials,

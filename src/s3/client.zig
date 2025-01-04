@@ -16,7 +16,7 @@ pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
 pub const ACL = @import("./acl.zig").ACL;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-pub fn s3Stat(this: *AWSCredentials, path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+pub fn stat(this: *AWSCredentials, path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .HEAD,
@@ -25,7 +25,7 @@ pub fn s3Stat(this: *AWSCredentials, path: []const u8, callback: *const fn (S3St
     }, .{ .stat = callback }, callback_context);
 }
 
-pub fn s3Download(this: *AWSCredentials, path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+pub fn download(this: *AWSCredentials, path: []const u8, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .GET,
@@ -34,7 +34,7 @@ pub fn s3Download(this: *AWSCredentials, path: []const u8, callback: *const fn (
     }, .{ .download = callback }, callback_context);
 }
 
-pub fn s3DownloadSlice(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+pub fn downloadSlice(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, callback: *const fn (S3DownloadResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
     const range = brk: {
         if (size) |size_| {
             if (offset == 0) break :brk null;
@@ -58,7 +58,7 @@ pub fn s3DownloadSlice(this: *AWSCredentials, path: []const u8, offset: usize, s
     }, .{ .download = callback }, callback_context);
 }
 
-pub fn s3Delete(this: *AWSCredentials, path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
+pub fn delete(this: *AWSCredentials, path: []const u8, callback: *const fn (S3DeleteResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .DELETE,
@@ -67,7 +67,7 @@ pub fn s3Delete(this: *AWSCredentials, path: []const u8, callback: *const fn (S3
     }, .{ .delete = callback }, callback_context);
 }
 
-pub fn s3Upload(this: *AWSCredentials, path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ?ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+pub fn upload(this: *AWSCredentials, path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ?ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .PUT,
@@ -172,7 +172,7 @@ comptime {
 }
 
 /// consumes the readable stream and upload to s3
-pub fn s3UploadStream(this: *AWSCredentials, path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUploadOptions, acl: ?ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+pub fn uploadStream(this: *AWSCredentials, path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUploadOptions, acl: ?ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
     this.ref(); // ref the credentials
     const proxy_url = (proxy orelse "");
 
@@ -335,7 +335,7 @@ pub fn s3UploadStream(this: *AWSCredentials, path: []const u8, readable_stream: 
     return endPromise;
 }
 /// returns a writable stream that writes to the s3 path
-pub fn s3WritableStream(this: *AWSCredentials, path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
+pub fn writableStream(this: *AWSCredentials, path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
             if (sink.endPromise.hasValue()) {
@@ -448,7 +448,7 @@ const S3DownloadStreamWrapper = struct {
     }
 };
 
-pub fn s3StreamDownload(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void, callback_context: *anyopaque) void {
+pub fn downloadStream(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void, callback_context: *anyopaque) void {
     const range = brk: {
         if (size) |size_| {
             if (offset == 0) break :brk null;
@@ -529,7 +529,7 @@ pub fn s3StreamDownload(this: *AWSCredentials, path: []const u8, offset: usize, 
     bun.http.http_thread.schedule(batch);
 }
 
-pub fn s3ReadableStream(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn readableStream(this: *AWSCredentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     var reader = JSC.WebCore.ByteStream.Source.new(.{
         .context = undefined,
         .globalThis = globalThis,
@@ -538,7 +538,7 @@ pub fn s3ReadableStream(this: *AWSCredentials, path: []const u8, offset: usize, 
     reader.context.setup();
     const readable_value = reader.toReadableStream(globalThis);
 
-    s3StreamDownload(this, path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
+    downloadStream(this, path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
             .ptr = .{ .Bytes = &reader.context },
             .value = readable_value,

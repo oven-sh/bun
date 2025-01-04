@@ -3332,7 +3332,7 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = bun.S3.s3UploadStream(
+                _ = bun.S3.uploadStream(
                     credentialsWithOptions.credentials.dupe(),
                     url.s3Path(),
                     body.ReadableStream.get().?,

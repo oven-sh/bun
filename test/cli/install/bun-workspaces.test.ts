@@ -381,8 +381,6 @@ describe("workspace aliases", async () => {
       ),
     ]);
 
-    console.log({ packageDir });
-
     await runBunInstall(env, packageDir);
     const files = await Promise.all(
       ["a0", "a1", "a2", "a3", "a4", "a5"].map(name =>
@@ -1284,6 +1282,60 @@ for (const version of versions) {
 }
 
 describe("install --filter", () => {
+  test("does not run root scripts if root is filtered out", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: {
+            postinstall: `${bunExe()} root.js`,
+          },
+        }),
+      ),
+      write(join(packageDir, "root.js"), `require("fs").writeFileSync("root.txt", "")`),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          scripts: {
+            postinstall: `${bunExe()} pkg1.js`,
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "pkg1.js"), `require("fs").writeFileSync("pkg1.txt", "")`),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "root.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "packages", "pkg1", "pkg1.txt"))).toBeTrue();
+
+    await rm(join(packageDir, "packages", "pkg1", "pkg1.txt"));
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "root"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "root.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "packages", "pkg1.txt"))).toBeFalse();
+  });
+
   test("basic", async () => {
     await Promise.all([
       write(

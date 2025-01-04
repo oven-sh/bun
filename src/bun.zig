@@ -4221,3 +4221,6 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
     pub fn deleteAll() void {}
 };
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3.zig");
+pub const AWSCredentials = S3.AWSCredentials;

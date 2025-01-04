@@ -7,12 +7,55 @@ pub const RareData = @import("./bun.js/rare_data.zig");
 const JSC = bun.JSC;
 const strings = bun.strings;
 
+pub const ACL = enum {
+    /// Owner gets FULL_CONTROL. No one else has access rights (default).
+    private,
+    /// Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
+    public_read,
+    /// Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
+    public_read_write,
+    /// Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
+    aws_exec_read,
+    /// Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
+    authenticated_read,
+    /// Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    bucket_owner_read,
+    /// Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+    bucket_owner_full_control,
+    log_delivery_write,
+
+    pub fn toString(this: @This()) []const u8 {
+        return switch (this) {
+            .private => "private",
+            .public_read => "public-read",
+            .public_read_write => "public-read-write",
+            .aws_exec_read => "aws-exec-read",
+            .authenticated_read => "authenticated-read",
+            .bucket_owner_read => "bucket-owner-read",
+            .bucket_owner_full_control => "bucket-owner-full-control",
+            .log_delivery_write => "log-delivery-write",
+        };
+    }
+
+    pub const Map = bun.ComptimeStringMap(ACL, .{
+        .{ "private", .private },
+        .{ "public-read", .public_read },
+        .{ "public-read-write", .public_read_write },
+        .{ "aws-exec-read", .aws_exec_read },
+        .{ "authenticated-read", .authenticated_read },
+        .{ "bucket-owner-read", .bucket_owner_read },
+        .{ "bucket-owner-full-control", .bucket_owner_full_control },
+        .{ "log-delivery-write", .log_delivery_write },
+    });
+};
+
 pub const AWSCredentials = struct {
     accessKeyId: []const u8,
     secretAccessKey: []const u8,
     region: []const u8,
     endpoint: []const u8,
     bucket: []const u8,
+    sessionToken: []const u8,
 
     ref_count: u32 = 1,
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
@@ -24,12 +67,16 @@ pub const AWSCredentials = struct {
     pub const AWSCredentialsWithOptions = struct {
         credentials: AWSCredentials,
         options: MultiPartUpload.MultiPartUploadOptions = .{},
+        acl: ?ACL = null,
+        /// indicates if the credentials have changed
+        changed_credentials: bool = false,
 
         _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
         _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
         _regionSlice: ?JSC.ZigString.Slice = null,
         _endpointSlice: ?JSC.ZigString.Slice = null,
         _bucketSlice: ?JSC.ZigString.Slice = null,
+        _sessionTokenSlice: ?JSC.ZigString.Slice = null,
 
         pub fn deinit(this: *@This()) void {
             if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -37,13 +84,31 @@ pub const AWSCredentials = struct {
             if (this._regionSlice) |slice| slice.deinit();
             if (this._endpointSlice) |slice| slice.deinit();
             if (this._bucketSlice) |slice| slice.deinit();
+            if (this._sessionTokenSlice) |slice| slice.deinit();
         }
     };
-    pub fn getCredentialsWithOptions(this: AWSCredentials, options: ?JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+
+    fn hashConst(acl: []const u8) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        var remain = acl;
+
+        var buf: [@sizeOf(@TypeOf(hasher.buf))]u8 = undefined;
+
+        while (remain.len > 0) {
+            const end = @min(hasher.buf.len, remain.len);
+
+            hasher.update(strings.copyLowercaseIfNeeded(remain[0..end], &buf));
+            remain = remain[end..];
+        }
+
+        return hasher.final();
+    }
+    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUpload.MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
         // get ENV config
         var new_credentials = AWSCredentialsWithOptions{
             .credentials = this,
-            .options = .{},
+            .options = default_options,
+            .acl = default_acl,
         };
         errdefer {
             new_credentials.deinit();
@@ -59,6 +124,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._accessKeyIdSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.accessKeyId = new_credentials._accessKeyIdSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("accessKeyId", "string", js_value);
@@ -73,6 +139,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._secretAccessKeySlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.secretAccessKey = new_credentials._secretAccessKeySlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("secretAccessKey", "string", js_value);
@@ -87,6 +154,7 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._regionSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.region = new_credentials._regionSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("region", "string", js_value);
@@ -103,6 +171,7 @@ pub const AWSCredentials = struct {
                                 const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).host;
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
+                                    new_credentials.changed_credentials = true;
                                 }
                             }
                         } else {
@@ -118,6 +187,23 @@ pub const AWSCredentials = struct {
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._bucketSlice = str.toUTF8(bun.default_allocator);
                                 new_credentials.credentials.bucket = new_credentials._bucketSlice.?.slice();
+                                new_credentials.changed_credentials = true;
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "sessionToken")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._sessionTokenSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.credentials.sessionToken = new_credentials._sessionTokenSlice.?.slice();
+                                new_credentials.changed_credentials = true;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
@@ -146,6 +232,21 @@ pub const AWSCredentials = struct {
                     } else {
                         new_credentials.options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
                     }
+                }
+
+                if (try opts.getOptional(globalObject, "retry", i32)) |retry| {
+                    if (retry < 0 and retry > 255) {
+                        return globalObject.throwRangeError(retry, .{
+                            .min = 0,
+                            .max = 255,
+                            .field_name = "retry",
+                        });
+                    } else {
+                        new_credentials.options.retry = @intCast(retry);
+                    }
+                }
+                if (try opts.getOptionalEnum(globalObject, "acl", ACL)) |acl| {
+                    new_credentials.acl = acl;
                 }
             }
         }
@@ -177,6 +278,11 @@ pub const AWSCredentials = struct {
                 bun.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
             else
                 "",
+
+            .sessionToken = if (this.sessionToken.len > 0)
+                bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
+            else
+                "",
         });
     }
     pub fn deinit(this: *@This()) void {
@@ -194,6 +300,9 @@ pub const AWSCredentials = struct {
         }
         if (this.bucket.len > 0) {
             bun.default_allocator.free(this.bucket);
+        }
+        if (this.sessionToken.len > 0) {
+            bun.default_allocator.free(this.sessionToken);
         }
         this.destroy();
     }
@@ -250,17 +359,41 @@ pub const AWSCredentials = struct {
         authorization: []const u8,
         url: []const u8,
 
-        content_disposition: []const u8,
-        _headers: [5]picohttp.Header,
-        _headers_len: u8 = 4,
+        content_disposition: []const u8 = "",
+        session_token: []const u8 = "",
+        acl: ?ACL = null,
+        _headers: [7]picohttp.Header = .{
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
+        },
+        _headers_len: u8 = 0,
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
             return this._headers[0..this._headers_len];
         }
 
+        pub fn mixWithHeader(this: *const @This(), headers_buffer: []picohttp.Header, header: picohttp.Header) []const picohttp.Header {
+            // copy the headers to buffer
+            const len = this._headers_len;
+            for (this._headers[0..len], 0..len) |existing_header, i| {
+                headers_buffer[i] = existing_header;
+            }
+            headers_buffer[len] = header;
+            return headers_buffer[0 .. len + 1];
+        }
+
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
                 bun.default_allocator.free(this.amz_date);
+            }
+
+            if (this.session_token.len > 0) {
+                bun.default_allocator.free(this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
@@ -284,15 +417,16 @@ pub const AWSCredentials = struct {
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
     };
-
     pub const SignOptions = struct {
         path: []const u8,
         method: bun.http.Method,
         content_hash: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
+        acl: ?ACL = null,
     };
-    fn guessRegion(endpoint: []const u8) []const u8 {
+
+    pub fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
             if (strings.indexOf(endpoint, ".amazonaws.com")) |end| {
@@ -310,7 +444,7 @@ pub const AWSCredentials = struct {
             else => error.InvalidHexChar,
         };
     }
-    fn encodeURIComponent(input: []const u8, buffer: []u8) ![]const u8 {
+    fn encodeURIComponent(input: []const u8, buffer: []u8, comptime encode_slash: bool) ![]const u8 {
         var written: usize = 0;
 
         for (input) |c| {
@@ -323,6 +457,12 @@ pub const AWSCredentials = struct {
                 },
                 // All other characters need to be percent-encoded
                 else => {
+                    if (!encode_slash and (c == '/' or c == '\\')) {
+                        if (written >= buffer.len) return error.BufferTooSmall;
+                        buffer[written] = if (c == '\\') '/' else c;
+                        written += 1;
+                        continue;
+                    }
                     if (written + 3 > buffer.len) return error.BufferTooSmall;
                     buffer[written] = '%';
                     // Convert byte to hex
@@ -344,40 +484,46 @@ pub const AWSCredentials = struct {
     };
     fn getSignErrorMessage(comptime err: anyerror) [:0]const u8 {
         return switch (err) {
-            error.MissingCredentials => return "missing s3 credentials",
-            error.InvalidMethod => return "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
-            error.InvalidPath => return "invalid s3 bucket, key combination",
-            error.InvalidEndpoint => return "invalid s3 endpoint",
-            else => return "failed to retrieve s3 content check your credentials",
+            error.MissingCredentials => return "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
+            error.InvalidMethod => return "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+            error.InvalidPath => return "Invalid S3 bucket, key combination",
+            error.InvalidEndpoint => return "Invalid S3 endpoint",
+            error.InvalidSessionToken => return "Invalid session token",
+            else => return "Failed to retrieve S3 content. Are the credentials correct?",
         };
     }
     pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (err) {
-            error.MissingCredentials => return globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
-            error.InvalidMethod => return globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
-            error.InvalidPath => return globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
-            error.InvalidEndpoint => return globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
-            else => return globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
+            error.MissingCredentials => return globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
+            error.InvalidMethod => return globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
+            error.InvalidPath => return globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
+            error.InvalidEndpoint => return globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
+            error.InvalidSessionToken => return globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
+            else => return globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
         };
     }
     pub fn throwSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) bun.JSError {
         return switch (err) {
-            error.MissingCredentials => globalThis.ERR_AWS_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
-            error.InvalidMethod => globalThis.ERR_AWS_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
-            error.InvalidPath => globalThis.ERR_AWS_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
-            error.InvalidEndpoint => globalThis.ERR_AWS_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
-            else => globalThis.ERR_AWS_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
+            error.MissingCredentials => globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
+            error.InvalidMethod => globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
+            error.InvalidPath => globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
+            error.InvalidEndpoint => globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
+            error.InvalidSessionToken => globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
+            else => globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
         };
     }
     pub fn getSignErrorCodeAndMessage(err: anyerror) ErrorCodeAndMessage {
+        // keep error codes consistent for internal errors
         return switch (err) {
-            error.MissingCredentials => .{ .code = "MissingCredentials", .message = getSignErrorMessage(error.MissingCredentials) },
-            error.InvalidMethod => .{ .code = "InvalidMethod", .message = getSignErrorMessage(error.InvalidMethod) },
-            error.InvalidPath => .{ .code = "InvalidPath", .message = getSignErrorMessage(error.InvalidPath) },
-            error.InvalidEndpoint => .{ .code = "InvalidEndpoint", .message = getSignErrorMessage(error.InvalidEndpoint) },
-            else => .{ .code = "SignError", .message = getSignErrorMessage(error.SignError) },
+            error.MissingCredentials => .{ .code = "ERR_S3_MISSING_CREDENTIALS", .message = getSignErrorMessage(error.MissingCredentials) },
+            error.InvalidMethod => .{ .code = "ERR_S3_INVALID_METHOD", .message = getSignErrorMessage(error.InvalidMethod) },
+            error.InvalidPath => .{ .code = "ERR_S3_INVALID_PATH", .message = getSignErrorMessage(error.InvalidPath) },
+            error.InvalidEndpoint => .{ .code = "ERR_S3_INVALID_ENDPOINT", .message = getSignErrorMessage(error.InvalidEndpoint) },
+            error.InvalidSessionToken => .{ .code = "ERR_S3_INVALID_SESSION_TOKEN", .message = getSignErrorMessage(error.InvalidSessionToken) },
+            else => .{ .code = "ERR_S3_INVALID_SIGNATURE", .message = getSignErrorMessage(error.SignError) },
         };
     }
+
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
@@ -388,6 +534,9 @@ pub const AWSCredentials = struct {
         if (content_disposition != null and content_disposition.?.len == 0) {
             content_disposition = null;
         }
+        const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
+
+        const acl: ?[]const u8 = if (signOptions.acl) |acl_value| acl_value.toString() else null;
 
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
@@ -403,9 +552,13 @@ pub const AWSCredentials = struct {
 
         const region = if (this.region.len > 0) this.region else guessRegion(this.endpoint);
         var full_path = request_path;
+        // handle \\ on bucket name
         if (strings.startsWith(full_path, "/")) {
             full_path = full_path[1..];
+        } else if (strings.startsWith(full_path, "\\")) {
+            full_path = full_path[1..];
         }
+
         var path: []const u8 = full_path;
         var bucket: []const u8 = this.bucket;
 
@@ -414,25 +567,41 @@ pub const AWSCredentials = struct {
 
             // guess bucket using path
             if (strings.indexOf(full_path, "/")) |end| {
+                if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                    if (backslash_index < end) {
+                        bucket = full_path[0..backslash_index];
+                        path = full_path[backslash_index + 1 ..];
+                    }
+                }
                 bucket = full_path[0..end];
                 path = full_path[end + 1 ..];
+            } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                bucket = full_path[0..backslash_index];
+                path = full_path[backslash_index + 1 ..];
             } else {
                 return error.InvalidPath;
             }
         }
         if (strings.endsWith(path, "/")) {
             path = path[0..path.len];
+        } else if (strings.endsWith(path, "\\")) {
+            path = path[0 .. path.len - 1];
         }
         if (strings.startsWith(path, "/")) {
+            path = path[1..];
+        } else if (strings.startsWith(path, "\\")) {
             path = path[1..];
         }
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (path.len == 0) return error.InvalidPath;
 
-        var path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
-
-        const normalizedPath = std.fmt.bufPrint(&path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
+        var normalized_path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
+        var path_buffer: [1024]u8 = undefined;
+        var bucket_buffer: [63]u8 = undefined;
+        bucket = encodeURIComponent(bucket, &bucket_buffer, false) catch return error.InvalidPath;
+        path = encodeURIComponent(path, &path_buffer, false) catch return error.InvalidPath;
+        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -440,10 +609,34 @@ pub const AWSCredentials = struct {
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
-            if (content_disposition != null) {
-                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+            if (acl != null) {
+                if (content_disposition != null) {
+                    if (session_token != null) {
+                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                    }
+                } else {
+                    if (session_token != null) {
+                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                    }
+                }
             } else {
-                break :brk "host;x-amz-content-sha256;x-amz-date";
+                if (content_disposition != null) {
+                    if (session_token != null) {
+                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                    }
+                } else {
+                    if (session_token != null) {
+                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else {
+                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                    }
+                }
             }
         };
         // detect service name and host from region or endpoint
@@ -451,7 +644,7 @@ pub const AWSCredentials = struct {
         var encoded_host: []const u8 = "";
         const host = brk_host: {
             if (this.endpoint.len > 0) {
-                encoded_host = encodeURIComponent(this.endpoint, &encoded_host_buffer) catch return error.InvalidEndpoint;
+                encoded_host = encodeURIComponent(this.endpoint, &encoded_host_buffer, true) catch return error.InvalidEndpoint;
                 break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
             } else {
                 break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
@@ -462,7 +655,7 @@ pub const AWSCredentials = struct {
         errdefer bun.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
-        var tmp_buffer: [2048]u8 = undefined;
+        var tmp_buffer: [4096]u8 = undefined;
 
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
@@ -485,26 +678,93 @@ pub const AWSCredentials = struct {
                 break :brk_sign result;
             };
             if (signQuery) {
-                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                var token_encoded_buffer: [2048]u8 = undefined; // token is normaly like 600-700 but can be up to 2k
+                var encoded_session_token: ?[]const u8 = null;
+                if (session_token) |token| {
+                    encoded_session_token = encodeURIComponent(token, &token_encoded_buffer, true) catch return error.InvalidSessionToken;
+                }
+                const canonical = brk_canonical: {
+                    if (acl) |acl_value| {
+                        if (encoded_session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        }
+                    } else {
+                        if (encoded_session_token) |token| {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        } else {
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, if (encoded_host.len > 0) encoded_host else host, signed_headers, aws_content_hash });
+                        }
+                    }
+                };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
-                break :brk try std.fmt.allocPrint(
-                    bun.default_allocator,
-                    "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                    .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                );
+                if (acl) |acl_value| {
+                    if (encoded_session_token) |token| {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    } else {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    }
+                } else {
+                    if (encoded_session_token) |token| {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    } else {
+                        break :brk try std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "https://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                            .{ host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                        );
+                    }
+                }
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
-                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer) catch return error.ContentTypeIsTooLong else "";
+                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
-                    if (content_disposition != null) {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                    if (acl) |acl_value| {
+                        if (content_disposition != null) {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
+                        } else {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
+                        }
                     } else {
-                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                        if (content_disposition != null) {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
+                        } else {
+                            if (session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", if (encoded_host.len > 0) encoded_host else host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                            }
+                        }
                     }
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
@@ -531,61 +791,86 @@ pub const AWSCredentials = struct {
                 .amz_date = "",
                 .host = "",
                 .authorization = "",
+                .acl = signOptions.acl,
                 .url = authorization,
-                .content_disposition = "",
-                ._headers = .{
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                    .{ .name = "", .value = "" },
-                },
-                ._headers_len = 0,
             };
         }
 
-        if (content_disposition) |cd| {
-            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
-            return SignResult{
-                .amz_date = amz_date,
-                .host = host,
-                .authorization = authorization,
-                .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-                .content_disposition = content_disposition_value,
-                ._headers = .{
-                    .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                    .{ .name = "x-amz-date", .value = amz_date },
-                    .{ .name = "Authorization", .value = authorization[0..] },
-                    .{ .name = "Host", .value = host },
-                    .{ .name = "Content-Disposition", .value = content_disposition_value },
-                },
-                ._headers_len = 5,
-            };
-        }
-        return SignResult{
+        var result = SignResult{
             .amz_date = amz_date,
             .host = host,
             .authorization = authorization,
+            .acl = signOptions.acl,
             .url = try std.fmt.allocPrint(bun.default_allocator, "https://{s}{s}{s}", .{ host, normalizedPath, if (search_params) |s| s else "" }),
-            .content_disposition = "",
-            ._headers = .{
+            ._headers = [_]picohttp.Header{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = authorization[0..] },
                 .{ .name = "Host", .value = host },
                 .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
             },
             ._headers_len = 4,
         };
+
+        if (acl) |acl_value| {
+            result._headers[result._headers_len] = .{ .name = "x-amz-acl", .value = acl_value };
+            result._headers_len += 1;
+        }
+
+        if (session_token) |token| {
+            const session_token_value = bun.default_allocator.dupe(u8, token) catch bun.outOfMemory();
+            result.session_token = session_token_value;
+            result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
+            result._headers_len += 1;
+        }
+
+        if (content_disposition) |cd| {
+            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            result.content_disposition = content_disposition_value;
+            result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
+            result._headers_len += 1;
+        }
+
+        return result;
     }
+    const JSS3Error = extern struct {
+        code: bun.String = bun.String.empty,
+        message: bun.String = bun.String.empty,
+        path: bun.String = bun.String.empty,
+
+        pub fn init(code: []const u8, message: []const u8, path: ?[]const u8) @This() {
+            return .{
+                // lets make sure we can reuse code and message and keep it service independent
+                .code = bun.String.createAtomIfPossible(code),
+                .message = bun.String.createAtomIfPossible(message),
+                .path = if (path) |p| bun.String.init(p) else bun.String.empty,
+            };
+        }
+
+        pub fn deinit(this: *const @This()) void {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+        }
+
+        pub fn toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) JSC.JSValue {
+            defer this.deinit();
+
+            return S3Error__toErrorInstance(this, global);
+        }
+        extern fn S3Error__toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
+    };
+
     pub const S3Error = struct {
         code: []const u8,
         message: []const u8,
 
-        pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            const js_err = globalObject.createErrorInstance("{s}", .{err.message});
-            js_err.put(globalObject, JSC.ZigString.static("code"), JSC.ZigString.init(err.code).toJS(globalObject));
-            return js_err;
+        pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject, path: ?[]const u8) JSC.JSValue {
+            const value = JSS3Error.init(err.code, err.message, path).toErrorInstance(globalObject);
+            bun.assert(!globalObject.hasException());
+            return value;
         }
     };
     pub const S3StatResult = union(enum) {
@@ -594,7 +879,7 @@ pub const AWSCredentials = struct {
             /// etag is not owned and need to be copied if used after this callback
             etag: []const u8 = "",
         },
-        not_found: void,
+        not_found: S3Error,
 
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
@@ -606,7 +891,7 @@ pub const AWSCredentials = struct {
             /// body is owned and dont need to be copied, but dont forget to free it
             body: bun.MutableString,
         },
-        not_found: void,
+        not_found: S3Error,
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
     };
@@ -617,7 +902,7 @@ pub const AWSCredentials = struct {
     };
     pub const S3DeleteResult = union(enum) {
         success: void,
-        not_found: void,
+        not_found: S3Error,
 
         /// failure error is not owned and need to be copied if used after this callback
         failure: S3Error,
@@ -678,6 +963,20 @@ pub const AWSCredentials = struct {
                     }, context),
                 }
             }
+            pub fn notFound(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) void {
+                switch (this) {
+                    inline .download,
+                    .stat,
+                    .delete,
+                    => |callback| callback(.{
+                        .not_found = .{
+                            .code = code,
+                            .message = message,
+                        },
+                    }, context),
+                    else => this.fail(code, message, context),
+                }
+            }
         };
         pub fn deinit(this: *@This()) void {
             if (this.result.certificate_info) |*certificate| {
@@ -697,11 +996,17 @@ pub const AWSCredentials = struct {
             this.destroy();
         }
 
-        fn fail(this: *@This()) void {
+        const ErrorType = enum {
+            not_found,
+            failure,
+        };
+        fn errorWithBody(this: @This(), comptime error_type: ErrorType) void {
             var code: []const u8 = "UnknownError";
             var message: []const u8 = "an unexpected error has occurred";
+            var has_error_code = false;
             if (this.result.fail) |err| {
                 code = @errorName(err);
+                has_error_code = true;
             } else if (this.result.body) |body| {
                 const bytes = body.list.items;
                 if (bytes.len > 0) {
@@ -709,6 +1014,7 @@ pub const AWSCredentials = struct {
                     if (strings.indexOf(bytes, "<Code>")) |start| {
                         if (strings.indexOf(bytes, "</Code>")) |end| {
                             code = bytes[start + "<Code>".len .. end];
+                            has_error_code = true;
                         }
                     }
                     if (strings.indexOf(bytes, "<Message>")) |start| {
@@ -718,7 +1024,16 @@ pub const AWSCredentials = struct {
                     }
                 }
             }
-            this.callback.fail(code, message, this.callback_context);
+
+            if (error_type == .not_found) {
+                if (!has_error_code) {
+                    code = "NoSuchKey";
+                    message = "The specified key does not exist.";
+                }
+                this.callback.notFound(code, message, this.callback_context);
+            } else {
+                this.callback.fail(code, message, this.callback_context);
+            }
         }
 
         fn failIfContainsError(this: *@This(), status: u32) bool {
@@ -759,7 +1074,7 @@ pub const AWSCredentials = struct {
         pub fn onResponse(this: *@This()) void {
             defer this.deinit();
             if (!this.result.isSuccess()) {
-                this.fail();
+                this.errorWithBody(.failure);
                 return;
             }
             bun.assert(this.result.metadata != null);
@@ -767,9 +1082,6 @@ pub const AWSCredentials = struct {
             switch (this.callback) {
                 .stat => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200 => {
                             callback(.{
                                 .success = .{
@@ -778,21 +1090,24 @@ pub const AWSCredentials = struct {
                                 },
                             }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
                 .delete => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200, 204 => {
                             callback(.{ .success = {} }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
@@ -802,15 +1117,12 @@ pub const AWSCredentials = struct {
                             callback(.{ .success = {} }, this.callback_context);
                         },
                         else => {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
                 .download => |callback| {
                     switch (response.status_code) {
-                        404 => {
-                            callback(.{ .not_found = {} }, this.callback_context);
-                        },
                         200, 204, 206 => {
                             const body = this.response_buffer;
                             this.response_buffer = .{
@@ -827,9 +1139,12 @@ pub const AWSCredentials = struct {
                                 },
                             }, this.callback_context);
                         },
+                        404 => {
+                            this.errorWithBody(.not_found);
+                        },
                         else => {
                             //error
-                            this.fail();
+                            this.errorWithBody(.failure);
                         },
                     }
                 },
@@ -844,7 +1159,7 @@ pub const AWSCredentials = struct {
                         if (response.headers.get("etag")) |etag| {
                             callback(.{ .etag = etag }, this.callback_context);
                         } else {
-                            this.fail();
+                            this.errorWithBody(.failure);
                         }
                     }
                 },
@@ -978,14 +1293,7 @@ pub const AWSCredentials = struct {
                                 }
                             }
                         }
-                        if (state.status_code == 404) {
-                            if (!has_body_code) {
-                                code = "FileNotFound";
-                            }
-                            if (!has_body_message) {
-                                message = "File not found";
-                            }
-                        }
+
                         err = .{
                             .code = code,
                             .message = message,
@@ -1085,6 +1393,7 @@ pub const AWSCredentials = struct {
         body: []const u8,
         proxy_url: ?[]const u8 = null,
         range: ?[]const u8 = null,
+        acl: ?ACL = null,
     };
 
     pub fn executeSimpleS3Request(
@@ -1098,6 +1407,7 @@ pub const AWSCredentials = struct {
             .method = options.method,
             .search_params = options.search_params,
             .content_disposition = options.content_disposition,
+            .acl = options.acl,
         }, null) catch |sign_err| {
             if (options.range) |range_| bun.default_allocator.free(range_);
             const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
@@ -1106,40 +1416,15 @@ pub const AWSCredentials = struct {
         };
 
         const headers = brk: {
+            var header_buffer: [10]picohttp.Header = undefined;
             if (options.range) |range_| {
-                const _headers = result.headers();
-                var headersWithRange: [5]picohttp.Header = .{
-                    _headers[0],
-                    _headers[1],
-                    _headers[2],
-                    _headers[3],
-                    .{ .name = "range", .value = range_ },
-                };
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
             } else {
                 if (options.content_type) |content_type| {
                     if (content_type.len > 0) {
-                        const _headers = result.headers();
-                        if (_headers.len > 4) {
-                            var headersWithContentType: [6]picohttp.Header = .{
-                                _headers[0],
-                                _headers[1],
-                                _headers[2],
-                                _headers[3],
-                                _headers[4],
-                                .{ .name = "Content-Type", .value = content_type },
-                            };
-                            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
-                        }
-
-                        var headersWithContentType: [5]picohttp.Header = .{
-                            _headers[0],
-                            _headers[1],
-                            _headers[2],
-                            _headers[3],
-                            .{ .name = "Content-Type", .value = content_type },
-                        };
-                        break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithContentType, bun.default_allocator) catch bun.outOfMemory();
+                        const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = content_type });
+                        break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
                     }
                 }
 
@@ -1252,17 +1537,11 @@ pub const AWSCredentials = struct {
             return;
         };
 
+        var header_buffer: [10]picohttp.Header = undefined;
         const headers = brk: {
             if (range) |range_| {
-                const _headers = result.headers();
-                var headersWithRange: [5]picohttp.Header = .{
-                    _headers[0],
-                    _headers[1],
-                    _headers[2],
-                    _headers[3],
-                    .{ .name = "range", .value = range_ },
-                };
-                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(&headersWithRange, bun.default_allocator) catch bun.outOfMemory();
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
             } else {
                 break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
             }
@@ -1328,12 +1607,14 @@ pub const AWSCredentials = struct {
                 .ptr = .{ .Bytes = &reader.context },
                 .value = readable_value,
             }, globalThis),
+            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         }));
         return readable_value;
     }
 
     const S3DownloadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        path: []const u8,
         pub usingnamespace bun.New(@This());
 
         pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?S3Error, this: *@This()) void {
@@ -1348,7 +1629,7 @@ pub const AWSCredentials = struct {
 
                         readable.ptr.Bytes.onData(
                             .{
-                                .err = .{ .JSValue = err.toJS(globalThis) },
+                                .err = .{ .JSValue = err.toJS(globalThis, this.path) },
                             },
                             bun.default_allocator,
                         );
@@ -1381,6 +1662,7 @@ pub const AWSCredentials = struct {
 
         pub fn deinit(this: *@This()) void {
             this.readable_stream_ref.deinit();
+            bun.default_allocator.free(this.path);
             this.destroy();
         }
     };
@@ -1394,37 +1676,41 @@ pub const AWSCredentials = struct {
         }, .{ .delete = callback }, callback_context);
     }
 
-    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
+    pub fn s3Upload(this: *const @This(), path: []const u8, content: []const u8, content_type: ?[]const u8, acl: ?ACL, proxy_url: ?[]const u8, callback: *const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) void {
         this.executeSimpleS3Request(.{
             .path = path,
             .method = .PUT,
             .proxy_url = proxy_url,
             .body = content,
             .content_type = content_type,
+            .acl = acl,
         }, .{ .upload = callback }, callback_context);
     }
 
     const S3UploadStreamWrapper = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
-        sink: *JSC.WebCore.FetchTaskletChunkedRequestSink,
+        sink: *JSC.WebCore.NetworkSink,
+        task: *MultiPartUpload,
         callback: ?*const fn (S3UploadResult, *anyopaque) void,
         callback_context: *anyopaque,
         ref_count: u32 = 1,
+        path: []const u8, // this is owned by the task not by the wrapper
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
         pub fn resolve(result: S3UploadResult, self: *@This()) void {
             const sink = self.sink;
             defer self.deref();
-
-            if (sink.endPromise.globalObject()) |globalObject| {
-                switch (result) {
-                    .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
-                    .failure => |err| {
-                        if (!sink.done) {
-                            sink.abort();
-                            return;
-                        }
-                        sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
-                    },
+            if (sink.endPromise.hasValue()) {
+                if (sink.endPromise.globalObject()) |globalObject| {
+                    switch (result) {
+                        .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
+                        .failure => |err| {
+                            if (!sink.done) {
+                                sink.abort();
+                                return;
+                            }
+                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, self.path));
+                        },
+                    }
                 }
             }
             if (self.callback) |callback| {
@@ -1436,6 +1722,7 @@ pub const AWSCredentials = struct {
             self.readable_stream_ref.deinit();
             self.sink.finalize();
             self.sink.destroy();
+            self.task.deref();
             self.destroy();
         }
     };
@@ -1443,13 +1730,12 @@ pub const AWSCredentials = struct {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
-        if (this.sink.endPromise.hasValue()) {
-            this.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
-        }
+
         if (this.readable_stream_ref.get()) |stream| {
             stream.done(globalThis);
         }
         this.readable_stream_ref.deinit();
+        this.task.continueStream();
 
         return .undefined;
     }
@@ -1458,6 +1744,7 @@ pub const AWSCredentials = struct {
         const args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
         defer this.deref();
+
         const err = args.ptr[0];
         if (this.sink.endPromise.hasValue()) {
             this.sink.endPromise.rejectOnNextTick(globalThis, err);
@@ -1475,6 +1762,8 @@ pub const AWSCredentials = struct {
                 });
             }
         }
+        this.task.continueStream();
+
         return .undefined;
     }
     pub const shim = JSC.Shimmer("Bun", "S3UploadStream", @This());
@@ -1491,9 +1780,33 @@ pub const AWSCredentials = struct {
     }
 
     /// consumes the readable stream and upload to s3
-    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
+    pub fn s3UploadStream(this: *@This(), path: []const u8, readable_stream: JSC.WebCore.ReadableStream, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, acl: ?ACL, content_type: ?[]const u8, proxy: ?[]const u8, callback: ?*const fn (S3UploadResult, *anyopaque) void, callback_context: *anyopaque) JSC.JSValue {
         this.ref(); // ref the credentials
         const proxy_url = (proxy orelse "");
+
+        if (readable_stream.isDisturbed(globalThis)) {
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        }
+
+        switch (readable_stream.ptr) {
+            .Invalid => {
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            },
+            inline .File, .Bytes => |stream| {
+                if (stream.pending.result == .err) {
+                    // we got an error, fail early
+                    const err = stream.pending.result.err;
+                    stream.pending = .{ .result = .{ .done = {} } };
+                    const js_err, const was_strong = err.toJSWeak(globalThis);
+                    if (was_strong == .Strong) {
+                        js_err.unprotect();
+                    }
+                    js_err.ensureStillAlive();
+                    return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                }
+            },
+            else => {},
+        }
 
         const task = MultiPartUpload.new(.{
             .credentials = this,
@@ -1503,32 +1816,42 @@ pub const AWSCredentials = struct {
             .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
             .callback_context = undefined,
             .globalThis = globalThis,
+            .state = .wait_stream_check,
             .options = options,
+            .acl = acl,
             .vm = JSC.VirtualMachine.get(),
         });
 
         task.poll_ref.ref(task.vm);
 
-        task.ref(); // + 1 for the stream
+        task.ref(); // + 1 for the stream sink
 
-        var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
+        var response_stream = JSC.WebCore.NetworkSink.new(.{
             .task = .{ .s3_upload = task },
             .buffer = .{},
             .globalThis = globalThis,
             .encoded = false,
             .endPromise = JSC.JSPromise.Strong.init(globalThis),
         }).toSink();
+        task.ref(); // + 1 for the stream wrapper
+
         const endPromise = response_stream.sink.endPromise.value();
         const ctx = S3UploadStreamWrapper.new(.{
             .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
             .sink = &response_stream.sink,
             .callback = callback,
             .callback_context = callback_context,
+            .path = task.path,
+            .task = task,
         });
         task.callback_context = @ptrCast(ctx);
+        // keep the task alive until we are done configuring the signal
+        task.ref();
+        defer task.deref();
+
         var signal = &response_stream.sink.signal;
 
-        signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
+        signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1536,7 +1859,7 @@ pub const AWSCredentials = struct {
         bun.assert(signal.isDead());
 
         // We are already corked!
-        const assignment_result: JSC.JSValue = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.assignToStream(
+        const assignment_result: JSC.JSValue = JSC.WebCore.NetworkSink.JSSink.assignToStream(
             globalThis,
             readable_stream.value,
             response_stream,
@@ -1549,14 +1872,15 @@ pub const AWSCredentials = struct {
         bun.assert(!signal.isDead());
 
         if (assignment_result.toError()) |err| {
-            readable_stream.cancel(globalThis);
             if (response_stream.sink.endPromise.hasValue()) {
                 response_stream.sink.endPromise.rejectOnNextTick(globalThis, err);
             }
+
             task.fail(.{
                 .code = "UnknownError",
                 .message = "ReadableStream ended with an error",
             });
+            readable_stream.cancel(globalThis);
             return endPromise;
         }
 
@@ -1568,40 +1892,54 @@ pub const AWSCredentials = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status(globalThis.vm())) {
                     .pending => {
+                        // if we eended and its not canceled the promise is the endPromise
+                        // because assignToStream can return the sink.end() promise
+                        // we set the endPromise in the NetworkSink so we need to resolve it
+                        if (response_stream.sink.ended and !response_stream.sink.cancel) {
+                            task.continueStream();
+
+                            readable_stream.done(globalThis);
+                            return endPromise;
+                        }
                         ctx.ref();
+
                         assignment_result.then(
                             globalThis,
                             task.callback_context,
                             onUploadStreamResolveRequestStream,
                             onUploadStreamRejectRequestStream,
                         );
+                        // we need to wait the promise to resolve because can be an error/cancel here
+                        if (!task.ended)
+                            task.continueStream();
                     },
                     .fulfilled => {
+                        task.continueStream();
+
                         readable_stream.done(globalThis);
-                        if (response_stream.sink.endPromise.hasValue()) {
-                            response_stream.sink.endPromise.resolve(globalThis, JSC.jsNumber(0));
-                        }
                     },
                     .rejected => {
-                        readable_stream.cancel(globalThis);
                         if (response_stream.sink.endPromise.hasValue()) {
                             response_stream.sink.endPromise.rejectOnNextTick(globalThis, promise.result(globalThis.vm()));
                         }
+
                         task.fail(.{
                             .code = "UnknownError",
                             .message = "ReadableStream ended with an error",
                         });
+                        readable_stream.cancel(globalThis);
                     },
                 }
             } else {
-                readable_stream.cancel(globalThis);
                 if (response_stream.sink.endPromise.hasValue()) {
                     response_stream.sink.endPromise.rejectOnNextTick(globalThis, assignment_result);
                 }
+
                 task.fail(.{
                     .code = "UnknownError",
                     .message = "ReadableStream ended with an error",
                 });
+                readable_stream.cancel(globalThis);
             }
         }
         return endPromise;
@@ -1609,23 +1947,25 @@ pub const AWSCredentials = struct {
     /// returns a writable stream that writes to the s3 path
     pub fn s3WritableStream(this: *@This(), path: []const u8, globalThis: *JSC.JSGlobalObject, options: MultiPartUpload.MultiPartUploadOptions, content_type: ?[]const u8, proxy: ?[]const u8) bun.JSError!JSC.JSValue {
         const Wrapper = struct {
-            pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.FetchTaskletChunkedRequestSink) void {
-                if (sink.endPromise.globalObject()) |globalObject| {
-                    const event_loop = globalObject.bunVM().eventLoop();
-                    event_loop.enter();
-                    defer event_loop.exit();
-                    switch (result) {
-                        .success => {
-                            sink.endPromise.resolve(globalObject, JSC.jsNumber(0));
-                        },
-                        .failure => |err| {
-                            if (!sink.done) {
-                                sink.abort();
-                                return;
-                            }
+            pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
+                if (sink.endPromise.hasValue()) {
+                    if (sink.endPromise.globalObject()) |globalObject| {
+                        const event_loop = globalObject.bunVM().eventLoop();
+                        event_loop.enter();
+                        defer event_loop.exit();
+                        switch (result) {
+                            .success => {
+                                sink.endPromise.resolve(globalObject, JSC.jsNumber(0));
+                            },
+                            .failure => |err| {
+                                if (!sink.done) {
+                                    sink.abort();
+                                    return;
+                                }
 
-                            sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject));
-                        },
+                                sink.endPromise.rejectOnNextTick(globalObject, err.toJS(globalObject, sink.path()));
+                            },
+                        }
                     }
                 }
                 sink.finalize();
@@ -1649,7 +1989,7 @@ pub const AWSCredentials = struct {
         task.poll_ref.ref(task.vm);
 
         task.ref(); // + 1 for the stream
-        var response_stream = JSC.WebCore.FetchTaskletChunkedRequestSink.new(.{
+        var response_stream = JSC.WebCore.NetworkSink.new(.{
             .task = .{ .s3_upload = task },
             .buffer = .{},
             .globalThis = globalThis,
@@ -1660,7 +2000,7 @@ pub const AWSCredentials = struct {
         task.callback_context = @ptrCast(response_stream);
         var signal = &response_stream.sink.signal;
 
-        signal.* = JSC.WebCore.FetchTaskletChunkedRequestSink.JSSink.SinkSignal.init(.zero);
+        signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1686,6 +2026,7 @@ pub const MultiPartUpload = struct {
     ended: bool = false,
 
     options: MultiPartUploadOptions = .{},
+    acl: ?ACL = null,
     credentials: *AWSCredentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *JSC.VirtualMachine,
@@ -1704,6 +2045,7 @@ pub const MultiPartUpload = struct {
     multipart_upload_list: bun.ByteList = .{},
 
     state: enum {
+        wait_stream_check,
         not_started,
         multipart_started,
         multipart_completed,
@@ -1756,7 +2098,7 @@ pub const MultiPartUpload = struct {
         }
 
         pub fn onPartResponse(result: AWS.S3PartResult, this: *@This()) void {
-            if (this.state == .canceled) {
+            if (this.state == .canceled or this.ctx.state == .finished) {
                 log("onPartResponse {} canceled", .{this.partNumber});
                 if (this.owns_data) bun.default_allocator.free(this.data);
                 this.ctx.deref();
@@ -1814,7 +2156,7 @@ pub const MultiPartUpload = struct {
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) void {
-            if (this.state != .pending or this.ctx.state != .multipart_completed) return;
+            if (this.state != .pending or this.ctx.state != .multipart_completed or this.ctx.state == .finished) return;
             this.ctx.ref();
             this.state = .started;
             this.perform();
@@ -1860,11 +2202,14 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn singleSendUploadResponse(result: AWS.S3UploadResult, this: *@This()) void {
+        defer this.deref();
+        if (this.state == .finished) return;
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
                     log("singleSendUploadResponse {} retry", .{this.options.retry});
                     this.options.retry -= 1;
+                    this.ref();
                     // retry failed
                     this.credentials.executeSimpleS3Request(.{
                         .path = this.path,
@@ -1872,6 +2217,7 @@ pub const MultiPartUpload = struct {
                         .proxy_url = this.proxyUrl(),
                         .body = this.buffered.items,
                         .content_type = this.content_type,
+                        .acl = this.acl,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -1925,6 +2271,9 @@ pub const MultiPartUpload = struct {
     }
 
     fn drainEnqueuedParts(this: *@This()) void {
+        if (this.state == .finished) {
+            return;
+        }
         // check pending to start or transformed buffered ones into tasks
         if (this.state == .multipart_completed) {
             for (this.queue.items) |*part| {
@@ -1946,13 +2295,16 @@ pub const MultiPartUpload = struct {
     }
     pub fn fail(this: *@This(), _err: AWS.S3Error) void {
         log("fail {s}:{s}", .{ _err.code, _err.message });
+        this.ended = true;
         for (this.queue.items) |*task| {
             task.cancel();
         }
         if (this.state != .finished) {
-            this.callback(.{ .failure = _err }, this.callback_context);
+            const old_state = this.state;
             this.state = .finished;
-            if (this.state == .multipart_completed) {
+            this.callback(.{ .failure = _err }, this.callback_context);
+
+            if (old_state == .multipart_completed) {
                 // will deref after rollback
                 this.rollbackMultiPartRequest();
             } else {
@@ -1984,6 +2336,8 @@ pub const MultiPartUpload = struct {
         }
     }
     pub fn startMultiPartRequestResult(result: AWS.S3DownloadResult, this: *@This()) void {
+        defer this.deref();
+        if (this.state == .finished) return;
         switch (result) {
             .failure => |err| {
                 log("startMultiPartRequestResult {s} failed {s}: {s}", .{ this.path, err.message, err.message });
@@ -2021,6 +2375,7 @@ pub const MultiPartUpload = struct {
 
     pub fn onCommitMultiPartRequest(result: AWS.S3CommitResult, this: *@This()) void {
         log("onCommitMultiPartRequest {s}", .{this.upload_id});
+
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
@@ -2094,6 +2449,7 @@ pub const MultiPartUpload = struct {
         if (this.state == .not_started) {
             // will auto start later
             this.state = .multipart_started;
+            this.ref();
             this.credentials.executeSimpleS3Request(.{
                 .path = this.path,
                 .method = .POST,
@@ -2101,6 +2457,7 @@ pub const MultiPartUpload = struct {
                 .body = "",
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
+                .acl = this.acl,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             part.start();
@@ -2138,6 +2495,7 @@ pub const MultiPartUpload = struct {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
             log("processBuffered {s} singlefile_started", .{this.path});
             this.state = .singlefile_started;
+            this.ref();
             // we can do only 1 request
             this.credentials.executeSimpleS3Request(.{
                 .path = this.path,
@@ -2145,6 +2503,7 @@ pub const MultiPartUpload = struct {
                 .proxy_url = this.proxyUrl(),
                 .body = this.buffered.items,
                 .content_type = this.content_type,
+                .acl = this.acl,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
         } else {
             // we need to split
@@ -2156,9 +2515,22 @@ pub const MultiPartUpload = struct {
         return this.options.partSize * OneMiB;
     }
 
+    pub fn continueStream(this: *@This()) void {
+        if (this.state == .wait_stream_check) {
+            this.state = .not_started;
+            if (this.ended) {
+                this.processBuffered(this.partSizeInBytes());
+            }
+        }
+    }
+
     pub fn sendRequestData(this: *@This(), chunk: []const u8, is_last: bool) void {
         if (this.ended) return;
-
+        if (this.state == .wait_stream_check and chunk.len == 0 and is_last) {
+            // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
+            this.ended = true;
+            return;
+        }
         if (is_last) {
             this.ended = true;
             if (chunk.len > 0) {

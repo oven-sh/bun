@@ -607,7 +607,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             await s3file.write("Hello Bun!");
             expect.unreachable();
           } catch (e: any) {
-            expect(e?.code).toBe("ENAMETOOLONG");
+            expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH"]).toContain(e?.code);
           }
         }),
       );

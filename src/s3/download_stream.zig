@@ -46,7 +46,7 @@ pub const S3HttpDownloadStreamingTask = struct {
         pub const AtomicType = std.atomic.Value(u64);
         status_code: u32 = 0,
         request_error: u16 = 0,
-        has_more: bool = false,
+        has_more: bool = true,
         _reserved: u15 = 0,
     };
 

@@ -2423,8 +2423,12 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
     }
 
     if (comptime Environment.isPosix) {
-        // chmod 777 on posix
-        switch (bun.sys.fchmod(file.handle, 0o777)) {
+        // chmod 755 for binary, 644 for plaintext
+        var filemode: bun.Mode = 0o755;
+        if (save_format == .text) {
+            filemode = 0o644;
+        }
+        switch (bun.sys.fchmod(file.handle, filemode)) {
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);

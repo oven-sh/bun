@@ -706,9 +706,9 @@ pub const FFI = struct {
         if (try object.getTruthy(globalThis, "define")) |define_value| {
             if (define_value.isObject()) {
                 const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
-                var iter = Iter.init(globalThis, define_value);
+                var iter = try Iter.init(globalThis, define_value);
                 defer iter.deinit();
-                while (iter.next()) |entry| {
+                while (try iter.next()) |entry| {
                     const key = entry.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
                     var owned_value: [:0]const u8 = "";
                     if (iter.value != .zero and iter.value != .undefined) {
@@ -1421,7 +1421,7 @@ pub const FFI = struct {
         JSC.markBinding(@src());
         const allocator = VirtualMachine.get().allocator;
 
-        var symbols_iter = JSC.JSPropertyIterator(.{
+        var symbols_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
 
             .include_value = true,
@@ -1430,7 +1430,7 @@ pub const FFI = struct {
 
         try symbols.ensureTotalCapacity(allocator, symbols_iter.len);
 
-        while (symbols_iter.next()) |prop| {
+        while (try symbols_iter.next()) |prop| {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {

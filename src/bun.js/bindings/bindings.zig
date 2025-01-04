@@ -4497,7 +4497,7 @@ pub const JSValue = enum(i64) {
             .quote_strings = true,
         };
 
-        JestPrettyFormat.format(
+        try JestPrettyFormat.format(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),

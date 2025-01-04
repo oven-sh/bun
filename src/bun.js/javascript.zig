@@ -3962,11 +3962,11 @@ pub const VirtualMachine = struct {
                     .observable = false,
                     .only_non_index_properties = true,
                 });
-                var iterator = Iterator.init(this.global, error_instance);
+                var iterator = try Iterator.init(this.global, error_instance);
                 defer iterator.deinit();
                 const longest_name = @min(iterator.getLongestPropertyName(), 10);
                 var is_first_property = true;
-                while (iterator.next() orelse iterator.getCodeProperty()) |field| {
+                while ((try iterator.next()) orelse iterator.getCodeProperty()) |field| {
                     const value = iterator.value;
                     if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
                         continue;

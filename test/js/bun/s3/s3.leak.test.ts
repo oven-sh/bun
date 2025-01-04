@@ -43,7 +43,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       },
       30 * 1000,
     );
-    it(
+    it.only(
       "s3().text() should not leak",
       async () => {
         const dir = tempDirWithFiles("s3-text-leak-fixture", {

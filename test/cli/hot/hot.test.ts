@@ -445,12 +445,12 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     outer: for await (const chunk of runner.stderr) {
       str += new TextDecoder().decode(chunk);
       var any = false;
-      if (!/Error: .*[0-9]\n.*?\n/g.test(str)) continue;
+      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("Error:")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -458,11 +458,11 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           break;
         }
 
-        if (line.includes(`Error: ${reloadCounter - 1}`)) {
+        if (line.includes(`error: ${reloadCounter - 1}`)) {
           onReload(); // re-save file to prevent deadlock
           continue outer;
         }
-        expect(line).toContain(`Error: ${reloadCounter}`);
+        expect(line).toContain(`error: ${reloadCounter}`);
         reloadCounter++;
 
         let next = it.shift()!;
@@ -525,12 +525,12 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     outer: for await (const chunk of runner.stderr) {
       str += new TextDecoder().decode(chunk);
       var any = false;
-      if (!/Error: .*[0-9]\n.*?\n/g.test(str)) continue;
+      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("Error:")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -538,11 +538,11 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           break;
         }
 
-        if (line.includes(`Error: ${reloadCounter - 1}`)) {
+        if (line.includes(`error: ${reloadCounter - 1}`)) {
           onReload(); // re-save file to prevent deadlock
           continue outer;
         }
-        expect(line).toContain(`Error: ${reloadCounter}`);
+        expect(line).toContain(`error: ${reloadCounter}`);
         reloadCounter++;
 
         let next = it.shift()!;
@@ -623,12 +623,12 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     outer: for await (const chunk of runner.stderr) {
       str += new TextDecoder().decode(chunk);
       var any = false;
-      if (!/Error: .*[0-9]\n.*?\n/g.test(str)) continue;
+      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("Error:")) continue;
+        if (!line.includes("error:")) continue;
         let rssMatch = str.match(/RSS: (\d+(\.\d+)?)\n/);
         let rss;
         if (rssMatch) rss = Number(rssMatch[1]);
@@ -644,11 +644,11 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           break;
         }
 
-        if (line.includes(`Error: ${reloadCounter - 1}`)) {
+        if (line.includes(`error: ${reloadCounter - 1}`)) {
           onReload(); // re-save file to prevent deadlock
           continue outer;
         }
-        expect(line).toContain(`Error: ${reloadCounter}`);
+        expect(line).toContain(`error: ${reloadCounter}`);
 
         reloadCounter++;
         let next = it.shift()!;

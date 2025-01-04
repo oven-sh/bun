@@ -964,7 +964,7 @@ pub const WTFTimer = struct {
 
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
         // There's only one of these.
-        this.imminent.store(if (seconds == 0) null else this, .monotonic);
+        this.imminent.store(if (seconds == 0) this else null, .monotonic);
 
         if (seconds == 0.0) {
             return;

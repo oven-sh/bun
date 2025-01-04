@@ -197,7 +197,7 @@ pub const S3HttpDownloadStreamingTask = struct {
 
     /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
     fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
-        // lets lock and unlock to be safe we now the state is not in the middle of a callback
+        // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         this.reported_response_lock.lock();
         defer this.reported_response_lock.unlock();
 

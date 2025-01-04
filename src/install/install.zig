@@ -15049,7 +15049,7 @@ pub const PackageManager = struct {
                 }
 
                 var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
-                break :abs_root_path abs_path[Path.windowsVolumeNameLen(abs_path)[0]..];
+                break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
             };
 
             for (workspace_filters.items) |filter| {

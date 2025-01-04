@@ -75,6 +75,15 @@ class Query extends PublicPromise {
   [_handler];
   [_queryStatus] = 0;
 
+  [Symbol.for("nodejs.util.inspect.custom")]() {
+    const status = this[_queryStatus];
+    const active = (status & QueryStatus.active) != 0;
+    const cancelled = (status & QueryStatus.cancelled) != 0;
+    const executed = (status & QueryStatus.executed) != 0;
+    const error = (status & QueryStatus.error) != 0;
+    return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
+  }
+
   constructor(handle, handler) {
     var resolve_, reject_;
     super((resolve, reject) => {
@@ -182,7 +191,7 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function (query, result, commandTag, count) {
+  function onResolvePostgresQuery(query, result, commandTag, count, queries) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
@@ -194,18 +203,48 @@ init(
 
     result.count = count || 0;
 
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.resolve(result);
     } catch (e) {}
   },
-  function (query, reject) {
+  function onRejectPostgresQuery(query, reject, queries) {
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.reject(reject);
     } catch (e) {}
   },
 );
 
-function createConnection({ hostname, port, username, password, tls, query, database, sslMode }, onConnected, onClose) {
+function createConnection(
+  {
+    hostname,
+    port,
+    username,
+    password,
+    tls,
+    query,
+    database,
+    sslMode,
+    idleTimeout = 0,
+    connectionTimeout = 30 * 1000,
+    maxLifetime = 0,
+  },
+  onConnected,
+  onClose,
+) {
   return _createConnection(
     hostname,
     Number(port),
@@ -221,6 +260,9 @@ function createConnection({ hostname, port, username, password, tls, query, data
     query || "",
     onConnected,
     onClose,
+    idleTimeout,
+    connectionTimeout,
+    maxLifetime,
   );
 }
 
@@ -312,7 +354,20 @@ class SQLArrayParameter {
 }
 
 function loadOptions(o) {
-  var hostname, port, username, password, database, tls, url, query, adapter;
+  var hostname,
+    port,
+    username,
+    password,
+    database,
+    tls,
+    url,
+    query,
+    adapter,
+    idleTimeout,
+    connectionTimeout,
+    maxLifetime,
+    onconnect,
+    onclose;
   const env = Bun.env;
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -375,6 +430,48 @@ function loadOptions(o) {
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
 
+  idleTimeout ??= o.idleTimeout;
+  idleTimeout ??= o.idle_timeout;
+  connectionTimeout ??= o.connectionTimeout;
+  connectionTimeout ??= o.connection_timeout;
+  maxLifetime ??= o.maxLifetime;
+  maxLifetime ??= o.max_lifetime;
+
+  onconnect ??= o.onconnect;
+  onclose ??= o.onclose;
+  if (onconnect !== undefined) {
+    if (!$isCallable(onconnect)) {
+      throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
+    }
+  }
+
+  if (onclose !== undefined) {
+    if (!$isCallable(onclose)) {
+      throw $ERR_INVALID_ARG_TYPE("onclose", "function", onclose);
+    }
+  }
+
+  if (idleTimeout != null) {
+    idleTimeout = Number(idleTimeout);
+    if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
+      throw $ERR_INVALID_ARG_VALUE("idle_timeout must be a non-negative integer less than 2^31");
+    }
+  }
+
+  if (connectionTimeout != null) {
+    connectionTimeout = Number(connectionTimeout);
+    if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
+      throw $ERR_INVALID_ARG_VALUE("connection_timeout must be a non-negative integer less than 2^31");
+    }
+  }
+
+  if (maxLifetime != null) {
+    maxLifetime = Number(maxLifetime);
+    if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
+      throw $ERR_INVALID_ARG_VALUE("max_lifetime must be a non-negative integer less than 2^31");
+    }
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = {
@@ -398,7 +495,23 @@ function loadOptions(o) {
     throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
 
-  return { hostname, port, username, password, database, tls, query, sslMode };
+  const ret: any = { hostname, port, username, password, database, tls, query, sslMode };
+  if (idleTimeout != null) {
+    ret.idleTimeout = idleTimeout;
+  }
+  if (connectionTimeout != null) {
+    ret.connectionTimeout = connectionTimeout;
+  }
+  if (maxLifetime != null) {
+    ret.maxLifetime = maxLifetime;
+  }
+  if (onconnect !== undefined) {
+    ret.onconnect = onconnect;
+  }
+  if (onclose !== undefined) {
+    ret.onclose = onclose;
+  }
+  return ret;
 }
 
 function SQL(o) {
@@ -407,6 +520,7 @@ function SQL(o) {
     connecting = false,
     closed = false,
     onConnect: any[] = [],
+    storedErrorForClosedConnection,
     connectionInfo = loadOptions(o);
 
   function connectedHandler(query, handle, err) {
@@ -415,7 +529,7 @@ function SQL(o) {
     }
 
     if (!connected) {
-      return query.reject(new Error("Not connected"));
+      return query.reject(storedErrorForClosedConnection || new Error("Not connected"));
     }
 
     if (query.cancelled) {
@@ -423,6 +537,10 @@ function SQL(o) {
     }
 
     handle.run(connection, query);
+
+    // if the above throws, we don't want it to be in the array.
+    // This array exists mostly to keep the in-flight queries alive.
+    connection.queries.push(query);
   }
 
   function pendingConnectionHandler(query, handle) {
@@ -434,7 +552,7 @@ function SQL(o) {
   }
 
   function closedConnectionHandler(query, handle) {
-    query.reject(new Error("Connection closed"));
+    query.reject(storedErrorForClosedConnection || new Error("Connection closed"));
   }
 
   function onConnected(err, result) {
@@ -443,11 +561,31 @@ function SQL(o) {
       handler(err);
     }
     onConnect = [];
+
+    if (connected && connectionInfo?.onconnect) {
+      connectionInfo.onconnect(err);
+    }
   }
 
-  function onClose(err) {
+  function onClose(err, queries) {
     closed = true;
+    storedErrorForClosedConnection = err;
+    if (sql === lazyDefaultSQL) {
+      resetDefaultSQL(initialDefaultSQL);
+    }
+
     onConnected(err, undefined);
+    if (queries) {
+      const queriesCopy = queries.slice();
+      queries.length = 0;
+      for (const handler of queriesCopy) {
+        handler.reject(err);
+      }
+    }
+
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
   }
 
   function doCreateQuery(strings, values) {
@@ -568,18 +706,23 @@ function SQL(o) {
 }
 
 var lazyDefaultSQL;
-var defaultSQLObject = function sql(strings, ...values) {
+
+function resetDefaultSQL(sql) {
+  lazyDefaultSQL = sql;
+  Object.assign(defaultSQLObject, lazyDefaultSQL);
+  exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+}
+
+var initialDefaultSQL;
+var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
-
   if (!lazyDefaultSQL) {
-    lazyDefaultSQL = SQL(undefined);
-    Object.assign(defaultSQLObject, lazyDefaultSQL);
-    exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+    resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-};
+});
 
 var exportsObject = {
   sql: defaultSQLObject,

@@ -1,8 +1,9 @@
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
+import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile } from "fs/promises";
-import fs, { closeSync, openSync } from "node:fs";
+import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
+import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 import detectLibc from "detect-libc";
@@ -18,8 +19,10 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const isBuildKite = process.env.BUILDKITE === "true";
 export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isMusl = isLinux && libcFamily === "musl";
+export const isGlibc = isLinux && libcFamily === "glibc";
+export const isBuildKite = process.env.BUILDKITE === "true";
 export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
@@ -548,6 +551,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -587,6 +594,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     // workspaces don't need a version
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
@@ -1416,4 +1427,90 @@ export function rmScope(path: string) {
       fs.rmSync(path, { recursive: true, force: true });
     },
   };
+}
+
+export function textLockfile(version: number, pkgs: any): string {
+  return JSON.stringify({
+    lockfileVersion: version,
+    ...pkgs,
+  });
+}
+
+export class VerdaccioRegistry {
+  port: number;
+  process: ChildProcess | undefined;
+  configPath: string;
+  packagesPath: string;
+
+  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
+    this.port = randomPort();
+    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
+    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
+  }
+
+  async start(silent: boolean = true) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+      silent,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
+    });
+
+    this.process.stderr?.on("data", data => {
+      console.error(`[verdaccio] stderr: ${data}`);
+    });
+
+    const started = Promise.withResolvers();
+
+    this.process.on("error", error => {
+      console.error(`Failed to start verdaccio: ${error}`);
+      started.reject(error);
+    });
+
+    this.process.on("exit", (code, signal) => {
+      if (code !== 0) {
+        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+      } else {
+        console.log("Verdaccio exited successfully");
+      }
+    });
+
+    this.process.on("message", (message: { verdaccio_started: boolean }) => {
+      if (message.verdaccio_started) {
+        started.resolve();
+      }
+    });
+
+    await started.promise;
+  }
+
+  registryUrl() {
+    return `http://localhost:${this.port}/`;
+  }
+
+  stop() {
+    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process?.kill();
+  }
+
+  async createTestDir() {
+    const packageDir = tmpdirSync();
+    const packageJson = join(packageDir, "package.json");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `
+      [install]
+      cache = "${join(packageDir, ".bun-cache")}"
+      registry = "${this.registryUrl()}"
+      `,
+    );
+
+    return { packageDir, packageJson };
+  }
+}
+
+export async function readdirSorted(path: string): Promise<string[]> {
+  const results = await readdir(path);
+  results.sort();
+  return results;
 }

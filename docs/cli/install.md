@@ -130,6 +130,20 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
 
+## Omitting dependencies
+
+To omit dev, peer, or optional dependencies use the `--omit` flag.
+
+```bash
+# Exclude "devDependencies" from the installation. This will apply to the
+# root package and workspaces if they exist. Transitive dependencies will
+# not have "devDependencies".
+$ bun install --omit dev
+
+# Install only dependencies from "dependencies"
+$ bun install --omit=dev --omit=peer --omit=optional
+```
+
 ## Dry run
 
 To perform a dry run (i.e. don't actually install anything):
@@ -149,7 +163,8 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
     "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
     "moment": "git@github.com:moment/moment.git",
     "zod": "github:colinhacks/zod",
-    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
   }
 }
 ```
@@ -172,6 +187,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false

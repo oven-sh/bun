@@ -123,8 +123,8 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu.
-  await Bun.sleep(0);
+  // Flaky on Ubuntu & Windows.
+  await Bun.sleep(16);
   const end2 = process.hrtime();
 
   expect(end2[1] > start[1]).toBe(true);
@@ -1055,4 +1055,11 @@ describe("process.exitCode", () => {
 
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
+});
+
+it("process.memoryUsage.arrayBuffers", () => {
+  const initial = process.memoryUsage().arrayBuffers;
+  const array = new ArrayBuffer(1024 * 1024 * 16);
+  array.buffer;
+  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });

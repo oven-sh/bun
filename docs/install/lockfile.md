@@ -74,6 +74,24 @@ print = "yarn"
 
 {% /codetabs %}
 
+### Text-based lockfile
+
+Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at [no cost to performance](https://bun.sh/blog/bun-lock-text-lockfile#cached-bun-install-gets-30-faster).
+
+To generate the lockfile, use `--save-text-lockfile` with `bun install`. You can do this for new projects and existing projects already using `bun.lockb` (resolutions will be preserved).
+
+```bash
+$ bun install --save-text-lockfile
+$ head -n3 bun.lock
+{
+  "lockfileVersion": 0,
+  "workspaces": {
+```
+
+Once `bun.lock` is generated, Bun will use it for all subsequent installs and updates through commands that read and modify the lockfile. If both lockfiles exist, `bun.lock` will be choosen over `bun.lockb`.
+
+Bun v1.2.0 will switch the default lockfile format to `bun.lock`.
+
 {% details summary="Configuring lockfile" %}
 
 ```toml

@@ -10,6 +10,7 @@ export default [
     estimatedSize: true,
     configurable: false,
     overridesToJS: true,
+    memoryCost: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -163,6 +164,16 @@ export default [
       lastModified: {
         getter: "getLastModified",
       },
+
+      // Non-standard, s3 + BunFile support
+      unlink: { fn: "doUnlink", length: 0 },
+      write: { fn: "doWrite", length: 2 },
+      // Non-standard, s3 support
+      bucket: {
+        cache: true,
+        getter: "getBucket",
+      },
+      presign: { fn: "getPresignUrl", length: 1 },
 
       size: {
         getter: "getSize",

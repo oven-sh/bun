@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -104,4 +105,92 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
     return fmtstring.transferToJS(globalThis);
+}
+
+/// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
+/// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
+///
+/// ```js
+/// // util.js
+/// const extractedNewLineRe = new RegExp("(?<=\\n)");
+/// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
+/// ```
+pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    bun.assert(callframe.argumentsCount() == 1);
+    const value = callframe.argument(0);
+    bun.assert(value.isString());
+
+    const str = try value.toBunString2(globalThis);
+    defer str.deref();
+
+    return switch (str.encoding()) {
+        inline .utf16, .latin1 => |encoding| split(encoding, globalThis, bun.default_allocator, &str),
+        .utf8 => if (bun.strings.isAllASCII(str.byteSlice()))
+            return split(.utf8, globalThis, bun.default_allocator, &str)
+        else
+            return JSC.JSValue.jsUndefined(),
+    };
+}
+
+fn split(
+    comptime encoding: bun.strings.EncodingNonAscii,
+    globalThis: *JSC.JSGlobalObject,
+    allocator: Allocator,
+    str: *const bun.String,
+) bun.JSError!JSC.JSValue {
+    var fallback = std.heap.stackFallback(1024, allocator);
+    const alloc = fallback.get();
+    const Char = switch (encoding) {
+        .utf8, .latin1 => u8,
+        .utf16 => u16,
+    };
+
+    var lines: std.ArrayListUnmanaged(bun.String) = .{};
+    defer {
+        for (lines.items) |out| {
+            out.deref();
+        }
+        lines.deinit(alloc);
+    }
+
+    const buffer: []const Char = if (encoding == .utf16)
+        str.utf16()
+    else
+        str.byteSlice();
+    var it: SplitNewlineIterator(Char) = .{ .buffer = buffer, .index = 0 };
+    while (it.next()) |line| {
+        const encoded_line = switch (encoding) {
+            inline .utf8 => bun.String.fromUTF8(line),
+            inline .latin1 => bun.String.createLatin1(line),
+            inline .utf16 => bun.String.fromUTF16(line),
+        };
+        errdefer encoded_line.deref();
+        try lines.append(alloc, encoded_line);
+    }
+
+    return bun.String.toJSArray(globalThis, lines.items);
+}
+
+pub fn SplitNewlineIterator(comptime T: type) type {
+    return struct {
+        buffer: []const T,
+        index: ?usize,
+
+        const Self = @This();
+
+        /// Returns a slice of the next field, or null if splitting is complete.
+        pub fn next(self: *Self) ?[]const T {
+            const start = self.index orelse return null;
+
+            if (std.mem.indexOfScalarPos(T, self.buffer, start, '\n')) |delim_start| {
+                const end = delim_start + 1;
+                const slice = self.buffer[start..end];
+                self.index = end;
+                return slice;
+            } else {
+                self.index = null;
+                return self.buffer[start..];
+            }
+        }
+    };
 }

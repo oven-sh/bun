@@ -1,4 +1,7 @@
 #include "root.h"
+
+#include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
@@ -33,6 +36,7 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -448,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
@@ -515,7 +519,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false, false);
+    std::set<EncodedJSValue> objVisited;
+    std::set<EncodedJSValue> subsetVisited;
+    MarkedArgumentBuffer gcBuffer;
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, false, false);
+
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }
@@ -542,6 +550,45 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto object = WebCore::DOMURL::create(fileURL.string(), String());
     auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSValue arg0 = callFrame->argument(0);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    bool useV8 = false;
+    if (!arg0.isUndefined()) {
+        if (arg0.isString()) {
+            auto str = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (str == "v8"_s) {
+                useV8 = true;
+            } else if (str == "jsc"_s) {
+                // do nothing
+            } else {
+                throwTypeError(globalObject, throwScope, "Expected 'v8' or 'jsc' or undefined"_s);
+                return {};
+            }
+        }
+    }
+
+    if (useV8) {
+        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        return JSC::JSValue::encode(jsString(vm, builder.json()));
+    }
+
+    JSC::HeapSnapshotBuilder builder(heapProfiler);
+    builder.buildSnapshot();
+    auto json = builder.json();
+    // Returning an object was a bad idea but it's a breaking change
+    // so we'll just keep it for now.
+    JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -592,6 +639,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
     MD4                                            BunObject_getter_wrap_MD4                                           DontDelete|PropertyCallback
     MD5                                            BunObject_getter_wrap_MD5                                           DontDelete|PropertyCallback
+    S3                                             BunObject_getter_wrap_S3                                            DontDelete|PropertyCallback
     SHA1                                           BunObject_getter_wrap_SHA1                                          DontDelete|PropertyCallback
     SHA224                                         BunObject_getter_wrap_SHA224                                        DontDelete|PropertyCallback
     SHA256                                         BunObject_getter_wrap_SHA256                                        DontDelete|PropertyCallback
@@ -619,7 +667,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
-    generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -653,6 +701,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
     sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1

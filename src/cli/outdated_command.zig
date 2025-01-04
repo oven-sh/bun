@@ -212,14 +212,14 @@ pub const OutdatedCommand = struct {
 
                             const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                            if (!glob.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.walk.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.matchImpl(pattern, name).matches()) {
+                            if (!glob.walk.matchImpl(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -331,7 +331,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
+                                    if (!glob.walk.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },
@@ -453,10 +453,10 @@ pub const OutdatedCommand = struct {
         for (workspace_pkg_ids) |workspace_pkg_id| {
             inline for (
                 .{
-                    Behavior{ .normal = true },
-                    Behavior{ .dev = true },
-                    Behavior{ .peer = true },
-                    Behavior{ .optional = true },
+                    Behavior.prod,
+                    Behavior.dev,
+                    Behavior.peer,
+                    Behavior.optional,
                 },
             ) |group_behavior| {
                 for (outdated_ids.items) |ids| {
@@ -465,7 +465,7 @@ pub const OutdatedCommand = struct {
                     const dep_id = ids.dep_id;
 
                     const dep = dependencies[dep_id];
-                    if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+                    if (!dep.behavior.includes(group_behavior)) continue;
 
                     const package_name = pkg_names[package_id].slice(string_buf);
                     const resolution = pkg_resolutions[package_id];

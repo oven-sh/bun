@@ -159,7 +159,7 @@ pub const S3HttpDownloadStreamingTask = struct {
             if (!has_more) this.deinit();
         }
 
-        // lets never signal that we can schedule another callback if we dont have more data to read
+        // there is no reason to set has_schedule_callback to true if we dont have more data to read
         if (has_more) this.has_schedule_callback.store(false, .monotonic);
         this.reportProgress(state);
     }

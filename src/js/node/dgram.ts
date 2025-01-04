@@ -74,7 +74,7 @@ class ERR_BUFFER_OUT_OF_BOUNDS extends Error {
   }
 }
 
-class ERR_INVALID_ARG_TYPE extends Error {
+class ERR_INVALID_ARG_TYPE extends TypeError {
   constructor(argName, expected, actual) {
     super(`The "${argName}" argument must be of type ${expected}. Received type ${typeof actual}`);
     this.code = "ERR_INVALID_ARG_TYPE";

@@ -1389,7 +1389,7 @@ pub const AWSCredentials = struct {
 
             // remember the state is atomic load it once, and store it again
             var state = this.getState();
-            // old state should have more
+            // old state should have more otherwise its a http.zig bug
             bun.assert(state.has_more);
             const is_done = !result.has_more;
             const wait_until_done = updateState(this, async_http, result, &state);

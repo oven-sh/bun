@@ -251,8 +251,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
     if (allowZero.isUndefined()) allowZero = jsBoolean(true);
 
     auto allowZero_b = allowZero.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (!port.isNumber() && !port.isString()) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
 
     if (port.isString()) {
@@ -358,6 +356,25 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     }
     return JSValue::encode(jsUndefined());
 }
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (minLength.isUndefined()) minLength = jsNumber(0);
+
+    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+
+    auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto length_num = length.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto minLength_num = minLength.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (length_num < minLength_num) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
+    }
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -404,7 +421,6 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
 
     auto positive_b = positive.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
     if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
@@ -420,7 +436,6 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
 
     auto positive_b = positive.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
     if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);

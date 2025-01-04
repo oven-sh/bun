@@ -4664,7 +4664,6 @@ pub const Expect = struct {
             if (result.isObject()) {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
-                    if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {

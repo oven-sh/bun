@@ -590,7 +590,7 @@ JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
 
 JSC::EncodedJSValue UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active"_s);
+    auto message = "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active"_s;
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET, message));
     return {};
 }

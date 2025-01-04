@@ -1377,7 +1377,7 @@ describe("install --filter", () => {
     ]);
 
     var { exited } = spawn({
-      cmd: [bunExe(), "install", "--filter", "!pkg2"],
+      cmd: [bunExe(), "install", "--filter", "!pkg2", "--save-text-lockfile"],
       cwd: packageDir,
       stdout: "ignore",
       stderr: "pipe",
@@ -1392,6 +1392,27 @@ describe("install --filter", () => {
         exists(join(packageDir, "node_modules", "pkg2")),
       ]),
     ).toEqual([true, { name: "no-deps", version: "2.0.0" }, false]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // exclude the root by name
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!root"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+        exists(join(packageDir, "node_modules", "pkg1")),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([false, true, true, true]);
   });
 
   test("matched workspace depends on filtered workspace", async () => {

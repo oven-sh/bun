@@ -2344,10 +2344,6 @@ pub const JSPromise = extern struct {
                 this.reject(globalThis, val);
             }
 
-            pub fn rejectOnNextTick(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-                this.swap().rejectOnNextTick(globalThis, val);
-            }
-
             pub fn resolve(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
                 this.swap().resolve(globalThis, val);
             }
@@ -2425,9 +2421,7 @@ pub const JSPromise = extern struct {
             this.reject(globalThis, val);
         }
 
-        pub fn rejectOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().rejectOnNextTick(globalThis, val);
-        }
+        pub const rejectOnNextTick = @compileError("Either use an event loop task, or you're draining microtasks when you shouldn't be.");
 
         pub fn resolve(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().resolve(globalThis, val);
@@ -2544,18 +2538,6 @@ pub const JSPromise = extern struct {
         return cppFn("resolveOnNextTick", .{ promise, globalThis, value });
     }
 
-    pub fn rejectOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
-        return rejectOnNextTickWithHandled(promise, globalThis, value, false);
-    }
-
-    pub fn rejectOnNextTickAsHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
-        return rejectOnNextTickWithHandled(promise, globalThis, value, true);
-    }
-
-    pub fn rejectOnNextTickWithHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue, handled: bool) void {
-        return cppFn("rejectOnNextTickWithHandled", .{ promise, globalThis, value, handled });
-    }
-
     /// Create a new promise with an already fulfilled value
     /// This is the faster function for doing that.
     pub fn resolvedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
@@ -2621,7 +2603,6 @@ pub const JSPromise = extern struct {
         "reject",
         "rejectAsHandled",
         "rejectAsHandledException",
-        "rejectOnNextTickWithHandled",
         "rejectedPromise",
         "rejectedPromiseValue",
         "resolve",

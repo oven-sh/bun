@@ -341,7 +341,7 @@ pub const S3BlobStatTask = struct {
                 this.promise.resolve(globalThis, .true);
             },
             .failure => |err| {
-                this.promise.rejectOnNextTick(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
     }
@@ -355,7 +355,7 @@ pub const S3BlobStatTask = struct {
                 this.promise.resolve(globalThis, JSValue.jsNumber(stat.size));
             },
             inline .not_found, .failure => |err| {
-                this.promise.rejectOnNextTick(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
     }

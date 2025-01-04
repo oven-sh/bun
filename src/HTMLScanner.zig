@@ -28,12 +28,20 @@ pub fn deinit(this: *HTMLScanner) void {
     this.import_records.deinitWithAllocator(this.allocator);
 }
 
-fn createImportRecord(this: *HTMLScanner, path: []const u8, kind: ImportKind) !void {
+fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKind) !void {
+    // In HTML, sometimes people do /src/index.js
+    // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
+    const path_to_use = if (input_path.len > 1 and input_path[0] == '/')
+        bun.path.joinAbsString(bun.fs.FileSystem.instance.top_level_dir, &[_][]const u8{input_path[1..]}, .auto)
+    else
+        input_path;
+
     const record = ImportRecord{
-        .path = fs.Path.init(try this.allocator.dupe(u8, path)),
+        .path = fs.Path.init(try this.allocator.dupeZ(u8, path_to_use)),
         .kind = kind,
         .range = logger.Range.None,
     };
+
     try this.import_records.push(this.allocator, record);
 }
 

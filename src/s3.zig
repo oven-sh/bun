@@ -57,6 +57,9 @@ pub const AWSCredentials = struct {
     bucket: []const u8,
     sessionToken: []const u8,
 
+    /// Important for MinIO support.
+    insecure_http: bool = false,
+
     ref_count: u32 = 1,
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
@@ -168,9 +171,15 @@ pub const AWSCredentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
-                                const normalized_endpoint = bun.URL.parse(new_credentials._endpointSlice.?.slice()).host;
+                                const url = bun.URL.parse(new_credentials._endpointSlice.?.slice());
+                                const normalized_endpoint = url.host;
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
+
+                                    // Default to https://
+                                    // Only use http:// if the endpoint specifically starts with 'http://'
+                                    new_credentials.credentials.insecure_http = url.isHTTP();
+
                                     new_credentials.changed_credentials = true;
                                 }
                             }
@@ -283,6 +292,8 @@ pub const AWSCredentials = struct {
                 bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
             else
                 "",
+
+            .insecure_http = this.insecure_http,
         });
     }
     pub fn deinit(this: *@This()) void {
@@ -641,7 +652,7 @@ pub const AWSCredentials = struct {
         };
 
         // Default to https. Only use http if they explicit pass "http://" as the endpoint.
-        const protocol = if (strings.hasPrefixComptime(this.endpoint, "http://")) "http" else "https";
+        const protocol = if (this.insecure_http) "http" else "https";
 
         // detect service name and host from region or endpoint
         var encoded_host_buffer: [512]u8 = undefined;

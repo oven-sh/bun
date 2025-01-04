@@ -6,7 +6,7 @@ const picohttp = JSC.WebCore.picohttp;
 pub const S3Error = @import("./error.zig");
 
 pub const S3Credentials = @import("./credentials.zig").S3Credentials;
-const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
+pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 const S3SimpleRequest = @import("./simple_request.zig");
 pub const S3HttpSimpleTask = S3SimpleRequest.S3HttpSimpleTask;

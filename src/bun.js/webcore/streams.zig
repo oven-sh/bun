@@ -43,7 +43,7 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
-const S3MultiPartUpload = @import("../../s3/multipart.zig").MultiPartUpload;
+const S3MultiPartUpload = bun.S3.MultiPartUpload;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {

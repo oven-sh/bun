@@ -533,7 +533,7 @@ pub const Response = struct {
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
                     }, .{ .expires = 15 * 60 }) catch |sign_err| {
-                        return s3.AWSCredentials.throwSignError(sign_err, globalThis);
+                        return s3.S3Credentials.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
@@ -3250,8 +3250,8 @@ pub const Fetch = struct {
 
         if (url.isS3()) {
             // get ENV config
-            var credentialsWithOptions: s3.AWSCredentialsWithOptions = .{
-                .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
+            var credentialsWithOptions: s3.S3CredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
             };
@@ -3263,7 +3263,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
                     }
                 }
             }
@@ -3277,7 +3277,7 @@ pub const Fetch = struct {
                     url_proxy_buffer: []const u8,
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: s3.AWSCredentials.S3UploadResult, self: *@This()) void {
+                    pub fn resolve(result: s3.S3Credentials.S3UploadResult, self: *@This()) void {
                         if (self.promise.globalObject()) |global| {
                             switch (result) {
                                 .success => {
@@ -3357,7 +3357,7 @@ pub const Fetch = struct {
                 .method = method,
             }, null) catch |sign_err| {
                 is_error = true;
-                return JSPromise.rejectedPromiseValue(globalThis, s3.AWSCredentials.getJSSignError(sign_err, globalThis));
+                return JSPromise.rejectedPromiseValue(globalThis, s3.S3Credentials.getJSSignError(sign_err, globalThis));
             };
             defer result.deinit();
             if (proxy) |proxy_| {

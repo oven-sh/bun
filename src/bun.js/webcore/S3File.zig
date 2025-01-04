@@ -215,15 +215,15 @@ fn constructS3FileInternalStore(
     options: ?JSC.JSValue,
 ) bun.JSError!Blob {
     // get credentials from env
-    const existing_credentials = globalObject.bunVM().transpiler.env.getAWSCredentials();
-    return constructS3FileWithAWSCredentials(globalObject, path, options, existing_credentials);
+    const existing_credentials = globalObject.bunVM().transpiler.env.getS3Credentials();
+    return constructS3FileWithS3Credentials(globalObject, path, options, existing_credentials);
 }
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
-pub fn constructS3FileWithAWSCredentialsAndOptions(
+pub fn constructS3FileWithS3CredentialsAndOptions(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
-    default_credentials: *S3.AWSCredentials,
+    default_credentials: *S3.S3Credentials,
     default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
 ) bun.JSError!Blob {
@@ -269,11 +269,11 @@ pub fn constructS3FileWithAWSCredentialsAndOptions(
     return blob;
 }
 
-pub fn constructS3FileWithAWSCredentials(
+pub fn constructS3FileWithS3Credentials(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
     options: ?JSC.JSValue,
-    existing_credentials: S3.AWSCredentials,
+    existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
     var aws_options = try S3.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
     defer aws_options.deinit();
@@ -404,7 +404,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
 
-    var credentialsWithOptions: S3.AWSCredentialsWithOptions = .{
+    var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
         .credentials = this.store.?.data.s3.getCredentials().*,
     };
     defer {

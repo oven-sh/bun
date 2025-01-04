@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const strings = bun.strings;
-const AWSCredentials = @import("./credentials.zig").AWSCredentials;
+const S3Credentials = @import("./credentials.zig").S3Credentials;
 const ACL = @import("./acl.zig").ACL;
 const JSC = bun.JSC;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
@@ -16,7 +16,7 @@ pub const MultiPartUpload = struct {
     const MIN_SINGLE_UPLOAD_SIZE_IN_MiB: usize = MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE_IN_MiB;
     const DefaultPartSize = MultiPartUploadOptions.DefaultPartSize;
     const MAX_QUEUE_SIZE = MultiPartUploadOptions.MAX_QUEUE_SIZE;
-    const AWS = AWSCredentials;
+    const AWS = S3Credentials;
     queue: std.ArrayListUnmanaged(UploadPart) = .{},
     available: bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
 
@@ -26,7 +26,7 @@ pub const MultiPartUpload = struct {
 
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
-    credentials: *AWSCredentials,
+    credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *JSC.VirtualMachine,
     globalThis: *JSC.JSGlobalObject,

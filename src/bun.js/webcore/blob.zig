@@ -44,7 +44,7 @@ const Request = JSC.WebCore.Request;
 const libuv = bun.windows.libuv;
 
 const S3 = bun.S3;
-const AWSCredentials = S3.AWSCredentials;
+const S3Credentials = S3.S3Credentials;
 const S3MultiPartUpload = S3.MultiPartUpload;
 const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
@@ -1829,7 +1829,7 @@ pub const Blob = struct {
         if (check_s3) {
             if (path_or_fd.* == .path) {
                 if (strings.startsWith(path_or_fd.path.slice(), "s3://")) {
-                    const credentials = globalThis.bunVM().transpiler.env.getAWSCredentials();
+                    const credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
                     const copy = path_or_fd.*;
                     path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                     return Blob.initWithStore(Blob.Store.initS3(copy.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
@@ -1959,7 +1959,7 @@ pub const Blob = struct {
             var this = bun.cast(*Store, ptr);
             this.deref();
         }
-        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWSCredentials, allocator: std.mem.Allocator) !*Store {
+        pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials, allocator: std.mem.Allocator) !*Store {
             var path = pathlike;
             // this actually protects/refs the pathlike
             path.toThreadSafe();
@@ -1987,7 +1987,7 @@ pub const Blob = struct {
             });
             return store;
         }
-        pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials, allocator: std.mem.Allocator) !*Store {
+        pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: S3Credentials, allocator: std.mem.Allocator) !*Store {
             var path = pathlike;
             // this actually protects/refs the pathlike
             path.toThreadSafe();
@@ -3508,20 +3508,20 @@ pub const Blob = struct {
     pub const S3Store = struct {
         pathlike: JSC.Node.PathLike,
         mime_type: http.MimeType = http.MimeType.other,
-        credentials: ?*AWSCredentials,
+        credentials: ?*S3Credentials,
         options: S3MultiPartUpload.MultiPartUploadOptions = .{},
         acl: ?S3.ACL = null,
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;
         }
 
-        pub fn getCredentials(this: *const @This()) *AWSCredentials {
+        pub fn getCredentials(this: *const @This()) *S3Credentials {
             bun.assert(this.credentials != null);
             return this.credentials.?;
         }
 
-        pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!S3.AWSCredentialsWithOptions {
-            return AWSCredentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, globalObject);
+        pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!S3.S3CredentialsWithOptions {
+            return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, globalObject);
         }
 
         pub fn path(this: *@This()) []const u8 {
@@ -3580,7 +3580,7 @@ pub const Blob = struct {
 
             return value;
         }
-        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *AWSCredentials) S3Store {
+        pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{
                 .credentials = credentials,
@@ -3588,7 +3588,7 @@ pub const Blob = struct {
                 .mime_type = mime_type orelse http.MimeType.other,
             };
         }
-        pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: AWSCredentials) S3Store {
+        pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: S3Credentials) S3Store {
             return .{
                 .credentials = credentials.dupe(),
                 .pathlike = pathlike,

@@ -8,7 +8,7 @@ pub const ACL = @import("./acl.zig");
 pub const throwSignError = @import("./error.zig").throwSignError;
 const JSC = bun.JSC;
 const strings = bun.strings;
-pub const AWSCredentials = struct {
+pub const S3Credentials = struct {
     accessKeyId: []const u8,
     secretAccessKey: []const u8,
     region: []const u8,
@@ -23,7 +23,7 @@ pub const AWSCredentials = struct {
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
     pub fn estimatedSize(this: *const @This()) usize {
-        return @sizeOf(AWSCredentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
+        return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
     }
 
     fn hashConst(acl: []const u8) u64 {
@@ -41,9 +41,9 @@ pub const AWSCredentials = struct {
 
         return hasher.final();
     }
-    pub fn getCredentialsWithOptions(this: AWSCredentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!AWSCredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
         // get ENV config
-        var new_credentials = AWSCredentialsWithOptions{
+        var new_credentials = S3CredentialsWithOptions{
             .credentials = this,
             .options = default_options,
             .acl = default_acl,
@@ -196,8 +196,8 @@ pub const AWSCredentials = struct {
         }
         return new_credentials;
     }
-    pub fn dupe(this: *const @This()) *AWSCredentials {
-        return AWSCredentials.new(.{
+    pub fn dupe(this: *const @This()) *S3Credentials {
+        return S3Credentials.new(.{
             .accessKeyId = if (this.accessKeyId.len > 0)
                 bun.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
             else
@@ -742,8 +742,8 @@ pub const AWSCredentials = struct {
     }
 };
 
-pub const AWSCredentialsWithOptions = struct {
-    credentials: AWSCredentials,
+pub const S3CredentialsWithOptions = struct {
+    credentials: S3Credentials,
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
     /// indicates if the credentials have changed

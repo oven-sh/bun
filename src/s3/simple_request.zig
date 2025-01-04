@@ -2,9 +2,9 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const strings = bun.strings;
-const SignResult = @import("./credentials.zig").AWSCredentials.SignResult;
+const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
 const S3Error = @import("./error.zig").S3Error;
-const AWSCredentials = @import("./credentials.zig").AWSCredentials;
+const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
 pub const S3StatResult = union(enum) {
@@ -329,7 +329,7 @@ pub const S3SimpleRequestOptions = struct {
 };
 
 pub fn executeSimpleS3Request(
-    this: *const AWSCredentials,
+    this: *const S3Credentials,
     options: S3SimpleRequestOptions,
     callback: S3HttpSimpleTask.Callback,
     callback_context: *anyopaque,

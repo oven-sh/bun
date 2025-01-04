@@ -406,55 +406,6 @@ pub fn writableStream(this: *S3Credentials, path: []const u8, globalThis: *JSC.J
     return response_stream.sink.toJS(globalThis);
 }
 
-const S3DownloadStreamWrapper = struct {
-    readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
-    path: []const u8,
-    pub usingnamespace bun.New(@This());
-
-    pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, this: *@This()) void {
-        defer if (!has_more) this.deinit();
-
-        if (this.readable_stream_ref.get()) |readable| {
-            if (readable.ptr == .Bytes) {
-                const globalThis = this.readable_stream_ref.globalThis().?;
-
-                if (request_err) |err| {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = err.toJS(globalThis, this.path) },
-                        },
-                        bun.default_allocator,
-                    );
-                    return;
-                }
-                if (has_more) {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .temporary = bun.ByteList.initConst(chunk.list.items),
-                        },
-                        bun.default_allocator,
-                    );
-                    return;
-                }
-
-                readable.ptr.Bytes.onData(
-                    .{
-                        .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
-                    },
-                    bun.default_allocator,
-                );
-                return;
-            }
-        }
-    }
-
-    pub fn deinit(this: *@This()) void {
-        this.readable_stream_ref.deinit();
-        bun.default_allocator.free(this.path);
-        this.destroy();
-    }
-};
-
 pub fn downloadStream(this: *S3Credentials, path: []const u8, offset: usize, size: ?usize, proxy_url: ?[]const u8, callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, *anyopaque) void, callback_context: *anyopaque) void {
     const range = brk: {
         if (size) |size_| {
@@ -547,6 +498,55 @@ pub fn readableStream(this: *S3Credentials, path: []const u8, offset: usize, siz
 
     reader.context.setup();
     const readable_value = reader.toReadableStream(globalThis);
+
+    const S3DownloadStreamWrapper = struct {
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
+        path: []const u8,
+        pub usingnamespace bun.New(@This());
+
+        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) void {
+            defer if (!has_more) self.deinit();
+
+            if (self.readable_stream_ref.get()) |readable| {
+                if (readable.ptr == .Bytes) {
+                    if (request_err) |err| {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{
+                                    .JSValue = err.toJS(self.readable_stream_ref.globalThis().?, self.path),
+                                },
+                            },
+                            bun.default_allocator,
+                        );
+                        return;
+                    }
+                    if (has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.initConst(chunk.list.items),
+                            },
+                            bun.default_allocator,
+                        );
+                        return;
+                    }
+
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
+                        },
+                        bun.default_allocator,
+                    );
+                    return;
+                }
+            }
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.readable_stream_ref.deinit();
+            bun.default_allocator.free(self.path);
+            self.destroy();
+        }
+    };
 
     downloadStream(this, path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{

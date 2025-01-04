@@ -721,4 +721,60 @@ body {
       expect(cssBundle).toContain("box-sizing: border-box");
     },
   });
+
+  // Test absolute paths in HTML
+  itBundled("html/absolute-paths", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="/styles/main.css">
+    <script src="/scripts/app.js"></script>
+  </head>
+  <body>
+    <h1>Absolute Paths</h1>
+    <img src="/images/logo.png">
+  </body>
+</html>`,
+      "/styles/main.css": "body { margin: 0; }",
+      "/scripts/app.js": "console.log('App loaded')",
+      "/images/logo.png": "fake image content",
+    },
+    experimentalHtml: true,
+    experimentalCss: true,
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check that absolute paths are handled correctly
+      const htmlBundle = api.readFile("out/index.html");
+
+      // CSS should be bundled and hashed
+      api.expectFile("out/index.html").not.toContain("/styles/main.css");
+      api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
+
+      // JS should be bundled and hashed
+      api.expectFile("out/index.html").not.toContain("/scripts/app.js");
+      api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
+
+      // Image should be hashed
+      api.expectFile("out/index.html").not.toContain("/images/logo.png");
+      api.expectFile("out/index.html").toMatch(/src=".*\.png"/);
+
+      // Get the bundled files and verify their contents
+      const cssMatch = htmlBundle.match(/href="(.*\.css)"/);
+      const jsMatch = htmlBundle.match(/src="(.*\.js)"/);
+      const imgMatch = htmlBundle.match(/src="(.*\.png)"/);
+
+      expect(cssMatch).not.toBeNull();
+      expect(jsMatch).not.toBeNull();
+      expect(imgMatch).not.toBeNull();
+
+      const cssBundle = api.readFile("out/" + cssMatch![1]);
+      const jsBundle = api.readFile("out/" + jsMatch![1]);
+
+      expect(cssBundle).toContain("margin: 0");
+      expect(jsBundle).toContain("App loaded");
+    },
+  });
 });

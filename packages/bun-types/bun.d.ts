@@ -1226,8 +1226,56 @@ declare module "bun" {
      */
     unlink(): Promise<void>;
   }
+  interface NetworkSink extends FileSink {
+    /**
+     * Write a chunk of data to the network.
+     *
+     * If the network is not writable yet, the data is buffered.
+     */
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    /**
+     * Flush the internal buffer, committing the data to the network.
+     */
+    flush(): number | Promise<number>;
+    /**
+     * Finish the upload. This also flushes the internal buffer.
+     */
+    end(error?: Error): number | Promise<number>;
+  }
 
-  interface S3FileOptions extends BlobPropertyBag {
+  interface S3Options extends BlobPropertyBag {
+    /**
+     * The ACL to used to write the file to S3. by default will omit the ACL header/parameter.
+     */
+    acl?: /**
+     * Owner gets FULL_CONTROL. No one else has access rights (default).
+     */
+    | "private"
+      /**
+       * Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
+       */
+      | "public-read"
+      /**
+       * Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
+       */
+      | "public-read-write"
+      /**
+       * Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
+       */
+      | "aws-exec-read"
+      /**
+       * Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
+       */
+      | "authenticated-read"
+      /**
+       * Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+       */
+      | "bucket-owner-read"
+      /**
+       * Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
+       */
+      | "bucket-owner-full-control"
+      | "log-delivery-write";
     /**
      * The bucket to use for the S3 client. by default will use the `S3_BUCKET` and `AWS_BUCKET` environment variable, or deduce as first part of the path.
      */
@@ -1244,6 +1292,10 @@ declare module "bun" {
      * The secret access key to use for the S3 client. By default, it will use the `S3_SECRET_ACCESS_KEY and `AWS_SECRET_ACCESS_KEY` environment variable.
      */
     secretAccessKey?: string;
+    /**
+     * The session token to use for the S3 client. By default, it will use the `S3_SESSION_TOKEN` and `AWS_SESSION_TOKEN` environment variable.
+     */
+    sessionToken?: string;
 
     /**
      * The endpoint to use for the S3 client. Defaults to `https://s3.{region}.amazonaws.com`, it will also use the `S3_ENDPOINT` and `AWS_ENDPOINT`  environment variable.
@@ -1274,7 +1326,7 @@ declare module "bun" {
     highWaterMark?: number;
   }
 
-  interface S3FilePresignOptions extends S3FileOptions {
+  interface S3FilePresignOptions extends S3Options {
     /**
      * The number of seconds the presigned URL will be valid for. Defaults to 86400 (1 day).
      */
@@ -1290,7 +1342,7 @@ declare module "bun" {
      * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
      * @param options - The options to use for the S3 client.
      */
-    new (path: string | URL, options?: S3FileOptions): S3File;
+    new (path: string | URL, options?: S3Options): S3File;
     /**
      * The size of the file in bytes.
      */
@@ -1327,9 +1379,9 @@ declare module "bun" {
     slice(contentType?: string): S3File;
 
     /**
-     * Incremental writer to stream writes to S3, this is equivalent of using MultipartUpload and is suitable for large files.
+     * Incremental writer to stream writes to the network, this is equivalent of using MultipartUpload and is suitable for large files.
      */
-    writer(options?: S3FileOptions): FileSink;
+    writer(options?: S3Options): NetworkSink;
 
     /**
      * The readable stream of the file.
@@ -1364,7 +1416,7 @@ declare module "bun" {
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
-      options?: S3FileOptions,
+      options?: S3Options,
     ): Promise<number>;
 
     /**
@@ -1379,38 +1431,43 @@ declare module "bun" {
     unlink(): Promise<void>;
   }
 
-  namespace S3File {
+  interface S3Bucket {
     /**
-     * Uploads the data to S3.
+     * Get a file from the bucket.
+     * @param path - The path to the file.
+     */
+    (path: string, options?: S3Options): S3File;
+    /**
+     * Uploads the data to S3. This will overwrite the file if it already exists.
      * @param data - The data to write.
      * @param options - The options to use for the S3 client.
      */
-    function upload(
-      path: string | S3File,
+    write(
+      path: string,
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File,
-      options?: S3FileOptions,
+      options?: S3Options,
     ): Promise<number>;
 
     /**
      * Returns a presigned URL for the file.
      * @param options - The options to use for the presigned URL.
      */
-    function presign(path: string | S3File, options?: S3FilePresignOptions): string;
+    presign(path: string, options?: S3FilePresignOptions): string;
 
     /**
      * Deletes the file from S3.
      */
-    function unlink(path: string | S3File, options?: S3FileOptions): Promise<void>;
+    unlink(path: string, options?: S3Options): Promise<void>;
 
     /**
      * The size of the file in bytes.
      */
-    function size(path: string | S3File, options?: S3FileOptions): Promise<number>;
+    size(path: string, options?: S3Options): Promise<number>;
 
     /**
-     * The size of the file in bytes.
+     * Does the file exist?
      */
-    function exists(path: string | S3File, options?: S3FileOptions): Promise<boolean>;
+    exists(path: string, options?: S3Options): Promise<boolean>;
   }
 
   /**
@@ -3268,11 +3325,12 @@ declare module "bun" {
    * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
    * @param options - The options to use for the S3 client.
    */
-  function s3(path: string | URL, options?: S3FileOptions): S3File;
+  function s3(path: string | URL, options?: S3Options): S3File;
   /**
-   * The S3 file class.
+   * Create a configured S3 bucket reference.
+   * @param options - The options to use for the S3 client.
    */
-  const S3: typeof S3File;
+  function S3(options?: S3Options): S3Bucket;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.

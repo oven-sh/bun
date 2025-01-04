@@ -2236,6 +2236,31 @@ pub const Process = struct {
     pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 };
 
+pub const PathOrBlob = union(enum) {
+    path: JSC.Node.PathOrFileDescriptor,
+    blob: Blob,
+
+    const Blob = JSC.WebCore.Blob;
+
+    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
+            return PathOrBlob{
+                .path = path,
+            };
+        }
+
+        const arg = args.nextEat() orelse {
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+        };
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.*,
+            };
+        }
+        return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
+    }
+};
+
 comptime {
     std.testing.refAllDecls(Process);
 }

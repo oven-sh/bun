@@ -49,6 +49,18 @@ Packages, metadata for those packages, the hoisted install order, dependencies f
 
 It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
+#### Generate a lockfile without installing?
+
+To generate a lockfile without installing to `node_modules` you can use the `--lockfile-only` flag. The lockfile will always be saved to disk, even if it is up-to-date with the `package.json`(s) for your project.
+
+```bash
+$ bun install --lockfile-only
+```
+
+{% callout %}
+**Note** - using `--lockfile-only` will still populate the global install cache with registry metadata and git/tarball dependencies.
+{% endcallout %}
+
 #### Can I opt out?
 
 To install without creating a lockfile:

@@ -58,6 +58,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
+BUN_DECLARE_HOST_FUNCTION(Bun__S3Constructor);
 namespace Bun {
 
 using namespace JSC;
@@ -619,7 +620,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
     MD4                                            BunObject_getter_wrap_MD4                                           DontDelete|PropertyCallback
     MD5                                            BunObject_getter_wrap_MD5                                           DontDelete|PropertyCallback
-    S3                                             BunObject_getter_wrap_S3                                            DontDelete|PropertyCallback
     SHA1                                           BunObject_getter_wrap_SHA1                                          DontDelete|PropertyCallback
     SHA224                                         BunObject_getter_wrap_SHA224                                        DontDelete|PropertyCallback
     SHA256                                         BunObject_getter_wrap_SHA256                                        DontDelete|PropertyCallback
@@ -682,6 +682,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
     s3                                             BunObject_callback_s3                                               DontDelete|Function 1
+    S3                                             Bun__S3Constructor                                                  DontDelete|Constructable|Function 1
     sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1

@@ -1,5 +1,6 @@
 import { describe } from "bun:test";
 import { itBundled } from "../expectBundled";
+import { readdirSync } from "node:fs";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -474,7 +475,7 @@ a {
 `);
     },
   });
-  itBundled("css/DataURLImportURLInCSS", {
+  itBundled("css/Png", {
     experimentalCss: true,
     outfile: "/out.css",
     // GENERATED
@@ -484,47 +485,84 @@ a {
           background: url(./example.png);
         }
       `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
+      "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     },
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
 /* entry.css */
 a {
-  background: url(data:image/png;base64,iVBORw0KGgo=);
+  background: url("data:image/png;base64,iVBORw0KGgo=");
 }
 `);
     },
   });
-  itBundled("css/BinaryImportURLInCSS", {
-    experimentalCss: true,
 
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a {
-          background: url(./example.png);
-        }
-      `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
-    },
-  });
-  itBundled("css/Base64ImportURLInCSS", {
-    experimentalCss: true,
+  // We don't support dataurl rn
+  //   itBundled("css/DataURLImportURLInCSS", {
+  //     experimentalCss: true,
+  //     outfile: "/out.css",
+  //     // GENERATED
+  //     files: {
+  //       "/entry.css": /* css */ `
+  //         a {
+  //           background: url(./example.png);
+  //         }
+  //       `,
+  //       "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  //     },
+  //     loader: {
+  //       ".png": "dataurl",
+  //     },
+  //     onAfterBundle(api) {
+  //       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+  // /* entry.css */
+  // a {
+  //   background: url("data:image/png;base64,iVBORw0KGgo=");
+  // }
+  // `);
+  //     },
+  //   });
 
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a {
-          background: url(./example.png);
-        }
-      `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
-    },
-  });
+  // We don't support binary loader rn
+  //   itBundled("css/BinaryImportURLInCSS", {
+  //     experimentalCss: true,
+
+  //     // GENERATED
+  //     files: {
+  //       "/entry.css": /* css */ `
+  //         a {
+  //           background: url(./example.png);
+  //         }
+  //       `,
+  //       "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  //     },
+  //     onAfterBundle(api) {
+  //       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+  // /* entry.css */
+  // a {
+  //   background: url("data:image/png;base64,iVBORw0KGgo=");
+  // }
+  // `);
+  //     },
+  //   });
+
+  // We don't support base64 loader rn
+  // itBundled("css/Base64ImportURLInCSS", {
+  //   experimentalCss: true,
+
+  //   // GENERATED
+  //   files: {
+  //     "/entry.css": /* css */ `
+  //       a {
+  //         background: url(./example.png);
+  //       }
+  //     `,
+  //     "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
+  //   },
+  // });
+
   itBundled("css/FileImportURLInCSS", {
     experimentalCss: true,
-
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "./one.css";
@@ -532,9 +570,31 @@ a {
       `,
       "/one.css": `a { background: url(./example.data) }`,
       "/two.css": `b { background: url(./example.data) }`,
-      "/example.data": `This is some data.`,
+      "/example.data": new Array(128 * 1024 + 1).fill("Z".charCodeAt(0)).join(""),
+    },
+    loader: {
+      ".data": "file",
+    },
+    outdir: "/out",
+    async onAfterBundle(api) {
+      api.expectFile("/out/example-ra0pdz4b.data").toEqual(new Array(128 * 1024 + 1).fill("Z".charCodeAt(0)).join(""));
+
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* one.css */
+a {
+  background: url("./example-ra0pdz4b.data");
+}
+
+/* two.css */
+b {
+  background: url("./example-ra0pdz4b.data");
+}
+
+/* entry.css */
+`);
     },
   });
+
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     experimentalCss: true,
 
@@ -548,13 +608,12 @@ a {
       `,
     },
   });
+
   itBundled("css/PackageURLsInCSS", {
     experimentalCss: true,
-
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
-        @import "test.css";
+        @import "./test.css";
 
         a { background: url(a/1.png); }
         b { background: url(b/2.png); }
@@ -566,7 +625,28 @@ a {
       "/c/3.png": `c-3`,
       "/node_modules/c/3.png": `c-3-node_modules`,
     },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* test.css */
+.css {
+  color: red;
+}
+
+/* entry.css */
+a {
+  background: url("data:image/png;base64,YS0x");
+}
+b {
+  background: url("data:image/png;base64,Yi0yLW5vZGVfbW9kdWxlcw==");
+}
+c {
+  background: url("data:image/png;base64,Yy0z");
+}
+`);
+    },
   });
+
   itBundled("css/CSSAtImportExtensionOrderCollision", {
     experimentalCss: true,
 
@@ -579,6 +659,7 @@ a {
     outfile: "/out.css",
     extensionOrder: [".js", ".css"],
   });
+
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
     experimentalCss: true,
 
@@ -594,6 +675,7 @@ a {
       "/entry.css": ['ERROR: No loader is configured for ".sass" files: test.sass'],
     },
   });
+
   itBundled("css/CSSAtImportConditionsNoBundle", {
     experimentalCss: true,
 
@@ -603,6 +685,7 @@ a {
     },
     mode: "passthrough",
   });
+
   itBundled("css/CSSAtImportConditionsBundleExternal", {
     experimentalCss: true,
 

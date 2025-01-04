@@ -464,12 +464,19 @@ pub const BundleV2 = struct {
         reachable: std.ArrayList(Index),
         visited: bun.bit_set.DynamicBitSet,
         all_import_records: []ImportRecord.List,
+        all_loaders: []const Loader,
+        all_urls_for_css: []const ?[]const u8,
         redirects: []u32,
         redirect_map: PathToSourceIndexMap,
         dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
         /// Files which are Server Component Boundaries
         scb_bitset: ?bun.bit_set.DynamicBitSetUnmanaged,
         scb_list: ServerComponentBoundary.List.Slice,
+
+        /// Files which are imported by JS and inlined in CSS
+        additional_files_imported_by_js_and_inlined_in_css: *bun.bit_set.DynamicBitSetUnmanaged,
+        /// Files which are imported by CSS and inlined in CSS
+        additional_files_imported_by_css_and_inlined: *bun.bit_set.DynamicBitSetUnmanaged,
 
         const MAX_REDIRECTS: usize = 64;
 
@@ -498,6 +505,9 @@ pub const BundleV2 = struct {
                 }
             }
 
+            const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
+            const is_css = v.all_loaders[source_index.get()] == .css;
+
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
             if (import_record_list_id.get() < v.all_import_records.len) {
@@ -523,6 +533,14 @@ pub const BundleV2 = struct {
                             if (!other_source.isValid()) {
                                 break;
                             }
+                        }
+
+                        // Mark if the file is imported by JS and its URL is inlined for CSS
+                        const is_inlined = v.all_urls_for_css[import_record.source_index.get()] != null;
+                        if (is_js and is_inlined) {
+                            v.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
+                        } else if (is_css and is_inlined) {
+                            v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());
                         }
 
                         v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
@@ -561,13 +579,24 @@ pub const BundleV2 = struct {
             null;
         defer if (scb_bitset) |*b| b.deinit(stack_alloc);
 
+        var additional_files_imported_by_js_and_inlined_in_css = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
+        var additional_files_imported_by_css_and_inlined = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
+        defer {
+            additional_files_imported_by_js_and_inlined_in_css.deinit(stack_alloc);
+            additional_files_imported_by_css_and_inlined.deinit(stack_alloc);
+        }
+
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
+
+        const all_urls_for_css = this.graph.ast.items(.url_for_css);
 
         var visitor = ReachableFileVisitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
+            .all_loaders = this.graph.input_files.items(.loader),
+            .all_urls_for_css = all_urls_for_css,
             .redirect_map = this.graph.path_to_source_index_map,
             .dynamic_import_entry_points = &this.dynamic_import_entry_points,
             .scb_bitset = scb_bitset,
@@ -575,6 +604,8 @@ pub const BundleV2 = struct {
                 this.graph.server_component_boundaries.slice()
             else
                 undefined, // will never be read since the above bitset is `null`
+            .additional_files_imported_by_js_and_inlined_in_css = &additional_files_imported_by_js_and_inlined_in_css,
+            .additional_files_imported_by_css_and_inlined = &additional_files_imported_by_css_and_inlined,
         };
         defer visitor.visited.deinit();
 
@@ -603,6 +634,21 @@ pub const BundleV2 = struct {
                     source.path.text,
                     @tagName(targets[idx.get()]),
                 });
+            }
+        }
+
+        const additional_files = this.graph.input_files.items(.additional_files);
+        const unique_keys = this.graph.input_files.items(.unique_key_for_additional_file);
+        const content_hashes = this.graph.input_files.items(.content_hash_for_additional_file);
+        for (all_urls_for_css, 0..) |maybe_url_for_css, index| {
+            if (maybe_url_for_css != null) {
+                // We like to inline additional files in CSS if they fit a size threshold
+                // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
+                if (additional_files_imported_by_css_and_inlined.isSet(index) and !additional_files_imported_by_js_and_inlined_in_css.isSet(index)) {
+                    additional_files[index].clearRetainingCapacity();
+                    unique_keys[index] = "";
+                    content_hashes[index] = 0;
+                }
             }
         }
 
@@ -3781,7 +3827,6 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-        ast.url_for_css = unique_key;
         ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, null, unique_key);
         return ast;
     }
@@ -7189,6 +7234,7 @@ pub const LinkerContext = struct {
             const tla_checks = this.parse_graph.ast.items(.tla_check);
             const input_files = this.parse_graph.input_files.items(.source);
             const loaders: []const Loader = this.parse_graph.input_files.items(.loader);
+            const unique_key_for_additional_file = this.parse_graph.input_files.items(.unique_key_for_additional_file);
 
             const export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             const exports_refs: []Ref = this.graph.ast.items(.exports_ref);
@@ -7244,8 +7290,13 @@ pub const LinkerContext = struct {
                                     .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                                 }
 
+                                // It has an inlined url for CSS
                                 if (urls_for_css[record.source_index.get()]) |url| {
                                     record.path.text = url;
+                                }
+                                // It is some external URL
+                                else if (unique_key_for_additional_file[record.source_index.get()].len > 0) {
+                                    record.path.text = unique_key_for_additional_file[record.source_index.get()];
                                 }
                             }
                         }

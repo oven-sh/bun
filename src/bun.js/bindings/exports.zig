@@ -365,6 +365,8 @@ pub const Process = extern struct {
     var title_mutex = std.Thread.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
+        title_mutex.lock();
+        defer title_mutex.unlock();
         const str = bun.CLI.Bun__Node__ProcessTitle;
         title.* = ZigString.init(str orelse "bun");
     }

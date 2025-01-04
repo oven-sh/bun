@@ -381,9 +381,12 @@ pub const S3Credentials = struct {
                     return endpoint[start + 3 .. end];
                 }
             }
+            // endpoint is informed but is not s3 so auto detect
+            return "auto";
         }
 
-        return "auto";
+        // no endpoint so we default to us-east-1 because s3.us-east-1.amazonaws.com is the default endpoint
+        return "us-east-1";
     }
     fn toHexChar(value: u8) !u8 {
         return switch (value) {

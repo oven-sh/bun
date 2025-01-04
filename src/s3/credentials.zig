@@ -107,7 +107,8 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
-                                const url = bun.URL.parse(new_credentials._endpointSlice.?.slice());
+                                const endpoint = new_credentials._endpointSlice.?.slice();
+                                const url = bun.URL.parse(endpoint);
                                 const normalized_endpoint = url.host;
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
@@ -117,6 +118,9 @@ pub const S3Credentials = struct {
                                     new_credentials.credentials.insecure_http = url.isHTTP();
 
                                     new_credentials.changed_credentials = true;
+                                } else if (endpoint.len > 0) {
+                                    // endpoint is not a valid URL
+                                    return globalObject.throwInvalidArgumentTypeValue("endpoint", "string", js_value);
                                 }
                             }
                         } else {

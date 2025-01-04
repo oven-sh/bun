@@ -1350,15 +1350,18 @@ pub const AWSCredentials = struct {
             this.reportProgress(state);
         }
 
-        pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
-            const is_done = !result.has_more;
+        /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
+        fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
             // lets lock and unlock to be safe we now the state is not in the middle of a callback
             this.reported_response_lock.lock();
+            defer this.reported_response_lock.unlock();
 
+            // remember the state is atomic load it once, and store it again
             var state = this.getState();
             // old state should have more
             bun.assert(state.has_more);
-
+            const is_done = !result.has_more;
+            // if we got a error or fail wait until we are done buffering the response body to report
             var wait_until_done = false;
             {
                 state.has_more = !is_done;
@@ -1378,12 +1381,13 @@ pub const AWSCredentials = struct {
                     200, 204, 206 => wait_until_done = state.request_error != 0,
                     else => wait_until_done = true,
                 }
+                // store the new state
                 this.setState(state);
                 this.http = async_http.*;
             }
-            // if we got a error or fail wait until we are done buffering the response body to report
             const should_enqueue = !wait_until_done or is_done;
             log("state err: {} status_code: {} has_more: {} should_enqueue: {}", .{ state.request_error, state.status_code, state.has_more, should_enqueue });
+
             if (should_enqueue) {
                 if (result.body) |body| {
                     this.response_buffer = body.*;
@@ -1392,28 +1396,24 @@ pub const AWSCredentials = struct {
                     }
                     this.response_buffer.reset();
                     if (this.reported_response_buffer.list.items.len == 0 and !is_done) {
-                        // we did not enqueue lets unlock
-                        this.reported_response_lock.unlock();
-                        return;
+                        return false;
                     }
                 } else if (!is_done) {
-                    // we did not enqueue lets unlock
-                    this.reported_response_lock.unlock();
-                    return;
+                    return false;
                 }
                 if (this.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                     if (has_schedule_callback) {
-                        // we did not enqueue lets unlock
-                        this.reported_response_lock.unlock();
-                        return;
+                        return false;
                     }
                 }
-                // lets unlock before we enqueue
-                this.reported_response_lock.unlock();
+                return true;
+            }
+            return false;
+        }
+        pub fn http_callback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
+            if (processHttpCallback(this, async_http, result)) {
+                // we are always unlocked here and its safe to enqueue
                 this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
-            } else {
-                // we did not enqueue lets unlock
-                this.reported_response_lock.unlock();
             }
         }
     };

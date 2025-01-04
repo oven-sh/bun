@@ -533,7 +533,7 @@ pub const Response = struct {
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
                     }, .{ .expires = 15 * 60 }) catch |sign_err| {
-                        return s3.S3Credentials.throwSignError(sign_err, globalThis);
+                        return s3.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
@@ -3357,7 +3357,7 @@ pub const Fetch = struct {
                 .method = method,
             }, null) catch |sign_err| {
                 is_error = true;
-                return JSPromise.rejectedPromiseValue(globalThis, s3.S3Credentials.getJSSignError(sign_err, globalThis));
+                return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
             };
             defer result.deinit();
             if (proxy) |proxy_| {

@@ -6,6 +6,7 @@ const picohttp = JSC.WebCore.picohttp;
 pub const S3Error = @import("./error.zig");
 
 pub const S3Credentials = @import("./credentials.zig").S3Credentials;
+
 pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 const S3SimpleRequest = @import("./simple_request.zig");
@@ -16,6 +17,9 @@ pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
 pub const ACL = @import("./acl.zig").ACL;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+pub const throwSignError = S3Error.throwSignError;
+pub const getJSSignError = S3Error.getJSSignError;
+
 pub fn stat(this: *S3Credentials, path: []const u8, callback: *const fn (S3StatResult, *anyopaque) void, callback_context: *anyopaque, proxy_url: ?[]const u8) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,

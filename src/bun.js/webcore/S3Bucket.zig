@@ -6,11 +6,11 @@ const PathOrBlob = JSC.Node.PathOrBlob;
 const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const S3File = @import("./S3File.zig");
-const AWSCredentials = bun.AWSCredentials;
+const S3Credentials = bun.S3.S3Credentials;
 
 const S3BucketOptions = struct {
-    credentials: *AWSCredentials,
-    options: bun.S3.MultiPartUpload.MultiPartUploadOptions = .{},
+    credentials: *S3Credentials,
+    options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     pub usingnamespace bun.New(@This());
 
@@ -20,7 +20,7 @@ const S3BucketOptions = struct {
     }
 };
 
-pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.MultiPartUpload.MultiPartUploadOptions, acl: ?bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.MultiPartUploadOptions, acl: ?bun.S3.ACL, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll("\n");
 
     {
@@ -37,7 +37,7 @@ pub fn writeFormatCredentials(credentials: *AWSCredentials, options: bun.S3.Mult
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
-        const region = if (credentials.region.len > 0) credentials.region else AWSCredentials.guessRegion(credentials.endpoint);
+        const region = if (credentials.region.len > 0) credentials.region else S3Credentials.guessRegion(credentials.endpoint);
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>region<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{region});
@@ -133,7 +133,7 @@ pub fn call(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     };
     errdefer path.deinit();
     const options = args.nextEat();
-    var blob = Blob.new(try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl));
+    var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl));
     blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
@@ -151,7 +151,7 @@ pub fn presign(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe
     errdefer path.deinit();
 
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+    var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
     defer blob.detach();
     return S3File.getPresignUrlFrom(&blob, globalThis, options);
 }
@@ -168,7 +168,7 @@ pub fn exists(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     };
     errdefer path.deinit();
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+    var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
     defer blob.detach();
     return S3File.S3BlobStatTask.exists(globalThis, &blob);
 }
@@ -185,7 +185,7 @@ pub fn size(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: *
     };
     errdefer path.deinit();
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+    var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
     defer blob.detach();
     return S3File.S3BlobStatTask.size(globalThis, &blob);
 }
@@ -203,7 +203,7 @@ pub fn write(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe: 
     };
 
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+    var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
     defer blob.detach();
     var blob_internal: PathOrBlob = .{ .blob = blob };
     return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
@@ -221,7 +221,7 @@ pub fn unlink(ptr: *S3BucketOptions, globalThis: *JSC.JSGlobalObject, callframe:
     };
     errdefer path.deinit();
     const options = args.nextEat();
-    var blob = try S3File.constructS3FileWithAWSCredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+    var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
     defer blob.detach();
     return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
 }
@@ -235,7 +235,7 @@ pub fn construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
         globalThis.throwInvalidArguments("Expected S3 options to be passed", .{}) catch return null;
     }
-    var aws_options = AWSCredentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getAWSCredentials(), .{}, options, null, globalThis) catch return null;
+    var aws_options = S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, options, null, globalThis) catch return null;
     defer aws_options.deinit();
     return S3BucketOptions.new(.{
         .credentials = aws_options.credentials.dupe(),

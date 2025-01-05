@@ -651,32 +651,47 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it("should error with invalid endpoint", async () => {
       await Promise.all(
         [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
-          const s3file = fn("s3://bucket/credentials-test", {
-            ...s3Options,
-            endpoint: "🙂.🥯",
-          });
           try {
+            const s3file = fn("s3://bucket/credentials-test", {
+              ...s3Options,
+              endpoint: "🙂.🥯",
+            });
             await s3file.write("Hello Bun!");
             expect.unreachable();
           } catch (e: any) {
-            expect(e?.code).toBeOneOf(["FailedToOpenSocket", "ConnectionRefused"]);
+            expect(e?.code).toBe("ERR_INVALID_ARG_TYPE");
           }
         }),
       );
     });
-
     it("should error with invalid endpoint", async () => {
       await Promise.all(
         [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
-          const s3file = fn("s3://bucket/credentials-test", {
-            ...s3Options,
-            endpoint: "..asd.@%&&&%%",
-          });
           try {
+            const s3file = fn("s3://bucket/credentials-test", {
+              ...s3Options, // credentials and endpoint dont match
+              endpoint: "s3.us-west-1.amazonaws.com",
+            });
             await s3file.write("Hello Bun!");
             expect.unreachable();
           } catch (e: any) {
-            expect(e?.code).toBeOneOf(["FailedToOpenSocket", "ConnectionRefused"]);
+            expect(e?.code).toBe("PermanentRedirect");
+          }
+        }),
+      );
+    });
+    it("should error with invalid endpoint", async () => {
+      await Promise.all(
+        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+          try {
+            const s3file = fn("s3://bucket/credentials-test", {
+              ...s3Options,
+              endpoint: "..asd.@%&&&%%",
+            });
+            await s3file.write("Hello Bun!");
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e?.code).toBe("ERR_INVALID_ARG_TYPE");
           }
         }),
       );
@@ -775,6 +790,36 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         const s3file = s3("s3://bucket/credentials-test", s3Options);
         const url = s3file.presign();
         expect(url).toBeDefined();
+        expect(url.includes("X-Amz-Expires=86400")).toBe(true);
+        expect(url.includes("X-Amz-Date")).toBe(true);
+        expect(url.includes("X-Amz-Signature")).toBe(true);
+        expect(url.includes("X-Amz-Credential")).toBe(true);
+        expect(url.includes("X-Amz-Algorithm")).toBe(true);
+        expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+      });
+      it("default endpoint and region should work", async () => {
+        let options = { ...s3Options };
+        options.endpoint = undefined;
+        options.region = undefined;
+        const s3file = s3("s3://bucket/credentials-test", options);
+        const url = s3file.presign();
+        expect(url).toBeDefined();
+        expect(url.includes("https://s3.us-east-1.amazonaws.com")).toBe(true);
+        expect(url.includes("X-Amz-Expires=86400")).toBe(true);
+        expect(url.includes("X-Amz-Date")).toBe(true);
+        expect(url.includes("X-Amz-Signature")).toBe(true);
+        expect(url.includes("X-Amz-Credential")).toBe(true);
+        expect(url.includes("X-Amz-Algorithm")).toBe(true);
+        expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+      });
+      it("default endpoint + region should work", async () => {
+        let options = { ...s3Options };
+        options.endpoint = undefined;
+        options.region = "us-west-1";
+        const s3file = s3("s3://bucket/credentials-test", options);
+        const url = s3file.presign();
+        expect(url).toBeDefined();
+        expect(url.includes("https://s3.us-west-1.amazonaws.com")).toBe(true);
         expect(url.includes("X-Amz-Expires=86400")).toBe(true);
         expect(url.includes("X-Amz-Date")).toBe(true);
         expect(url.includes("X-Amz-Signature")).toBe(true);

@@ -17,7 +17,7 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
-const s3 = @import("./s3.zig");
+const s3 = bun.S3;
 
 const DotEnvFileSuffix = enum {
     development,
@@ -46,7 +46,7 @@ pub const Loader = struct {
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
 
-    aws_credentials: ?s3.AWSCredentials = null,
+    aws_credentials: ?s3.S3Credentials = null,
 
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
@@ -115,7 +115,7 @@ pub const Loader = struct {
         }
     }
 
-    pub fn getAWSCredentials(this: *Loader) s3.AWSCredentials {
+    pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
         if (this.aws_credentials) |credentials| {
             return credentials;
         }

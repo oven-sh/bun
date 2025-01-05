@@ -110,7 +110,7 @@ function runInCwdSuccess({
       cmd.push("--filter", p);
     }
   } else {
-    cmd.push("--filter", pattern);
+    cmd.push("-F", pattern);
   }
 
   for (const c of command) {

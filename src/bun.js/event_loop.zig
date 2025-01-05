@@ -18,9 +18,9 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
-const AWS = @import("../s3.zig").AWSCredentials;
-const S3HttpSimpleTask = AWS.S3HttpSimpleTask;
-const S3HttpDownloadStreamingTask = AWS.S3HttpDownloadStreamingTask;
+const S3 = bun.S3;
+const S3HttpSimpleTask = S3.S3HttpSimpleTask;
+const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
 
 const JSValue = JSC.JSValue;
 const js = JSC.C;

@@ -21,12 +21,13 @@ const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
-
+const S3Bucket = @import("./webcore/S3Bucket.zig");
 pub const shim = Shimmer("Bun", "ConsoleObject", @This());
 pub const Type = *anyopaque;
 pub const name = "Bun::ConsoleObject";
 pub const include = "\"ConsoleObject.h\"";
 pub const namespace = shim.namespace;
+
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
@@ -378,13 +379,13 @@ pub const TablePrinter = struct {
                     }
                 }
             } else {
-                var cols_iter = JSC.JSPropertyIterator(.{
+                var cols_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(this.globalObject, row_value);
                 defer cols_iter.deinit();
 
-                while (cols_iter.next()) |col_key| {
+                while (try cols_iter.next()) |col_key| {
                     const value = cols_iter.value;
 
                     // find or create the column for the property
@@ -561,13 +562,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
-                var rows_iter = JSC.JSPropertyIterator(.{
+                var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
-                while (rows_iter.next()) |row_key| {
+                while (try rows_iter.next()) |row_key| {
                     try this.updateColumnsForRow(&columns, .{ .str = String.init(row_key) }, rows_iter.value);
                 }
             }
@@ -634,13 +635,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
-                var rows_iter = JSC.JSPropertyIterator(.{
+                var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
-                while (rows_iter.next()) |row_key| {
+                while (try rows_iter.next()) |row_key| {
                     try this.printRow(Writer, writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
                 }
             }
@@ -2216,6 +2217,10 @@ pub const Formatter = struct {
                 );
             },
             .Class => {
+                if (S3Bucket.fromJS(value)) |s3bucket| {
+                    S3Bucket.writeFormat(s3bucket, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
+                }
                 var printable = ZigString.init(&name_buf);
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
@@ -2728,10 +2733,6 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-
                 const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                 if (length == 0) {
@@ -2762,7 +2763,7 @@ pub const Formatter = struct {
                         },
                     }
                 }
-                if (this.single_line) {
+                if (!this.single_line) {
                     this.writeIndent(Writer, writer_) catch {};
                 }
                 writer.writeAll("}");
@@ -2999,7 +3000,7 @@ pub const Formatter = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    var props_iter = JSC.JSPropertyIterator(.{
+                    var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = true,
 
                         .include_value = true,
@@ -3013,7 +3014,7 @@ pub const Formatter = struct {
                             defer this.indent -|= 1;
                             const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
-                            while (props_iter.next()) |prop| {
+                            while (try props_iter.next()) |prop| {
                                 if (prop.eqlComptime("children"))
                                     continue;
 

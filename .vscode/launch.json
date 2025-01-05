@@ -15,6 +15,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -31,6 +32,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--only", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
@@ -53,6 +55,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -69,6 +72,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_DEBUG_jest": "1",
@@ -85,6 +89,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -101,6 +106,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -117,6 +123,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -139,6 +146,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -162,6 +170,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -178,6 +187,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
@@ -197,6 +207,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -212,6 +223,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "--watch", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         // "BUN_DEBUG_DEBUGGER": "1",
         // "BUN_DEBUG_INTERNAL_DEBUGGER": "1",
@@ -230,6 +242,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "--hot", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -245,6 +258,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -267,6 +281,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -290,6 +305,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -306,6 +322,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -322,6 +339,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -338,6 +356,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -354,6 +373,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -370,6 +390,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -392,6 +413,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
@@ -415,6 +437,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["exec", "${input:testName}"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -431,6 +454,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -446,6 +470,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
@@ -461,6 +486,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -482,6 +508,7 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["install"],
       "cwd": "${fileDirname}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -497,6 +524,7 @@
       "program": "node",
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",

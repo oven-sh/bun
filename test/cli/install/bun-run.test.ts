@@ -1,9 +1,17 @@
 import { file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync, stderrForInstall } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+  stderrForInstall,
+  readdirSorted,
+} from "harness";
 import { join } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
 

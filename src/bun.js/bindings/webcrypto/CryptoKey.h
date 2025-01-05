@@ -26,6 +26,8 @@
 #pragma once
 
 #if ENABLE(WEB_CRYPTO)
+struct evp_pkey_st;
+typedef struct evp_pkey_st EVP_PKEY;
 
 #include "CryptoAesKeyAlgorithm.h"
 #include "CryptoAlgorithmIdentifier.h"
@@ -91,6 +93,20 @@ inline auto CryptoKey::type() const -> Type
 }
 
 WebCoreOpaqueRoot root(CryptoKey*);
+
+class AsymmetricKeyValue {
+public:
+    EVP_PKEY* key = nullptr;
+    bool owned = false;
+
+    operator EVP_PKEY*() const { return key; }
+    EVP_PKEY* operator*() const { return key; }
+    bool operator!() const { return !key; }
+
+    ~AsymmetricKeyValue();
+    AsymmetricKeyValue(EVP_PKEY* key, bool owned);
+    AsymmetricKeyValue(CryptoKey&);
+};
 
 } // namespace WebCore
 

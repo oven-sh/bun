@@ -281,28 +281,6 @@ function createSecureContext(options) {
 // javascript object representations before passing them back to the user.  Can
 // be used on any cert object, but changing the name would be semver-major.
 function translatePeerCertificate(c) {
-  if (!c) return null;
-
-  if (c.issuerCertificate != null && c.issuerCertificate !== c) {
-    c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
-  }
-  if (c.infoAccess != null) {
-    const info = c.infoAccess;
-    c.infoAccess = { __proto__: null };
-    // XXX: More key validation?
-    RegExpPrototypeSymbolReplace.$call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
-      if (val.charCodeAt(0) === 0x22) {
-        // The translatePeerCertificate function is only
-        // used on internally created legacy certificate
-        // objects, and any value that contains a quote
-        // will always be a valid JSON string literal,
-        // so this should never throw.
-        val = JSONParse(val);
-      }
-      if (key in c.infoAccess) ArrayPrototypePush.$call(c.infoAccess[key], val);
-      else c.infoAccess[key] = [val];
-    });
-  }
   return c;
 }
 
@@ -498,10 +476,10 @@ const TLSSocket = (function (InternalTLSSocket) {
       }
     }
     getPeerX509Certificate() {
-      throw Error("Not implented in Bun yet");
+      return this._handle?.getPeerX509Certificate?.();
     }
     getX509Certificate() {
-      throw Error("Not implented in Bun yet");
+      return this._handle?.getX509Certificate?.();
     }
 
     [buntls](port, host) {

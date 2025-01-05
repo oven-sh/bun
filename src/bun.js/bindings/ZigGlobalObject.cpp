@@ -158,7 +158,7 @@
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
-
+#include "JSX509Certificate.h"
 #include "JSS3Bucket.h"
 #include "JSS3File.h"
 #include "S3Error.h"
@@ -2806,7 +2806,9 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
-
+    m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
+        setupX509CertificateClassStructure(init);
+    });
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3861,6 +3863,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
+
+    thisObject->m_JSX509CertificateClassStructure.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

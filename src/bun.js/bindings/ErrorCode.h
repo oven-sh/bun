@@ -94,4 +94,7 @@ JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
 
 }
 
+void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode);
+void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);
+
 }

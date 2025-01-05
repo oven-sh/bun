@@ -26,6 +26,7 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
+#include "ZigGlobalObject.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "webcrypto/CryptoKeyOKP.h"
@@ -58,6 +59,7 @@
 #include "CryptoAlgorithmRegistry.h"
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
+#include "ncrypto.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject = JSC::JSGlobalObject;
@@ -139,11 +141,6 @@ static bool KeyObject__IsEncryptedPrivateKeyInfo(const unsigned char* data, size
     // EncryptedPrivateKeyInfo starts with an AlgorithmIdentifier.
     return len >= 1 && data[offset] != 2;
 }
-
-struct AsymmetricKeyValue {
-    EVP_PKEY* key;
-    bool owned;
-};
 
 struct AsymmetricKeyValueWithDER {
     EVP_PKEY* key;
@@ -323,6 +320,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
@@ -861,7 +859,7 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
 
@@ -1255,6 +1253,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     JSValue bufferArg = callFrame->uncheckedArgument(0);
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1370,6 +1369,7 @@ static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
 }
 JSC_DEFINE_HOST_FUNCTION(KeyObject__Sign, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1579,6 +1579,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Sign, (JSC::JSGlobalObject * globalObject, J
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1786,7 +1787,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__Exports, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2371,7 +2372,7 @@ static char* bignum_to_string(const BIGNUM* bn)
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject_AsymmetricKeyDetails, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         auto id = key->wrapped().algorithmIdentifier();
         auto& vm = lexicalGlobalObject->vm();
@@ -2496,6 +2497,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject_AsymmetricKeyDetails, (JSC::JSGlobalObject * 
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeyPairSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2718,6 +2720,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeyPairSync, (JSC::JSGlobalObject * 
 }
 JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto count = callFrame->argumentCount();
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2778,6 +2781,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexi
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__AsymmetricKeyType, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     static const NeverDestroyed<String> values[] = {
         MAKE_STATIC_STRING_IMPL("rsa"),
         MAKE_STATIC_STRING_IMPL("rsa-pss"),
@@ -2833,36 +2837,66 @@ static Vector<uint8_t> GetRawKeyFromSecret(WebCore::CryptoKey& key)
     }
     }
 }
-static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
+AsymmetricKeyValue::~AsymmetricKeyValue()
 {
-    auto id = key.algorithmIdentifier();
+    if (key && owned) {
+        EVP_PKEY_free(key);
+    }
+}
+
+AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
+{
+    auto id = cryptoKey.algorithmIdentifier();
+    owned = false;
+    key = nullptr;
+
     switch (id) {
     case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
     case CryptoAlgorithmIdentifier::RSA_PSS:
-        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
+        key = downcast<WebCore::CryptoKeyRSA>(cryptoKey).platformKey();
+        break;
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
-        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
+        key = downcast<WebCore::CryptoKeyEC>(cryptoKey).platformKey();
+        break;
     case CryptoAlgorithmIdentifier::Ed25519: {
-        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(cryptoKey);
         auto keyData = okpKey.exportKey();
         if (okpKey.type() == CryptoKeyType::Private) {
-            auto* evp_key = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return AsymmetricKeyValue { .key = evp_key, .owned = true };
+            key = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
+            owned = true;
+            break;
         } else {
             auto* evp_key = EVP_PKEY_new_raw_public_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return AsymmetricKeyValue { .key = evp_key, .owned = true };
+            key = evp_key;
+            owned = true;
+            break;
         }
     }
-    default:
-        return AsymmetricKeyValue { .key = NULL, .owned = false };
+    case CryptoAlgorithmIdentifier::AES_CTR:
+    case CryptoAlgorithmIdentifier::AES_CBC:
+    case CryptoAlgorithmIdentifier::AES_GCM:
+    case CryptoAlgorithmIdentifier::AES_CFB:
+    case CryptoAlgorithmIdentifier::AES_KW:
+    case CryptoAlgorithmIdentifier::HMAC:
+    case CryptoAlgorithmIdentifier::SHA_1:
+    case CryptoAlgorithmIdentifier::SHA_224:
+    case CryptoAlgorithmIdentifier::SHA_256:
+    case CryptoAlgorithmIdentifier::SHA_384:
+    case CryptoAlgorithmIdentifier::SHA_512:
+    case CryptoAlgorithmIdentifier::HKDF:
+    case CryptoAlgorithmIdentifier::PBKDF2:
+    case CryptoAlgorithmIdentifier::None:
+        key = nullptr;
+        break;
     }
 }
 
 JSC_DEFINE_HOST_FUNCTION(KeyObject__Equals, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         if (auto* key2 = jsDynamicCast<JSCryptoKey*>(callFrame->argument(1))) {
             auto& wrapped = key->wrapped();
@@ -2882,17 +2916,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Equals, (JSC::JSGlobalObject * lexicalGlobal
                 }
                 return JSC::JSValue::encode(jsBoolean(CRYPTO_memcmp(keyData.data(), keyData2.data(), size) == 0));
             }
-            auto evp_key = GetInternalAsymmetricKey(wrapped);
-            auto evp_key2 = GetInternalAsymmetricKey(wrapped2);
+            AsymmetricKeyValue first(wrapped);
+            AsymmetricKeyValue second(wrapped2);
 
-            int ok = !evp_key.key || !evp_key2.key ? -2 : EVP_PKEY_cmp(evp_key.key, evp_key2.key);
+            int ok = !first.key || !second.key ? -2 : EVP_PKEY_cmp(first.key, second.key);
 
-            if (evp_key.key && evp_key.owned) {
-                EVP_PKEY_free(evp_key.key);
-            }
-            if (evp_key2.key && evp_key2.owned) {
-                EVP_PKEY_free(evp_key2.key);
-            }
             if (ok == -2) {
                 auto& vm = lexicalGlobalObject->vm();
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3200,6 +3228,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicDecrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "publicDecrypt"_s, KeyObject__publicDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
 
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "X509Certificate"_s)),
+        globalObject->m_JSX509CertificateClassStructure.constructor(globalObject));
     return obj;
 }
 

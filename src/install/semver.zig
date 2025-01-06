@@ -704,34 +704,6 @@ pub const ExternalString = extern struct {
     }
 };
 
-pub const BigExternalString = extern struct {
-    off: u32 = 0,
-    len: u32 = 0,
-    hash: u64 = 0,
-
-    pub fn from(in: string) BigExternalString {
-        return BigExternalString{
-            .off = 0,
-            .len = @as(u32, @truncate(in.len)),
-            .hash = bun.Wyhash.hash(0, in),
-        };
-    }
-
-    pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
-
-        return BigExternalString{
-            .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
-            .len = @as(u32, @truncate(in.len)),
-            .hash = hash,
-        };
-    }
-
-    pub fn slice(this: BigExternalString, buf: string) string {
-        return buf[this.off..][0..this.len];
-    }
-};
-
 pub const SlicedString = struct {
     buf: string,
     slice: string,
@@ -771,14 +743,12 @@ pub const SlicedString = struct {
     }
 };
 
-const RawType = void;
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
     _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
-    // raw: RawType = RawType{},
 
     /// Assumes that there is only one buffer for all the strings
     pub fn sortGt(ctx: []const u8, lhs: Version, rhs: Version) bool {
@@ -1717,10 +1687,6 @@ pub const Version = extern struct {
 
         result.len = @as(u32, @intCast(i));
 
-        if (comptime RawType != void) {
-            result.version.raw = sliced_string.sub(input[0..i]).external();
-        }
-
         return result;
     }
 
@@ -2241,7 +2207,7 @@ pub const Query = struct {
             };
         }
 
-        pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
+        pub const FlagsBitSet = bun.bit_set.IntegerBitSet(3);
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;

@@ -1125,7 +1125,7 @@ pub const ArgumentsSlice = struct {
     arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
-    protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
     will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
@@ -1134,7 +1134,7 @@ pub const ArgumentsSlice = struct {
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
-        this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
+        this.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
     }
 
     pub fn deinit(this: *ArgumentsSlice) void {
@@ -2139,10 +2139,14 @@ pub const Process = struct {
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
-        var buf1: [32768]u16 = undefined;
-        var buf2: [32768]u16 = undefined;
+        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
+        const allocator = fixed_stack_allocator.get();
+        var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf1);
+        var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf2);
         const len1: usize = switch (wtf1.is8Bit()) {
-            true => bun.strings.copyLatin1IntoUTF16([]u16, &buf1, []const u8, wtf1.latin1Slice()).written,
+            true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,
             false => b: {
                 @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
                 break :b wtf1.length();
@@ -2153,7 +2157,7 @@ pub const Process = struct {
             if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
             const wtf2 = v.value.WTFStringImpl;
             const len2: usize = switch (wtf2.is8Bit()) {
-                true => bun.strings.copyLatin1IntoUTF16([]u16, &buf2, []const u8, wtf2.latin1Slice()).written,
+                true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, []const u8, wtf2.latin1Slice()).written,
                 false => b: {
                     @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
                     break :b wtf2.length();
@@ -2189,6 +2193,31 @@ pub const Process = struct {
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
     pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
+};
+
+pub const PathOrBlob = union(enum) {
+    path: JSC.Node.PathOrFileDescriptor,
+    blob: Blob,
+
+    const Blob = JSC.WebCore.Blob;
+
+    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
+            return PathOrBlob{
+                .path = path,
+            };
+        }
+
+        const arg = args.nextEat() orelse {
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+        };
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.*,
+            };
+        }
+        return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
+    }
 };
 
 comptime {

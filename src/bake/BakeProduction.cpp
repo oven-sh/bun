@@ -1,5 +1,6 @@
 #include "BakeProduction.h"
 #include "BunBuiltinNames.h"
+#include "JavaScriptCore/CallData.h"
 #include "WebCoreJSBuiltins.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/Exception.h"
@@ -38,7 +39,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(styles);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(global, cb, callData, JSC::jsUndefined(), args, returnedException);
+    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
     if (UNLIKELY(returnedException)) {
         // This should be impossible because it returns a promise.
         return JSC::JSPromise::rejectedPromise(global, returnedException->value());

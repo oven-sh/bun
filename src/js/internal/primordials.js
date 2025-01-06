@@ -1,5 +1,5 @@
 // TODO: Use native code and JSC intrinsics for everything in this file.
-// Do not use this file for new code, many things here will be slow especailly when intrinsics for these operations is available.
+// Do not use this file for new code, many things here will be slow especially when intrinsics for these operations is available.
 // It is primarily used for `internal/util`
 
 const createSafeIterator = (factory, next) => {

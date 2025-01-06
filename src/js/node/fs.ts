@@ -742,6 +742,7 @@ const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readab
 const NativeReadablePrototype = NativeReadable.prototype;
 const kFs = Symbol("kFs");
 const kHandle = Symbol("kHandle");
+const kDeferredError = Symbol("kDeferredError");
 
 const kinternalRead = Symbol("kinternalRead");
 const kerrorOrDestroy = Symbol("kerrorOrDestroy");
@@ -825,11 +826,12 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   // If fd not open for this file, open it
   if (this.fd == null) {
     // NOTE: this fs is local to constructor, from options
-    this.fd = overridden_fs.openSync(pathOrFd, flags, mode);
+    try {
+      this.fd = overridden_fs.openSync(pathOrFd, flags, mode);
+    } catch (e) {
+      this[kDeferredError] = e;
+    }
   }
-
-  // Get FileRef from fd
-  var fileRef = Bun.file(this.fd);
 
   // Get the stream controller
   // We need the pointer to the underlying stream controller for the NativeReadable
@@ -845,13 +847,20 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
     }
   }
 
-  const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
-  var ptr = stream.$bunNativePtr;
-  if (!ptr) {
-    throw new Error("Failed to get internal stream controller. This is a bug in Bun");
-  }
+  if (this.fd != null) {
+    // Get FileRef from fd
+    var fileRef = Bun.file(this.fd);
 
-  NativeReadable.$apply(this, [ptr, options]);
+    const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
+    var ptr = stream.$bunNativePtr;
+    if (!ptr) {
+      throw new Error("Failed to get internal stream controller. This is a bug in Bun");
+    }
+
+    NativeReadable.$apply(this, [ptr, options]);
+  } else {
+    NativeReadable.$apply(this, [null, options]);
+  }
 
   this[kHandle] = handle;
   this.end = end;
@@ -885,8 +894,14 @@ ReadStream.prototype._construct = function (callback) {
   } else {
     callback();
   }
-  this.emit("open", this.fd);
-  this.emit("ready");
+
+  if (this[kDeferredError]) {
+    this.emit("error", this[kDeferredError]);
+    delete this[kDeferredError];
+  } else {
+    this.emit("open", this.fd);
+    this.emit("ready");
+  }
 };
 
 ReadStream.prototype._destroy = function (err, cb) {

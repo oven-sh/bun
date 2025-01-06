@@ -27,6 +27,8 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { CSI } = require("internal/readline/utils");
+const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } = CSI;
 
 const {
   validateFunction,
@@ -36,6 +38,7 @@ const {
   validateBoolean,
   validateInteger,
   validateUint32,
+  validateNumber,
 } = require("internal/validators");
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
@@ -43,7 +46,7 @@ const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetString
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;
-const PromiseReject = Promise.reject;
+const PromiseReject = Promise.reject.bind(Promise);
 
 var isWritable;
 
@@ -302,34 +305,23 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
   }
 }
 
+// Node uses an AbortError that isn't exactly the same as the DOMException
+// to make usage of the error in userland and readable-stream easier.
+// It is a regular error with `.code` and `.name`.
 class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
+  constructor(message = "The operation was aborted", options = undefined) {
+    if (options !== undefined && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", "Object", options);
+    }
+    super(message, options);
     this.code = "ABORT_ERR";
+    this.name = "AbortError";
   }
 }
 
 // ----------------------------------------------------------------------------
 // Section: Utils
 // ----------------------------------------------------------------------------
-
-function CSI(strings, ...args) {
-  var ret = `${kEscape}[`;
-  for (var n = 0; n < strings.length; n++) {
-    ret += strings[n];
-    if (n < args.length) ret += args[n];
-  }
-  return ret;
-}
-
-var kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd;
-
-CSI.kEscape = kEscape;
-CSI.kClearLine = kClearLine = CSI`2K`;
-CSI.kClearScreenDown = kClearScreenDown = CSI`0J`;
-CSI.kClearToLineBeginning = kClearToLineBeginning = CSI`1K`;
-CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 
 function charLengthLeft(str: string, i: number) {
   if (i <= 0) return 0;
@@ -387,6 +379,7 @@ function* emitKeys(stream) {
     var keyCtrl = false;
     var keyMeta = false;
     var keyShift = false;
+    var keyCode = {};
 
     // var key = {
     //   sequence: null,
@@ -776,6 +769,8 @@ function* emitKeys(stream) {
           keyName = "undefined";
           break;
       }
+
+      keyCode.code = code;
     } else if (ch === "\r") {
       // carriage return
       keyName = "return";
@@ -829,6 +824,7 @@ function* emitKeys(stream) {
         ctrl: keyCtrl,
         meta: keyMeta,
         shift: keyShift,
+        ...keyCode,
       });
     } else if (charLengthAt(s, 0) === s.length) {
       /* Single unnamed character, e.g. "." */
@@ -838,6 +834,7 @@ function* emitKeys(stream) {
         ctrl: keyCtrl,
         meta: keyMeta,
         shift: keyShift,
+        ...keyCode,
       });
     }
     /* Unrecognized or broken escape sequence, don't emit anything */
@@ -1312,9 +1309,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     historySize = kHistorySize;
   }
 
-  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
-  }
+  validateNumber(historySize, "historySize", 0);
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified
@@ -1425,8 +1420,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     return this[kPrompt];
   }
 
-  [kSetRawMode](flag) {
-    const mode = flag + 0;
+  [kSetRawMode](mode) {
     const wasInRawMode = this.input.isRaw;
 
     var setRawMode = this.input.setRawMode;
@@ -1647,6 +1641,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       if (this[kLine_buffer]) {
         string = this[kLine_buffer] + string;
         this[kLine_buffer] = null;
+        lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
         newPartContainsEnding = RegExpPrototypeExec.$call(lineEnding, string);
       }
       this[kSawReturnAt] = StringPrototypeEndsWith.$call(string, "\r") ? DateNow() : 0;
@@ -1739,7 +1734,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // Apply/show completions.
     var completionsWidth = ArrayPrototypeMap.$call(completions, e => getStringWidth(e));
-    var width = MathMax.$apply(completionsWidth) + 2; // 2 space padding
+    var width = MathMax.$apply(null, completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;
@@ -2315,19 +2310,21 @@ var _Interface = class Interface extends InterfaceConstructor {
         // falls through
         default:
           if (typeof s === "string" && s) {
-            var nextMatch = RegExpPrototypeExec.$call(lineEnding, s);
-            if (nextMatch !== null) {
+            // Erase state of previous searches.
+            lineEnding.lastIndex = 0;
+            var nextMatch;
+            // Keep track of the end of the last match.
+            var lastIndex = 0;
+            while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
               this[kInsertString](StringPrototypeSlice.$call(s, 0, nextMatch.index));
-              var { lastIndex } = lineEnding;
-              while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
-                this[kLine]();
-                this[kInsertString](StringPrototypeSlice.$call(s, lastIndex, nextMatch.index));
-                ({ lastIndex } = lineEnding);
-              }
-              if (lastIndex === s.length) this[kLine]();
-            } else {
-              this[kInsertString](s);
+              ({ lastIndex } = lineEnding);
+              this[kLine]();
+              // Restore lastIndex as the call to kLine could have mutated it.
+              lineEnding.lastIndex = lastIndex;
             }
+            // This ensures that the last line is written if it doesn't end in a newline.
+            // Note that the last line may be the first line, in which case this still works.
+            this[kInsertString](StringPrototypeSlice.$call(s, lastIndex));
           }
       }
     }
@@ -2901,21 +2898,21 @@ var PromisesInterface = class Interface extends _Interface {
         return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
       }
     }
-    const { promise, resolve, reject } = $newPromiseCapability(Promise);
-    var cb = resolve;
-    if (options?.signal) {
-      var onAbort = () => {
-        this[kQuestionCancel]();
-        reject(new AbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
-    }
-    this[kQuestion](query, cb);
-    return promise;
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (options?.signal) {
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject(new AbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this[kQuestion](query, cb);
+    });
   }
 };
 

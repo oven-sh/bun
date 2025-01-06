@@ -3108,7 +3108,7 @@ var require_readable = __commonJS({
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state[kPaused] = false;
+      state.paused = false;
       return this;
     };
     function resume(stream, state) {
@@ -5444,8 +5444,10 @@ function createNativeStreamReadable(Readable) {
     this[constructed] = false;
     this[remainingChunk] = undefined;
     this[pendingRead] = false;
-    ptr.onClose = this[_onClose].bind(this);
-    ptr.onDrain = this[_onDrain].bind(this);
+    if (ptr) {
+      ptr.onClose = this[_onClose].bind(this);
+      ptr.onDrain = this[_onDrain].bind(this);
+    }
   }
   $toClass(NativeReadable, "NativeReadable", Readable);
 

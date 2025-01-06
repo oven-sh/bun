@@ -89,7 +89,7 @@ const String = bun.String;
 const debug = Output.scoped(.ModuleLoader, true);
 const panic = std.debug.panic;
 
-inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
+inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
         .allocator = null,
         .source_code = bun.String.empty,
@@ -223,7 +223,7 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    // Thsi is run at the top of the event loop on the JS thread.
+    // This is run at the top of the event loop on the JS thread.
     pub fn drain(this: *RuntimeTranspilerStore) void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
@@ -2476,15 +2476,6 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.InternalForTesting, specifier);
                 },
 
-                .@"internal/test/binding" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:test/binding", specifier);
-                },
-
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sql" => {
@@ -2598,6 +2589,10 @@ pub const ModuleLoader = struct {
                     .is_commonjs_module = file.module_format == .cjs,
                 };
             }
+        } else if (is_allowed_to_use_internal_testing_apis) {
+            if (internal_modules.getWithEql(specifier, bun.String.eqlComptime)) |tag| {
+                return jsSyntheticModule(tag, specifier);
+            }
         }
 
         return null;
@@ -2689,6 +2684,23 @@ pub const FetchFlags = enum {
 
 const SavedSourceMap = JSC.SavedSourceMap;
 
+pub const internal_modules = brk: {
+    const all_modules = std.enums.values(ResolvedSource.Tag);
+    var internal_module_entries: std.BoundedArray(
+        struct { []const u8, ResolvedSource.Tag },
+        all_modules.len,
+    ) = .{};
+    for (all_modules) |module| {
+        if (std.mem.startsWith(u8, @tagName(module), "internal:")) {
+            internal_module_entries.appendAssumeCapacity(.{
+                "internal/" ++ @tagName(module)["internal:".len..],
+                module,
+            });
+        }
+    }
+    break :brk bun.ComptimeStringMap(ResolvedSource.Tag, internal_module_entries.slice());
+};
+
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
@@ -2760,7 +2772,6 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
-    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2840,8 +2851,6 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
-
-            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 

@@ -280,7 +280,6 @@ const searchIterator = new JSCallback(
   {
     returns: "bool",
     args: ["ptr", "usize"],
-    threadsafe: true // Optional. Defaults to `false`
   },
 );
 
@@ -297,6 +296,20 @@ setTimeout(() => {
 ```
 
 When you're done with a JSCallback, you should call `close()` to free the memory.
+
+### Experimental thread-safe callbacks
+`JSCallback` has experimental support for thread-safe callbacks. This will be needed if you pass a callback function into a different thread from it's instantiation context. You can enable it with the optional `threadsafe` option flag.
+```ts
+const searchIterator = new JSCallback(
+  (ptr, length) => /hello/.test(new CString(ptr, length)),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+    threadsafe: true, // Optional. Defaults to `false`
+  },
+);
+```
+Be aware that there are still cases where this does not 100% work.
 
 {% callout %}
 

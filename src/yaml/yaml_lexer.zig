@@ -302,6 +302,8 @@ pub const Lexer = struct {
     pub fn next(lexer: *Lexer) !void {
         lexer.has_newline_before = lexer.end == 0;
 
+        const started_at_line_start = lexer.at_line_start;
+
         while (true) {
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
@@ -314,14 +316,13 @@ pub const Lexer = struct {
 
                 '\r', '\n', 0x2028, 0x2029 => |cp| {
                     if (cp == '\r') {
-                        try lexer.step();
+                        lexer.step();
                         if (lexer.code_point != '\n') {
                             try lexer.addDefaultError("Unexpected \r carriage return. Carriage returns should be followed by a newline character.");
-                            return error.SyntaxError;
                         }
                     }
 
-                    try lexer.step();
+                    lexer.step();
                     lexer.has_newline_before = true;
                     lexer.at_line_start = true;
                     lexer.current_indent = 0;
@@ -329,15 +330,7 @@ pub const Lexer = struct {
                     return;
                 },
 
-                ' ' => {
-                    if (lexer.at_line_start) {
-                        lexer.current_indent += 1;
-                    }
-                    lexer.step();
-                    continue;
-                },
-
-                '\t' => {
+                ' ', '\t' => {
                     if (lexer.at_line_start) {
                         lexer.current_indent += 1;
                     }
@@ -456,7 +449,7 @@ pub const Lexer = struct {
             }
 
             // Handle indentation after processing the token
-            if (lexer.at_line_start) {
+            if (started_at_line_start) {
                 lexer.at_line_start = false;
             }
 
@@ -713,7 +706,6 @@ pub const Lexer = struct {
         };
 
         var content = std.ArrayList(u8).init(lexer.allocator);
-        errdefer content.deinit();
 
         var trailing_empty = false;
         var line_start = true;
@@ -853,7 +845,6 @@ pub const Lexer = struct {
 
     fn foldLine(lexer: *Lexer, line: []const u8) ![]const u8 {
         var result = std.ArrayList(u8).init(lexer.allocator);
-        errdefer result.deinit();
 
         var i: usize = 0;
         var last_was_space = false;
@@ -1044,7 +1035,7 @@ pub const Lexer = struct {
         lexer.step(); // consume opening quote
         lexer.string_literal_is_ascii = true;
         var result = std.ArrayList(u8).init(lexer.allocator);
-        errdefer result.deinit();
+
         var was_carriage_return = false;
 
         while (true) {
@@ -1190,7 +1181,6 @@ pub const Lexer = struct {
         lexer.step(); // consume opening quote
         lexer.string_literal_is_ascii = true;
         var result = std.ArrayList(u8).init(lexer.allocator);
-        errdefer result.deinit();
 
         while (true) {
             switch (lexer.code_point) {
@@ -1222,7 +1212,7 @@ pub const Lexer = struct {
             }
         }
 
-        lexer.string_literal_slice = try lexer.allocator.dupe(u8, result.items);
+        lexer.string_literal_slice = result.items;
         lexer.token = .t_string_literal;
     }
 

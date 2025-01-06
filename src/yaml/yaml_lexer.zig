@@ -355,9 +355,19 @@ pub const Lexer = struct {
                     lexer.step();
                 },
                 ':' => {
-                    lexer.step();
-                    lexer.token = T.t_colon;
-                    lexer.at_line_start = false;
+                    // Check if this is a key-value separator
+                    const peek_ahead = lexer.peek(1);
+                    const is_key_value = peek_ahead.len == 0 or peek_ahead[0] == ' ' or peek_ahead[0] == '\t' or peek_ahead[0] == '\n' or peek_ahead[0] == '\r';
+
+                    if (is_key_value) {
+                        lexer.step();
+                        lexer.token = T.t_colon;
+                        lexer.at_line_start = false;
+                        return;
+                    } else {
+                        // This colon is part of a plain scalar
+                        try lexer.parsePlainScalar();
+                    }
                 },
                 ',' => {
                     lexer.step();
@@ -1222,7 +1232,12 @@ pub const Lexer = struct {
         var first = true;
         var spaces: usize = 0;
 
+        const initial_indent = lexer.current_indent;
         while (true) {
+            if (lexer.current_indent < initial_indent) {
+                break;
+            }
+
             switch (lexer.code_point) {
                 -1, '\r', '\n' => break,
                 ' ' => {
@@ -1233,7 +1248,43 @@ pub const Lexer = struct {
                     spaces += 8;
                     lexer.step();
                 },
-                ':', ',', ']', '}', '|', '>', '\'', '"', '#', '&', '*', '!', '%', '@', '`' => {
+                ':' => {
+                    // A colon is only special if it's followed by whitespace or line end
+                    const peek_ahead = lexer.peek(1);
+                    const is_key_value = peek_ahead.len == 0 or peek_ahead[0] == ' ' or peek_ahead[0] == '\t' or peek_ahead[0] == '\n' or peek_ahead[0] == '\r';
+                    if (is_key_value) {
+                        break;
+                    }
+                    if (spaces > 0) {
+                        if (result.items.len > 0) {
+                            try result.append(' ');
+                        }
+                        spaces = 0;
+                    }
+                    try result.append(@intCast(lexer.code_point));
+                    lexer.step();
+                    first = false;
+                },
+                ',', '[', ']', '{', '}' => {
+                    // Flow indicators are only special at flow level
+                    if (lexer.flow_level > 0) {
+                        if (first) {
+                            try lexer.addDefaultError("Invalid start of plain scalar");
+                            return;
+                        }
+                        break;
+                    }
+                    if (spaces > 0) {
+                        if (result.items.len > 0) {
+                            try result.append(' ');
+                        }
+                        spaces = 0;
+                    }
+                    try result.append(@intCast(lexer.code_point));
+                    lexer.step();
+                    first = false;
+                },
+                '#', '&', '*', '!', '%', '@', '`', '|', '>', '\'' => {
                     if (first) {
                         try lexer.addDefaultError("Invalid start of plain scalar");
                         return;

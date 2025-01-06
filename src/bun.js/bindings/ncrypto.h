@@ -829,6 +829,8 @@ private:
 };
 
 class X509Pointer final {
+    WTF_MAKE_ISO_ALLOCATED(X509Pointer);
+
 public:
     static Result<X509Pointer, int> Parse(Buffer<const unsigned char> buffer);
     static X509Pointer IssuerFrom(const SSLPointer& ssl, const X509View& view);

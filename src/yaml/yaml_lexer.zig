@@ -37,8 +37,6 @@ pub const T = enum {
     t_null, // null
 
     // YAML specific
-    t_indent, // Increased indentation level
-    t_dedent, // Decreased indentation level
     t_newline, // Line break
     t_pipe, // | - Literal block scalar
     t_gt, // > - Folded block scalar
@@ -72,7 +70,7 @@ pub const ComplexKey = struct {
 
 pub const BlockScalarHeader = struct {
     chomping: enum { clip, strip, keep } = .clip,
-    indent: ?u8 = null,
+    indent: ?u16 = null,
     style: enum { literal, folded },
 };
 
@@ -99,11 +97,8 @@ pub const Lexer = struct {
     should_redact_logs: bool,
 
     // Indentation tracking
-    indent_stack: std.ArrayList(usize),
-    current_indent: usize = 0,
-    indent_width: ?usize = null, // Will be set on first indent
+    current_indent: u16 = 0,
     at_line_start: bool = true,
-    pending_dedents: usize = 0,
 
     // Anchor/Alias resolution
     anchors: AnchorMap,
@@ -140,6 +135,20 @@ pub const Lexer = struct {
     // Block scalar state
     block_scalar_header: ?BlockScalarHeader = null,
     block_scalar_indent: ?usize = null,
+
+    is_ascii: ?bool = null,
+
+    pub fn remaining(self: *const Lexer) []const u8 {
+        return self.source.contents[@min(self.current, self.source.contents.len)..];
+    }
+
+    pub fn isASCII(self: *Lexer) bool {
+        if (self.is_ascii == null) {
+            self.is_ascii = strings.isAllASCII(self.remaining());
+        }
+
+        return self.is_ascii.?;
+    }
 
     pub const FlowCommaState = packed struct(u32) {
         level: u15,
@@ -293,31 +302,26 @@ pub const Lexer = struct {
     pub fn next(lexer: *Lexer) !void {
         lexer.has_newline_before = lexer.end == 0;
 
-        // Handle pending dedents
-        if (lexer.pending_dedents > 0) {
-            lexer.pending_dedents -= 1;
-            lexer.token = T.t_dedent;
-            return;
-        }
-
         while (true) {
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
 
             switch (lexer.code_point) {
                 -1 => {
-                    // Generate dedents for any remaining indentation levels
-                    if (lexer.indent_stack.items.len > 1) {
-                        lexer.pending_dedents = lexer.indent_stack.items.len - 1;
-                        lexer.indent_stack.shrinkRetainingCapacity(1);
-                        lexer.token = T.t_dedent;
-                        return;
-                    }
                     lexer.token = T.t_end_of_file;
+                    return;
                 },
 
-                '\r', '\n', 0x2028, 0x2029 => {
-                    lexer.step();
+                '\r', '\n', 0x2028, 0x2029 => |cp| {
+                    if (cp == '\r') {
+                        try lexer.step();
+                        if (lexer.code_point != '\n') {
+                            try lexer.addDefaultError("Unexpected \r carriage return. Carriage returns should be followed by a newline character.");
+                            return error.SyntaxError;
+                        }
+                    }
+
+                    try lexer.step();
                     lexer.has_newline_before = true;
                     lexer.at_line_start = true;
                     lexer.current_indent = 0;
@@ -335,7 +339,7 @@ pub const Lexer = struct {
 
                 '\t' => {
                     if (lexer.at_line_start) {
-                        lexer.current_indent += 8;
+                        lexer.current_indent += 1;
                     }
                     lexer.step();
                     continue;
@@ -453,28 +457,6 @@ pub const Lexer = struct {
 
             // Handle indentation after processing the token
             if (lexer.at_line_start) {
-                const last_indent = lexer.indent_stack.items[lexer.indent_stack.items.len - 1];
-                if (lexer.current_indent > last_indent) {
-                    // This is an indent
-                    try lexer.indent_stack.append(lexer.current_indent);
-                    lexer.token = T.t_indent;
-                } else if (lexer.current_indent < last_indent) {
-                    // This is one or more dedents
-                    var dedent_count: usize = 0;
-                    while (lexer.indent_stack.items.len > 0 and lexer.current_indent < lexer.indent_stack.items[lexer.indent_stack.items.len - 1]) {
-                        _ = lexer.indent_stack.pop();
-                        dedent_count += 1;
-                    }
-
-                    if (lexer.current_indent != lexer.indent_stack.items[lexer.indent_stack.items.len - 1]) {
-                        try lexer.addDefaultError("Invalid indentation");
-                    }
-
-                    if (dedent_count > 1) {
-                        lexer.pending_dedents = dedent_count - 1;
-                    }
-                    lexer.token = T.t_dedent;
-                }
                 lexer.at_line_start = false;
             }
 
@@ -555,7 +537,7 @@ pub const Lexer = struct {
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
             .should_redact_logs = redact_logs,
-            .indent_stack = std.ArrayList(usize).init(allocator),
+
             .anchors = AnchorMap.init(allocator),
             .tag_library = TagMap.init(allocator),
             .tag_handles = std.ArrayList(TagHandle).init(allocator),
@@ -566,20 +548,21 @@ pub const Lexer = struct {
             .merge_key_stack = std.ArrayList(js_ast.Expr).init(allocator),
         };
 
-        // Initialize with base indent level
-        try lex.indent_stack.append(0);
-
-        // Add default tag handles
-        try lex.tag_handles.append(.{ .handle = "!", .prefix = "!" });
-        try lex.tag_handles.append(.{ .handle = "!!", .prefix = "tag:yaml.org,2002:" });
-
         lex.step();
         try lex.next();
 
         return lex;
     }
 
-    pub inline fn toString(lexer: *Lexer, loc_: logger.Loc) js_ast.Expr {
+    pub fn toPropertyKey(lexer: *const Lexer, loc_: logger.Loc) js_ast.Expr {
+        if (lexer.token == .t_identifier) {
+            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = lexer.identifier }, loc_);
+        }
+        bun.debugAssert(lexer.token == .t_string_literal);
+        return js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = lexer.string_literal_slice }, loc_);
+    }
+
+    pub fn toString(lexer: *const Lexer, loc_: logger.Loc) js_ast.Expr {
         if (lexer.string_literal_is_ascii) {
             return js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = lexer.string_literal_slice }, loc_);
         }
@@ -712,11 +695,8 @@ pub const Lexer = struct {
                         line_start = true;
                         current_indent = 0;
                     },
-                    ' ' => {
+                    '\t', ' ' => {
                         if (line_start) current_indent += 1;
-                    },
-                    '\t' => {
-                        if (line_start) current_indent += 8;
                     },
                     else => {
                         if (line_start and c != '\n' and c != '\r') {
@@ -1248,7 +1228,6 @@ pub const Lexer = struct {
 
     fn parsePlainScalar(lexer: *Lexer) !void {
         var result = std.ArrayList(u8).init(lexer.allocator);
-        errdefer result.deinit();
 
         var first = true;
         var spaces: usize = 0;

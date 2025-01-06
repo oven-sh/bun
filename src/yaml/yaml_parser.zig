@@ -141,8 +141,6 @@ pub const YAML = struct {
     }
 
     fn runParser(p: *YAML) anyerror!Expr {
-        var current_sequence: ?*E.Array = null;
-        var is_top_level_sequence = true;
         var root_expr: ?Expr = null;
 
         var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, p.allocator);
@@ -163,75 +161,66 @@ pub const YAML = struct {
                 },
                 .t_dash => {
                     // Start of sequence item
-                    try p.lexer.next();
-
-                    // Create a new sequence if we're not already in one
-                    if (current_sequence == null) {
-                        const array_expr = p.e(E.Array{}, p.lexer.loc());
-                        current_sequence = array_expr.data.e_array;
-
-                        if (is_top_level_sequence) {
-                            // This is a top-level sequence, make it the root
-                            root_expr = array_expr;
-                            is_top_level_sequence = false;
-                        } else {
-                            // If we're in a mapping context, we need a key for this sequence
-                            if (root_expr == null) {
-                                root_expr = p.e(E.Object{}, p.lexer.loc());
-                            }
-                            const head = root_expr.?.data.e_object;
-
-                            const key = try p.parseKey(key_allocator);
-                            try p.lexer.expect(.t_colon);
-                            head.setRope(key, p.allocator, array_expr) catch |err| {
-                                switch (err) {
-                                    error.Clobber => {
-                                        try p.lexer.addDefaultError("Cannot redefine key");
-                                        return error.SyntaxError;
-                                    },
-                                    else => return err,
-                                }
-                            };
-                        }
+                    if (root_expr == null) {
+                        // First dash, create the sequence
+                        root_expr = p.e(E.Array{
+                            .items = .{},
+                            .is_single_line = false,
+                        }, p.lexer.loc());
+                    }
+                    if (root_expr != null and root_expr.?.data != .e_array) {
+                        try p.lexer.addDefaultError("Top-level sequence must be an array or object");
+                        return error.SyntaxError;
                     }
 
-                    // Parse the sequence item
-                    const item = try p.parseValue();
-                    try current_sequence.?.push(p.allocator, item);
-
-                    // Handle indentation and newlines
-                    while (p.lexer.token == .t_newline) {
-                        try p.lexer.next();
-                        if (p.lexer.token != .t_dash) {
-                            current_sequence = null; // End of sequence
-                            break;
-                        }
-                        try p.lexer.next();
-                    }
-                },
-                .t_indent => {
-                    try p.lexer.next();
+                    const array = root_expr.?.data.e_array;
+                    const value = try p.parseValue();
+                    try array.push(p.allocator, value);
                     continue;
                 },
-                .t_dedent => {
+                .t_newline => {
                     try p.lexer.next();
-                    current_sequence = null; // End of sequence on dedent
                     continue;
                 },
                 .t_identifier, .t_string_literal => {
-                    // As soon as we see a key-value pair, we're no longer in a top-level sequence context
-                    is_top_level_sequence = false;
-
+                    const initial_indent = p.lexer.current_indent;
                     // Create root object if needed
                     if (root_expr == null) {
                         root_expr = p.e(E.Object{}, p.lexer.loc());
                     }
+                    if (root_expr.?.data != .e_object) {
+                        try p.lexer.addDefaultError("Top-level sequence must be an array or object");
+                        return error.SyntaxError;
+                    }
                     const head = root_expr.?.data.e_object;
 
                     // Key-value pair
-                    const key = try p.parseKey(key_allocator);
+                    const key = try key_allocator.create(Rope);
+                    key.* = .{
+                        .head = p.lexer.toPropertyKey(p.lexer.loc()),
+                        .next = null,
+                    };
+                    try p.lexer.next();
                     try p.lexer.expect(.t_colon);
-                    const value = try p.parseValue();
+                    while (p.lexer.token == .t_newline) {
+                        try p.lexer.next();
+                    }
+
+                    const value = value: {
+                        const new_indent = p.lexer.current_indent;
+                        if (new_indent > initial_indent) {
+                            const value = try p.parseObjectOrArraySequence(p.lexer.loc(), new_indent);
+                            break :value value;
+                        } else if (p.lexer.token == .t_dash) {
+                            try p.lexer.addDefaultError("An array cannot be nested inside an object");
+                            return error.SyntaxError;
+                        } else if (p.lexer.token == .t_end_of_file) {
+                            break :value p.e(E.Null{}, p.lexer.loc());
+                        }
+
+                        break :value try p.parseValue();
+                    };
+
                     head.setRope(key, p.allocator, value) catch |err| {
                         switch (err) {
                             error.Clobber => {
@@ -241,12 +230,109 @@ pub const YAML = struct {
                             else => return err,
                         }
                     };
+
+                    // Handle any trailing newlines after the value
+                    while (p.lexer.token == .t_newline) {
+                        try p.lexer.next();
+                    }
                 },
                 else => {
                     try p.lexer.unexpected();
                     return error.SyntaxError;
                 },
             }
+        }
+
+        return root_expr orelse p.e(E.Object{}, p.lexer.loc());
+    }
+
+    fn parseObjectOrArraySequence(p: *YAML, loc: logger.Loc, indent: u16) anyerror!Expr {
+        // Check what follows to determine if it's an array or object
+        if (p.lexer.token == .t_dash) {
+            // The start of an array sequence
+            const array = p.e(E.Array{
+                .items = .{},
+            }, loc);
+
+            while (p.lexer.token == .t_dash) {
+                try p.lexer.next();
+
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
+                }
+
+                if (p.lexer.token == .t_end_of_file or p.lexer.current_indent < indent) {
+                    break;
+                }
+
+                if (p.lexer.current_indent > indent) {
+                    try array.data.e_array.push(p.allocator, try p.runParser());
+                } else {
+                    try array.data.e_array.push(p.allocator, try p.parseValue());
+                }
+
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
+                }
+            }
+
+            return array;
+        } else {
+            var root: ?Expr = null;
+
+            // Parse key-value pairs at this indentation level
+            while (true) {
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
+                }
+
+                if (p.lexer.token == .t_end_of_file or p.lexer.current_indent < indent) {
+                    break;
+                }
+
+                const key = try p.parseKey(p.allocator);
+
+                try p.lexer.expect(.t_colon);
+
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
+                }
+
+                // A single object with { [key]: null }
+                if (p.lexer.token == .t_end_of_file or p.lexer.current_indent < indent) {
+                    if (root == null) {
+                        root = p.e(E.Object{}, loc);
+                    }
+
+                    root.?.data.e_object.setRope(key, p.allocator, p.e(E.Null{}, loc)) catch {
+                        try p.lexer.addDefaultError("Cannot redefine key");
+                        return error.SyntaxError;
+                    };
+                    break;
+                }
+
+                // Handle potential indent after the colon
+                const value = if (p.lexer.current_indent > indent)
+                    try p.runParser()
+                else
+                    try p.parseValue();
+
+                if (root == null) {
+                    root = p.e(E.Object{}, loc);
+                }
+
+                root.?.data.e_object.setRope(key, p.allocator, value) catch |err| {
+                    switch (err) {
+                        error.Clobber => {
+                            try p.lexer.addDefaultError("Cannot redefine key");
+                            return error.SyntaxError;
+                        },
+                        else => return err,
+                    }
+                };
+            }
+
+            return root orelse p.e(E.Null{}, loc);
         }
     }
 
@@ -297,9 +383,11 @@ pub const YAML = struct {
             },
             // Handle quoted strings: "quoted" or 'quoted'
             .t_string_literal => brk: {
-                const result = p.lexer.toString(loc);
+                const str_loc = p.lexer.loc();
+                const str = p.lexer.toString(str_loc);
                 try p.lexer.next();
-                break :brk result;
+
+                break :brk str;
             },
             // Handle unquoted scalars: plain_text
             .t_identifier => brk: {
@@ -314,26 +402,9 @@ pub const YAML = struct {
                 break :brk p.e(E.Number{ .value = value }, loc);
             },
 
-            // Handle block sequences (indentation-based)
-            // Example:
-            // - item1
-            // - item2
-            .t_dash => brk: {
-                try p.lexer.next();
-                var items = std.ArrayList(Expr).init(p.allocator);
-                errdefer items.deinit();
-                while (true) {
-                    if (p.lexer.token != .t_dash) break;
-                    try p.lexer.next();
-                    try items.append(try p.parseValue());
-                    if (p.lexer.token != .t_newline) break;
-                    try p.lexer.next();
-                }
-
-                break :brk p.e(E.Array{
-                    .items = ExprNodeList.fromList(items),
-                    .is_single_line = false,
-                }, loc);
+            .t_dash => {
+                p.lexer.addError(loc.toUsize(), "Unexpected array element. Try either adding an indentation, or wrapping in quotes", .{});
+                return error.SyntaxError;
             },
 
             // Handle flow sequences (bracket-based)
@@ -347,8 +418,16 @@ pub const YAML = struct {
                     if (items.items.len > 0) {
                         if (p.lexer.token != .t_comma) break;
                         try p.lexer.next();
+                        // Handle newlines after commas
+                        while (p.lexer.token == .t_newline) {
+                            try p.lexer.next();
+                        }
                     }
                     try items.append(try p.parseValue());
+                }
+
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
                 }
 
                 try p.lexer.expect(.t_close_bracket);
@@ -363,12 +442,21 @@ pub const YAML = struct {
             .t_open_brace => brk: {
                 try p.lexer.next();
 
+                // Handle newlines before the first key
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
+                }
+
                 const expr = p.e(E.Object{}, loc);
                 const obj = expr.data.e_object;
                 while (p.lexer.token != .t_close_brace) {
                     if (obj.properties.len > 0) {
                         if (p.lexer.token != .t_comma) break;
                         try p.lexer.next();
+                        // Handle newlines after commas
+                        while (p.lexer.token == .t_newline) {
+                            try p.lexer.next();
+                        }
                     }
 
                     const key = try p.parseKey(p.allocator);
@@ -386,6 +474,15 @@ pub const YAML = struct {
                             else => return err,
                         }
                     };
+
+                    // Handle newlines after values
+                    while (p.lexer.token == .t_newline) {
+                        try p.lexer.next();
+                    }
+                }
+
+                while (p.lexer.token == .t_newline) {
+                    try p.lexer.next();
                 }
 
                 try p.lexer.expect(.t_close_brace);
@@ -446,6 +543,11 @@ pub const YAML = struct {
             }
 
             p.lexer.current_tag = null;
+        }
+
+        // Handle any trailing newlines after the value
+        while (p.lexer.token == .t_newline) {
+            try p.lexer.next();
         }
 
         return value;

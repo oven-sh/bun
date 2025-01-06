@@ -58,6 +58,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
+    pub const YAML = toJSGetter(Bun.getYAMLObject);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
     pub const cwd = toJSGetter(Bun.getCWD);
@@ -117,6 +118,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
 
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.YAML, .{ .name = getterName("YAML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
@@ -3394,6 +3396,10 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
     return TOMLObject.create(globalThis);
 }
 
+pub fn getYAMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return YAMLObject.create(globalThis);
+}
+
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
@@ -3500,61 +3506,73 @@ const UnsafeObject = struct {
     }
 };
 
-const TOMLObject = struct {
-    const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
+fn TOMLLikeParser(comptime Parser: anytype, comptime default_name: []const u8) type {
+    return struct {
+        const ThisParser = Parser;
+        const name = default_name;
 
-    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const object = JSValue.createEmptyObject(globalThis, 1);
-        object.put(
-            globalThis,
-            ZigString.static("parse"),
-            JSC.createCallback(
+        pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            const object = JSValue.createEmptyObject(globalThis, 1);
+            object.put(
                 globalThis,
                 ZigString.static("parse"),
-                1,
-                parse,
-            ),
-        );
+                JSC.createCallback(
+                    globalThis,
+                    ZigString.static("parse"),
+                    1,
+                    parse,
+                ),
+            );
 
-        return object;
-    }
-
-    pub fn parse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        var arena = bun.ArenaAllocator.init(globalThis.allocator());
-        const allocator = arena.allocator();
-        defer arena.deinit();
-        var log = logger.Log.init(default_allocator);
-        const arguments = callframe.arguments_old(1).slice();
-        if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
-            return globalThis.throwInvalidArguments("Expected a string to parse", .{});
+            return object;
         }
 
-        var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
-        defer input_slice.deinit();
-        var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
-        };
+        pub fn parse(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) bun.JSError!JSC.JSValue {
+            var arena = bun.ArenaAllocator.init(globalThis.allocator());
+            const allocator = arena.allocator();
+            defer arena.deinit();
+            var log = logger.Log.init(default_allocator);
+            defer log.deinit();
+            const arguments = callframe.arguments_old(1).slice();
+            if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+                return globalThis.throwInvalidArguments("Expected a string to parse", .{});
+            }
 
-        // for now...
-        const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-        };
-        var writer = js_printer.BufferPrinter.init(buffer_writer);
-        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source, .{}) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-        };
+            var input_slice: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, arguments[0]) orelse {
+                if (!globalThis.hasException()) {
+                    return globalThis.throwInvalidArguments("Expected a string to parse", .{});
+                }
+                return error.JSError;
+            };
+            defer input_slice.deinit();
+            var source = logger.Source.initPathString(name, input_slice.slice());
+            const parse_result = ThisParser.parse(&source, &log, allocator, false) catch {
+                return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
+            };
 
-        const slice = writer.ctx.buffer.slice();
-        var out = bun.String.fromUTF8(slice);
-        defer out.deref();
+            // for now...
+            const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
+                return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
+            };
+            var writer = js_printer.BufferPrinter.init(buffer_writer);
+            _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source, .{}) catch {
+                return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
+            };
 
-        return out.toJSByParseJSON(globalThis);
-    }
-};
+            const slice = writer.ctx.buffer.slice();
+            var out = bun.String.fromUTF8(slice);
+            defer out.deref();
+
+            return out.toJSByParseJSON(globalThis);
+        }
+    };
+}
+
+pub const TOMLObject = TOMLLikeParser(@import("../../toml/toml_parser.zig").TOML, "input.toml");
+pub const YAMLObject = TOMLLikeParser(@import("../../yaml/yaml_parser.zig").YAML, "input.yaml");
 
 const Debugger = JSC.Debugger;
 

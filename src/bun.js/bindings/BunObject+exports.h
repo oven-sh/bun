@@ -17,20 +17,21 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
+    macro(YAML) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \
+    macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
     macro(main) \
     macro(origin) \
+    macro(semver) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
-    macro(semver) \
-    macro(embeddedFiles) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

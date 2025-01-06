@@ -1917,6 +1917,10 @@ pub const E = struct {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
         }
 
+        pub fn getPtr(self: *const Object, key: string) ?*Expr {
+            return if (asProperty(self, key)) |query| &self.properties.slice()[query.i].value.? else null;
+        }
+
         pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
             obj.protect();
@@ -1965,7 +1969,7 @@ pub const E = struct {
 
         // this is terribly, shamefully slow
         pub fn setRope(self: *Object, rope: *const Rope, allocator: std.mem.Allocator, value: Expr) SetError!void {
-            if (self.get(rope.head.data.e_string.data)) |existing| {
+            if (self.getPtr(rope.head.data.e_string.data)) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -1992,6 +1996,18 @@ pub const E = struct {
                         }
 
                         return error.Clobber;
+                    },
+                    .e_null => {
+                        // null can replace.
+                        if (rope.next) |next| {
+                            var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
+                            existing.* = obj;
+                            try obj.data.e_object.setRope(next, allocator, value);
+                            return;
+                        }
+
+                        existing.* = value;
+                        return;
                     },
                     else => {
                         return error.Clobber;
@@ -3396,6 +3412,10 @@ pub const Expr = struct {
 
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    pub fn getPtr(expr: *const Expr, name: string) ?*Expr {
+        return if (asProperty(expr, name)) |*query| &expr.data.e_object.properties.slice()[query.i] else null;
     }
 
     /// Don't use this if you care about performance.

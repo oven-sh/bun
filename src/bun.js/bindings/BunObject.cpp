@@ -247,7 +247,6 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto arg2 = callFrame->argument(2);
     if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);

@@ -2795,7 +2795,6 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
     WTF::TriState triState = value.toBoolean(globalObject) ? WTF::TriState::True : WTF::TriState::False;
-    RETURN_IF_EXCEPTION(scope, false);
     moduleNamespaceObject->m_hasESModuleMarker = triState;
     return true;
 }

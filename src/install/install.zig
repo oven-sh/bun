@@ -8843,7 +8843,7 @@ pub const PackageManager = struct {
                                 } else child_path;
 
                                 if (strings.eqlLong(maybe_workspace_path, path, true)) {
-                                    fs.top_level_dir = parent;
+                                    fs.top_level_dir = try bun.default_allocator.dupeZ(u8, parent);
                                     found = true;
                                     child_json.close();
                                     if (comptime Environment.isWindows) {
@@ -8860,16 +8860,15 @@ pub const PackageManager = struct {
                 }
             }
 
-            fs.top_level_dir = child_cwd;
+            fs.top_level_dir = try bun.default_allocator.dupeZ(u8, child_cwd);
             break :root_package_json_file child_json;
         };
 
-        try bun.sys.chdir(fs.top_level_dir).unwrap();
+        try bun.sys.chdir(fs.top_level_dir, fs.top_level_dir).unwrap();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
-        cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
-        cwd_buf[fs.top_level_dir.len + 1] = 0;
-        fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
+        cwd_buf[fs.top_level_dir.len] = 0;
+        fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
         package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
@@ -10213,7 +10212,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                bun.sys.chdir(final_path).unwrap() catch |err| {
+                bun.sys.chdir("", final_path).unwrap() catch |err| {
                     Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
                     Global.crash();
                 };

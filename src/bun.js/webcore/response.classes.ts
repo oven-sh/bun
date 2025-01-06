@@ -168,6 +168,7 @@ export default [
 
       // Non-standard, s3 + BunFile support
       unlink: { fn: "doUnlink", length: 0 },
+      delete: { fn: "doUnlink", length: 0 },
       write: { fn: "doWrite", length: 2 },
       size: {
         getter: "getSize",

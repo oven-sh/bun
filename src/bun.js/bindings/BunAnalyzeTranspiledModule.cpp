@@ -188,7 +188,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-#if ASSERT_ENABLED
+#ifdef DEBUG
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #else
     promise->fulfillWithNonPromise(globalObject, moduleRecord);

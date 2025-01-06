@@ -157,6 +157,62 @@ if (!isCI) {
     expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
   });
 
+  // Last one wins.
+  test("Handles duplicate string column names", async () => {
+    const result = await sql`select 1 as x, 2 as x, 3 as x`;
+    expect(result).toEqual([{ x: 3 }]);
+  });
+
+  test("Handles numeric column names", async () => {
+    // deliberately out of order
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;
+    expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, "0": 0 }]);
+
+    expect(Object.keys(result[0])).toEqual(["0", "1", "2", "3"]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  // Last one wins.
+  test("Handles duplicate numeric column names", async () => {
+    const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;
+    expect(result).toEqual([{ "1": 3 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
+    expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names with duplicates", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x`;
+    expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 2 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+
+    // Named columns are inserted first, but they appear from JS as last.
+    expect(Object.keys(result[0])).toEqual(["1", "2", "3", "x"]);
+  });
+
+  test("Handles mixed column names with duplicates at the end", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x, 3 as x, 4 as "y"`;
+    expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 3, y: 4 }]);
+
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names with duplicates at the start", async () => {
+    const result = await sql`select 1 as "1", 2 as "1", 3 as "2", 4 as "3", 1 as x, 2 as x, 3 as x`;
+    expect(result).toEqual([{ "1": 2, "2": 3, "3": 4, x: 3 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
   test("Uses default database without slash", async () => {
     const sql = postgres("postgres://localhost");
     expect(sql.options.username).toBe(sql.options.database);

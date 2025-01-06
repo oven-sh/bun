@@ -155,11 +155,9 @@ pub extern fn JSC__JSPromise__rejectAsHandled(arg0: ?*bindings.JSPromise, arg1: 
 pub extern fn JSC__JSPromise__rejectAsHandledException(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.Exception) void;
 pub extern fn JSC__JSPromise__rejectedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__rejectOnNextTickWithHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, arg3: bool) void;
 pub extern fn JSC__JSPromise__resolve(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__resolveOnNextTick(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__result(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) JSC__JSValue;
 pub extern fn JSC__JSPromise__setHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) void;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) u32;

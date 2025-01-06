@@ -1252,9 +1252,11 @@ pub fn joinAbs(cwd: []const u8, comptime _platform: Platform, part: []const u8) 
     return joinAbsString(cwd, &.{part}, _platform);
 }
 
-// Convert parts of potentially invalid file paths into a single valid filpeath
-// without querying the filesystem
-// This is the equivalent of path.resolve
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
     return joinAbsStringBuf(
         _cwd,
@@ -1264,6 +1266,11 @@ pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platf
     );
 }
 
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Platform) [:0]const u8 {
     return joinAbsStringBufZ(
         _cwd,

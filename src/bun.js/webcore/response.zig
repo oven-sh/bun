@@ -55,7 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const s3 = @import("../../s3.zig");
+const s3 = bun.S3;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -533,7 +533,7 @@ pub const Response = struct {
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
                     }, .{ .expires = 15 * 60 }) catch |sign_err| {
-                        return s3.AWSCredentials.throwSignError(sign_err, globalThis);
+                        return s3.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
@@ -1173,8 +1173,6 @@ pub const Fetch = struct {
                 }
 
                 if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                    this.javascript_vm.drainMicrotasks();
-
                     assignment_result.ensureStillAlive();
                     // it returns a Promise when it goes through ReadableStreamDefaultReader
                     if (assignment_result.asAnyPromise()) |promise| {
@@ -3143,7 +3141,7 @@ pub const Fetch = struct {
             prepare_body: {
                 // is a S3 file we can use chunked here
 
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                     var old = body;
                     defer old.detach();
                     body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
@@ -3252,8 +3250,8 @@ pub const Fetch = struct {
 
         if (url.isS3()) {
             // get ENV config
-            var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
-                .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
+            var credentialsWithOptions: s3.S3CredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
             };
@@ -3265,7 +3263,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
                     }
                 }
             }
@@ -3279,7 +3277,7 @@ pub const Fetch = struct {
                     url_proxy_buffer: []const u8,
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: s3.AWSCredentials.S3UploadResult, self: *@This()) void {
+                    pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                         if (self.promise.globalObject()) |global| {
                             switch (result) {
                                 .success => {
@@ -3334,7 +3332,8 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(
+                _ = bun.S3.uploadStream(
+                    credentialsWithOptions.credentials.dupe(),
                     url.s3Path(),
                     body.ReadableStream.get().?,
                     globalThis,
@@ -3358,7 +3357,7 @@ pub const Fetch = struct {
                 .method = method,
             }, null) catch |sign_err| {
                 is_error = true;
-                return JSPromise.rejectedPromiseValue(globalThis, s3.AWSCredentials.getJSSignError(sign_err, globalThis));
+                return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
             };
             defer result.deinit();
             if (proxy) |proxy_| {

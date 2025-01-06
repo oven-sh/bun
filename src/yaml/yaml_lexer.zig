@@ -13,6 +13,9 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
+const AnchorMap = bun.StringHashMap(js_ast.Expr);
+const TagMap = bun.StringHashMap([]const u8);
+
 pub const T = enum {
     t_end_of_file,
 
@@ -103,11 +106,11 @@ pub const Lexer = struct {
     pending_dedents: usize = 0,
 
     // Anchor/Alias resolution
-    anchors: bun.StringHashMap(js_ast.Expr),
+    anchors: AnchorMap,
     current_anchor: ?[]const u8 = null,
 
     // Tag resolution
-    tag_library: std.StringHashMap([]const u8),
+    tag_library: TagMap,
     current_tag: ?[]const u8 = null,
 
     // Multi-document handling
@@ -437,7 +440,7 @@ pub const Lexer = struct {
                 },
                 '"' => try lexer.parseDoubleQuotedString(),
                 '\'' => try lexer.parseSingleQuotedString(),
-                '@', 'a'...'z', 'A'...'Z', '$', '_', '-' => try lexer.parsePlainScalar(),
+                '@', 'a'...'z', 'A'...'Z', '$', '_' => try lexer.parsePlainScalar(),
                 '0'...'9' => {
                     try lexer.parseNumericLiteral();
                     lexer.at_line_start = false;
@@ -477,12 +480,12 @@ pub const Lexer = struct {
 
             // Handle flow style comma tracking
             if (lexer.flow_level > 0 and lexer.token == .t_comma) {
-                lexer.flow_commas.items[lexer.flow_level - 1] = true;
+                lexer.flow_commas.items[lexer.flow_level - 1].has_comma = true;
             }
 
             // Handle indentation for complex keys
-            if (lexer.in_complex_key and lexer.complex_key_indent) |key_indent| {
-                if (lexer.current_indent < key_indent) {
+            if (lexer.in_complex_key and lexer.complex_key_indent != null) {
+                if (lexer.current_indent < lexer.complex_key_indent.?) {
                     lexer.in_complex_key = false;
                     lexer.complex_key_indent = null;
                 }
@@ -553,8 +556,8 @@ pub const Lexer = struct {
             .allocator = allocator,
             .should_redact_logs = redact_logs,
             .indent_stack = std.ArrayList(usize).init(allocator),
-            .anchors = std.StringHashMap(js_ast.Expr).init(allocator),
-            .tag_library = std.StringHashMap([]const u8).init(allocator),
+            .anchors = AnchorMap.init(allocator),
+            .tag_library = TagMap.init(allocator),
             .tag_handles = std.ArrayList(TagHandle).init(allocator),
             .flow_commas = std.ArrayList(FlowCommaState).init(allocator),
             .current_tag_handle = null,
@@ -681,9 +684,10 @@ pub const Lexer = struct {
                         lexer.step();
                     }
                 },
-                '\n', '\r' => {
+                '\n', '\r' => |char| {
+                    const cr = char == '\r';
                     lexer.step();
-                    if (lexer.code_point == '\n' and lexer.prev_code_point == '\r') {
+                    if (lexer.code_point == '\n' and cr) {
                         lexer.step();
                     }
                     break;
@@ -1186,6 +1190,46 @@ pub const Lexer = struct {
                 },
                 '\r', '\n' => {
                     try lexer.addDefaultError("Unescaped line break in double-quoted string");
+                    return;
+                },
+                else => {
+                    if (lexer.code_point > 0x7F) {
+                        lexer.string_literal_is_ascii = false;
+                    }
+                    try result.append(@intCast(lexer.code_point));
+                    lexer.step();
+                },
+            }
+        }
+
+        lexer.string_literal_slice = try lexer.allocator.dupe(u8, result.items);
+        lexer.token = .t_string_literal;
+    }
+
+    fn parseSingleQuotedString(lexer: *Lexer) !void {
+        lexer.step(); // consume opening quote
+        lexer.string_literal_is_ascii = true;
+        var result = std.ArrayList(u8).init(lexer.allocator);
+        errdefer result.deinit();
+
+        while (true) {
+            switch (lexer.code_point) {
+                -1 => {
+                    try lexer.addDefaultError("Unterminated single-quoted string");
+                    return;
+                },
+                '\'' => {
+                    lexer.step();
+                    // Check for escaped single quote ('') which represents a literal single quote
+                    if (lexer.code_point == '\'') {
+                        try result.append('\'');
+                        lexer.step();
+                    } else {
+                        break;
+                    }
+                },
+                '\r', '\n' => {
+                    try lexer.addDefaultError("Unescaped line break in single-quoted string");
                     return;
                 },
                 else => {

@@ -1,11 +1,7 @@
 const std = @import("std");
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("options.zig");
-const BabyList = @import("./baby_list.zig").BabyList;
-const fs = @import("fs.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -17,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
+
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 
 const StmtNodeIndex = js_ast.StmtNodeIndex;
@@ -335,7 +331,7 @@ pub const YAML = struct {
                 }
 
                 break :brk p.e(E.Array{
-                    .items = try ExprNodeList.fromList(items),
+                    .items = ExprNodeList.fromList(items),
                     .is_single_line = false,
                 }, loc);
             },
@@ -357,7 +353,7 @@ pub const YAML = struct {
 
                 try p.lexer.expect(.t_close_bracket);
                 break :brk p.e(E.Array{
-                    .items = try ExprNodeList.fromList(items),
+                    .items = ExprNodeList.fromList(items),
                     .is_single_line = true,
                 }, loc);
             },
@@ -383,7 +379,8 @@ pub const YAML = struct {
                     obj.setRope(key, p.allocator, value) catch |err| {
                         switch (err) {
                             error.Clobber => {
-                                try p.lexer.addError(key_loc, "Cannot redefine key");
+                                // TODO: add key name.
+                                p.lexer.addError(key_loc.toUsize(), "Cannot redefine key", .{});
                                 return error.SyntaxError;
                             },
                             else => return err,

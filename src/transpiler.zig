@@ -866,7 +866,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .toml, .yaml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1452,7 +1452,6 @@ pub const Transpiler = struct {
                     },
                 };
             },
-            // TODO: use lazy export AST
             inline .toml, .json, .yaml => |kind| {
                 var expr = if (kind == .json)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
@@ -1719,7 +1718,7 @@ pub const Transpiler = struct {
                     ),
                 };
             },
-            .toml, .json => {
+            .toml, .json, .yaml => {
                 return ServeResult{
                     .file = options.OutputFile.initPending(loader, resolved),
                     .mime_type = MimeType.transpiled_json,

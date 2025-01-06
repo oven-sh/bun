@@ -685,7 +685,8 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json => bun.http.MimeType.json,
+            .yaml, .toml, .json => bun.http.MimeType.json,
+
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => bun.http.MimeType.other,
@@ -703,7 +704,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh, .yaml => true,
+            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -724,6 +725,7 @@ pub const Loader = enum(u8) {
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
         map.set(.html, "input.html");
+        map.set(.yaml, "input.yaml");
         break :brk map;
     };
 
@@ -770,6 +772,7 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "yaml", .yaml },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -794,6 +797,7 @@ pub const Loader = enum(u8) {
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
         .{ "html", .html },
+        .{ "yaml", .yaml },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -906,6 +910,8 @@ const default_loaders_posix = .{
     .{ ".cts", .ts },
 
     .{ ".toml", .toml },
+    .{ ".yaml", .yaml },
+    .{ ".yml", .yaml },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
@@ -1297,7 +1303,8 @@ const default_loader_ext = [_]string{
     ".ts",   ".tsx",
     ".mts",  ".cts",
 
-    ".toml", ".wasm",
+    ".toml", ".yaml",
+    ".yml",  ".wasm",
     ".txt",  ".text",
 };
 
@@ -1323,6 +1330,8 @@ const node_modules_default_loader_ext = [_]string{
     ".wasm",
     ".text",
     ".html",
+    ".yaml",
+    ".yml",
 };
 
 pub const ResolveFileExtensions = struct {

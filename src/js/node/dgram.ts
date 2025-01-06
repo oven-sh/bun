@@ -210,6 +210,7 @@ function Socket(type, listener) {
     connectState: CONNECT_STATE_DISCONNECTED,
     queue: undefined,
     reuseAddr: options && options.reuseAddr, // Use UV_UDP_REUSEADDR if true.
+    reusePort: options && options.reusePort,
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
     sendBufferSize,
@@ -354,10 +355,11 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       flags |= LIBUS_SOCKET_IPV6_ONLY;
     }
 
-    if (exclusive) {
-      flags |= LIBUS_LISTEN_EXCLUSIVE_PORT;
-    } else {
+    if (state.reusePort) {
+      exclusive = true; // TODO: cluster support
       flags |= LIBUS_SOCKET_REUSE_PORT;
+    } else {
+      flags |= LIBUS_LISTEN_EXCLUSIVE_PORT;
     }
 
     // TODO flags

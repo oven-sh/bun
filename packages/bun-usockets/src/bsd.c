@@ -966,8 +966,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
 #ifdef IPV6_V6ONLY
-    int disabled = 0;
-    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    if (listenAddr->ai_family == AF_INET6) {
+        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    }
 #endif
 
     /* We need destination address for udp packets in both ipv6 and ipv4 */

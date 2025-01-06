@@ -69,6 +69,7 @@ pub fn PosixPipeReader(
                     readFile(parent, resizable_buffer, fd, size_hint, received_hup);
                 },
                 .socket => {
+                    // leak
                     readSocket(parent, resizable_buffer, fd, size_hint, received_hup);
                 },
                 .pipe => {
@@ -112,6 +113,7 @@ pub fn PosixPipeReader(
         }
 
         fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+            // leak
             return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
         }
 

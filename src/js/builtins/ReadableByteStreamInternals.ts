@@ -1,3 +1,9 @@
+/// <reference path="../builtins.d.ts" />
+/// <reference path="./ReadableStreamInternals.ts" />
+/**
+ * ## References
+ * - [ReadableStream - `ReadableByteStreamController`](https://streams.spec.whatwg.org/#rbs-controller-class)
+ */
 /*
  * Copyright (C) 2016 Canon Inc. All rights reserved.
  *
@@ -31,6 +37,7 @@ export function privateInitializeReadableByteStreamController(this, stream, unde
   if ($getByIdDirectPrivate(stream, "readableStreamController") !== null)
     throw new TypeError("ReadableStream already has a controller");
 
+  // https://streams.spec.whatwg.org/#rbs-controller-internal-slots
   $putByIdDirectPrivate(this, "controlledReadableStream", stream);
   $putByIdDirectPrivate(this, "underlyingByteSource", underlyingByteSource);
   $putByIdDirectPrivate(this, "pullAgain", false);
@@ -181,7 +188,11 @@ export function readableByteStreamControllerHandleQueueDrain(controller) {
   else $readableByteStreamControllerCallPullIfNeeded(controller);
 }
 
+/**
+ * ## [`ReadableStream.pull(controller)`](https://streams.spec.whatwg.org/#dom-underlyingsource-pull)
+ */
 export function readableByteStreamControllerPull(controller) {
+  console.log(new Error().stack);
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   $assert($readableStreamHasDefaultReader(stream));
   if ($getByIdDirectPrivate(controller, "queue").content?.isNotEmpty()) {
@@ -204,7 +215,7 @@ export function readableByteStreamControllerPull(controller) {
     } catch (error) {
       return Promise.$reject(error);
     }
-    const pullIntoDescriptor = {
+    const pullIntoDescriptor: PullIntoDescriptor = {
       buffer,
       byteOffset: 0,
       byteLength: $getByIdDirectPrivate(controller, "autoAllocateChunkSize"),
@@ -213,6 +224,7 @@ export function readableByteStreamControllerPull(controller) {
       ctor: Uint8Array,
       readerType: "default",
     };
+    console.log(".pull() - adding pullIntoDescriptor", pullIntoDescriptor);
     $getByIdDirectPrivate(controller, "pendingPullIntos").push(pullIntoDescriptor);
   }
 
@@ -289,6 +301,7 @@ export function readableStreamReaderKind(reader) {
 }
 
 export function readableByteStreamControllerEnqueue(controller, chunk) {
+  console.log("enqueuing chunk", chunk);
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
@@ -298,14 +311,17 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
   ) {
     /* default reader */
     case 1: {
-      if (!$getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty())
+      console.log("default reader");
+      if (!$getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) {
+        console.log("no read requests, enqueueing chunk")
         $readableByteStreamControllerEnqueueChunk(
           controller,
           $transferBufferToCurrentRealm(chunk.buffer),
           chunk.byteOffset,
           chunk.byteLength,
         );
-      else {
+      } else {
+        console.log("read requests are queued, fufilling read request");
         $assert(!$getByIdDirectPrivate(controller, "queue").content.size());
         const transferredView =
           chunk.constructor === Uint8Array ? chunk : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
@@ -316,6 +332,7 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
     /* BYOB */
     case 2: {
+      console.log("BYOB reader, enqueuing chunk");
       $readableByteStreamControllerEnqueueChunk(
         controller,
         $transferBufferToCurrentRealm(chunk.buffer),
@@ -354,12 +371,19 @@ export function readableByteStreamControllerEnqueueChunk(controller, buffer, byt
     byteLength: byteLength,
   });
   $getByIdDirectPrivate(controller, "queue").size += byteLength;
+  console.log(
+    "enqueued chunk",
+    "queue.content.size()",
+    $getByIdDirectPrivate(controller, "queue").content.size(),
+    "queue.size",
+    $getByIdDirectPrivate(controller, "queue").size,
+  );
 }
 
 export function readableByteStreamControllerRespondWithNewView(controller, view) {
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
 
-  let firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
+  let firstDescriptor: PullIntoDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
 
   if (firstDescriptor.byteOffset + firstDescriptor.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
@@ -381,8 +405,9 @@ export function readableByteStreamControllerRespond(controller, bytesWritten) {
   $readableByteStreamControllerRespondInternal(controller, bytesWritten);
 }
 
+// export declare function $readableByteStreamControllerRespondInternal(controller, bytesWritten);
 export function readableByteStreamControllerRespondInternal(controller, bytesWritten) {
-  let firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
+  let firstDescriptor: PullIntoDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
   let stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
@@ -393,7 +418,12 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
   }
 }
 
-export function readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor) {
+// export declare function $readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor: PullIntoDescriptor)
+export function readableByteStreamControllerRespondInReadableState(
+  controller,
+  bytesWritten,
+  pullIntoDescriptor: PullIntoDescriptor,
+) {
   if (pullIntoDescriptor.bytesFilled + bytesWritten > pullIntoDescriptor.byteLength)
     throw new RangeError("bytesWritten value is too great");
 
@@ -444,12 +474,28 @@ export function readableByteStreamControllerRespondInClosedState(controller, fir
   }
 }
 
-// Spec name: readableByteStreamControllerProcessPullIntoDescriptorsUsingQueue (shortened for readability).
+/**
+ * [readableByteStreamControllerProcessPullIntoDescriptorsUsingQueue](https://streams.spec.whatwg.org/#readable-byte-stream-controller-process-pull-into-descriptors-using-queue)
+ */
+// export declare function $readableByteStreamControllerProcessPullDescriptors(controller);
 export function readableByteStreamControllerProcessPullDescriptors(controller) {
+  console.log("processing pull into descriptors");
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   while ($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty()) {
-    if ($getByIdDirectPrivate(controller, "queue").size === 0) return;
-    let pullIntoDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
+    // if controller.[[queueTotalSize]] is 0, then break
+    if ($getByIdDirectPrivate(controller, "queue").size === 0) {
+      console.log(
+        "queue.content.size()",
+        $getByIdDirectPrivate(controller, "queue").content.size(),
+        "pendingPullIntos.size()",
+        $getByIdDirectPrivate(controller, "pendingPullIntos").size(),
+      );
+      return;
+    } else {
+      console.log("queue is not empty");
+    }
+    // Let pullIntoDescriptor be controller.[[pendingPullIntos]]
+    let pullIntoDescriptor: PullIntoDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
     if ($readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {
       $readableByteStreamControllerShiftPendingDescriptor(controller);
       $readableByteStreamControllerCommitDescriptor(
@@ -461,7 +507,13 @@ export function readableByteStreamControllerProcessPullDescriptors(controller) {
 }
 
 // Spec name: readableByteStreamControllerFillPullIntoDescriptorFromQueue (shortened for readability).
-export function readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor) {
+/**
+ * [`readableByteStreamControllerFillPullIntoDescriptorFromQueue`](https://streams.spec.whatwg.org/#readable-byte-stream-controller-fill-pull-into-descriptor-from-queue)
+ */
+export function readableByteStreamControllerFillDescriptorFromQueue(
+  controller,
+  pullIntoDescriptor: PullIntoDescriptor,
+) {
   const currentAlignedBytes =
     pullIntoDescriptor.bytesFilled - (pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize);
   const maxBytesToCopy =
@@ -493,8 +545,18 @@ export function readableByteStreamControllerFillDescriptorFromQueue(controller, 
       destStart,
     );
 
-    if (headOfQueue.byteLength === bytesToCopy) $getByIdDirectPrivate(controller, "queue").content.shift();
-    else {
+    if (headOfQueue.byteLength === bytesToCopy) {
+      console.log(
+        "shifting queue",
+        "queue.content.size()",
+        $getByIdDirectPrivate(controller, "queue").content.size(),
+        "queue.content.peek()",
+        $getByIdDirectPrivate(controller, "queue").content.peek(),
+        "queue.size",
+        $getByIdDirectPrivate(controller, "queue").size,
+      );
+      $getByIdDirectPrivate(controller, "queue").content.shift();
+    } else {
       headOfQueue.byteOffset += bytesToCopy;
       headOfQueue.byteLength -= bytesToCopy;
     }
@@ -519,6 +581,7 @@ export function readableByteStreamControllerFillDescriptorFromQueue(controller, 
 }
 
 // Spec name: readableByteStreamControllerShiftPendingPullInto (renamed for consistency).
+// export declare function $readableByteStreamControllerShiftPendingDescriptor(controller): PullIntoDescriptor;
 export function readableByteStreamControllerShiftPendingDescriptor(controller) {
   let descriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").shift();
   $readableByteStreamControllerInvalidateBYOBRequest(controller);
@@ -534,6 +597,7 @@ export function readableByteStreamControllerInvalidateBYOBRequest(controller) {
 }
 
 // Spec name: readableByteStreamControllerCommitPullIntoDescriptor (shortened for readability).
+// export declare function $readableByteStreamControllerCommitDescriptor(stream, pullIntoDescriptor: PullIntoDescriptor);
 export function readableByteStreamControllerCommitDescriptor(stream, pullIntoDescriptor) {
   $assert($getByIdDirectPrivate(stream, "state") !== $streamErrored);
   let done = false;
@@ -600,7 +664,7 @@ export function readableByteStreamControllerPullInto(controller, view) {
   // name has already been met before.
   const ctor = view.constructor;
 
-  const pullIntoDescriptor = {
+  const pullIntoDescriptor: PullIntoDescriptor = {
     buffer: view.buffer,
     byteOffset: view.byteOffset,
     byteLength: view.byteLength,
@@ -654,3 +718,115 @@ export function readableStreamAddReadIntoRequest(stream) {
 
   return readRequest;
 }
+
+// buffer
+// An ArrayBuffer
+
+// buffer byte length
+// A positive integer representing the initial byte length of buffer
+
+// byte offset
+// A nonnegative integer byte offset into the buffer where the underlying byte source will start writing
+
+// byte length
+// A positive integer number of bytes which can be written into the buffer
+
+// bytes filled
+// A nonnegative integer number of bytes that have been written into the buffer so far
+
+// minimum fill
+// A positive integer representing the minimum number of bytes that must be written into the buffer before the associated read() request may be fulfilled. By default, this equals the element size.
+
+// element size
+// A positive integer representing the number of bytes that can be written into the buffer at a time, using views of the type described by the view constructor
+
+// view constructor
+// A typed array constructor or %DataView%, which will be used for constructing a view with which to write into the buffer
+
+// reader type
+// Either "default" or "byob", indicating what type of readable stream reader initiated this request, or "none" if the initiating reader was released
+
+/**
+ * ## References
+ * - [Spec](https://streams.spec.whatwg.org/#pull-into-descriptor)
+ */
+interface PullIntoDescriptor {
+  /**
+   * An {@link ArrayBuffer}
+   */
+  buffer: ArrayBuffer;
+  /**
+   * A positive integer representing the initial byte length of {@link buffer}
+   */
+  bufferByteLength: number;
+  /**
+   * A nonnegative integer byte offset into the {@link buffer} where the
+   * underlying byte source will start writing
+   */
+  byteOffset: number;
+  /**
+   * A positive integer number of bytes which can be written into the
+   * {@link buffer}
+   */
+  byteLength: number;
+  /**
+   * A nonnegative integer number of bytes that have been written into the
+   * {@link buffer} so far
+   */
+  bytesFilled: number;
+  /**
+   * A positive integer representing the minimum number of bytes that must be
+   * written into the {@link buffer} before the associated read() request may be
+   * fulfilled. By default, this equals the element size.
+   */
+  minimumFill: number;
+  /**
+   * A positive integer representing the number of bytes that can be written
+   * into the {@link buffer} at a time, using views of the type described by the
+   * view constructor
+   */
+  elementSize: number;
+  /**
+   * `view constructor`
+   *
+   * A {@link NodeJS.TypedArray typed array constructor} or
+   * {@link NodeJS.DataView `%DataView%`}, which will be used for constructing a
+   * view with which to write into the {@link buffer}
+   *
+   * ## References
+   * - [`TypedArray` Constructors](https://tc39.es/ecma262/#table-49)
+   */
+  ctor: ArrayBufferViewConstructor;
+  /**
+   * Either "default" or "byob", indicating what type of readable stream reader
+   * initiated this request, or "none" if the initiating reader was released
+   */
+  readerType: "default" | "byob" | "none";
+}
+
+// type TypedArray =
+//     | Uint8Array
+//     | Uint8ClampedArray
+//     | Uint16Array
+//     | Uint32Array
+//     | Int8Array
+//     | Int16Array
+//     | Int32Array
+//     | BigUint64Array
+//     | BigInt64Array
+//     | Float32Array
+//     | Float64Array;
+// type ArrayBufferView = TypedArray | DataView;
+type TypedArrayConstructor =
+  | Uint8ArrayConstructor
+  | Uint8ClampedArrayConstructor
+  | Uint16ArrayConstructor
+  | Uint32ArrayConstructor
+  | Int8ArrayConstructor
+  | Int16ArrayConstructor
+  | Int32ArrayConstructor
+  | BigUint64ArrayConstructor
+  | BigInt64ArrayConstructor
+  | Float32ArrayConstructor
+  | Float64ArrayConstructor;
+type ArrayBufferViewConstructor = TypedArrayConstructor | DataViewConstructor;

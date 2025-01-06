@@ -59,6 +59,9 @@ declare function $getByIdDirect<T = any>(obj: any, key: string): T;
  * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
  *
  * TODO: clarify what private means exactly.
+ * @param obj The object the property belongs to
+ * @param key The `[[internal]]` property. Must be a string literal or WebKit will throw.
+ * @see [WebKit `emit_intrinsic_getByIdDirectPrivate`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L1461)
  */
 declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
 /**
@@ -161,8 +164,26 @@ declare function $toPropertyKey(x: any): PropertyKey;
  * `$toObject(this, "Class.prototype.method requires that |this| not be null or undefined");`
  */
 declare function $toObject(object: any, errorMessage?: string): object;
+/**
+ * ## References
+ * - [WebKit - `emit_intrinsic_newArrayWithSize`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2317)
+ */
 declare function $newArrayWithSize<T>(size: number): T[];
-declare function $newArrayWithSpecies(): TODO;
+/**
+ * Optimized path for creating a new array storing objects with the same homogenous Structure
+ * as {@link array}.
+ * 
+ * @param size the initial size of the new array
+ * @param array the array whose shape we want to copy
+ * 
+ * @returns a new array
+ * 
+ * ## References
+ * - [WebKit - `emit_intrinsic_newArrayWithSpecies`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2328)
+ * - [WebKit - #4909](https://github.com/WebKit/WebKit/pull/4909)
+ * - [WebKit Bugzilla - Related Issue/Ticket](https://bugs.webkit.org/show_bug.cgi?id=245797)
+ */
+declare function $newArrayWithSpecies<T>(size: number, array: T[]): T[];
 declare function $newPromise(): TODO;
 declare function $createPromise(): TODO;
 declare const $iterationKindKey: TODO;
@@ -452,6 +473,17 @@ declare function $createCommonJSModule(
 declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
 
 // The following I cannot find any definitions of, but they are functional.
+/**
+ * Converts a a number into an integer suitable for use as the length of an array-like object.
+ * 
+ * @param length the number to convert
+ * @returns `length` as an int32
+ * @throws if `length` is not castable into an int32
+ * 
+ * ## References
+ * - [ECMA-262 § 7.1.15](https://262.ecma-international.org/6.0/#sec-tolength)
+ * - [WebKit - `toLengthThunkGenerator`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/jit/ThunkGenerators.cpp#L1529)
+ */
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
 declare function $setStateToMax(target: any, state: number): void;

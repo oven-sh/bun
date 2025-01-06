@@ -1022,11 +1022,11 @@ pub const StreamResult = union(Tag) {
                 const value = result.toJS(globalThis);
                 value.ensureStillAlive();
 
-                switch (result.*) {
-                    .temporary => |*temporary| temporary.deinitWithAllocator(bun.default_allocator),
-                    .temporary_and_done => |*temporary_and_done| temporary_and_done.deinitWithAllocator(bun.default_allocator),
-                    else => {},
-                }
+                // switch (result.*) {
+                //     .temporary => |*temporary| temporary.deinitWithAllocator(bun.default_allocator),
+                //     .temporary_and_done => |*temporary_and_done| temporary_and_done.deinitWithAllocator(bun.default_allocator),
+                //     else => {},
+                // }
                 result.* = .{ .temporary = .{} };
                 promise.resolve(globalThis, value);
             },

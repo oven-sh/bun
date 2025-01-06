@@ -66,9 +66,10 @@ TRIPLET = $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_NAME = bun-$(TRIPLET)
 PACKAGES_REALPATH = $(realpath packages)
 PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
+BUILD_REALPATH = $(realpath build)
 DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 RELEASE_BUN = $(PACKAGE_DIR)/bun
-DEBUG_BIN = $(DEBUG_PACKAGE_DIR)
+DEBUG_BIN = $(BUILD_REALPATH)/debug
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./src/build-id)
 PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
@@ -905,7 +906,7 @@ zig-win32:
 
 # Hardened runtime will not work with debugging
 bun-codesign-debug:
-	codesign --entitlements $(realpath entitlements.debug.plist) --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(DEBUG_BUN)
+	codesign --entitlements $(realpath entitlements.debug.plist) --force --timestamp --sign - -vvvv --deep --strict $(DEBUG_BUN)
 
 bun-codesign-release-local:
 	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(RELEASE_BUN)

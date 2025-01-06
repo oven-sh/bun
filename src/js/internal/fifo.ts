@@ -1,5 +1,5 @@
 var slice = Array.prototype.slice;
-class Denqueue {
+class Denqueue<T> {
   constructor() {
     this._head = 0;
     this._tail = 0;
@@ -8,10 +8,10 @@ class Denqueue {
     this._list = $newArrayWithSize(4);
   }
 
-  _head;
-  _tail;
-  _capacityMask;
-  _list;
+  _head: number;
+  _tail: number;
+  _capacityMask: number;
+  _list: T[];
 
   size() {
     if (this._head === this._tail) return 0;
@@ -31,7 +31,8 @@ class Denqueue {
     var { _head: head, _tail, _list, _capacityMask } = this;
     if (head === _tail) return undefined;
     var item = _list[head];
-    $putByValDirect(_list, head, undefined);
+    // $putByValDirect(_list, head, undefined);
+    this._list[head] = undefined;
     head = this._head = (head + 1) & _capacityMask;
     if (head < 2 && _tail > 10000 && _tail <= _list.length >>> 2) this._shrinkArray();
     return item;

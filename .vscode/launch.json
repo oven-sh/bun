@@ -1128,6 +1128,15 @@
       },
     },
     {
+      "type": "bun",
+      "request": "launch",
+      "name": "bun debug [file]",
+      // "program": "${file}",
+      "runtimeArgs": ["run", "${file}"],
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "cwd": "${workspaceFolder}",
+    },
+    {
       "type": "cppvsdbg",
       "sourceFileMap": {
         "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",

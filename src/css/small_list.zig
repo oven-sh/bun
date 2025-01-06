@@ -80,6 +80,70 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             }
         }
 
+        /// NOTE: This will deinit the list
+        pub fn fromList(allocator: Allocator, list: std.ArrayListUnmanaged(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            defer list.deinit(allocator);
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        pub fn fromListNoDeinit(list: std.ArrayListUnmanaged(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        /// NOTE: This will deinit the list
+        pub fn fromBabyList(allocator: Allocator, list: bun.BabyList(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            defer list.deinitWithAllocator(allocator);
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        pub fn fromBabyListNoDeinit(list: bun.BabyList(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.ptr[0..list.len]);
+            return this;
+        }
+
         pub fn withOne(val: T) @This() {
             var ret = This{};
             ret.capacity = 1;

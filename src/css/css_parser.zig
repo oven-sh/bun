@@ -1292,7 +1292,7 @@ pub const DefaultAtRuleParser = struct {
 
         pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
 
-        pub fn onLayerRule(_: *This, _: *const ArrayList(LayerName)) void {}
+        pub fn onLayerRule(_: *This, _: *const bun.css.SmallList(LayerName, 1)) void {}
     };
 };
 
@@ -1369,9 +1369,9 @@ pub const BundlerAtRuleParser = struct {
             }) catch bun.outOfMemory();
         }
 
-        pub fn onLayerRule(this: *This, layers: *const ArrayList(LayerName)) void {
-            this.layer_names.ensureUnusedCapacity(this.allocator, layers.items.len) catch bun.outOfMemory();
-            for (layers.items) |*layer| {
+        pub fn onLayerRule(this: *This, layers: *const bun.css.SmallList(LayerName, 1)) void {
+            this.layer_names.ensureUnusedCapacity(this.allocator, layers.len()) catch bun.outOfMemory();
+            for (layers.slice()) |*layer| {
                 this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
             }
         }
@@ -1517,7 +1517,7 @@ pub fn AtRulePrelude(comptime T: type) type {
         },
         page: ArrayList(css_rules.page.PageSelector),
         moz_document,
-        layer: ArrayList(LayerName),
+        layer: bun.css.SmallList(LayerName, 1),
         container: struct {
             name: ?css_rules.container.ContainerName,
             condition: css_rules.container.ContainerCondition,
@@ -1973,11 +1973,11 @@ pub fn NestedRuleParser(comptime T: type) type {
                             break :brk .moz_document;
                         },
                         .layer => {
-                            const names = switch (input.parseList(LayerName, LayerName.parse)) {
+                            const names = switch (bun.css.SmallList(LayerName, 1).parse(input)) {
                                 .result => |vv| vv,
                                 .err => |e| names: {
                                     if (e.kind == .basic and e.kind.basic == .end_of_input) {
-                                        break :names ArrayList(LayerName){};
+                                        break :names bun.css.SmallList(LayerName, 1){};
                                     }
                                     return .{ .err = e };
                                 },
@@ -2262,10 +2262,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         return .{ .result = {} };
                     },
                     .layer => {
-                        const name = if (prelude.layer.items.len == 0) null else if (prelude.layer.items.len == 1) names: {
-                            var out: LayerName = .{};
-                            std.mem.swap(LayerName, &out, &prelude.layer.items[0]);
-                            break :names out;
+                        const name = if (prelude.layer.len() == 0) null else if (prelude.layer.len() == 1) names: {
+                            break :names prelude.layer.at(0).*;
                         } else return .{ .err = input.newError(.at_rule_body_invalid) };
 
                         const rules = switch (this.parseStyleBlock(input)) {
@@ -2370,7 +2368,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 const loc = this.getLoc(start);
                 switch (prelude) {
                     .layer => {
-                        if (this.is_in_style_rule or prelude.layer.items.len == 0) {
+                        if (this.is_in_style_rule or prelude.layer.len() == 0) {
                             return .{ .err = {} };
                         }
 
@@ -6625,9 +6623,9 @@ pub const to_css = struct {
         return s.items;
     }
 
-    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        const len = this.items.len;
-        for (this.items, 0..) |*val, idx| {
+    pub fn fromList(comptime T: type, this: []const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const len = this.len;
+        for (this, 0..) |*val, idx| {
             try val.toCss(W, dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);

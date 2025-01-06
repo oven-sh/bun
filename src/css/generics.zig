@@ -125,10 +125,10 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => {
-                return css.to_css.fromList(result.child, this, W, dest);
+                return css.to_css.fromList(result.child, this.items, W, dest);
             },
-            .baby_list => {},
-            .small_list => {},
+            .baby_list => @compileError("TODO"),
+            .small_list => @compileError("TODO"),
         }
     }
     return switch (T) {

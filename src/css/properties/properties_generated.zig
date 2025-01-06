@@ -5086,6 +5086,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"margin-right" => {
+                @setEvalBranchQuota(5000);
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"margin-right" = c } };
@@ -7196,6 +7197,7 @@ pub const PropertyId = union(PropertyIdTag) {
 
     /// Returns the property name, without any vendor prefixes.
     pub inline fn name(this: *const PropertyId) []const u8 {
+        if (this.* == .custom) return this.custom.asStr();
         return @tagName(this.*);
     }
 

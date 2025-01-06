@@ -878,6 +878,23 @@ pub const Resolver = struct {
         errdefer (r.flushDebugLogs(.fail) catch {});
 
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
+
+        // Fragments in URLs in CSS imports are technically expected to work
+        if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
+            // If resolution failed, try again with the URL query and/or hash removed
+            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            if (maybe_suffix == null or maybe_suffix.? < 1)
+                break :try_without_suffix;
+
+            const suffix = maybe_suffix.?;
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("Retrying resolution after removing the suffix {s}", .{import_path[suffix..]});
+            }
+            const result2 = r.resolveWithoutSymlinks(source_dir_normalized, import_path[0..suffix], kind, global_cache);
+            if (result2 == .not_found) break :try_without_suffix;
+            tmp = result2;
+        }
+
         switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
@@ -1156,7 +1173,7 @@ pub const Resolver = struct {
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
         const is_package_path = isPackagePathNotAbsolute(import_path);
-        var check_relative = !is_package_path or kind == .url;
+        var check_relative = !is_package_path or kind.isFromCSS();
         var check_package = is_package_path;
 
         if (check_relative) {

@@ -591,7 +591,7 @@ pub const UrlSource = struct {
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, &this.tech, W, dest);
+            try css.to_css.fromList(FontTechnology, this.tech.items, W, dest);
             try dest.writeChar(')');
         }
     }

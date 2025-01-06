@@ -191,7 +191,7 @@ pub fn LayerBlockRule(comptime R: type) type {
 /// See also [LayerBlockRule](LayerBlockRule).
 pub const LayerStatementRule = struct {
     /// The layer names to declare.
-    names: ArrayList(LayerName),
+    names: bun.css.SmallList(LayerName, 1),
     /// The location of the rule in the source file.
     loc: Location,
 
@@ -200,9 +200,13 @@ pub const LayerStatementRule = struct {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
-        try dest.writeStr("@layer ");
-        try css.to_css.fromList(LayerName, &this.names, W, dest);
-        try dest.writeChar(';');
+        if (this.names.len() > 0) {
+            try dest.writeStr("@layer ");
+            try css.to_css.fromList(LayerName, this.names.slice(), W, dest);
+            try dest.writeChar(';');
+        } else {
+            try dest.writeStr("@layer;");
+        }
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

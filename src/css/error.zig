@@ -244,7 +244,7 @@ pub const ParserError = union(enum) {
             .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
-            .unexpected_token => |token| writer.print("Unexpected token. {}", .{token}),
+            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
         };
     }

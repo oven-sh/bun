@@ -9583,7 +9583,7 @@ pub const LinkerContext = struct {
                         if (len > 0) {
                             rules.v.append(allocator, bun.css.BundlerCssRule{
                                 .layer_statement = bun.css.LayerStatementRule{
-                                    .names = layers.inner().*.list(),
+                                    .names = bun.css.SmallList(bun.css.LayerName, 1).fromBabyListNoDeinit(layers.inner().*),
                                     .loc = bun.css.Location.dummy(),
                                 },
                             }) catch bun.outOfMemory();
@@ -9735,31 +9735,37 @@ pub const LinkerContext = struct {
             // Generate "@layer" wrappers. Note that empty "@layer" rules still have
             // a side effect (they set the layer order) so they cannot be removed.
             if (item.layer) |l| {
-                if (l.v) |layer| {
-                    if (ast.rules.v.items.len == 0) {
-                        if (layer.v.isEmpty()) {
-                            // Omit an empty "@layer {}" entirely
-                            continue;
-                        } else {
-                            // Generate "@layer foo;" instead of "@layer foo {}"
-                            ast.rules.v = .{};
-                        }
+                const layer = l.v;
+                var do_block_rule = true;
+                if (ast.rules.v.items.len == 0) {
+                    if (l.v == null) {
+                        // Omit an empty "@layer {}" entirely
+                        continue;
+                    } else {
+                        // Generate "@layer foo;" instead of "@layer foo {}"
+                        ast.rules.v = .{};
+                        do_block_rule = false;
                     }
-
-                    ast.rules = brk: {
-                        var new_rules = bun.css.BundlerCssRuleList{};
-                        new_rules.v.append(
-                            temp_allocator,
-                            .{ .layer_block = bun.css.BundlerLayerBlockRule{
-                                .name = layer,
-                                .rules = ast.rules,
-                                .loc = bun.css.Location.dummy(),
-                            } },
-                        ) catch bun.outOfMemory();
-
-                        break :brk new_rules;
-                    };
                 }
+
+                ast.rules = brk: {
+                    var new_rules = bun.css.BundlerCssRuleList{};
+                    new_rules.v.append(
+                        temp_allocator,
+                        if (do_block_rule) .{ .layer_block = bun.css.BundlerLayerBlockRule{
+                            .name = layer,
+                            .rules = ast.rules,
+                            .loc = bun.css.Location.dummy(),
+                        } } else .{
+                            .layer_statement = .{
+                                .names = if (layer) |ly| bun.css.SmallList(bun.css.LayerName, 1).withOne(ly) else .{},
+                                .loc = bun.css.Location.dummy(),
+                            },
+                        },
+                    ) catch bun.outOfMemory();
+
+                    break :brk new_rules;
+                };
             }
 
             // Generate "@supports" wrappers. This is not done if the rule block is

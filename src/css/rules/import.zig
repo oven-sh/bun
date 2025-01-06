@@ -26,6 +26,12 @@ pub const ImportConditions = struct {
     layer: ?struct {
         /// PERF: null pointer optimizaiton, nullable
         v: ?LayerName,
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            if (this.v == null and other.v == null) return true;
+            if (this.v == null or other.v == null) return false;
+            return this.v.?.eql(&other.v.?);
+        }
     } = null,
 
     /// An optional `supports()` condition.
@@ -114,7 +120,7 @@ pub const ImportConditions = struct {
     pub fn layersEql(lhs: *const @This(), rhs: *const @This()) bool {
         if (lhs.layer == null and rhs.layer == null) return true;
         if (lhs.layer == null or rhs.layer == null) return false;
-        return lhs.layer.?.v.?.eql(&rhs.layer.?.v.?);
+        return lhs.layer.?.eql(&rhs.layer.?);
     }
 
     pub fn supportsEql(lhs: *const @This(), rhs: *const @This()) bool {

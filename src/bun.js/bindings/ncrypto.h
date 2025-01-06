@@ -727,7 +727,7 @@ private:
 };
 
 class SSLPointer final {
-    WTF_MAKE_ISO_ALLOCATED(SSLCtxPointer);
+    WTF_MAKE_ISO_ALLOCATED(SSLPointer);
 
 public:
     SSLPointer() = default;

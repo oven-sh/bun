@@ -25,8 +25,6 @@
 
 #pragma once
 
-struct evp_pkey_st;
-typedef struct evp_pkey_st EVP_PKEY;
 #include "CryptoAesKeyAlgorithm.h"
 #include "CryptoAlgorithmIdentifier.h"
 #include "CryptoEcKeyAlgorithm.h"

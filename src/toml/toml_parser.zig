@@ -46,36 +46,6 @@ const locModuleScope = logger.Loc.Empty;
 const LEXER_DEBUGGER_WORKAROUND = false;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
-const HashMapPool = struct {
-    const HashMap = std.HashMap(u64, void, IdentityContext, 80);
-    const LinkedList = std.SinglyLinkedList(HashMap);
-    threadlocal var list: LinkedList = undefined;
-    threadlocal var loaded: bool = false;
-
-    pub fn get(_: std.mem.Allocator) *LinkedList.Node {
-        if (loaded) {
-            if (list.popFirst()) |node| {
-                node.data.clearRetainingCapacity();
-                return node;
-            }
-        }
-
-        const new_node = default_allocator.create(LinkedList.Node) catch unreachable;
-        new_node.* = LinkedList.Node{ .data = HashMap.initContext(default_allocator, IdentityContext{}) };
-        return new_node;
-    }
-
-    pub fn release(node: *LinkedList.Node) void {
-        if (loaded) {
-            list.prepend(node);
-            return;
-        }
-
-        list = LinkedList{ .first = node };
-        loaded = true;
-    }
-};
-
 pub const TOML = struct {
     lexer: Lexer,
     log: *logger.Log,

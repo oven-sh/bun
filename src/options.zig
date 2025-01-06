@@ -645,6 +645,7 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+    yaml,
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -702,7 +703,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh, .yaml => true,
             else => false,
         };
     }
@@ -822,6 +823,7 @@ pub const Loader = enum(u8) {
             .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -842,6 +844,7 @@ pub const Loader = enum(u8) {
             .file => .file,
             .json => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -872,8 +875,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json => true,
 
-            // toml is included because we can serialize to the same AST as JSON
-            .toml => true,
+            // toml and yaml are included because we can serialize to the same AST as JSON
+            .toml, .yaml => true,
 
             else => false,
         };

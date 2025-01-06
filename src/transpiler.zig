@@ -52,7 +52,7 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 const DataURL = @import("./resolver/data_url.zig").DataURL;
-
+const YAML = @import("./yaml/yaml_parser.zig").YAML;
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
         return struct {
@@ -1453,7 +1453,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json => |kind| {
+            inline .toml, .json, .yaml => |kind| {
                 var expr = if (kind == .json)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1463,6 +1463,8 @@ pub const Transpiler = struct {
                         JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
+                else if (kind == .yaml)
+                    YAML.parse(&source, transpiler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 

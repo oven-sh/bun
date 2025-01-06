@@ -1519,7 +1519,7 @@ pub const ModuleLoader = struct {
         }
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml, .text => {
+            .js, .jsx, .ts, .tsx, .json, .toml, .yaml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
                 const hash = JSC.GenericWatcher.getHash(path.text);
@@ -1796,7 +1796,7 @@ pub const ModuleLoader = struct {
                         .already_bundled = true,
                         .hash = 0,
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
-                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
@@ -2327,6 +2327,8 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (attribute.eqlComptime("yaml")) {
+                loader = .yaml;
             }
         }
 

@@ -101,6 +101,7 @@ const URL = @import("../url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
+const YAML = @import("../yaml/yaml_parser.zig").YAML;
 const EntryPoints = @import("./entry_points.zig");
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
@@ -3665,6 +3666,12 @@ pub const ParseTask = struct {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator, false);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+            },
+            .yaml => {
+                const trace = tracer(@src(), "ParseYAML");
+                defer trace.end();
+                const root = try YAML.parse(&source, log, allocator, false);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {

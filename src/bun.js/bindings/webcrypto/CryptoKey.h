@@ -101,5 +101,3 @@ WebCoreOpaqueRoot root(CryptoKey*);
         return key.keyClass() == WebCore::KeyClass;              \
     }                                                            \
     SPECIALIZE_TYPE_TRAITS_END()
-
-#endif // ENABLE(WEB_CRYPTO)

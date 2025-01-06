@@ -875,6 +875,17 @@ pub const Stringifier = struct {
         // need a way to detect new/deleted workspaces
         if (pkg_id == 0) {
             try writer.writeAll("\"\": {");
+            const root_name = pkg_names[0].slice(buf);
+            if (root_name.len > 0) {
+                try writer.writeByte('\n');
+                try incIndent(writer, indent);
+                try writer.print("\"name\": {}", .{
+                    bun.fmt.formatJSONStringUTF8(root_name, .{}),
+                });
+
+                // TODO(dylan-conway) should we save version?
+                any = true;
+            }
         } else {
             try writer.print("{}: {{", .{
                 bun.fmt.formatJSONStringUTF8(res.slice(buf), .{}),
@@ -958,7 +969,7 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\"{s}",
+                    \\{},
                     \\
                 , .{
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
@@ -1625,7 +1636,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log, .resolvable, {}) catch |err| {
+        lockfile.resolve(log) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {

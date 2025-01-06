@@ -59,6 +59,8 @@ export interface ClassDefinition {
   JSType?: string;
   noConstructor?: boolean;
 
+  final?: boolean;
+
   // Do not try to track the `this` value in the constructor automatically.
   // That is a memory leak.
   wantsThis?: never;

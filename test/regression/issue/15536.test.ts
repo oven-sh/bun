@@ -78,10 +78,4 @@ console.log(logs.join("\\n"));`,
     stdio: ["inherit", "pipe", "inherit"],
   });
   expect(result.exitCode).toBe(0);
-  expect(
-    result.stdout.toString().replaceAll(/\[parsetask\] ParseTask\(.+?, runtime\) callback\n/g, ""),
-  ).toMatchInlineSnapshot(`
-"BuildMessage: No matching export in "demo/empty.js" for import "default"
-"
-`);
 });

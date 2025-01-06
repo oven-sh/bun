@@ -16,6 +16,7 @@ const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const MiniLockfile = Install.MiniLockfile;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -462,20 +463,32 @@ pub const Tree = struct {
     pub const List = std.ArrayListUnmanaged(Tree);
     pub const Id = u32;
 
-    pub fn folderName(this: *const Tree, deps: []const Dependency, buf: string) string {
+    fn folderName(this: *const Tree, deps_or_names: anytype, buf: string) string {
         const dep_id = this.dependency_id;
         if (dep_id == invalid_dependency_id) return "";
-        return deps[dep_id].name.slice(buf);
+        switch (comptime std.meta.Child(@TypeOf(deps_or_names))) {
+            Dependency => {
+                return deps_or_names[dep_id].name.slice(buf);
+            },
+            String => {
+                return deps_or_names[dep_id].slice(buf);
+            },
+            else => {
+                @compileError("unexpected type");
+            },
+        }
     }
 
     pub fn toExternal(this: Tree) External {
-        var out = External{};
-        out[0..4].* = @as(Id, @bitCast(this.id));
-        out[4..8].* = @as(Id, @bitCast(this.dependency_id));
-        out[8..12].* = @as(Id, @bitCast(this.parent));
-        out[12..16].* = @as(u32, @bitCast(this.dependencies.off));
-        out[16..20].* = @as(u32, @bitCast(this.dependencies.len));
+        var out: External = undefined;
         if (out.len != 20) @compileError("Tree.External is not 20 bytes");
+        var stream = std.io.fixedBufferStream(&out);
+        var writer = stream.writer();
+        writer.writeInt(Id, this.id, .little) catch unreachable;
+        writer.writeInt(DependencyID, this.dependency_id, .little) catch unreachable;
+        writer.writeInt(Id, this.parent, .little) catch unreachable;
+        writer.writeInt(u32, this.dependencies.off, .little) catch unreachable;
+        writer.writeInt(u32, this.dependencies.len, .little) catch unreachable;
         return out;
     }
 
@@ -523,16 +536,16 @@ pub const Tree = struct {
         pkg_path,
     };
 
-    pub fn Iterator(comptime path_style: IteratorPathStyle) type {
+    pub fn Iterator(comptime LockfileType: type, comptime path_style: IteratorPathStyle) type {
         return struct {
             tree_id: Id,
             path_buf: bun.PathBuffer = undefined,
 
-            lockfile: *const Lockfile,
+            lockfile: *const LockfileType,
 
             depth_stack: DepthBuf = undefined,
 
-            pub fn init(lockfile: *const Lockfile) @This() {
+            pub fn init(lockfile: *const LockfileType) @This() {
                 var iter: @This() = .{
                     .tree_id = 0,
                     .lockfile = lockfile,
@@ -563,7 +576,21 @@ pub const Tree = struct {
             };
 
             pub fn next(this: *@This(), completed_trees: if (path_style == .node_modules) ?*Bitset else void) ?Next {
-                const trees = this.lockfile.buffers.trees.items;
+                const trees, const hoisted_dependencies, const string_bytes, const deps_or_names = switch (LockfileType) {
+                    Lockfile => .{
+                        this.lockfile.buffers.trees.items,
+                        this.lockfile.buffers.hoisted_dependencies.items,
+                        this.lockfile.buffers.string_bytes.items,
+                        this.lockfile.buffers.dependencies.items,
+                    },
+                    MiniLockfile => .{
+                        this.lockfile.trees,
+                        this.lockfile.hoisted_dependencies,
+                        this.lockfile.string_bytes,
+                        this.lockfile.dep_names,
+                    },
+                    else => @compileError("unexpected lockfile type"),
+                };
 
                 if (this.tree_id >= trees.len) return null;
 
@@ -579,10 +606,12 @@ pub const Tree = struct {
 
                 const current_tree_id = this.tree_id;
                 const tree = trees[current_tree_id];
-                const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
+                const tree_dependencies = tree.dependencies.get(hoisted_dependencies);
 
                 const relative_path, const depth = relativePathAndDepth(
-                    this.lockfile,
+                    string_bytes,
+                    trees,
+                    deps_or_names,
                     current_tree_id,
                     &this.path_buf,
                     &this.depth_stack,
@@ -603,13 +632,14 @@ pub const Tree = struct {
 
     /// Returns relative path and the depth of the tree
     pub fn relativePathAndDepth(
-        lockfile: *const Lockfile,
+        string_buf: string,
+        trees: []const Tree,
+        deps_or_names: anytype,
         tree_id: Id,
         path_buf: *bun.PathBuffer,
         depth_buf: *DepthBuf,
         comptime path_style: IteratorPathStyle,
     ) struct { stringZ, usize } {
-        const trees = lockfile.buffers.trees.items;
         var depth: usize = 0;
 
         const tree = trees[tree_id];
@@ -623,8 +653,6 @@ pub const Tree = struct {
         depth_buf[0] = 0;
 
         if (tree.id > 0) {
-            const dependencies = lockfile.buffers.dependencies.items;
-            const buf = lockfile.buffers.string_bytes.items;
             var depth_buf_len: usize = 1;
 
             while (parent_id > 0 and parent_id < trees.len) {
@@ -648,7 +676,7 @@ pub const Tree = struct {
                 }
 
                 const id = depth_buf[depth_buf_len];
-                const name = trees[id].folderName(dependencies, buf);
+                const name = trees[id].folderName(deps_or_names, string_buf);
                 @memcpy(path_buf[path_written..][0..name.len], name);
                 path_written += name.len;
 
@@ -6297,6 +6325,13 @@ const Buffers = struct {
         comptime assertNoUninitializedPadding(@TypeOf(array));
         const bytes = std.mem.sliceAsBytes(array);
 
+        const item_info = @typeInfo(std.meta.Child(ArrayList));
+        if (item_info == .Struct) {
+            if (item_info.Struct.layout == .auto) {
+                @compileError("attempt to serialize non-extern struct");
+            }
+        }
+
         const start_pos = try stream.getPos();
         try writer.writeInt(u64, 0xDEADBEEF, .little);
         try writer.writeInt(u64, 0xDEADBEEF, .little);
@@ -6398,8 +6433,9 @@ const Buffers = struct {
             } else {
                 const list = @field(buffers, name);
                 const items = list.items;
-                const Type = @TypeOf(items);
-                if (comptime Type == Tree) {
+                const ArrayType = @TypeOf(items);
+                const ItemType = std.meta.Child(ArrayType);
+                if (comptime ItemType == Tree) {
                     // We duplicate it here so that alignment bytes are zeroed out
                     var clone = try std.ArrayListUnmanaged(Tree.External).initCapacity(allocator, list.items.len);
                     for (list.items) |item| {
@@ -6407,14 +6443,14 @@ const Buffers = struct {
                     }
                     defer clone.deinit(allocator);
 
-                    try writeArray(StreamType, stream, Writer, writer, Tree.External, clone.items);
+                    try writeArray(StreamType, stream, Writer, writer, []const Tree.External, clone.items);
                 } else {
                     // We duplicate it here so that alignment bytes are zeroed out
-                    var clone = try std.ArrayListUnmanaged(std.meta.Child(Type)).initCapacity(allocator, list.items.len);
+                    var clone = try std.ArrayListUnmanaged(ItemType).initCapacity(allocator, list.items.len);
                     clone.appendSliceAssumeCapacity(items);
                     defer clone.deinit(allocator);
 
-                    try writeArray(StreamType, stream, Writer, writer, Type, clone.items);
+                    try writeArray(StreamType, stream, Writer, writer, ArrayType, clone.items);
                 }
             }
 
@@ -7014,7 +7050,15 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
 
     var i: usize = 0;
     for (l.buffers.trees.items) |l_tree| {
-        const rel_path, _ = Tree.relativePathAndDepth(l, l_tree.id, &path_buf, &depth_buf, .pkg_path);
+        const rel_path, _ = Tree.relativePathAndDepth(
+            l.buffers.string_bytes.items,
+            l.buffers.trees.items,
+            l.buffers.dependencies.items,
+            l_tree.id,
+            &path_buf,
+            &depth_buf,
+            .pkg_path,
+        );
         const tree_path = try allocator.dupe(u8, rel_path);
         for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
             if (l_dep_id == invalid_dependency_id) continue;
@@ -7031,7 +7075,15 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
 
     i = 0;
     for (r.buffers.trees.items) |r_tree| {
-        const rel_path, _ = Tree.relativePathAndDepth(r, r_tree.id, &path_buf, &depth_buf, .pkg_path);
+        const rel_path, _ = Tree.relativePathAndDepth(
+            r.buffers.string_bytes.items,
+            r.buffers.trees.items,
+            r.buffers.dependencies.items,
+            r_tree.id,
+            &path_buf,
+            &depth_buf,
+            .pkg_path,
+        );
         const tree_path = try allocator.dupe(u8, rel_path);
         for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
             if (r_dep_id == invalid_dependency_id) continue;
@@ -7511,7 +7563,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.write(tree_id);
 
             const relative_path, const depth = Lockfile.Tree.relativePathAndDepth(
-                this,
+                this.buffers.string_bytes.items,
+                this.buffers.trees.items,
+                this.buffers.dependencies.items,
                 @intCast(tree_id),
                 &path_buf,
                 &depth_buf,

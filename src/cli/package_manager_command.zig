@@ -15,7 +15,7 @@ const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
-const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
+const NodeModulesFolder = Lockfile.Tree.Iterator(Lockfile, .node_modules).Next;
 const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
@@ -301,7 +301,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             Output.disableBuffering();
             const lockfile = load_lockfile.ok.lockfile;
-            var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+            var iterator = Lockfile.Tree.Iterator(Lockfile, .node_modules).init(lockfile);
 
             var max_depth: usize = 0;
 

@@ -59,14 +59,17 @@ behavior: Behavior = .{},
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass
 pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
-    const behavior = lhs.behavior.cmp(rhs.behavior);
-    if (behavior != .eq) {
-        return behavior == .lt;
-    }
-
     const lhs_name = lhs.name.slice(string_buf);
     const rhs_name = rhs.name.slice(string_buf);
-    return strings.cmpStringsAsc({}, lhs_name, rhs_name);
+
+    return order(lhs_name, lhs.behavior, rhs_name, rhs.behavior) == .lt;
+}
+
+pub fn order(l_name: string, l_behavior: Behavior, r_name: string, r_behavior: Behavior) std.math.Order {
+    return switch (l_behavior.cmp(r_behavior)) {
+        .eq => strings.order(l_name, r_name),
+        else => |lt_or_gt| lt_or_gt,
+    };
 }
 
 pub fn countWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {

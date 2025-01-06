@@ -43,7 +43,15 @@ pub const String = extern struct {
         allocator: std.mem.Allocator,
         pool: *Builder.StringPool,
 
-        pub fn init(lockfile: *const Lockfile) Buf {
+        pub fn init(allocator: std.mem.Allocator, bytes: *std.ArrayListUnmanaged(u8), pool: *Builder.StringPool) Buf {
+            return .{
+                .bytes = bytes,
+                .allocator = allocator,
+                .pool = pool,
+            };
+        }
+
+        pub fn initFromLockfile(lockfile: *const Lockfile) Buf {
             return .{
                 .bytes = &lockfile.buffers.string_bytes,
                 .allocator = lockfile.allocator,

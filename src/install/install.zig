@@ -65,6 +65,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+pub const MiniLockfile = @import("./mini_lockfile.zig").MiniLockfile;
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -2114,10 +2115,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
         }
 
-        pub fn uninstallBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
+        pub fn uninstallBeforeInstall(node_modules_path: string, destination_dir: std.fs.Dir, subpath: stringZ) void {
             var rand_path_buf: [48]u8 = undefined;
             const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
-            switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
+            switch (bun.sys.renameat(bun.toFD(destination_dir), subpath, bun.toFD(destination_dir), temp_path)) {
                 .err => {
                     // if it fails, that means the directory doesn't exist or was inaccessible
                 },
@@ -2152,8 +2153,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
                             defer {
-                                _ = PackageManager.get().decrementPendingTasks();
-                                PackageManager.get().wake();
+                                var pm = PackageManager.get();
+                                if (pm.options.log_level.showProgress()) {
+                                    if (pm.prune_node) |node| {
+                                        node.completeOne();
+                                    }
+                                }
+                                _ = pm.decrementPendingTasks();
+                                pm.wake();
                             }
 
                             defer unintall_task.deinit();
@@ -2191,7 +2198,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
-                        .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
+                        .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ node_modules_path, temp_path }, .auto)) catch bun.outOfMemory(),
                     });
                     PackageManager.get().thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
                     _ = PackageManager.get().incrementPendingTasks(1);
@@ -2252,7 +2259,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const dest_path = this.destination_dir_subpath;
             // If this fails, we don't care.
             // we'll catch it the next error
-            if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
+            if (!skip_delete and !strings.eqlComptime(dest_path, ".")) uninstallBeforeInstall(this.node_modules.path.items, destination_dir, this.destination_dir_subpath);
 
             const subdir = std.fs.path.dirname(dest_path);
 
@@ -2418,7 +2425,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
             // If this fails, we don't care.
             // we'll catch it the next error
-            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
+            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) uninstallBeforeInstall(this.node_modules.path.items, destination_dir, this.destination_dir_subpath);
 
             var supported_method_to_use = method_;
 
@@ -2654,6 +2661,7 @@ pub const PackageManager = struct {
     progress: Progress = .{},
     downloads_node: ?*Progress.Node = null,
     scripts_node: ?*Progress.Node = null,
+    prune_node: ?*Progress.Node = null,
     progress_name_buf: [768]u8 = undefined,
     progress_name_buf_dynamic: []u8 = &[_]u8{},
     cpu_count: u32 = 0,
@@ -7764,6 +7772,11 @@ pub const PackageManager = struct {
         const script_with_emoji: string = script_emoji ++ script_no_emoji_;
         pub const script_emoji: string = "  ⚙️  ";
 
+        pub const prune_no_emoji_ = "Pruning";
+        const prune_no_emoji: string = prune_no_emoji_ ++ "\n";
+        const prune_with_emoji: string = prune_emoji ++ prune_no_emoji_;
+        pub const prune_emoji: string = "  💥 ";
+
         pub inline fn download() string {
             return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
         }
@@ -7782,6 +7795,10 @@ pub const PackageManager = struct {
 
         pub inline fn script() string {
             return if (Output.isEmojiEnabled()) script_with_emoji else script_no_emoji;
+        }
+
+        pub inline fn prune() string {
+            return if (Output.isEmojiEnabled()) prune_with_emoji else prune_no_emoji;
         }
     };
 
@@ -11111,7 +11128,7 @@ pub const PackageManager = struct {
         }
     }
 
-    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).Next {
+    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(Lockfile, .node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(Lockfile, .node_modules).Next {
         while (iterator.next(null)) |node_modules| {
             for (ids) |id| {
                 _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, id[0]) orelse continue;
@@ -11121,7 +11138,7 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modules), dependency_id: DependencyID) !?Lockfile.Tree.Iterator(.node_modules).Next {
+    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(Lockfile, .node_modules), dependency_id: DependencyID) !?Lockfile.Tree.Iterator(Lockfile, .node_modules).Next {
         while (iterator.next(null)) |node_modules| {
             _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, dependency_id) orelse continue;
             return node_modules;
@@ -11134,11 +11151,11 @@ pub const PackageManager = struct {
 
     fn pkgInfoForNameAndVersion(
         lockfile: *Lockfile,
-        iterator: *Lockfile.Tree.Iterator(.node_modules),
+        iterator: *Lockfile.Tree.Iterator(Lockfile, .node_modules),
         pkg_maybe_version_to_patch: []const u8,
         name: []const u8,
         version: ?[]const u8,
-    ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
+    ) struct { PackageID, Lockfile.Tree.Iterator(Lockfile, .node_modules).Next } {
         var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
         var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
         defer pairs.deinit();
@@ -11312,7 +11329,7 @@ pub const PackageManager = struct {
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         var folder_path_buf: bun.PathBuffer = undefined;
-        var iterator = Lockfile.Tree.Iterator(.node_modules).init(manager.lockfile);
+        var iterator = Lockfile.Tree.Iterator(Lockfile, .node_modules).init(manager.lockfile);
         var resolution_buf: [1024]u8 = undefined;
 
         var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
@@ -11745,7 +11762,7 @@ pub const PackageManager = struct {
         };
         defer root_node_modules.close();
 
-        var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+        var iterator = Lockfile.Tree.Iterator(Lockfile, .node_modules).init(lockfile);
         var resolution_buf: [1024]u8 = undefined;
         const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
             .path => result: {
@@ -12461,7 +12478,7 @@ pub const PackageManager = struct {
         destination_dir_subpath_buf: bun.PathBuffer = undefined,
         folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
-        tree_iterator: *Lockfile.Tree.Iterator(.node_modules),
+        tree_iterator: *Lockfile.Tree.Iterator(Lockfile, .node_modules),
         command_ctx: Command.Context,
         current_tree_id: Lockfile.Tree.Id = Lockfile.Tree.invalid_id,
 
@@ -12623,7 +12640,9 @@ pub const PackageManager = struct {
                     this.seen_bin_links.clearRetainingCapacity();
                     this.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                     const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
-                        lockfile,
+                        lockfile.buffers.string_bytes.items,
+                        lockfile.buffers.trees.items,
+                        lockfile.buffers.dependencies.items,
                         @intCast(tree_id),
                         &node_modules_rel_path_buf,
                         &depth_buf,
@@ -13900,6 +13919,163 @@ pub const PackageManager = struct {
         )));
     }
 
+    pub fn deleteStalePackages(
+        this: *PackageManager,
+        node_modules_folder: bun.FD,
+        prune_node: *Progress.Node,
+        comptime log_level: Options.LogLevel,
+    ) OOM!void {
+        const mini_lockfile: MiniLockfile = try MiniLockfile.loadFromDir(this.allocator, node_modules_folder) orelse {
+            try MiniLockfile.saveToDisk(node_modules_folder, this.lockfile);
+            return;
+        };
+        defer {
+            MiniLockfile.saveToDisk(node_modules_folder, this.lockfile) catch bun.outOfMemory();
+            mini_lockfile.deinit(this.allocator);
+        }
+
+        var path_buf: bun.PathBuffer = undefined;
+        const original_pending_task_count = this.pendingTaskCount();
+        if (comptime Environment.isDebug) {
+            bun.assert(original_pending_task_count == 0);
+        }
+
+        var new_iter = Lockfile.Tree.Iterator(Lockfile, .node_modules).init(this.lockfile);
+        var curr = new_iter.next(null);
+
+        var existing_iter = Lockfile.Tree.Iterator(MiniLockfile, .node_modules).init(&mini_lockfile);
+
+        while (existing_iter.next(null)) |existing| {
+            const new = curr orelse {
+                if (comptime log_level.showProgress()) {
+                    prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + existing.dependencies.len);
+                }
+
+                continue;
+            };
+
+            switch (strings.order(existing.relative_path, new.relative_path)) {
+                .eq => {
+                    // compare dependencies from each tree
+                    const deps = this.lockfile.buffers.dependencies.items;
+                    const dep_names = mini_lockfile.dep_names;
+                    const dep_behaviors = mini_lockfile.dep_behaviors;
+                    var new_i: usize = 0;
+                    for (0..existing.dependencies.len) |existing_i| {
+                        const existing_dep_name = dep_names[existing.dependencies[existing_i]].slice(mini_lockfile.string_bytes);
+                        const existing_dep_behavior = dep_behaviors[existing.dependencies[existing_i]];
+
+                        if (new_i >= this.lockfile.buffers.dependencies.items.len) {
+                            var remain: []u8 = &path_buf;
+
+                            @memcpy(remain[0..existing_dep_name.len], existing_dep_name);
+                            remain[existing_dep_name.len] = 0;
+                            const existing_dep_name_z = remain[0..existing_dep_name.len :0];
+                            remain = remain[existing_dep_name.len + 1 ..];
+
+                            const trimmed_existing_path = strings.withoutLeadingPathSeparator(strings.withoutPrefixComptime(existing.relative_path, "node_modules"));
+
+                            if (trimmed_existing_path.len == 0) {
+                                if (comptime log_level.showProgress()) {
+                                    prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + 1);
+                                }
+                                PackageInstall.uninstallBeforeInstall(existing.relative_path, node_modules_folder.asDir(), existing_dep_name_z);
+                                continue;
+                            }
+
+                            @memcpy(remain[0..trimmed_existing_path.len], trimmed_existing_path);
+                            remain[trimmed_existing_path.len] = 0;
+                            const trimmed_existing_path_z = remain[0..trimmed_existing_path.len :0];
+                            remain = remain[trimmed_existing_path.len + 1 ..];
+
+                            const dir = bun.openDir(node_modules_folder.asDir(), trimmed_existing_path_z) catch {
+                                // probably already deleted
+                                continue;
+                            };
+
+                            if (comptime log_level.showProgress()) {
+                                prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + 1);
+                            }
+
+                            PackageInstall.uninstallBeforeInstall(existing.relative_path, dir, existing_dep_name_z);
+
+                            continue;
+                        }
+
+                        const new_dep = deps[new.dependencies[new_i]];
+                        const new_dep_behavior = new_dep.behavior;
+                        const new_dep_name = new_dep.name.slice(this.lockfile.buffers.string_bytes.items);
+                        switch (Dependency.order(existing_dep_name, existing_dep_behavior, new_dep_name, new_dep_behavior)) {
+                            .eq => {
+                                // keep it
+                                new_i += 1;
+                            },
+                            .lt => {
+                                // it will never exist, delete
+                                var remain: []u8 = &path_buf;
+
+                                @memcpy(remain[0..existing_dep_name.len], existing_dep_name);
+                                remain[existing_dep_name.len] = 0;
+                                const existing_dep_name_z = remain[0..existing_dep_name.len :0];
+                                remain = remain[existing_dep_name.len + 1 ..];
+
+                                const trimmed_existing_path = strings.withoutLeadingPathSeparator(strings.withoutPrefixComptime(existing.relative_path, "node_modules"));
+
+                                if (trimmed_existing_path.len == 0) {
+                                    if (comptime log_level.showProgress()) {
+                                        prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + 1);
+                                    }
+                                    PackageInstall.uninstallBeforeInstall(existing.relative_path, node_modules_folder.asDir(), existing_dep_name_z);
+                                    continue;
+                                }
+
+                                @memcpy(remain[0..trimmed_existing_path.len], trimmed_existing_path);
+                                remain[trimmed_existing_path.len] = 0;
+                                const trimmed_existing_path_z = remain[0..trimmed_existing_path.len :0];
+                                remain = remain[trimmed_existing_path.len + 1 ..];
+
+                                const dir = bun.openDir(node_modules_folder.asDir(), trimmed_existing_path_z) catch {
+                                    // probably already deleted
+                                    continue;
+                                };
+
+                                if (comptime log_level.showProgress()) {
+                                    prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + 1);
+                                }
+
+                                PackageInstall.uninstallBeforeInstall(existing.relative_path, dir, existing_dep_name_z);
+                            },
+                            .gt => {
+                                // catch up
+                                new_i += 1;
+                            },
+                        }
+                    }
+
+                    curr = new_iter.next(null);
+                },
+                .lt => {
+                    // it will never exist, delete
+                    if (comptime log_level.showProgress()) {
+                        prune_node.setEstimatedTotalItems(prune_node.unprotected_estimated_total_items + existing.dependencies.len);
+                    }
+                },
+                .gt => {
+                    // catch up
+                    curr = new_iter.next(null);
+                },
+            }
+        }
+
+        while (this.pendingTaskCount() > original_pending_task_count) {
+            this.sleep();
+        }
+
+        if (comptime log_level.showProgress()) {
+            prune_node.end();
+        }
+    }
+
     pub fn installPackages(
         this: *PackageManager,
         ctx: Command.Context,
@@ -13921,6 +14097,7 @@ pub const PackageManager = struct {
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
+        var prune_node: Progress.Node = undefined;
         const options = &this.options;
         var progress = &this.progress;
 
@@ -13931,8 +14108,10 @@ pub const PackageManager = struct {
 
             install_node = root_node.start(ProgressStrings.install(), this.lockfile.buffers.hoisted_dependencies.items.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
+            prune_node = root_node.start(ProgressStrings.prune(), 0);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
+            this.prune_node = &prune_node;
         }
 
         defer {
@@ -13950,26 +14129,37 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var new_node_modules = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = brk: {
+        const node_modules_folder = node_modules_folder: {
             // Attempt to open the existing node_modules folder
             switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
-                .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
+                .result => |fd| {
+                    try this.deleteStalePackages(fd, &prune_node, log_level);
+                    break :node_modules_folder std.fs.Dir{ .fd = fd.cast() };
+                },
                 .err => {},
             }
 
             new_node_modules = true;
 
+            // root node_modules is clean, make sure node_modules for each workspace
+            // is clean
+
             // Attempt to create a new node_modules folder
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+                    Output.errGeneric("<b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                     Global.crash();
                 }
             };
-            break :brk bun.openDir(cwd, "node_modules") catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+
+            const dir = bun.openDir(cwd, "node_modules") catch |err| {
+                Output.errGeneric("<b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
+
+            MiniLockfile.saveToDisk(bun.toFD(dir), this.lockfile) catch bun.outOfMemory();
+
+            break :node_modules_folder dir;
         };
 
         var skip_delete = new_node_modules;
@@ -13983,7 +14173,7 @@ pub const PackageManager = struct {
         var summary = PackageInstall.Summary{};
 
         {
-            var iterator = Lockfile.Tree.Iterator(.node_modules).init(this.lockfile);
+            var iterator = Lockfile.Tree.Iterator(Lockfile, .node_modules).init(this.lockfile);
             if (comptime Environment.isPosix) {
                 Bin.Linker.ensureUmask();
             }

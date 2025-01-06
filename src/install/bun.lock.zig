@@ -372,7 +372,7 @@ pub const Stringifier = struct {
             var tree_sort_buf: std.ArrayListUnmanaged(TreeSortCtx.Item) = .{};
             defer tree_sort_buf.deinit(allocator);
 
-            var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
+            var pkgs_iter = BinaryLockfile.Tree.Iterator(BinaryLockfile, .pkg_path).init(lockfile);
 
             // find trusted and patched dependencies. also overrides
             while (pkgs_iter.next({})) |node| {

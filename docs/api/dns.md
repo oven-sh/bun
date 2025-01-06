@@ -10,7 +10,7 @@ console.log(addrs);
 
 ## DNS caching in Bun
 
-In Bun v1.1.9, we added support for DNS caching. This cache makes repeated connections to the same hosts faster. 
+In Bun v1.1.9, we added support for DNS caching. This cache makes repeated connections to the same hosts faster.
 
 At the time of writing, we cache up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, we remove the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
 
@@ -27,10 +27,10 @@ This cache is automatically used by:
 
 Web browsers expose [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) to allow developers to prefetch DNS entries. This is useful when you know you'll need to connect to a host in the near future and want to avoid the initial DNS lookup.
 
-In Bun, you can use the `dns.prefetch` API to achieve the same effect. 
+In Bun, you can use the `dns.prefetch` API to achieve the same effect.
 
 ```ts
-import {dns} from "bun";
+import { dns } from "bun";
 
 dns.prefetch("my.database-host.com", 5432);
 ```
@@ -52,7 +52,7 @@ dns.prefetch(hostname: string, port: number): void;
 Here's an example:
 
 ```ts
-import {dns} from "bun";
+import { dns } from "bun";
 
 dns.prefetch("bun.sh", 443);
 //
@@ -66,13 +66,13 @@ await fetch("https://bun.sh");
 **🚧** — This API is experimental and may change in the future.
 {% /callout %}
 
-To get the current cache stats, you can use the `dns.getCacheStats` API. 
+To get the current cache stats, you can use the `dns.getCacheStats` API.
 
 This API returns an object with the following properties:
 
 ```ts
 {
-  // Cache hits 
+  // Cache hits
   cacheHitsCompleted: number;
   cacheHitsInflight: number;
   cacheMisses: number;
@@ -90,7 +90,7 @@ This API returns an object with the following properties:
 Example:
 
 ```ts
-import {dns} from "bun";
+import { dns } from "bun";
 
 const stats = dns.getCacheStats();
 console.log(stats);
@@ -107,7 +107,4 @@ BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts
 
 #### Why is 30 seconds the default?
 
-Unfortunately, the system API underneath (`getaddrinfo`) does not provide a way to get the TTL of a DNS entry. This means we have to pick a number arbitrarily. We chose 30 seconds because it's long enough to see the benefits of caching, and short enough to be unlikely to cause issues if a DNS entry changes. [Amazon Web Services recommends 5 seconds](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html) for the Java Virtual Machine, however the JVM defaults to cache indefinitely. 
-
-
-
+Unfortunately, the system API underneath (`getaddrinfo`) does not provide a way to get the TTL of a DNS entry. This means we have to pick a number arbitrarily. We chose 30 seconds because it's long enough to see the benefits of caching, and short enough to be unlikely to cause issues if a DNS entry changes. [Amazon Web Services recommends 5 seconds](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html) for the Java Virtual Machine, however the JVM defaults to cache indefinitely.

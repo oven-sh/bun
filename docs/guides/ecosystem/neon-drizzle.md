@@ -2,9 +2,9 @@
 name: Use Neon Postgres through Drizzle ORM
 ---
 
-[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. Neon can be used from Bun directly using the `@neondatabase/serverless` driver or through an ORM like `Drizzle`. 
+[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. Neon can be used from Bun directly using the `@neondatabase/serverless` driver or through an ORM like `Drizzle`.
 
-Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing the directory using `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/). 
+Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing the directory using `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/).
 
 ```sh
 $ mkdir bun-drizzle-neon
@@ -52,7 +52,7 @@ console.log(result.rows);
 
 ---
 
-Then run `index.ts` with Bun. 
+Then run `index.ts` with Bun.
 
 ```sh
 $ bun run index.ts
@@ -65,7 +65,7 @@ $ bun run index.ts
 
 ---
 
-We can define a schema for our database using Drizzle ORM primitives. Create a `schema.ts` file and add this code. 
+We can define a schema for our database using Drizzle ORM primitives. Create a `schema.ts` file and add this code.
 
 ```ts#schema.ts
 import { pgTable, integer, serial, text, timestamp } from "drizzle-orm/pg-core";
@@ -215,6 +215,6 @@ $ bun run index.ts
 
 ---
 
-This example used the Neon serverless driver's SQL-over-HTTP functionality. Neon's serverless driver also exposes `Client` and `Pool` constructors to enable sessions, interactive transactions, and node-postgres compatibility. Refer to [Neon's documentation](https://neon.tech/docs/serverless/serverless-driver) for a complete overview. 
+This example used the Neon serverless driver's SQL-over-HTTP functionality. Neon's serverless driver also exposes `Client` and `Pool` constructors to enable sessions, interactive transactions, and node-postgres compatibility. Refer to [Neon's documentation](https://neon.tech/docs/serverless/serverless-driver) for a complete overview.
 
 Refer to the [Drizzle website](https://orm.drizzle.team/docs/overview) for more documentation on using the Drizzle ORM.

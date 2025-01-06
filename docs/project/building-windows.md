@@ -7,7 +7,7 @@ It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.micr
 <!--
 {% details summary="Extra notes for Bun Core Team Members" %}
 
-Here are the extra steps I ran on my fresh windows machine (some of these are a little opiniated)
+Here are the extra steps I ran on my fresh windows machine (some of these are a little opinionated)
 
 - Change user to a local account (set username to `window` and 'bun!')
 - Set Windows Terminal as default terminal

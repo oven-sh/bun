@@ -1,5 +1,5 @@
 {% callout %}
-**Note** — You don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make getting started a bit quicker and easier.
+**Note** — You don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make getting started a bit quicker and easier.
 {% /callout %}
 
 Template a new Bun project with `bun create`. This is a flexible command that can be used to create a new project with a `create-<template>` npm package, a GitHub repo, or a local template.

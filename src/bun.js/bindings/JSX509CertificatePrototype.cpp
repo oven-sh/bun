@@ -19,7 +19,7 @@
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyAES.h"
 #include "wtf/DateMath.h"
-
+#include "AsymmetricKeyValue.h"
 #include <JavaScriptCore/DateInstance.h>
 
 namespace Bun {

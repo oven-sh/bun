@@ -60,6 +60,7 @@
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
 #include "ncrypto.h"
+#include "AsymmetricKeyValue.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject = JSC::JSGlobalObject;

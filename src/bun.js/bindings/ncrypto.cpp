@@ -20,8 +20,6 @@
 #endif // OPENSSL_IS_BORINGSSL
 
 namespace ncrypto {
-namespace {
-static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(BIOPointer);
 WTF_MAKE_ISO_ALLOCATED_IMPL(CipherCtxPointer);
@@ -29,6 +27,9 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(EVPKeyPointer);
 WTF_MAKE_ISO_ALLOCATED_IMPL(DHPointer);
 WTF_MAKE_ISO_ALLOCATED_IMPL(SSLCtxPointer);
 WTF_MAKE_ISO_ALLOCATED_IMPL(X509Pointer);
+
+namespace {
+static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
 
 bool EqualNoCase(WTF::StringView a, ASCIILiteral b)
 {

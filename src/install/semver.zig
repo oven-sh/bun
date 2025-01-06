@@ -2241,7 +2241,7 @@ pub const Query = struct {
             };
         }
 
-        pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
+        pub const FlagsBitSet = bun.bit_set.IntegerBitSet(3);
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;

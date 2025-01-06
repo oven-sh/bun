@@ -3573,6 +3573,9 @@ pub const VirtualMachine = struct {
         }
     }
 
+    // As `lines` is populated with referenced data from a source provider, that
+    // source provider is returned. Call `.deref()` on the returned provider to
+    // release memory. The `lines` should not have `deref` called on.
     extern fn Bun__getSourceCodeViewFromErrorInstance(val: JSValue, lines: [*]bun.String, numbers: [*]i32, len: u8) ?*JSC.SourceProvider;
 
     pub fn remapZigException(

@@ -600,7 +600,6 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
 )
 
 if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
 endif()

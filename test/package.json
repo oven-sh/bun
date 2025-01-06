@@ -11,6 +11,7 @@
   "dependencies": {
     "@azure/service-bus": "7.9.4",
     "@duckdb/node-api": "1.1.3-alpha.7",
+    "@electric-sql/pglite": "0.2.15",
     "@grpc/grpc-js": "1.12.0",
     "@grpc/proto-loader": "0.7.10",
     "@napi-rs/canvas": "0.1.65",
@@ -67,6 +68,7 @@
     "svelte": "5.4.0",
     "typescript": "5.0.2",
     "undici": "5.20.0",
+    "v8-heapsnapshot": "1.3.1",
     "verdaccio": "6.0.0",
     "vitest": "0.32.2",
     "webpack": "5.88.0",

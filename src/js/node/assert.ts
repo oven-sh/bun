@@ -73,7 +73,7 @@ function lazyInspect() {
   if (_inspect === undefined) {
     _inspect = require("internal/util/inspect").inspect;
   }
-  return _inspect
+  return _inspect;
 }
 
 var AssertionError;
@@ -177,7 +177,6 @@ Object.defineProperty(assert, "AssertionError", {
   configurable: true,
   enumerable: true,
 });
-
 
 /**
  * Pure assertion tests whether a value is truthy, as determined
@@ -750,7 +749,9 @@ function expectsError(stackStartFn: Function, actual: unknown, error: unknown, m
         throw $ERR_INVALID_ARG_VALUE("error", error, "may not be an empty object");
       }
     } else if (actual === error) {
-      throw $ERR_AMBIGUOUS_ARGUMENT(`The "error/message" argument is ambiguous. The error "${actual}" is identical to the message.`);
+      throw $ERR_AMBIGUOUS_ARGUMENT(
+        `The "error/message" argument is ambiguous. The error "${actual}" is identical to the message.`,
+      );
     }
     message = error;
     error = undefined;
@@ -980,11 +981,12 @@ assert.doesNotMatch = function doesNotMatch(string, regexp, message) {
   internalMatch(string, regexp, message, doesNotMatch);
 };
 
-var CallTracker
+var CallTracker;
 Object.defineProperty(assert, "CallTracker", {
   get() {
     if (CallTracker === undefined) {
-      CallTracker = require("internal/assert/calltracker"); deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173")
+      CallTracker = require("internal/assert/calltracker");
+      deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
     }
     return CallTracker;
   },

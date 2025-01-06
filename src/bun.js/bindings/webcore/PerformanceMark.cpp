@@ -85,6 +85,15 @@ PerformanceMark::PerformanceMark(const String& name, double startTime, RefPtr<Se
 
 PerformanceMark::~PerformanceMark() = default;
 
+size_t PerformanceMark::memoryCost() const
+{
+    size_t size = sizeof(PerformanceMark);
+    if (m_serializedDetail) {
+        size += m_serializedDetail->memoryCost();
+    }
+    return size;
+}
+
 JSC::JSValue PerformanceMark::detail(JSC::JSGlobalObject& globalObject)
 {
     if (!m_serializedDetail) {

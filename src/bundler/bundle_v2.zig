@@ -1655,7 +1655,7 @@ pub const BundleV2 = struct {
                     .entry_points = config.entry_points.keys(),
                     .target = config.target.toAPI(),
                     .absolute_working_dir = if (config.dir.list.items.len > 0)
-                        config.dir.slice()
+                        config.dir.sliceWithSentinel()
                     else
                         null,
                     .inject = &.{},
@@ -12961,7 +12961,7 @@ pub const LinkerContext = struct {
                     chunk,
                     chunks,
                     &display_size,
-                    c.options.source_maps != .none,
+                    chunk.content.sourcemap(c.options.source_maps) != .none,
                 );
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
@@ -12974,7 +12974,7 @@ pub const LinkerContext = struct {
                         chunk.final_rel_path,
                 );
 
-                switch (c.options.source_maps) {
+                switch (chunk.content.sourcemap(c.options.source_maps)) {
                     .external, .linked => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
@@ -13280,7 +13280,7 @@ pub const LinkerContext = struct {
                 chunk,
                 chunks,
                 &display_size,
-                c.options.source_maps != .none,
+                chunk.content.sourcemap(c.options.source_maps) != .none,
             ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
             var source_map_output_file: ?options.OutputFile = null;
@@ -13293,7 +13293,7 @@ pub const LinkerContext = struct {
                     chunk.final_rel_path,
             );
 
-            switch (c.options.source_maps) {
+            switch (chunk.content.sourcemap(c.options.source_maps)) {
                 .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
@@ -15463,6 +15463,18 @@ pub const Chunk = struct {
         javascript: JavaScriptChunk,
         css: CssChunk,
         html: HtmlChunk,
+
+        pub fn sourcemap(this: *const Content, default: options.SourceMapOption) options.SourceMapOption {
+            return switch (this.*) {
+                .javascript => default,
+                // TODO:
+                .css => options.SourceMapOption.none,
+
+                // probably never
+                .html => options.SourceMapOption.none,
+            };
+        }
+
         pub fn loader(this: *const Content) Loader {
             return switch (this.*) {
                 .javascript => .js,

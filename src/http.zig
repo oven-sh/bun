@@ -1148,7 +1148,8 @@ pub const HTTPThread = struct {
 
         if (Environment.isWindows) {
             _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
-                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                bun.Output.errGeneric("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                Global.crash();
             };
         }
 
@@ -1215,11 +1216,13 @@ pub const HTTPThread = struct {
             }
         }
         if (client.http_proxy) |url| {
-            // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            if (url.href.len > 0) {
+                // https://github.com/oven-sh/bun/issues/11343
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                }
+                return error.UnsupportedProxyProtocol;
             }
-            return error.UnsupportedProxyProtocol;
         }
         return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
     }

@@ -102,11 +102,10 @@ pub const PackCommand = struct {
         Output.flush();
 
         var lockfile: Lockfile = undefined;
-        const load_from_disk_result = lockfile.loadFromDisk(
+        const load_from_disk_result = lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             false,
         );
 
@@ -336,7 +335,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.matchImpl(include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
 
@@ -511,8 +510,8 @@ pub const PackCommand = struct {
 
         const dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
             switch (err) {
-                // ignore node_modules if it isn't a directory
-                error.NotDir => return bundled_pack_queue,
+                // ignore node_modules if it isn't a directory, or doesn't exist
+                error.NotDir, error.FileNotFound => return bundled_pack_queue,
 
                 else => {
                     Output.err(err, "failed to open \"node_modules\" to pack bundled dependencies", .{});
@@ -977,7 +976,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.matchImpl(pattern, entry_name)) {
+                switch (glob.walk.matchImpl(pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1004,7 +1003,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.matchImpl(pattern, entry_name)) {
+            switch (glob.walk.matchImpl(pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1046,7 +1045,7 @@ pub const PackCommand = struct {
                 if (pattern.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.matchImpl(pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob;
@@ -1141,11 +1140,11 @@ pub const PackCommand = struct {
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
-        var this_bundler: bun.bundler.Bundler = undefined;
+        var this_transpiler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
             ctx.command_ctx,
-            &this_bundler,
+            &this_transpiler,
             manager.env,
             manager.options.log_level != .silent,
             false,
@@ -1178,7 +1177,7 @@ pub const PackCommand = struct {
                             prepublish_only,
                             "prepublishOnly",
                             abs_workspace_path,
-                            this_bundler.env,
+                            this_transpiler.env,
                             &.{},
                             manager.options.log_level == .silent,
                             ctx.command_ctx.debug.use_system_shell,
@@ -1203,7 +1202,7 @@ pub const PackCommand = struct {
                         prepack_script_str,
                         "prepack",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1227,7 +1226,7 @@ pub const PackCommand = struct {
                         prepare_script_str,
                         "prepare",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1394,7 +1393,7 @@ pub const PackCommand = struct {
                     .uses_workspaces = false,
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
-                    .script_env = this_bundler.env,
+                    .script_env = this_transpiler.env,
                     .normalized_pkg_info = "",
                 };
             }
@@ -1720,7 +1719,7 @@ pub const PackCommand = struct {
                 .uses_workspaces = false,
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
-                .script_env = this_bundler.env,
+                .script_env = this_transpiler.env,
                 .normalized_pkg_info = normalized_pkg_info,
             };
         }

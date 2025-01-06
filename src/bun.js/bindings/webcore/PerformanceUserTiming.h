@@ -62,6 +62,8 @@ public:
 
     static bool isRestrictedMarkName(const String& markName);
 
+    size_t memoryCost() const;
+
 private:
     ExceptionOr<double> convertMarkToTimestamp(const std::variant<String, double>&) const;
     ExceptionOr<double> convertMarkToTimestamp(const String& markName) const;

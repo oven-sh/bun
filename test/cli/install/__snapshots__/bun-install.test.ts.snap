@@ -54,3 +54,24 @@ note: Package name is also declared here
    at [dir]/bar/package.json:1:9
 "
 `;
+
+exports[`should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVersion":0,"workspaces":{"":{"dependencies":{"jquery":"3.7.1"}}},"packages":{"jquery":["jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",{},"3a1288830817d13da39e9231302261896f8721ea"]}}"`;
+
+exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "foo",
+    },
+    "packages/pkg1": {
+      "name": "pkg-one",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "pkg-one": ["pkg-one@workspace:packages/pkg1", {}],
+  }
+}
+"
+`;

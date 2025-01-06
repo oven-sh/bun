@@ -164,6 +164,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
             return createRangeError(lexicalGlobalObject, "Bad value"_s);
         return createRangeError(lexicalGlobalObject, message);
 
+    case ExceptionCode::SyntaxError:
     case ExceptionCode::JSSyntaxError:
         if (message.isEmpty())
             return createSyntaxError(lexicalGlobalObject);

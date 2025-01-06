@@ -1,9 +1,17 @@
 import { file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync, stderrForInstall } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+  stderrForInstall,
+  readdirSorted,
+} from "harness";
 import { join } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
 
@@ -275,7 +283,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -339,7 +347,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
@@ -605,7 +613,7 @@ it("should run with bun instead of npm even with leading spaces", async () => {
       env: bunEnv,
     });
 
-    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stderr.toString()).toMatch(/\$    bun(-debug)? run other_script    \n\$    echo hi    \n/);
     expect(stdout.toString()).toEndWith("hi\n");
     expect(exitCode).toBe(0);
   }

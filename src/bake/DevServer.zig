@@ -96,9 +96,9 @@ bundles_since_last_error: usize = 0,
 framework: bake.Framework,
 bundler_options: bake.SplitBundlerOptions,
 // Each logical graph gets its own bundler configuration
-server_bundler: Bundler,
-client_bundler: Bundler,
-ssr_bundler: Bundler,
+server_bundler: Transpiler,
+client_bundler: Transpiler,
+ssr_bundler: Transpiler,
 /// The log used by all `server_bundler`, `client_bundler` and `ssr_bundler`.
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -314,7 +314,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(&dev.log);
-        return global.throwValue(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
+        return global.throwValue(dev.log.toJSAggregateError(global, bun.String.static("Framework is missing required files!")));
     };
 
     errdefer dev.route_lookup.clearAndFree(allocator);
@@ -837,7 +837,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) voi
     }
 
     const ctx = &dev.vm.rareData().editor_context;
-    ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
+    ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
     const line: ?[]const u8 = req.header("editor-line");
     const column: ?[]const u8 = req.header("editor-column");
 
@@ -1585,7 +1585,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     }
 }
 
-fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !Chunk.EntryPoint.ID {
     const path_hash = bun.hash(abs_path);
     const gop = try dev.css_files.getOrPut(dev.allocator, path_hash);
     if (gop.found_existing) {
@@ -1870,12 +1870,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
 
-        /// Start of the 'dependencies' linked list. These are the other files
-        /// that import used by this file. Walk this list to discover what
-        /// files are to be reloaded when something changes.
+        /// Start of a file's 'dependencies' linked list. These are the other
+        /// files that have imports to this file. Walk this list to discover
+        /// what files are to be reloaded when something changes.
         first_dep: ArrayListUnmanaged(EdgeIndex.Optional),
-        /// Start of the 'imports' linked list. These are the files that this
-        /// file imports.
+        /// Start of a file's 'imports' linked lists. These are the files that
+        /// this file imports.
         first_import: ArrayListUnmanaged(EdgeIndex.Optional),
         /// `File` objects act as nodes in a directional many-to-many graph,
         /// where edges represent the imports between modules. An 'dependency'
@@ -3319,7 +3319,7 @@ pub const SerializedFailure = struct {
         }
     };
 
-    const ErrorKind = enum(u8) {
+    pub const ErrorKind = enum(u8) {
         // A log message. The `logger.Kind` is encoded here.
         bundler_log_err = 0,
         bundler_log_warn = 1,
@@ -3431,7 +3431,7 @@ pub const SerializedFailure = struct {
             // TODO: syntax highlighted line text + give more context lines
             try writeString32(loc.line_text orelse "", w);
 
-            // The file is not specified here. Since the bundler runs every file
+            // The file is not specified here. Since the transpiler runs every file
             // in isolation, it would be impossible to reference any other file
             // in this Log. Thus, it is not serialized.
         } else {
@@ -4463,7 +4463,7 @@ const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const Log = bun.logger.Log;
 const Output = bun.Output;
 
-const Bundler = bun.bundler.Bundler;
+const Transpiler = bun.transpiler.Transpiler;
 const BundleV2 = bun.bundle_v2.BundleV2;
 
 const Define = bun.options.Define;
@@ -4486,3 +4486,4 @@ const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const Chunk = bun.bundle_v2.Chunk;

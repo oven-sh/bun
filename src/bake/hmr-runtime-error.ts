@@ -54,7 +54,7 @@ initWebSocket({
     }
   },
 
-  [MessageId.errors_cleared]() {
-    location.reload();
-  },
+  // [MessageId.errors_cleared]() {
+  //   location.reload();
+  // },
 });

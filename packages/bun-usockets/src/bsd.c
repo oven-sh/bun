@@ -304,13 +304,21 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef _WIN32
-    /* Libuv will set windows sockets as non-blocking */
-#elif defined(__APPLE__)
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK  | O_CLOEXEC);
-#else
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+/* Libuv will set windows sockets as non-blocking */
+#ifndef _WIN32
+    if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
+        int flags = fcntl(fd, F_GETFL, 0);
+
+        // F_GETFL supports O_NONBLCOK
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        flags = fcntl(fd, F_GETFD, 0);
+
+        // F_GETFD supports FD_CLOEXEC
+        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+    }
 #endif
+
     return fd;
 }
 
@@ -395,12 +403,27 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
+    LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
+    const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
+    do {
+        created_fd = socket(domain, type | flags, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return apple_no_sigpipe(created_fd);
 #else
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
+    do {
+        created_fd = socket(domain, type, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }
@@ -623,18 +646,34 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
     } else {
-      #if defined(SO_REUSEPORT)
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
-        #endif
+#if defined(SO_REUSEPORT)
+        if((options & LIBUS_LISTEN_REUSE_PORT)) {
+            int optval2 = 1;
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        }
+#endif
     }
 
 #if defined(SO_REUSEADDR)
+    #ifndef _WIN32
+
+    //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
+    //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
+    //  effectively allows 'stealing' a port which is in use by another application.
+    //  See libuv issue #1360.
+    
+    
     int optval3 = 1;
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
+    #endif
 #endif
 
 #ifdef IPV6_V6ONLY
+    // TODO: revise support to match node.js
+    // if (listenAddr->ai_family == AF_INET6) {
+    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    // }
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
@@ -949,8 +988,10 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        return -1;
+    int gai_error = getaddrinfo(host, port_string, &hints, &result);
+
+    if (gai_error != 0) {
+        return gai_error;
     }
 
     if (result == NULL) {

@@ -66,6 +66,7 @@
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
+#include <JavaScriptCore/BuiltinNames.h>
 
 // #include <iostream>
 using namespace JSC;
@@ -1004,6 +1005,16 @@ extern "C" void napi_module_register(napi_module* mod)
         return;
     }
 
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+
+    // TODO: think about the finalizer here
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+
+    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    ASSERT(success);
+
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
+
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
     if (!scope.exception() && strongExportsObject && strongExportsObject.get() != resultValue) {
@@ -1012,6 +1023,21 @@ extern "C" void napi_module_register(napi_module* mod)
     }
 
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
+}
+
+static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    if (auto* napi_instance = jsDynamicCast<NapiPrototype*>(object)) {
+        return napi_instance->napiRef;
+    } else {
+        JSValue contents = object->getDirect(vm, WebCore::builtinNames(vm).napiWrappedContentsPrivateName());
+        if (contents.isEmpty()) {
+            return nullptr;
+        } else {
+            // jsCast asserts: we should not have stored anything but a NapiExternal here
+            return static_cast<NapiRef*>(jsCast<Bun::NapiExternal*>(contents)->value());
+        }
+    }
 }
 
 extern "C" napi_status napi_wrap(napi_env env,
@@ -1028,50 +1054,46 @@ extern "C" napi_status napi_wrap(napi_env env,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
-        return napi_object_expected;
-    }
-
     auto* globalObject = toJS(env);
-
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto& vm = globalObject->vm();
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
     }
-
-    if (!refPtr) {
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
         return napi_object_expected;
     }
 
-    if (*refPtr) {
-        // Calling napi_wrap() a second time on an object will return an error.
-        // To associate another native instance with the object, use
-        // napi_remove_wrap() first.
+    // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
+
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+
+    if (getWrapContentsIfExists(vm, globalObject, jsc_object)) {
+        // already wrapped
         return napi_invalid_arg;
     }
 
+    // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.set(jsc_value, weakValueHandleOwner(), ref);
 
-    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
+    ref->finalizer.finalize_cb = finalize_cb;
+    ref->finalizer.finalize_hint = finalize_hint;
+    ref->data = native_object;
 
-    if (finalize_cb) {
-        ref->finalizer.finalize_cb = finalize_cb;
-        ref->finalizer.finalize_hint = finalize_hint;
+    if (napi_instance) {
+        napi_instance->napiRef = ref;
+    } else {
+        // wrap the ref in an external so that it can serve as a JSValue
+        auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, nullptr);
+        jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
-
-    if (native_object) {
-        ref->data = native_object;
-    }
-
-    *refPtr = ref;
 
     if (result) {
         *result = toNapi(ref);
     }
-
     return napi_ok;
 }
 
@@ -1080,35 +1102,41 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!js_object) {
         return napi_object_expected;
     }
+    // may be null
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
+
+    if (!ref) {
+        return napi_invalid_arg;
     }
 
-    if (!refPtr) {
-        return napi_object_expected;
+    if (napi_instance) {
+        napi_instance->napiRef = nullptr;
+    } else {
+        const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+        jsc_object->deleteProperty(globalObject, propertyName);
     }
-
-    if (!(*refPtr)) {
-        // not sure if this should succeed or return an error
-        return napi_ok;
-    }
-
-    auto* ref = *refPtr;
-    *refPtr = nullptr;
 
     if (result) {
         *result = ref->data;
     }
-    delete ref;
+    ref->finalizer.finalize_cb = nullptr;
 
+    // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
+    // if strong, native addon needs to clean it up.
+    // the external is garbage collected.
     return napi_ok;
 }
 
@@ -1117,23 +1145,24 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-
-    if (!value.isObject()) {
-        return NAPI_OBJECT_EXPECTED;
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
+        return napi_object_expected;
     }
 
-    NapiRef* ref = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        ref = val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        ref = val->napiRef;
-    } else {
-        ASSERT(false);
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
+    if (!ref) {
+        return napi_invalid_arg;
     }
 
-    if (ref && result) {
-        *result = ref ? ref->data : nullptr;
+    if (result) {
+        *result = ref->data;
     }
 
     return napi_ok;
@@ -2490,6 +2519,78 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     return napi_generic_failure;
 }
 
+static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "All NAPI bigint functions assume that bigint words are 64 bits");
+#if USE(BIGINT32)
+#error All NAPI bigint functions assume that BIGINT32 is disabled
+#endif
+
+extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value value, int64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+    JSValue jsValue = toJS(value);
+    if (!env || jsValue.isEmpty() || !result || !lossless) {
+        return napi_invalid_arg;
+    }
+    if (!jsValue.isHeapBigInt()) {
+        return napi_bigint_expected;
+    }
+
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    *result = jsValue.toBigInt64(toJS(env));
+    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
+    // hit an exception here, but we should check just in case
+    scope.assertNoException();
+
+    JSBigInt* bigint = jsValue.asHeapBigInt();
+    uint64_t digit = bigint->length() > 0 ? bigint->digit(0) : 0;
+
+    if (bigint->length() > 1) {
+        *lossless = false;
+    } else if (bigint->sign()) {
+        // negative
+        // lossless if numeric value is >= -2^63,
+        // for which digit will be <= 2^63
+        *lossless = (digit <= (1ull << 63));
+    } else {
+        // positive
+        // lossless if numeric value is <= 2^63 - 1
+        *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
+    }
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value value, uint64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+    JSValue jsValue = toJS(value);
+    if (!env || jsValue.isEmpty() || !result || !lossless) {
+        return napi_invalid_arg;
+    }
+    if (!jsValue.isHeapBigInt()) {
+        return napi_bigint_expected;
+    }
+
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    *result = jsValue.toBigUInt64(toJS(env));
+    // toBigUInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
+    // hit an exception here, but we should check just in case
+    scope.assertNoException();
+
+    // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
+    // value is positive
+    JSBigInt* bigint = jsValue.asHeapBigInt();
+    *lossless = (bigint->length() <= 1 && bigint->sign() == false);
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     napi_value value,
     int* sign_bit,
@@ -2541,7 +2642,8 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
         return napi_invalid_arg;
     }
 
-    auto* external = jsDynamicCast<Bun::NapiExternal*>(toJS(value));
+    JSValue jsval = toJS(value);
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(jsval);
     if (UNLIKELY(!external)) {
         return napi_invalid_arg;
     }
@@ -2632,32 +2734,45 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     const uint64_t* words,
     napi_value* result)
 {
-    NAPI_PREMABLE
-
-    if (UNLIKELY(!result)) {
+    NAPI_PREMABLE;
+    // JSBigInt::createWithLength's size argument is unsigned int
+    if (!env || !result || !words || word_count > UINT_MAX) {
         return napi_invalid_arg;
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-    auto* bigint = JSC::JSBigInt::tryCreateWithLength(vm, word_count);
-    if (UNLIKELY(!bigint)) {
-        return napi_generic_failure;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    if (word_count == 0) {
+        auto* bigint = JSBigInt::createZero(globalObject);
+        scope.assertNoException();
+        *result = toNapi(bigint, globalObject);
+        return napi_ok;
     }
 
-    // TODO: verify sign bit is consistent
-    bigint->setSign(sign_bit);
+    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
+    // passed an array containing leading zeroes. so we have to cut those off.
+    while (word_count > 0 && words[word_count - 1] == 0) {
+        word_count--;
+    }
 
-    if (words != nullptr) {
-        const uint64_t* word = words;
-        // TODO: add fast path that uses memcpy here instead of setDigit
-        // we need to add this to JSC. V8 has this optimization
-        for (size_t i = 0; i < word_count; i++) {
-            bigint->setDigit(i, *word++);
-        }
+    // throws RangeError if size is larger than JSC's limit
+    auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    ASSERT(bigint);
+
+    bigint->setSign(sign_bit != 0);
+
+    const uint64_t* current_word = words;
+    // TODO: add fast path that uses memcpy here instead of setDigit
+    // we need to add this to JSC. V8 has this optimization
+    for (size_t i = 0; i < word_count; i++) {
+        bigint->setDigit(i, *current_word++);
     }
 
     *result = toNapi(bigint, globalObject);
+    scope.assertNoException();
     return napi_ok;
 }
 

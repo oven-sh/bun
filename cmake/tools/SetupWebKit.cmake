@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 3bc4abf2d5875baf500b4687ef869987f6d19e00)
+  set(WEBKIT_VERSION e1a802a2287edfe7f4046a9dd8307c8b59f5d816)
 endif()
 
 if(WEBKIT_LOCAL)
@@ -63,7 +63,7 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-if(IS_MUSL)
+if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 

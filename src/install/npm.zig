@@ -9,6 +9,8 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const PackageManager = @import("./install.zig").PackageManager;
 const ExternalStringMap = @import("./install.zig").ExternalStringMap;
+const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
+const PackageNameHash = bun.install.PackageNameHash;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
@@ -275,7 +277,7 @@ pub const Registry = struct {
             return name[1..];
         }
 
-        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
+        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
             var registry = registry_;
 
             // Support $ENV_VAR for registry URLs
@@ -530,7 +532,7 @@ const ExternVersionMap = extern struct {
     }
 };
 
-fn Negatable(comptime T: type) type {
+pub fn Negatable(comptime T: type) type {
     return struct {
         added: T = T.none,
         removed: T = T.none,
@@ -578,6 +580,11 @@ fn Negatable(comptime T: type) type {
                 return;
             }
 
+            if (strings.eqlComptime(str, "none")) {
+                this.had_unrecognized_values = true;
+                return;
+            }
+
             const is_not = str[0] == '!';
             const offset: usize = @intFromBool(is_not);
 
@@ -592,6 +599,74 @@ fn Negatable(comptime T: type) type {
             } else {
                 this.* = .{ .added = @enumFromInt(@intFromEnum(this.added) | field), .removed = this.removed };
             }
+        }
+
+        pub fn fromJson(allocator: std.mem.Allocator, expr: JSON.Expr) OOM!T {
+            var this = T.none.negatable();
+            switch (expr.data) {
+                .e_array => |arr| {
+                    const items = arr.slice();
+                    if (items.len > 0) {
+                        for (items) |item| {
+                            if (item.asString(allocator)) |value| {
+                                this.apply(value);
+                            }
+                        }
+                    }
+                },
+                .e_string => |str| {
+                    this.apply(str.data);
+                },
+                else => {},
+            }
+
+            return this.combine();
+        }
+
+        /// writes to a one line json array with a trailing comma and space, or writes a string
+        pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
+            if (field == .none) {
+                // [] means everything, so unrecognized value
+                try writer.writeAll(
+                    \\"none"
+                );
+                return;
+            }
+
+            const kvs = T.NameMap.kvs;
+            var removed: u8 = 0;
+            for (kvs) |kv| {
+                if (!field.has(kv.value)) {
+                    removed += 1;
+                }
+            }
+            const included = kvs.len - removed;
+            const print_included = removed > kvs.len - removed;
+
+            const one = (print_included and included == 1) or (!print_included and removed == 1);
+
+            if (!one) {
+                try writer.writeAll("[ ");
+            }
+
+            for (kvs) |kv| {
+                const has = field.has(kv.value);
+                if (has and print_included) {
+                    try writer.print(
+                        \\"{s}"
+                    , .{kv.key});
+                    if (one) return;
+                    try writer.writeAll(", ");
+                } else if (!has and !print_included) {
+                    try writer.print(
+                        \\"!{s}"
+                    , .{kv.key});
+                    if (one) return;
+                    try writer.writeAll(", ");
+                }
+            }
+
+            try writer.writeByte(']');
         }
     };
 }
@@ -653,7 +728,7 @@ pub const OperatingSystem = enum(u16) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -695,7 +770,7 @@ pub const Libc = enum(u8) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -770,7 +845,7 @@ pub const Architecture = enum(u16) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -783,8 +858,6 @@ pub const Architecture = enum(u16) {
         return JSC.JSValue.jsBoolean(architecture.combine().isMatch());
     }
 };
-
-const BigExternalString = Semver.BigExternalString;
 
 pub const PackageVersion = extern struct {
     /// `"integrity"` field || `"shasum"` field
@@ -806,6 +879,8 @@ pub const PackageVersion = extern struct {
     /// We deliberately choose not to populate this field.
     /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
     dev_dependencies: ExternalStringMap = ExternalStringMap{},
+
+    bundled_dependencies: ExternalPackageNameHashList = .{},
 
     /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
     bin: Bin = Bin{},
@@ -836,10 +911,14 @@ pub const PackageVersion = extern struct {
 
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
+
+    pub fn allDependenciesBundled(this: *const PackageVersion) bool {
+        return this.bundled_dependencies.isInvalid();
+    }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 224) {
+    if (@sizeOf(Npm.PackageVersion) != 232) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -861,7 +940,6 @@ pub const NpmPackage = extern struct {
 
     versions_buf: VersionSlice = VersionSlice{},
     string_lists_buf: ExternalStringList = ExternalStringList{},
-    string_buf: BigExternalString = BigExternalString{},
 };
 
 pub const PackageManifest = struct {
@@ -874,6 +952,7 @@ pub const PackageManifest = struct {
     external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
+    bundled_deps_buf: []const PackageNameHash = &.{},
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -888,9 +967,10 @@ pub const PackageManifest = struct {
     }
 
     pub const Serializer = struct {
-        // - version 3: added serialization of registry url. it's used to invalidate when it changes
-        // - version 4: fixed bug with cpu & os tag not being added correctly
-        pub const version = "bun-npm-manifest-cache-v0.0.4\n";
+        // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
+        // - v0.0.4: fixed bug with cpu & os tag not being added correctly
+        // - v0.0.5: added bundled dependencies
+        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -1284,10 +1364,9 @@ pub const PackageManifest = struct {
         }
 
         pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-            const args = callFrame.arguments(2).slice();
+            const args = callFrame.arguments_old(2).slice();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
-                global.throw("expected manifest filename and registry string arguments", .{});
-                return .zero;
+                return global.throw("expected manifest filename and registry string arguments", .{});
             }
 
             const manifest_filename_str = args[0].toBunString(global);
@@ -1303,8 +1382,7 @@ pub const PackageManifest = struct {
             defer registry.deinit();
 
             const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
-                global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
-                return .zero;
+                return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
             };
             defer manifest_file.close();
 
@@ -1320,13 +1398,11 @@ pub const PackageManifest = struct {
             };
 
             const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
-                global.throw("failed to load manifest file: {s}", .{@errorName(err)});
-                return .zero;
+                return global.throw("failed to load manifest file: {s}", .{@errorName(err)});
             };
 
             const package_manifest: PackageManifest = maybe_package_manifest orelse {
-                global.throw("manifest is invalid ", .{});
-                return .zero;
+                return global.throw("manifest is invalid ", .{});
             };
 
             var buf: std.ArrayListUnmanaged(u8) = .{};
@@ -1334,22 +1410,13 @@ pub const PackageManifest = struct {
 
             // TODO: we can add more information. for now just versions is fine
 
-            writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()}) catch {
-                global.throwOutOfMemory();
-                return .zero;
-            };
+            try writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()});
 
             for (package_manifest.versions, 0..) |version, i| {
                 if (i == package_manifest.versions.len - 1)
-                    writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    }
+                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
                 else
-                    writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    };
+                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
             var result = bun.String.fromUTF8(buf.items);
@@ -1521,6 +1588,12 @@ pub const PackageManifest = struct {
         var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
+        var bundled_deps_set = bun.StringSet.init(allocator);
+        defer bundled_deps_set.deinit();
+        var bundle_all_deps = false;
+
+        var bundled_deps_count: usize = 0;
+
         var string_builder = String.Builder{
             .string_pool = string_pool,
         };
@@ -1633,6 +1706,22 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    bundled_deps_set.map.clearRetainingCapacity();
+                    bundle_all_deps = false;
+                    if (prop.value.?.get("bundleDependencies") orelse prop.value.?.get("bundledDependencies")) |bundled_deps_expr| {
+                        switch (bundled_deps_expr.data) {
+                            .e_boolean => |boolean| {
+                                bundle_all_deps = boolean.value;
+                            },
+                            .e_array => |arr| {
+                                for (arr.slice()) |bundled_dep| {
+                                    try bundled_deps_set.insert(bundled_dep.asString(allocator) orelse continue);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(pair.prop)) |versioned_deps| {
                             if (versioned_deps.expr.data == .e_object) {
@@ -1640,6 +1729,11 @@ pub const PackageManifest = struct {
                                 const properties = versioned_deps.expr.data.e_object.properties.slice();
                                 for (properties) |property| {
                                     if (property.key.?.asString(allocator)) |key| {
+                                        if (!bundle_all_deps and bundled_deps_set.swapRemove(key)) {
+                                            // swap remove the dependency name because it could exist in
+                                            // multiple behavior groups.
+                                            bundled_deps_count += 1;
+                                        }
                                         string_builder.count(key);
                                         string_builder.count(property.value.?.asString(allocator) orelse "");
                                     }
@@ -1685,6 +1779,8 @@ pub const PackageManifest = struct {
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
         var all_tarball_url_strings = try allocator.alloc(ExternalString, tarball_urls_count);
         var tarball_url_strings = all_tarball_url_strings;
+        const bundled_deps_buf = try allocator.alloc(PackageNameHash, bundled_deps_count);
+        var bundled_deps_offset: usize = 0;
 
         if (versioned_packages.len > 0) {
             const versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
@@ -1769,72 +1865,34 @@ pub const PackageManifest = struct {
                     }
                     if (!parsed_version.valid) continue;
 
+                    bundled_deps_set.map.clearRetainingCapacity();
+                    bundle_all_deps = false;
+                    if (prop.value.?.get("bundleDependencies") orelse prop.value.?.get("bundledDependencies")) |bundled_deps_expr| {
+                        switch (bundled_deps_expr.data) {
+                            .e_boolean => |boolean| {
+                                bundle_all_deps = boolean.value;
+                            },
+                            .e_array => |arr| {
+                                for (arr.slice()) |bundled_dep| {
+                                    try bundled_deps_set.insert(bundled_dep.asString(allocator) orelse continue);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
                     var package_version: PackageVersion = empty_version;
 
                     if (prop.value.?.asProperty("cpu")) |cpu_q| {
-                        var cpu = Architecture.none.negatable();
-
-                        switch (cpu_q.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |cpu_str_| {
-                                            cpu.apply(cpu_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                cpu.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.cpu = cpu.combine();
+                        package_version.cpu = try Negatable(Architecture).fromJson(allocator, cpu_q.expr);
                     }
 
                     if (prop.value.?.asProperty("os")) |os_q| {
-                        var os = OperatingSystem.none.negatable();
-
-                        switch (os_q.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |cpu_str_| {
-                                            os.apply(cpu_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                os.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.os = os.combine();
+                        package_version.os = try Negatable(OperatingSystem).fromJson(allocator, os_q.expr);
                     }
 
                     if (prop.value.?.asProperty("libc")) |libc| {
-                        var libc_ = Libc.none.negatable();
-
-                        switch (libc.expr.data) {
-                            .e_array => |arr| {
-                                const items = arr.slice();
-                                if (items.len > 0) {
-                                    for (items) |item| {
-                                        if (item.asString(allocator)) |libc_str_| {
-                                            libc_.apply(libc_str_);
-                                        }
-                                    }
-                                }
-                            },
-                            .e_string => |stri| {
-                                libc_.apply(stri.data);
-                            },
-                            else => {},
-                        }
-                        package_version.libc = libc_.combine();
+                        package_version.libc = try Negatable(Libc).fromJson(allocator, libc.expr);
                     }
 
                     if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {
@@ -1986,7 +2044,7 @@ pub const PackageManifest = struct {
 
                                 if (dist.expr.asProperty("integrity")) |shasum| {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
-                                        package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
+                                        package_version.integrity = Integrity.parse(shasum_str);
                                         if (package_version.integrity.tag.isSupported()) break :integrity;
                                     }
                                 }
@@ -2036,6 +2094,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
 
+                                const bundled_deps_begin = bundled_deps_offset;
+
                                 var i: usize = 0;
 
                                 for (items) |item| {
@@ -2044,6 +2104,11 @@ pub const PackageManifest = struct {
 
                                     this_names[i] = string_builder.append(ExternalString, name_str);
                                     this_versions[i] = string_builder.append(ExternalString, version_str);
+
+                                    if (!bundle_all_deps and bundled_deps_set.swapRemove(name_str)) {
+                                        bundled_deps_buf[bundled_deps_offset] = this_names[i].hash;
+                                        bundled_deps_offset += 1;
+                                    }
 
                                     if (comptime is_peer) {
                                         if (std.mem.indexOfScalar(u64, optional_peer_dep_names.items, this_names[i].hash) != null) {
@@ -2080,6 +2145,15 @@ pub const PackageManifest = struct {
                                 }
 
                                 count = i;
+
+                                if (bundle_all_deps) {
+                                    package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
+                                } else {
+                                    package_version.bundled_dependencies = ExternalPackageNameHashList.init(
+                                        bundled_deps_buf,
+                                        bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                    );
+                                }
 
                                 var name_list = ExternalStringList.init(all_extern_strings, this_names);
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
@@ -2362,15 +2436,11 @@ pub const PackageManifest = struct {
         result.external_strings_for_versions = version_extern_strings;
         result.package_versions = versioned_packages;
         result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
+        result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
 
         if (string_builder.ptr) |ptr| {
             result.string_buf = ptr[0..string_builder.len];
-            result.pkg.string_buf = BigExternalString{
-                .off = 0,
-                .len = @as(u32, @truncate(string_builder.len)),
-                .hash = 0,
-            };
         }
 
         return result;

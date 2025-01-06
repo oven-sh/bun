@@ -1,4 +1,3 @@
-const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
@@ -89,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {
@@ -252,7 +252,7 @@ pub const Source = struct {
             const stdout = bun.sys.File.from(std.io.getStdOut());
             const stderr = bun.sys.File.from(std.io.getStdErr());
 
-            Output.Source.init(stdout, stderr)
+            Source.init(stdout, stderr)
                 .set();
 
             if (comptime Environment.isDebug or Environment.enable_logs) {
@@ -469,42 +469,49 @@ pub fn isVerbose() bool {
     return false;
 }
 
-var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
-var _source_for_test_set = false;
-pub fn initTest() void {
-    if (_source_for_test_set) return;
-    _source_for_test_set = true;
-    const in = std.io.getStdErr();
-    const out = std.io.getStdOut();
-    _source_for_test = Output.Source.init(File.from(out), File.from(in));
-    Output.Source.set(&_source_for_test);
-}
+// var _source_for_test: if (Environment.isTest) Source else void = undefined;
+// var _source_for_test_set = false;
+// pub fn initTest() void {
+//     if (_source_for_test_set) return;
+//     _source_for_test_set = true;
+//     const in = std.io.getStdErr();
+//     const out = std.io.getStdOut();
+//     _source_for_test = Source.init(File.from(out), File.from(in));
+//     Source.set(&_source_for_test);
+// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
 
 pub fn disableBuffering() void {
-    Output.flush();
+    flush();
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
-    if (Output.isEmojiEnabled()) {
-        std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
+    if (isEmojiEnabled()) {
+        std.debug.panic(comptime prettyFmt(fmt, true), args);
     } else {
-        std.debug.panic(comptime Output.prettyFmt(fmt, false), args);
+        std.debug.panic(comptime prettyFmt(fmt, false), args);
     }
 }
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+// TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() WriterType {
     bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
+pub fn errorWriterBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_error_stream.writer();
+}
+
+// TODO: investigate returning the buffered_error_stream
 pub fn errorStream() Source.StreamType {
     bun.debugAssert(source_set);
     return source.error_stream;
@@ -605,11 +612,11 @@ pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: a
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
+    printElapsedToWithCtx(elapsed, prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
+    printElapsedToWithCtx(elapsed, pretty, false, {});
 }
 
 pub fn printElapsedStdoutTrim(elapsed: f64) void {
@@ -668,7 +675,7 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isRelease) return;
+    if (!Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -801,7 +808,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+            if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -1039,7 +1046,7 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug warn", false);
+const debugWarnScope = Scoped("debug_warn", false);
 
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
@@ -1150,7 +1157,7 @@ pub fn initScopedDebugWriterAtStartup() void {
             const fd = std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,
             }) catch |open_err| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
+                panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();

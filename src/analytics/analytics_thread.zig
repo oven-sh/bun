@@ -99,11 +99,12 @@ pub const Features = struct {
     pub var https_server: usize = 0;
     /// Set right before JSC::initialize is called
     pub var jsc: usize = 0;
-    /// Set when kit.DevServer is initialized
-    pub var kit_dev: usize = 0;
+    /// Set when bake.DevServer is initialized
+    pub var dev_server: usize = 0;
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
+    pub var text_lockfile: usize = 0;
     pub var macros: usize = 0;
     pub var no_avx2: usize = 0;
     pub var no_avx: usize = 0;

@@ -7,6 +7,13 @@ const enum QueryStatus {
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const PublicArray = globalThis.Array;
+const enum SSLMode {
+  disable = 0,
+  prefer = 1,
+  require = 2,
+  verify_ca = 3,
+  verify_full = 4,
+}
 
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
@@ -34,12 +41,48 @@ const {
   init,
 } = $zig("postgres.zig", "createBinding");
 
+function normalizeSSLMode(value: string): SSLMode {
+  if (!value) {
+    return SSLMode.disable;
+  }
+
+  value = (value + "").toLowerCase();
+  switch (value) {
+    case "disable":
+      return SSLMode.disable;
+    case "prefer":
+      return SSLMode.prefer;
+    case "require":
+      return SSLMode.require;
+    case "verify-ca":
+    case "verify_ca":
+      return SSLMode.verify_ca;
+    case "verify-full":
+    case "verify_full":
+      return SSLMode.verify_full;
+    default: {
+      break;
+    }
+  }
+
+  throw $ERR_INVALID_ARG_VALUE(`Invalid SSL mode: ${value}`);
+}
+
 class Query extends PublicPromise {
   [_resolve];
   [_reject];
   [_handle];
   [_handler];
   [_queryStatus] = 0;
+
+  [Symbol.for("nodejs.util.inspect.custom")]() {
+    const status = this[_queryStatus];
+    const active = (status & QueryStatus.active) != 0;
+    const cancelled = (status & QueryStatus.cancelled) != 0;
+    const executed = (status & QueryStatus.executed) != 0;
+    const error = (status & QueryStatus.error) != 0;
+    return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
+  }
 
   constructor(handle, handler) {
     var resolve_, reject_;
@@ -148,7 +191,7 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function (query, result, commandTag, count) {
+  function onResolvePostgresQuery(query, result, commandTag, count, queries) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
@@ -160,32 +203,66 @@ init(
 
     result.count = count || 0;
 
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.resolve(result);
-    } catch (e) {
-      console.log(e);
-    }
+    } catch (e) {}
   },
-  function (query, reject) {
+  function onRejectPostgresQuery(query, reject, queries) {
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
     try {
       query.reject(reject);
-    } catch (e) {
-      console.log(e);
-    }
+    } catch (e) {}
   },
 );
 
-function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
+function createConnection(
+  {
+    hostname,
+    port,
+    username,
+    password,
+    tls,
+    query,
+    database,
+    sslMode,
+    idleTimeout = 0,
+    connectionTimeout = 30 * 1000,
+    maxLifetime = 0,
+  },
+  onConnected,
+  onClose,
+) {
   return _createConnection(
     hostname,
     Number(port),
     username || "",
     password || "",
     database || "",
+    // > The default value for sslmode is prefer. As is shown in the table, this
+    // makes no sense from a security point of view, and it only promises
+    // performance overhead if possible. It is only provided as the default for
+    // backward compatibility, and is not recommended in secure deployments.
+    sslMode || SSLMode.disable,
     tls || null,
     query || "",
     onConnected,
     onClose,
+    idleTimeout,
+    connectionTimeout,
+    maxLifetime,
   );
 }
 
@@ -277,11 +354,32 @@ class SQLArrayParameter {
 }
 
 function loadOptions(o) {
-  var hostname, port, username, password, database, tls, url, query, adapter;
+  var hostname,
+    port,
+    username,
+    password,
+    database,
+    tls,
+    url,
+    query,
+    adapter,
+    idleTimeout,
+    connectionTimeout,
+    maxLifetime,
+    onconnect,
+    onclose;
   const env = Bun.env;
+  var sslMode: SSLMode = SSLMode.disable;
 
   if (o === undefined || (typeof o === "string" && o.length === 0)) {
-    const urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    if (!urlString) {
+      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+      if (urlString) {
+        sslMode = SSLMode.require;
+      }
+    }
+
     if (urlString) {
       url = new URL(urlString);
       o = {};
@@ -297,6 +395,11 @@ function loadOptions(o) {
         url = _url;
       }
     }
+
+    if (o?.tls) {
+      sslMode = SSLMode.require;
+      tls = o.tls;
+    }
   } else if (typeof o === "string") {
     url = new URL(o);
   }
@@ -306,16 +409,17 @@ function loadOptions(o) {
     if (adapter[adapter.length - 1] === ":") {
       adapter = adapter.slice(0, -1);
     }
+
     const queryObject = url.searchParams.toJSON();
     query = "";
     for (const key in queryObject) {
-      query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+      if (key.toLowerCase() === "sslmode") {
+        sslMode = normalizeSSLMode(queryObject[key]);
+      } else {
+        query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+      }
     }
     query = query.trim();
-  }
-
-  if (!o) {
-    o = {};
   }
 
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
@@ -326,6 +430,61 @@ function loadOptions(o) {
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
 
+  idleTimeout ??= o.idleTimeout;
+  idleTimeout ??= o.idle_timeout;
+  connectionTimeout ??= o.connectionTimeout;
+  connectionTimeout ??= o.connection_timeout;
+  maxLifetime ??= o.maxLifetime;
+  maxLifetime ??= o.max_lifetime;
+
+  onconnect ??= o.onconnect;
+  onclose ??= o.onclose;
+  if (onconnect !== undefined) {
+    if (!$isCallable(onconnect)) {
+      throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
+    }
+  }
+
+  if (onclose !== undefined) {
+    if (!$isCallable(onclose)) {
+      throw $ERR_INVALID_ARG_TYPE("onclose", "function", onclose);
+    }
+  }
+
+  if (idleTimeout != null) {
+    idleTimeout = Number(idleTimeout);
+    if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
+      throw $ERR_INVALID_ARG_VALUE("idle_timeout must be a non-negative integer less than 2^31");
+    }
+  }
+
+  if (connectionTimeout != null) {
+    connectionTimeout = Number(connectionTimeout);
+    if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
+      throw $ERR_INVALID_ARG_VALUE("connection_timeout must be a non-negative integer less than 2^31");
+    }
+  }
+
+  if (maxLifetime != null) {
+    maxLifetime = Number(maxLifetime);
+    if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
+      throw $ERR_INVALID_ARG_VALUE("max_lifetime must be a non-negative integer less than 2^31");
+    }
+  }
+
+  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+    if (hostname) {
+      tls = {
+        serverName: hostname,
+      };
+    } else {
+      tls = true;
+    }
+  }
+
+  if (!!tls) {
+    sslMode = SSLMode.prefer;
+  }
   port = Number(port);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
@@ -336,7 +495,23 @@ function loadOptions(o) {
     throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
 
-  return { hostname, port, username, password, database, tls, query };
+  const ret: any = { hostname, port, username, password, database, tls, query, sslMode };
+  if (idleTimeout != null) {
+    ret.idleTimeout = idleTimeout;
+  }
+  if (connectionTimeout != null) {
+    ret.connectionTimeout = connectionTimeout;
+  }
+  if (maxLifetime != null) {
+    ret.maxLifetime = maxLifetime;
+  }
+  if (onconnect !== undefined) {
+    ret.onconnect = onconnect;
+  }
+  if (onclose !== undefined) {
+    ret.onclose = onclose;
+  }
+  return ret;
 }
 
 function SQL(o) {
@@ -345,6 +520,7 @@ function SQL(o) {
     connecting = false,
     closed = false,
     onConnect: any[] = [],
+    storedErrorForClosedConnection,
     connectionInfo = loadOptions(o);
 
   function connectedHandler(query, handle, err) {
@@ -353,7 +529,7 @@ function SQL(o) {
     }
 
     if (!connected) {
-      return query.reject(new Error("Not connected"));
+      return query.reject(storedErrorForClosedConnection || new Error("Not connected"));
     }
 
     if (query.cancelled) {
@@ -361,6 +537,10 @@ function SQL(o) {
     }
 
     handle.run(connection, query);
+
+    // if the above throws, we don't want it to be in the array.
+    // This array exists mostly to keep the in-flight queries alive.
+    connection.queries.push(query);
   }
 
   function pendingConnectionHandler(query, handle) {
@@ -372,7 +552,7 @@ function SQL(o) {
   }
 
   function closedConnectionHandler(query, handle) {
-    query.reject(new Error("Connection closed"));
+    query.reject(storedErrorForClosedConnection || new Error("Connection closed"));
   }
 
   function onConnected(err, result) {
@@ -381,11 +561,31 @@ function SQL(o) {
       handler(err);
     }
     onConnect = [];
+
+    if (connected && connectionInfo?.onconnect) {
+      connectionInfo.onconnect(err);
+    }
   }
 
-  function onClose(err) {
+  function onClose(err, queries) {
     closed = true;
+    storedErrorForClosedConnection = err;
+    if (sql === lazyDefaultSQL) {
+      resetDefaultSQL(initialDefaultSQL);
+    }
+
     onConnected(err, undefined);
+    if (queries) {
+      const queriesCopy = queries.slice();
+      queries.length = 0;
+      for (const handler of queriesCopy) {
+        handler.reject(err);
+      }
+    }
+
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
   }
 
   function doCreateQuery(strings, values) {
@@ -506,14 +706,23 @@ function SQL(o) {
 }
 
 var lazyDefaultSQL;
-var defaultSQLObject = function sql(strings, ...values) {
+
+function resetDefaultSQL(sql) {
+  lazyDefaultSQL = sql;
+  Object.assign(defaultSQLObject, lazyDefaultSQL);
+  exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+}
+
+var initialDefaultSQL;
+var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
+  if (new.target) {
+    return SQL(strings);
+  }
   if (!lazyDefaultSQL) {
-    lazyDefaultSQL = SQL(undefined);
-    Object.assign(defaultSQLObject, lazyDefaultSQL);
-    exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+    resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-};
+});
 
 var exportsObject = {
   sql: defaultSQLObject,

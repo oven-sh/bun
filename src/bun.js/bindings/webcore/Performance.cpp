@@ -46,7 +46,7 @@
 // #include "PerformanceNavigationTiming.h"
 #include "PerformanceObserver.h"
 // #include "PerformancePaintTiming.h"
-// #include "PerformanceResourceTiming.h"
+#include "PerformanceResourceTiming.h"
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
@@ -172,8 +172,8 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
     // if (m_navigationTiming && entryType == "navigation"_s)
     //     entries.append(m_navigationTiming);
 
-    // if (entryType == "resource"_s)
-    //     entries.appendVector(m_resourceTimingBuffer);
+    if (entryType == "resource"_s)
+        entries.appendVector(m_resourceTimingBuffer);
 
     // if (m_firstContentfulPaint && entryType == "paint"_s)
     //     entries.append(m_firstContentfulPaint);
@@ -189,6 +189,16 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
     return entries;
 }
 
+size_t Performance::memoryCost() const
+{
+    size_t size = sizeof(Performance);
+    size += m_resourceTimingBuffer.size() * sizeof(PerformanceResourceTiming);
+    if (m_userTiming) {
+        size += m_userTiming->memoryCost();
+    }
+    return size;
+}
+
 Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& name, const String& entryType) const
 {
     Vector<RefPtr<PerformanceEntry>> entries;
@@ -196,12 +206,12 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
     // if (m_navigationTiming && (entryType.isNull() || entryType == "navigation"_s) && name == m_navigationTiming->name())
     //     entries.append(m_navigationTiming);
 
-    // if (entryType.isNull() || entryType == "resource"_s) {
-    //     for (auto& resource : m_resourceTimingBuffer) {
-    //         if (resource->name() == name)
-    //             entries.append(resource);
-    //     }
-    // }
+    if (entryType.isNull() || entryType == "resource"_s) {
+        for (auto& resource : m_resourceTimingBuffer) {
+            if (resource->name() == name)
+                entries.append(resource);
+        }
+    }
 
     // if (m_firstContentfulPaint && (entryType.isNull() || entryType == "paint"_s) && name == "first-contentful-paint"_s)
     //     entries.append(m_firstContentfulPaint);
@@ -226,8 +236,8 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
     //     observer.addedNavigationTiming();
     // }
 
-    // if (entryType == "resource"_s)
-    //     entries.appendVector(m_resourceTimingBuffer);
+    if (entryType == "resource"_s)
+        entries.appendVector(m_resourceTimingBuffer);
 
     // if (entryType == "paint"_s && m_firstContentfulPaint)
     //     entries.append(m_firstContentfulPaint);
@@ -240,17 +250,17 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
     }
 }
 
-// void Performance::clearResourceTimings()
-// {
-//     m_resourceTimingBuffer.clear();
-//     m_resourceTimingBufferFullFlag = false;
-// }
+void Performance::clearResourceTimings()
+{
+    m_resourceTimingBuffer.clear();
+    m_resourceTimingBufferFullFlag = false;
+}
 
-// void Performance::setResourceTimingBufferSize(unsigned size)
-// {
-//     m_resourceTimingBufferSize = size;
-//     m_resourceTimingBufferFullFlag = false;
-// }
+void Performance::setResourceTimingBufferSize(unsigned size)
+{
+    m_resourceTimingBufferSize = size;
+    m_resourceTimingBufferFullFlag = false;
+}
 
 // void Performance::reportFirstContentfulPaint()
 // {
@@ -274,40 +284,40 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
 //     queueEntry(*m_navigationTiming);
 // }
 
-// void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
-// {
-//     ASSERT(scriptExecutionContext());
+void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
+{
+    ASSERT(scriptExecutionContext());
 
-//     auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTFMove(resourceTiming));
+    auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTFMove(resourceTiming));
 
-//     if (m_waitingForBackupBufferToBeProcessed) {
-//         m_backupResourceTimingBuffer.append(WTFMove(entry));
-//         return;
-//     }
+    if (m_waitingForBackupBufferToBeProcessed) {
+        m_backupResourceTimingBuffer.append(WTFMove(entry));
+        return;
+    }
 
-//     if (m_resourceTimingBufferFullFlag) {
-//         // We fired resourcetimingbufferfull event but the author script didn't clear the buffer.
-//         // Notify performance observers but don't add it to the buffer.
-//         queueEntry(entry.get());
-//         return;
-//     }
+    if (m_resourceTimingBufferFullFlag) {
+        // We fired resourcetimingbufferfull event but the author script didn't clear the buffer.
+        // Notify performance observers but don't add it to the buffer.
+        queueEntry(entry.get());
+        return;
+    }
 
-//     if (isResourceTimingBufferFull()) {
-//         ASSERT(!m_resourceTimingBufferFullTimer.isActive());
-//         m_backupResourceTimingBuffer.append(WTFMove(entry));
-//         m_waitingForBackupBufferToBeProcessed = true;
-//         m_resourceTimingBufferFullTimer.startOneShot(0_s);
-//         return;
-//     }
+    if (isResourceTimingBufferFull()) {
+        // ASSERT(!m_resourceTimingBufferFullTimer.isActive());
+        m_backupResourceTimingBuffer.append(WTFMove(entry));
+        m_waitingForBackupBufferToBeProcessed = true;
+        // m_resourceTimingBufferFullTimer.startOneShot(0_s);
+        return;
+    }
 
-//     queueEntry(entry.get());
-//     m_resourceTimingBuffer.append(WTFMove(entry));
-// }
+    queueEntry(entry.get());
+    m_resourceTimingBuffer.append(WTFMove(entry));
+}
 
-// bool Performance::isResourceTimingBufferFull() const
-// {
-//     return m_resourceTimingBuffer.size() >= m_resourceTimingBufferSize;
-// }
+bool Performance::isResourceTimingBufferFull() const
+{
+    return m_resourceTimingBuffer.size() >= m_resourceTimingBufferSize;
+}
 
 // void Performance::resourceTimingBufferFullTimerFired()
 // {

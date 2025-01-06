@@ -5,15 +5,10 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-/// <reference path="./private.d.ts" />
+const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
-const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
-  code: string,
-  id: number,
-) => string;
-
-export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
-export const escapePowershell = (code: string) => fmtBinding(code, 1);
+export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -144,8 +139,15 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 );
 
 export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
-  parseRoutePattern: () => void;
+  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
   FrameworkRouter: {
-    new(): any;
+    new (opts: any): any;
   };
 };
+
+export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+  add: (a: any, b: any) => number;
+  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+};
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");

@@ -74,7 +74,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
-#if BUN_DEBUG
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,

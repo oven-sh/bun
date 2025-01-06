@@ -120,7 +120,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         bun.fs.FileSystem.instance.top_level_dir,
         buf,
         &.{
-            bun.install.PackageManager.fetchCacheDirectoryPath(env).path,
+            bun.install.PackageManager.fetchCacheDirectoryPath(env, null).path,
             version_str,
         },
         .auto,
@@ -153,7 +153,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         {
             var progress = refresher.start("Downloading", 0);
             defer progress.end();
-            const http_proxy: ?bun.URL = env.getHttpProxy(url);
+            const http_proxy: ?bun.URL = env.getHttpProxyFor(url);
 
             async_http.* = HTTP.AsyncHTTP.initSync(
                 allocator,
@@ -311,8 +311,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 pub fn isSupported(this: *const CompileTarget) bool {
     return switch (this.os) {
         .windows => this.arch == .x64,
+
         .mac => true,
-        .linux => this.libc == .default,
+        .linux => true,
+
         .wasm => false,
     };
 }

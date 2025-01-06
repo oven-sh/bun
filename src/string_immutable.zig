@@ -9,6 +9,7 @@ const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
 const JSC = bun.JSC;
+const OOM = bun.OOM;
 
 pub const Encoding = enum {
     ascii,
@@ -640,7 +641,7 @@ pub const StringOrTinyString = struct {
         // allocator.free(slice_);
     }
 
-    pub fn initAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+    pub fn initAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) OOM!StringOrTinyString {
         if (stringy.len <= StringOrTinyString.Max) {
             return StringOrTinyString.init(stringy);
         }
@@ -648,7 +649,7 @@ pub const StringOrTinyString = struct {
         return StringOrTinyString.init(try appendy.append(string, stringy));
     }
 
-    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) OOM!StringOrTinyString {
         if (stringy.len <= StringOrTinyString.Max) {
             return StringOrTinyString.initLowerCase(stringy);
         }
@@ -1559,20 +1560,14 @@ pub fn nonASCIISequenceLength(first_byte: u8) u3 {
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) ?[:0]u16 else ?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
-            const trimmed = bun.simdutf.trim.utf8(bytes);
-
-            if (trimmed.len == 0)
-                break :simd null;
-
-            const out_length = bun.simdutf.length.utf16.from.utf8(trimmed);
-
+            const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
             if (out_length == 0)
                 break :simd null;
 
             var out = try allocator.alloc(u16, out_length + if (sentinel) 1 else 0);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
@@ -1778,104 +1773,6 @@ pub fn toUTF16AllocMaybeBuffered(
     return .{ output.items, .{0} ** 3, 0 };
 }
 
-pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime _: bool) !?[]u16 {
-    if (strings.firstNonASCII(bytes)) |i| {
-        const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
-            const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
-
-            if (out_length == 0)
-                break :simd null;
-
-            var out = try allocator.alloc(u16, out_length);
-            log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
-
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
-            if (res.status == .success) {
-                return out;
-            }
-
-            if (comptime fail_if_invalid) {
-                allocator.free(out);
-                return error.InvalidByteSequence;
-            }
-
-            break :simd .{
-                .items = out[0..i],
-                .capacity = out.len,
-                .allocator = allocator,
-            };
-        } else null;
-        var output = output_ orelse fallback: {
-            var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
-            list.items.len = i;
-            strings.copyU8IntoU16(list.items, bytes[0..i]);
-            break :fallback list;
-        };
-        errdefer output.deinit();
-
-        var remaining = bytes[i..];
-
-        {
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
-            if (comptime fail_if_invalid) {
-                if (replacement.fail) {
-                    if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
-                    return error.InvalidByteSequence;
-                }
-            }
-            remaining = remaining[@max(replacement.len, 1)..];
-
-            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-            switch (replacement.code_point) {
-                0...0xffff => |c| {
-                    try output.append(@as(u16, @intCast(c)));
-                },
-                else => |c| {
-                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
-                },
-            }
-        }
-
-        while (strings.firstNonASCII(remaining)) |j| {
-            const end = output.items.len;
-            try output.ensureUnusedCapacity(j);
-            output.items.len += j;
-            strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
-            remaining = remaining[j..];
-
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
-            if (comptime fail_if_invalid) {
-                if (replacement.fail) {
-                    if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
-                    return error.InvalidByteSequence;
-                }
-            }
-            remaining = remaining[@max(replacement.len, 1)..];
-
-            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-            switch (replacement.code_point) {
-                0...0xffff => |c| {
-                    try output.append(@as(u16, @intCast(c)));
-                },
-                else => |c| {
-                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
-                },
-            }
-        }
-
-        if (remaining.len > 0) {
-            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
-
-            output.items.len += remaining.len;
-            strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
-        }
-
-        return output.items;
-    }
-
-    return null;
-}
-
 pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement {
     return utf16CodepointWithFFFDAndFirstInputChar(Type, input[0], input);
 }
@@ -2006,6 +1903,18 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
+pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
+        @memcpy(buf[0..utf8.len], utf8);
+        buf[utf8.len] = 0;
+        return buf[0..utf8.len :0];
+    }
+
+    const prefix = bun.windows.nt_maxpath_prefix_u8;
+    buf[0..prefix.len].* = prefix;
+    return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
+}
+
 pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
@@ -2040,9 +1949,10 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: bun.PathBuffer = undefined;
+    const renormalized = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(renormalized);
 
-    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
+    var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
@@ -2050,6 +1960,19 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     return toWPath(wbuf, path_to_use);
+}
+pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
+    const renormalized = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(renormalized);
+
+    var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    return toPath(buf, path_to_use);
 }
 
 pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
@@ -2070,17 +1993,20 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: bun.PathBuffer = undefined;
+    var renormalized: ?*bun.PathBuffer = null;
+    defer if (renormalized) |r| bun.PathBufferPool.put(r);
+
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
-        @memcpy(renormalized[0..utf8.len], utf8);
-        for (renormalized[0..utf8.len]) |*c| {
+        renormalized = bun.PathBufferPool.get();
+        @memcpy(renormalized.?[0..utf8.len], utf8);
+        for (renormalized.?[0..utf8.len]) |*c| {
             if (c.* == '/') {
                 c.* = '\\';
             }
         }
-        path_to_use = renormalized[0..utf8.len];
+        path_to_use = renormalized.?[0..utf8.len];
     }
 
     return toWDirPath(wbuf, path_to_use);
@@ -2088,6 +2014,9 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
+}
+pub fn toPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+    return toPathMaybeDir(buf, utf8, false);
 }
 
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -2135,6 +2064,19 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     wbuf[result.count] = 0;
 
     return wbuf[0..result.count :0];
+}
+pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u8 {
+    bun.unsafeAssert(buf.len > 0);
+
+    var len = utf8.len;
+    @memcpy(buf[0..len], utf8[0..len]);
+
+    if (add_trailing_lash and len > 0 and buf[len - 1] != '\\') {
+        buf[len] = '\\';
+        len += 1;
+    }
+    buf[len] = 0;
+    return buf[0..len :0];
 }
 
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
@@ -5716,9 +5658,6 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         // Combining Diacritical Marks
         return true;
     }
-    if (cp >= 0x300 and cp <= 0x36f)
-        // Combining Diacritical Marks
-        return true;
 
     if (cp >= 0x200b and cp <= 0x200f) {
         // Modifying Invisible Characters
@@ -6519,24 +6458,25 @@ pub const visible = struct {
     };
 };
 
-pub const QuoteEscapeFormat = struct {
-    data: []const u8,
-
-    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var i: usize = 0;
-        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
-            try writer.writeAll(self.data[i..j]);
-            try writer.writeAll(switch (self.data[j]) {
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\\' => "\\\\",
-                else => unreachable,
-            });
-        }
-        if (i == self.data.len) return;
-        try writer.writeAll(self.data[i..]);
-    }
+pub const QuoteEscapeFormatFlags = struct {
+    quote_char: u8,
+    ascii_only: bool = false,
+    json: bool = false,
+    str_encoding: Encoding = .utf8,
 };
+/// usage: print(" string: '{'}' ", .{formatEscapesJS("hello'world!")});
+pub fn formatEscapes(str: []const u8, comptime flags: QuoteEscapeFormatFlags) QuoteEscapeFormat(flags) {
+    return .{ .data = str };
+}
+fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
+    return struct {
+        data: []const u8,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+        }
+    };
+}
 
 /// Generic. Works on []const u8, []const u16, etc
 pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) ?usize {

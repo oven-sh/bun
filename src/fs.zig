@@ -37,7 +37,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string,
+    top_level_dir: stringZ,
 
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
@@ -108,22 +108,14 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(top_level_dir: ?string) !*FileSystem {
+    pub fn init(top_level_dir: ?stringZ) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
-
-        // Ensure there's a trailing separator in the top level directory
-        // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
-            const tld = try allocator.alloc(u8, top_level_dir.len + 1);
-            bun.copy(u8, tld, top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
-            top_level_dir = tld;
-        }
+        _ = &top_level_dir;
 
         if (!instance_loaded or force) {
             instance = FileSystem{
@@ -788,7 +780,9 @@ pub const FileSystem = struct {
 
         pub const Limit = struct {
             pub var handles: usize = 0;
+            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
             pub var stack: usize = 0;
+            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -797,26 +791,46 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
-            inline for (LIMITS, 0..) |limit_type, i| {
-                const limit = try std.posix.getrlimit(limit_type);
-
+            blk: {
+                const resource = std.posix.rlimit_resource.STACK;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.stack_before = limit;
                 if (limit.cur < limit.max) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    if (std.posix.setrlimit(limit_type, new_limit)) {
-                        if (i == 1) {
-                            Limit.handles = limit.max;
-                        } else {
-                            Limit.stack = limit.max;
-                        }
-                    } else |_| {}
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    Limit.stack = limit.max;
                 }
-
-                if (i == LIMITS.len - 1) return limit.max;
             }
+            var file_limit: usize = 0;
+            blk: {
+                const resource = std.posix.rlimit_resource.NOFILE;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.handles_before = limit;
+                file_limit = limit.max;
+                Limit.handles = file_limit;
+                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
+                    // musl has extremely low defaults here, so we really want
+                    // to enable this on musl or tests will start failing.
+                    @max(limit.max, 163840)
+                else
+                    // apparently, requesting too high of a number can cause other processes to not start.
+                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+                    limit.max;
+                if (limit.cur < max_to_use) {
+                    var new_limit = std.mem.zeroes(std.posix.rlimit);
+                    new_limit.cur = max_to_use;
+                    new_limit.max = max_to_use;
+
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    file_limit = new_limit.max;
+                    Limit.handles = file_limit;
+                }
+            }
+            return file_limit;
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
@@ -1894,6 +1908,13 @@ pub const Path = struct {
 
     pub fn isJSXFile(this: *const Path) bool {
         return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
+    }
+
+    pub fn keyForIncrementalGraph(path: *const Path) []const u8 {
+        return if (path.isFile())
+            path.text
+        else
+            path.pretty;
     }
 };
 

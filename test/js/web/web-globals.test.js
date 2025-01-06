@@ -27,6 +27,9 @@ test("exists", () => {
   expect(typeof PerformanceMeasure !== "undefined").toBe(true);
   expect(typeof PerformanceObserver !== "undefined").toBe(true);
   expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
+  expect(typeof PerformanceResourceTiming !== "undefined").toBe(true);
+  expect(typeof PerformanceServerTiming !== "undefined").toBe(true);
+  expect(typeof PerformanceTiming !== "undefined").toBe(true);
 });
 
 const globalSetters = [

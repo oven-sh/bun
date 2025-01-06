@@ -77,6 +77,10 @@ pub const FolderResolution = union(Tag) {
             pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
                 builder.count(this.folder_path);
             }
+
+            pub fn checkBundledDependencies() bool {
+                return tag == .folder or tag == .symlink;
+            }
         };
     }
 
@@ -99,6 +103,10 @@ pub const FolderResolution = union(Tag) {
         }
 
         pub fn count(_: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) void {}
+
+        pub fn checkBundledDependencies() bool {
+            return true;
+        }
     };
 
     const Paths = struct {
@@ -165,7 +173,7 @@ pub const FolderResolution = union(Tag) {
         version: Dependency.Version,
         comptime features: Features,
         comptime ResolverType: type,
-        resolver: ResolverType,
+        resolver: *ResolverType,
     ) !Lockfile.Package {
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
@@ -177,6 +185,7 @@ pub const FolderResolution = union(Tag) {
 
             try package.parseWithJSON(
                 manager.lockfile,
+                manager,
                 manager.allocator,
                 manager.log,
                 json.source,
@@ -199,7 +208,7 @@ pub const FolderResolution = union(Tag) {
                     body.data.reset();
                     var man = body.data.list.toManaged(manager.allocator);
                     defer body.data.list = man.moveToUnmanaged();
-                    _ = try file.readToEndWithArrayList(&man).unwrap();
+                    _ = try file.readToEndWithArrayList(&man, true).unwrap();
                 }
 
                 break :brk logger.Source.initPathString(abs, body.data.list.items);
@@ -207,6 +216,7 @@ pub const FolderResolution = union(Tag) {
 
             try package.parse(
                 manager.lockfile,
+                manager,
                 manager.allocator,
                 manager.log,
                 source,
@@ -260,45 +270,63 @@ pub const FolderResolution = union(Tag) {
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {
-            .global => brk: {
+            .global => global: {
                 var path: bun.PathBuffer = undefined;
                 std.mem.copyForwards(u8, &path, non_normalized_path);
-                break :brk readPackageJSONFromDisk(
+                var resolver: SymlinkResolver = .{
+                    .folder_path = path[0..non_normalized_path.len],
+                };
+                break :global readPackageJSONFromDisk(
                     manager,
                     abs,
                     version,
                     Features.link,
                     SymlinkResolver,
-                    SymlinkResolver{ .folder_path = path[0..non_normalized_path.len] },
+                    &resolver,
                 );
             },
             .relative => |tag| switch (tag) {
-                .folder => readPackageJSONFromDisk(
-                    manager,
-                    abs,
-                    version,
-                    Features.folder,
-                    Resolver,
-                    Resolver{ .folder_path = rel },
-                ),
-                .workspace => readPackageJSONFromDisk(
-                    manager,
-                    abs,
-                    version,
-                    Features.workspace,
-                    WorkspaceResolver,
-                    WorkspaceResolver{ .folder_path = rel },
-                ),
+                .folder => folder: {
+                    var resolver: Resolver = .{
+                        .folder_path = rel,
+                    };
+                    break :folder readPackageJSONFromDisk(
+                        manager,
+                        abs,
+                        version,
+                        Features.folder,
+                        Resolver,
+                        &resolver,
+                    );
+                },
+                .workspace => workspace: {
+                    var resolver: WorkspaceResolver = .{
+                        .folder_path = rel,
+                    };
+                    break :workspace readPackageJSONFromDisk(
+                        manager,
+                        abs,
+                        version,
+                        Features.workspace,
+                        WorkspaceResolver,
+                        &resolver,
+                    );
+                },
                 else => unreachable,
             },
-            .cache_folder => readPackageJSONFromDisk(
-                manager,
-                abs,
-                version,
-                Features.npm,
-                CacheFolderResolver,
-                CacheFolderResolver{ .version = version.value.npm.version.toVersion() },
-            ),
+            .cache_folder => cache_folder: {
+                var resolver: CacheFolderResolver = .{
+                    .version = version.value.npm.version.toVersion(),
+                };
+                break :cache_folder readPackageJSONFromDisk(
+                    manager,
+                    abs,
+                    version,
+                    Features.npm,
+                    CacheFolderResolver,
+                    &resolver,
+                );
+            },
         } catch |err| {
             if (err == error.FileNotFound or err == error.ENOENT) {
                 entry.value_ptr.* = .{ .err = error.MissingPackageJSON };

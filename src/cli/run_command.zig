@@ -33,7 +33,7 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
@@ -259,6 +259,8 @@ pub const RunCommand = struct {
         use_system_shell: bool,
     ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        env.map.put("npm_lifecycle_event", name) catch unreachable;
+        env.map.put("npm_lifecycle_script", original_script) catch unreachable;
 
         var copy_script_capacity: usize = original_script.len;
         for (passthrough) |part| copy_script_capacity += 1 + part.len;
@@ -378,9 +380,8 @@ pub const RunCommand = struct {
                 if (signal.valid() and signal != .SIGINT and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
-
-                    Global.raiseIgnoringPanicHandler(signal);
                 }
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             .err => |err| {
@@ -546,7 +547,7 @@ pub const RunCommand = struct {
                     },
 
                     .signaled => |signal| {
-                        if (!silent) {
+                        if (signal.valid() and signal != .SIGINT and !silent) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
@@ -614,13 +615,13 @@ pub const RunCommand = struct {
     pub fn ls(ctx: Command.Context) !void {
         const args = ctx.args;
 
-        var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.options.env.prefix = "";
+        var this_transpiler = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null);
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.prefix = "";
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.configureLinker();
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.configureLinker();
     }
 
     pub const bun_node_dir = switch (Environment.os) {
@@ -791,30 +792,30 @@ pub const RunCommand = struct {
     const DirInfo = @import("../resolver/dir_info.zig");
     pub fn configureEnvForRun(
         ctx: Command.Context,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         env: ?*DotEnv.Loader,
         log_errors: bool,
         store_root_fd: bool,
     ) !*DirInfo {
         const args = ctx.args;
-        this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.env.quiet = true;
-        this_bundler.options.env.prefix = "";
+        this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.env.quiet = true;
+        this_transpiler.options.env.prefix = "";
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = store_root_fd;
 
-        this_bundler.resolver.opts.load_tsconfig_json = false;
-        this_bundler.options.load_tsconfig_json = false;
+        this_transpiler.resolver.opts.load_tsconfig_json = false;
+        this_transpiler.options.load_tsconfig_json = false;
 
-        this_bundler.configureLinker();
+        this_transpiler.configureLinker();
 
-        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             ctx.log.print(Output.errorWriter()) catch {};
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
@@ -824,26 +825,26 @@ pub const RunCommand = struct {
             return error.CouldntReadCurrentDirectory;
         };
 
-        this_bundler.resolver.store_fd = false;
+        this_transpiler.resolver.store_fd = false;
 
         if (env == null) {
-            this_bundler.env.loadProcess();
+            this_transpiler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
+            if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
+                    this_transpiler.options.production = true;
                 }
             }
 
-            this_bundler.runEnvLoader(true) catch {};
+            this_transpiler.runEnvLoader(true) catch {};
         }
 
-        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
+        this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS
-        this_bundler.env.map.putDefault(
+        this_transpiler.env.map.putDefault(
             "npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
@@ -851,25 +852,33 @@ pub const RunCommand = struct {
             "bun/" ++ Global.package_json_version ++ " npm/? node/v" ++ Environment.reported_nodejs_version ++ " " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
-        if (this_bundler.env.get("npm_execpath") == null) {
+        if (this_transpiler.env.get("npm_execpath") == null) {
             // we don't care if this fails
             if (bun.selfExePath()) |self_exe_path| {
-                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
+                this_transpiler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }
 
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.name.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_name) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
+                if (this_transpiler.env.map.get(NpmArgs.package_name) == null) {
+                    this_transpiler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
                 }
             }
 
-            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
+            this_transpiler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
 
             if (package_json.version.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                if (this_transpiler.env.map.get(NpmArgs.package_version) == null) {
+                    this_transpiler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                }
+            }
+
+            if (package_json.config) |config| {
+                try this_transpiler.env.map.ensureUnusedCapacity(config.count());
+                for (config.keys(), config.values()) |k, v| {
+                    const key = try bun.strings.concat(bun.default_allocator, &.{ "npm_package_config_", k });
+                    this_transpiler.env.map.putAssumeCapacity(key, v);
                 }
             }
         }
@@ -880,20 +889,20 @@ pub const RunCommand = struct {
     pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
         package_json_dir: string,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
     ) ![]u8 {
-        const PATH = this_bundler.env.get("PATH") orelse "";
+        const PATH = this_transpiler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
 
         const bun_node_exe = try bunNodeFileUtf8(ctx.allocator);
         const bun_node_dir_win = bun.Dirname.dirname(u8, bun_node_exe) orelse return error.FailedToGetTempPath;
-        const found_node = this_bundler.env.loadNodeJSConfig(
-            this_bundler.fs,
+        const found_node = this_transpiler.env.loadNodeJSConfig(
+            this_transpiler.fs,
             if (force_using_bun) bun_node_exe else "",
         ) catch false;
 
@@ -925,9 +934,9 @@ pub const RunCommand = struct {
         if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
             if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
-                this_bundler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
+                this_transpiler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
+                this_transpiler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
+                this_transpiler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
             }
 
             needs_to_force_bun = false;
@@ -960,7 +969,7 @@ pub const RunCommand = struct {
     pub fn configurePathForRun(
         ctx: Command.Context,
         root_dir_info: *DirInfo,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
@@ -975,8 +984,8 @@ pub const RunCommand = struct {
             }
         }
 
-        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
-        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_transpiler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_transpiler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -989,35 +998,35 @@ pub const RunCommand = struct {
 
         const args = ctx.args;
 
-        var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.options.env.prefix = "";
-        this_bundler.env.quiet = true;
+        var this_transpiler = transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.prefix = "";
+        this_transpiler.env.quiet = true;
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.resolver.store_fd = true;
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = true;
         defer {
-            this_bundler.resolver.care_about_bin_folder = false;
-            this_bundler.resolver.care_about_scripts = false;
+            this_transpiler.resolver.care_about_bin_folder = false;
+            this_transpiler.resolver.care_about_scripts = false;
         }
-        this_bundler.configureLinker();
+        this_transpiler.configureLinker();
 
-        const root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
+        const root_dir_info = (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
-            this_bundler.env.loadProcess();
+            this_transpiler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
+            if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
+                    this_transpiler.options.production = true;
                 }
             }
         }
 
         const ResultList = bun.StringArrayHashMap(void);
 
-        if (this_bundler.env.get("SHELL")) |shell| {
+        if (this_transpiler.env.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
@@ -1034,15 +1043,15 @@ pub const RunCommand = struct {
         }
 
         if (filter == Filter.bin or filter == Filter.all or filter == Filter.all_plus_bun_js) {
-            for (this_bundler.resolver.binDirs()) |bin_path| {
-                if (this_bundler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
+            for (this_transpiler.resolver.binDirs()) |bin_path| {
+                if (this_transpiler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
                     if (bin_dir.getEntriesConst()) |entries| {
                         var iter = entries.data.iterator();
                         var has_copied = false;
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
                             const value = entry.value_ptr.*;
-                            if (value.kind(&this_bundler.fs.fs, true) == .file) {
+                            if (value.kind(&this_transpiler.fs.fs, true) == .file) {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
@@ -1061,7 +1070,7 @@ pub const RunCommand = struct {
                                 }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
-                                _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
+                                _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(base), base) catch continue);
                             }
                         }
                     }
@@ -1070,21 +1079,21 @@ pub const RunCommand = struct {
         }
 
         if (filter == Filter.all_plus_bun_js or filter == Filter.bun_js) {
-            if (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) |dir_info| {
+            if (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) |dir_info| {
                 if (dir_info.getEntriesConst()) |entries| {
                     var iter = entries.data.iterator();
 
                     while (iter.next()) |entry| {
                         const value = entry.value_ptr.*;
                         const name = value.base();
-                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
+                        if (name[0] != '.' and this_transpiler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
                             !strings.contains(name, ".d.cts") and
-                            value.kind(&this_bundler.fs.fs, true) == .file)
+                            value.kind(&this_transpiler.fs.fs, true) == .file)
                         {
-                            _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);
+                            _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(name), name) catch continue);
                         }
                     }
                 }
@@ -1100,7 +1109,7 @@ pub const RunCommand = struct {
                     }
 
                     var max_description_len: usize = 20;
-                    if (this_bundler.env.get("MAX_DESCRIPTION_LEN")) |max| {
+                    if (this_transpiler.env.get("MAX_DESCRIPTION_LEN")) |max| {
                         if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
@@ -1381,10 +1390,10 @@ pub const RunCommand = struct {
         Global.configureAllocator(.{ .long_running = false });
 
         var ORIGINAL_PATH: string = "";
-        var this_bundler: bundler.Bundler = undefined;
-        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
-        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        var this_transpiler: transpiler.Transpiler = undefined;
+        const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
+        try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
+        this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (script_name_to_search.len == 0) {
             // naked "bun run"
@@ -1413,25 +1422,27 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
+                            this_transpiler.fs.top_level_dir,
+                            this_transpiler.env,
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
                         );
                     }
 
-                    try runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_content,
-                        script_name_to_search,
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
-                        passthrough,
-                        ctx.debug.silent,
-                        ctx.debug.use_system_shell,
-                    );
+                    {
+                        try runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_content,
+                            script_name_to_search,
+                            this_transpiler.fs.top_level_dir,
+                            this_transpiler.env,
+                            passthrough,
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
@@ -1441,8 +1452,8 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
+                            this_transpiler.fs.top_level_dir,
+                            this_transpiler.env,
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
@@ -1525,10 +1536,10 @@ pub const RunCommand = struct {
 
             const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
             const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
-            BunXFastPath.tryLaunch(ctx, path_to_use, this_bundler.env, ctx.passthrough);
+            BunXFastPath.tryLaunch(ctx, path_to_use, this_transpiler.env, ctx.passthrough);
         }
 
-        const PATH = this_bundler.env.get("PATH") orelse "";
+        const PATH = this_transpiler.env.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {
@@ -1539,14 +1550,14 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, this_transpiler.fs.top_level_dir, script_name_to_search)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,
-                    try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                     destination,
-                    this_bundler.fs.top_level_dir,
-                    this_bundler.env,
+                    this_transpiler.fs.top_level_dir,
+                    this_transpiler.env,
                     passthrough,
                     script_name_to_search,
                 );

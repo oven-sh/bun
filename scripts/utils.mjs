@@ -3,9 +3,19 @@
 
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { hostname, tmpdir as nodeTmpdir, userInfo } from "node:os";
+import {
+  appendFileSync,
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { connect } from "node:net";
+import { hostname, tmpdir as nodeTmpdir, homedir as nodeHomedir, userInfo, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -13,6 +23,9 @@ export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
+
+export const isArm64 = process.arch === "arm64";
+export const isX64 = process.arch === "x64";
 
 /**
  * @param {string} name
@@ -53,8 +66,9 @@ export function getSecret(name, options = { required: true, redact: true }) {
       command.push("--skip-redaction");
     }
 
-    const { error, stdout: secret } = spawnSync(command);
-    if (error || !secret.trim()) {
+    const { error, stdout } = spawnSync(command);
+    const secret = stdout.trim();
+    if (error || !secret) {
       const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false);
       const clusterId = getEnv("BUILDKITE_CLUSTER_ID", false);
 
@@ -106,8 +120,10 @@ export function setEnv(name, value) {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {Record<string, string | undefined>} [env]
- * @property {string} [stdout]
- * @property {string} [stderr]
+ * @property {boolean | ((error: Error) => boolean)} [throwOnError]
+ * @property {(error: Error) => boolean} [retryOnError]
+ * @property {string} [stdin]
+ * @property {boolean} [privileged]
  */
 
 /**
@@ -120,19 +136,114 @@ export function setEnv(name, value) {
  */
 
 /**
+ * @param {TemplateStringsArray} strings
+ * @param {...any} values
+ * @returns {string[]}
+ */
+export function $(strings, ...values) {
+  const result = [];
+  for (let i = 0; i < strings.length; i++) {
+    result.push(...strings[i].trim().split(/\s+/).filter(Boolean));
+    if (i < values.length) {
+      const value = values[i];
+      if (Array.isArray(value)) {
+        result.push(...value);
+      } else if (typeof value === "string") {
+        if (result.at(-1)?.endsWith("=")) {
+          result[result.length - 1] += value;
+        } else {
+          result.push(value);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * @param {string[]} command
+ * @param {SpawnOptions} options
+ */
+function parseCommand(command, options) {
+  if (options?.privileged) {
+    return [...getPrivilegedCommand(), ...command];
+  }
+  return command;
+}
+
+/** @type {string[] | undefined} */
+let priviledgedCommand;
+
+/**
+ * @returns {string[]}
+ */
+function getPrivilegedCommand() {
+  if (typeof priviledgedCommand !== "undefined") {
+    return priviledgedCommand;
+  }
+
+  if (isWindows) {
+    return (priviledgedCommand = []);
+  }
+
+  const sudo = ["sudo", "-n"];
+  const { error: sudoError } = spawnSync([...sudo, "true"]);
+  if (!sudoError) {
+    return (priviledgedCommand = sudo);
+  }
+
+  const su = ["su", "-s", "sh", "root", "-c"];
+  const { error: suError } = spawnSync([...su, "true"]);
+  if (!suError) {
+    return (priviledgedCommand = su);
+  }
+
+  const doas = ["doas", "-u", "root"];
+  const { error: doasError } = spawnSync([...doas, "true"]);
+  if (!doasError) {
+    return (priviledgedCommand = doas);
+  }
+
+  return (priviledgedCommand = []);
+}
+
+/** @type {boolean | undefined} */
+let privileged;
+
+/**
+ * @returns {boolean}
+ */
+export function isPrivileged() {
+  if (typeof privileged !== "undefined") {
+    return privileged;
+  }
+
+  const command = getPrivilegedCommand();
+  if (command.length) {
+    const { error } = spawnSync(command);
+    privileged = !error;
+  } else {
+    privileged = false;
+  }
+
+  return privileged;
+}
+
+/**
  * @param {string[]} command
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 export async function spawn(command, options = {}) {
-  debugLog("$", ...command);
+  const [cmd, ...args] = parseCommand(command, options);
+  debugLog("$", cmd, ...args);
 
-  const [cmd, ...args] = command;
+  const stdin = options["stdin"];
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [stdin ? "pipe" : "ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -144,6 +255,16 @@ export async function spawn(command, options = {}) {
 
   const result = new Promise((resolve, reject) => {
     const subprocess = nodeSpawn(cmd, args, spawnOptions);
+
+    if (typeof stdin !== "undefined") {
+      subprocess.stdin?.on("error", error => {
+        if (error.code !== "EPIPE") {
+          reject(error);
+        }
+      });
+      subprocess.stdin?.write(stdin);
+      subprocess.stdin?.end();
+    }
 
     subprocess.stdout?.on("data", chunk => {
       stdout += chunk;
@@ -184,6 +305,24 @@ export async function spawn(command, options = {}) {
     }
   }
 
+  if (error) {
+    const retryOnError = options["retryOnError"];
+    if (typeof retryOnError === "function") {
+      if (retryOnError(error)) {
+        return spawn(command, options);
+      }
+    }
+
+    const throwOnError = options["throwOnError"];
+    if (typeof throwOnError === "function") {
+      if (throwOnError(error)) {
+        throw error;
+      }
+    } else if (throwOnError) {
+      throw error;
+    }
+  }
+
   return {
     exitCode,
     signalCode,
@@ -198,15 +337,8 @@ export async function spawn(command, options = {}) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
-export async function spawnSafe(command, options) {
-  const result = await spawn(command, options);
-
-  const { error } = result;
-  if (error) {
-    throw error;
-  }
-
-  return result;
+export async function spawnSafe(command, options = {}) {
+  return spawn(command, { throwOnError: true, ...options });
 }
 
 /**
@@ -215,14 +347,16 @@ export async function spawnSafe(command, options) {
  * @returns {SpawnResult}
  */
 export function spawnSync(command, options = {}) {
-  debugLog("$", ...command);
+  const [cmd, ...args] = parseCommand(command, options);
+  debugLog("$", cmd, ...args);
 
-  const [cmd, ...args] = command;
+  const stdin = options["stdin"];
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
+    input: stdin,
     ...options,
   };
 
@@ -245,8 +379,8 @@ export function spawnSync(command, options = {}) {
   } else {
     exitCode = status ?? 1;
     signalCode = signal || undefined;
-    stdout = stdoutBuffer.toString();
-    stderr = stderrBuffer.toString();
+    stdout = stdoutBuffer?.toString?.() ?? "";
+    stderr = stderrBuffer?.toString?.() ?? "";
   }
 
   if (exitCode !== 0 && isWindows) {
@@ -258,12 +392,30 @@ export function spawnSync(command, options = {}) {
 
   if (error || signalCode || exitCode !== 0) {
     const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
-    const cause = error || stderr.trim() || stdout.trim() || undefined;
+    const cause = error || stderr?.trim() || stdout?.trim() || undefined;
 
     if (signalCode) {
       error = new Error(`Command killed with ${signalCode}: ${description}`, { cause });
     } else {
       error = new Error(`Command exited with code ${exitCode}: ${description}`, { cause });
+    }
+  }
+
+  if (error) {
+    const retryOnError = options["retryOnError"];
+    if (typeof retryOnError === "function") {
+      if (retryOnError(error)) {
+        return spawn(command, options);
+      }
+    }
+
+    const throwOnError = options["throwOnError"];
+    if (typeof throwOnError === "function") {
+      if (throwOnError(error)) {
+        throw error;
+      }
+    } else if (throwOnError) {
+      throw error;
     }
   }
 
@@ -281,15 +433,8 @@ export function spawnSync(command, options = {}) {
  * @param {SpawnOptions} options
  * @returns {SpawnResult}
  */
-export function spawnSyncSafe(command, options) {
-  const result = spawnSync(command, options);
-
-  const { error } = result;
-  if (error) {
-    throw error;
-  }
-
-  return result;
+export function spawnSyncSafe(command, options = {}) {
+  return spawnSync(command, { throwOnError: true, ...options });
 }
 
 /**
@@ -308,8 +453,8 @@ export function getWindowsExitReason(exitCode) {
 }
 
 /**
- * @param {string} url
- * @returns {URL}
+ * @param {string | URL} url
+ * @returns {URL | undefined}
  */
 export function parseGitUrl(url) {
   const string = typeof url === "string" ? url : url.toString();
@@ -321,8 +466,20 @@ export function parseGitUrl(url) {
   if (/^https:\/\/github\.com\//.test(string)) {
     return new URL(string.slice(19).replace(/\.git$/, ""), githubUrl);
   }
+}
 
-  throw new Error(`Unsupported git url: ${string}`);
+/**
+ * @param {string | URL} url
+ * @returns {string | undefined}
+ */
+export function parseGitRepository(url) {
+  const parsed = parseGitUrl(url);
+  if (parsed) {
+    const { hostname, pathname } = parsed;
+    if (hostname == "github.com") {
+      return pathname.slice(1);
+    }
+  }
 }
 
 /**
@@ -332,7 +489,7 @@ export function parseGitUrl(url) {
 export function getRepositoryUrl(cwd) {
   if (!cwd) {
     if (isBuildkite) {
-      const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO", false);
+      const repository = getEnv("BUILDKITE_REPO", false);
       if (repository) {
         return parseGitUrl(repository);
       }
@@ -369,9 +526,18 @@ export function getRepository(cwd) {
 
   const url = getRepositoryUrl(cwd);
   if (url) {
-    const { hostname, pathname } = new URL(url);
-    if (hostname == "github.com") {
-      return pathname.slice(1);
+    return parseGitRepository(url);
+  }
+}
+
+/**
+ * @returns {string | undefined}
+ */
+export function getPullRequestRepository() {
+  if (isBuildkite) {
+    const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
+    if (repository) {
+      return parseGitRepository(repository);
     }
   }
 }
@@ -466,7 +632,7 @@ export function getBranch(cwd) {
 
 /**
  * @param {string} [cwd]
- * @returns {string}
+ * @returns {string | undefined}
  */
 export function getMainBranch(cwd) {
   if (!cwd) {
@@ -589,7 +755,7 @@ export function isMergeQueue(cwd) {
 export function getGithubToken() {
   const cachedToken = getSecret("GITHUB_TOKEN", { required: false });
 
-  if (typeof cachedToken === "string") {
+  if (typeof cachedToken === "string" || !which("gh")) {
     return cachedToken || undefined;
   }
 
@@ -606,6 +772,7 @@ export function getGithubToken() {
  * @property {string} [body]
  * @property {Record<string, string | undefined>} [headers]
  * @property {number} [timeout]
+ * @property {boolean} [cache]
  * @property {number} [retries]
  * @property {boolean} [json]
  * @property {boolean} [arrayBuffer]
@@ -619,6 +786,9 @@ export function getGithubToken() {
  * @property {Error | undefined} error
  * @property {any} body
  */
+
+/** @type {Record<string, CurlResult | undefined>} */
+let cachedResults;
 
 /**
  * @param {string} url
@@ -634,6 +804,15 @@ export async function curl(url, options = {}) {
   let json = options["json"];
   let arrayBuffer = options["arrayBuffer"];
   let filename = options["filename"];
+
+  let cacheKey;
+  let cache = options["cache"];
+  if (cache) {
+    cacheKey = `${method} ${href}`;
+    if (cachedResults?.[cacheKey]) {
+      return cachedResults[cacheKey];
+    }
+  }
 
   if (typeof headers["Authorization"] === "undefined") {
     if (hostname === "api.github.com" || hostname === "uploads.github.com") {
@@ -670,7 +849,7 @@ export async function curl(url, options = {}) {
     try {
       if (filename && ok) {
         const buffer = await response.arrayBuffer();
-        await writeFile(filename, new Uint8Array(buffer));
+        writeFile(filename, new Uint8Array(buffer));
       } else if (arrayBuffer && ok) {
         body = await response.arrayBuffer();
       } else if (json && ok) {
@@ -692,6 +871,11 @@ export async function curl(url, options = {}) {
     if (status === 400 || status === 404 || status === 422) {
       break;
     }
+  }
+
+  if (cacheKey) {
+    cachedResults ||= {};
+    cachedResults[cacheKey] = { status, statusText, error, body };
   }
 
   return {
@@ -718,6 +902,7 @@ export async function curlSafe(url, options) {
   return body;
 }
 
+/** @type {Record<string, string> | undefined} */
 let cachedFiles;
 
 /**
@@ -734,14 +919,13 @@ export function readFile(filename, options = {}) {
     }
   }
 
-  const relativePath = relative(process.cwd(), absolutePath);
-  debugLog("cat", relativePath);
+  debugLog("$", "cat", absolutePath);
 
   let content;
   try {
     content = readFileSync(absolutePath, "utf-8");
   } catch (cause) {
-    throw new Error(`Read failed: ${relativePath}`, { cause });
+    throw new Error(`Read failed: ${absolutePath}`, { cause });
   }
 
   if (options["cache"]) {
@@ -753,17 +937,128 @@ export function readFile(filename, options = {}) {
 }
 
 /**
+ * @param {string} path
+ * @param {number} mode
+ */
+export function chmod(path, mode) {
+  debugLog("$", "chmod", path, mode);
+  chmodSync(path, mode);
+}
+
+/**
+ * @param {string} filename
+ * @param {string | Buffer} content
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function writeFile(filename, content, options) {
+  mkdir(dirname(filename));
+
+  debugLog("$", "touch", filename);
+  writeFileSync(filename, content);
+
+  if (options?.mode) {
+    chmod(filename, options.mode);
+  }
+}
+
+/**
+ * @param {string} source
+ * @param {string} destination
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function copyFile(source, destination, options) {
+  mkdir(dirname(destination));
+
+  debugLog("$", "cp", source, destination);
+  copyFileSync(source, destination);
+
+  if (options?.mode) {
+    chmod(destination, options.mode);
+  }
+}
+
+/**
+ * @param {string} path
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function mkdir(path, options = {}) {
+  if (existsSync(path)) {
+    return;
+  }
+
+  debugLog("$", "mkdir", path);
+  mkdirSync(path, { ...options, recursive: true });
+}
+
+/**
+ * @param {string} path
+ */
+export function rm(path) {
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch {
+    return;
+  }
+
+  if (stats?.isDirectory()) {
+    debugLog("$", "rm", "-rf", path);
+    rmSync(path, { recursive: true, force: true });
+  } else {
+    debugLog("$", "rm", "-f", path);
+    rmSync(path, { force: true });
+  }
+}
+
+/**
+ * @param {string | string[]} command
+ * @param {object} [options]
+ * @param {boolean} [options.required]
+ * @returns {string | undefined}
+ */
+export function which(command, options = {}) {
+  const commands = Array.isArray(command) ? command : [command];
+  const executables = isWindows ? commands.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : commands;
+
+  const path = getEnv("PATH", false) || "";
+  const binPaths = path.split(isWindows ? ";" : ":");
+
+  for (const binPath of binPaths) {
+    for (const executable of executables) {
+      const executablePath = join(binPath, executable);
+      if (existsSync(executablePath)) {
+        return executablePath;
+      }
+    }
+  }
+
+  if (options["required"]) {
+    const description = commands.join(" or ");
+    throw new Error(`Command not found: ${description}`);
+  }
+}
+
+/**
+ * @typedef {object} GitRef
+ * @property {string} [repository]
+ * @property {string} [commit]
+ */
+
+/**
  * @param {string} [cwd]
- * @param {string} [base]
- * @param {string} [head]
+ * @param {string | GitRef} [base]
+ * @param {string | GitRef} [head]
  * @returns {Promise<string[] | undefined>}
  */
 export async function getChangedFiles(cwd, base, head) {
   const repository = getRepository(cwd);
-  base ||= getCommit(cwd);
-  head ||= `${base}^1`;
+  head ||= getCommit(cwd);
+  base ||= `${head}^1`;
 
-  const url = `https://api.github.com/repos/${repository}/compare/${head}...${base}`;
+  const url = new URL(`repos/${repository}/compare/${base}...${head}`, getGithubApiUrl());
   const { error, body } = await curl(url, { json: true });
 
   if (error) {
@@ -840,7 +1135,7 @@ export function getBuildUrl() {
  */
 export function getBuildLabel() {
   if (isBuildkite) {
-    const label = getEnv("BUILDKITE_GROUP_LABEL", false) || getEnv("BUILDKITE_LABEL", false);
+    const label = getEnv("BUILDKITE_LABEL", false) || getEnv("BUILDKITE_GROUP_LABEL", false);
     if (label) {
       return label;
     }
@@ -852,6 +1147,37 @@ export function getBuildLabel() {
       return label;
     }
   }
+}
+
+/**
+ * @returns {boolean | undefined}
+ */
+export function isBuildManual() {
+  if (isBuildkite) {
+    const buildSource = getEnv("BUILDKITE_SOURCE", false);
+    if (buildSource) {
+      const buildId = getEnv("BUILDKITE_REBUILT_FROM_BUILD_ID", false);
+      return buildSource === "ui" && !buildId;
+    }
+  }
+}
+
+/**
+ * @param {string} [os]
+ * @returns {number}
+ */
+export function getBootstrapVersion(os) {
+  const scriptPath = join(
+    import.meta.dirname,
+    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
+  );
+  const scriptContent = readFile(scriptPath, { cache: true });
+  const match = /# Version: (\d+)/.exec(scriptContent);
+  if (match) {
+    const [, version] = match;
+    return parseInt(version);
+  }
+  return 0;
 }
 
 /**
@@ -888,9 +1214,8 @@ export async function getBuildkiteBuildNumber() {
     return;
   }
 
-  const { status, error, body } = await curl(`https://api.github.com/repos/${repository}/commits/${commit}/statuses`, {
-    json: true,
-  });
+  const url = new URL(`repos/${repository}/commits/${commit}/statuses`, getGithubApiUrl());
+  const { status, error, body } = await curl(url, { json: true });
   if (status === 404) {
     return;
   }
@@ -962,17 +1287,6 @@ export function getFileUrl(filename, line) {
   }
 
   const filePath = (cwd ? relative(cwd, filename) : filename).replace(/\\/g, "/");
-  const pullRequest = getPullRequest();
-
-  if (pullRequest) {
-    const fileMd5 = createHash("sha256").update(filePath).digest("hex");
-    const url = new URL(`pull/${pullRequest}/files#diff-${fileMd5}`, `${baseUrl}/`);
-    if (typeof line !== "undefined") {
-      return new URL(`R${line}`, url);
-    }
-    return url;
-  }
-
   const commit = getCommit(cwd);
   const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
   if (typeof line !== "undefined") {
@@ -1000,7 +1314,7 @@ export async function getLastSuccessfulBuild() {
     }
 
     while (url) {
-      const { error, body } = await curl(`${url}.json`, { json: true });
+      const { error, body } = await curl(`${url}.json`, { json: true, cache: true });
       if (error) {
         return;
       }
@@ -1028,11 +1342,33 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
+ * @param {string} filename
+ * @param {string} [cwd]
+ */
+export async function uploadArtifact(filename, cwd) {
+  if (isBuildkite) {
+    const relativePath = relative(cwd ?? process.cwd(), filename);
+    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+  }
+}
+
+/**
  * @param {string} string
  * @returns {string}
  */
 export function stripAnsi(string) {
-  return string.replace(/\u001b\[\d+m/g, "");
+  return string.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+/**
+ * @param {string} string
+ * @returns {string}
+ */
+export function escapeYaml(string) {
+  if (/[:"{}[\],&*#?|\-<>=!%@`]/.test(string)) {
+    return `"${string.replace(/"/g, '\\"')}"`;
+  }
+  return string;
 }
 
 /**
@@ -1074,6 +1410,21 @@ export function escapeCodeBlock(string) {
 }
 
 /**
+ * @param {string} string
+ * @returns {string}
+ */
+export function escapePowershell(string) {
+  return string.replace(/'/g, "''").replace(/`/g, "``");
+}
+
+/**
+ * @returns {string}
+ */
+export function homedir() {
+  return nodeHomedir();
+}
+
+/**
  * @returns {string}
  */
 export function tmpdir() {
@@ -1105,11 +1456,13 @@ export function tmpdir() {
 }
 
 /**
- * @param {string} string
+ * @param {string} [prefix]
+ * @param {string} [filename]
  * @returns {string}
  */
-function escapePowershell(string) {
-  return string.replace(/'/g, "''").replace(/`/g, "``");
+export function mkdtemp(prefix, filename) {
+  const tmpPath = mkdtempSync(join(tmpdir(), prefix || "bun-"));
+  return filename ? join(tmpPath, filename) : tmpPath;
 }
 
 /**
@@ -1126,6 +1479,30 @@ export async function unzip(filename, output) {
     await spawnSafe(["unzip", "-o", filename, "-d", destination]);
   }
   return destination;
+}
+
+/**
+ * @param {string} value
+ * @returns {boolean | undefined}
+ */
+export function parseBoolean(value) {
+  if (/^(true|yes|1|on)$/i.test(value)) {
+    return true;
+  }
+  if (/^(false|no|0|off)$/i.test(value)) {
+    return false;
+  }
+}
+
+/**
+ * @param {string} value
+ * @returns {number | undefined}
+ */
+export function parseNumber(value) {
+  const number = Number(value);
+  if (!isNaN(number)) {
+    return number;
+  }
 }
 
 /**
@@ -1174,19 +1551,78 @@ export function getArch() {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+export function getKernel() {
+  if (isWindows) {
+    return;
+  }
+
+  const kernel = release();
+  const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(kernel);
+
+  if (match) {
+    const [, major, minor, patch] = match;
+    if (patch) {
+      return `${major}.${minor}.${patch}`;
+    }
+    return `${major}.${minor}`;
+  }
+
+  return kernel;
+}
+
+/**
  * @returns {"musl" | "gnu" | undefined}
  */
 export function getAbi() {
-  if (isLinux) {
-    const arch = getArch() === "x64" ? "x86_64" : "aarch64";
-    const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
-    if (existsSync(muslLibPath)) {
+  if (!isLinux) {
+    return;
+  }
+
+  if (existsSync("/etc/alpine-release")) {
+    return "musl";
+  }
+
+  const arch = getArch() === "x64" ? "x86_64" : "aarch64";
+  const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
+  if (existsSync(muslLibPath)) {
+    return "musl";
+  }
+
+  const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
+  if (existsSync(gnuLibPath)) {
+    return "gnu";
+  }
+
+  const { error, stdout } = spawnSync(["ldd", "--version"]);
+  if (!error) {
+    if (/musl/i.test(stdout)) {
       return "musl";
     }
-
-    const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
-    if (existsSync(gnuLibPath)) {
+    if (/gnu|glibc/i.test(stdout)) {
       return "gnu";
+    }
+  }
+}
+
+/**
+ * @returns {string | undefined}
+ */
+export function getAbiVersion() {
+  if (!isLinux) {
+    return;
+  }
+
+  const { error, stdout } = spawnSync(["ldd", "--version"]);
+  if (!error) {
+    const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(stdout);
+    if (match) {
+      const [, major, minor, patch] = match;
+      if (patch) {
+        return `${major}.${minor}.${patch}`;
+      }
+      return `${major}.${minor}`;
     }
   }
 }
@@ -1272,7 +1708,7 @@ export async function getTargetDownloadUrl(target, release) {
       return canaryUrl;
     }
 
-    const statusUrl = new URL(`https://api.github.com/repos/oven-sh/bun/commits/${release}/status`).toString();
+    const statusUrl = new URL(`repos/oven-sh/bun/commits/${release}/status`, getGithubApiUrl());
     const { error, body } = await curl(statusUrl, { json: true });
     if (error) {
       throw new Error(`Failed to fetch commit status: ${release}`, { cause: error });
@@ -1360,17 +1796,24 @@ export async function downloadTarget(target, release) {
 }
 
 /**
- * @returns {string | undefined}
+ * @returns {string}
  */
-export function getTailscaleIp() {
-  let tailscale = "tailscale";
+export function getTailscale() {
   if (isMacOS) {
     const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/tailscale";
     if (existsSync(tailscaleApp)) {
-      tailscale = tailscaleApp;
+      return tailscaleApp;
     }
   }
 
+  return "tailscale";
+}
+
+/**
+ * @returns {string | undefined}
+ */
+export function getTailscaleIp() {
+  const tailscale = getTailscale();
   const { error, stdout } = spawnSync([tailscale, "ip", "--1"]);
   if (!error) {
     return stdout.trim();
@@ -1419,7 +1862,59 @@ export function getUsername() {
 }
 
 /**
+ * @param {string} distro
  * @returns {string}
+ */
+export function getUsernameForDistro(distro) {
+  if (/windows/i.test(distro)) {
+    return "administrator";
+  }
+
+  if (/alpine|centos/i.test(distro)) {
+    return "root";
+  }
+
+  if (/debian/i.test(distro)) {
+    return "admin";
+  }
+
+  if (/ubuntu/i.test(distro)) {
+    return "ubuntu";
+  }
+
+  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
+    return "ec2-user";
+  }
+
+  throw new Error(`Unsupported distro: ${distro}`);
+}
+
+/**
+ * @typedef {object} User
+ * @property {string} username
+ * @property {number} uid
+ * @property {number} gid
+ */
+
+/**
+ * @param {string} username
+ * @returns {Promise<User>}
+ */
+export async function getUser(username) {
+  if (isWindows) {
+    throw new Error("TODO: Windows");
+  }
+
+  const [uid, gid] = await Promise.all([
+    spawnSafe(["id", "-u", username]).then(({ stdout }) => parseInt(stdout.trim())),
+    spawnSafe(["id", "-g", username]).then(({ stdout }) => parseInt(stdout.trim())),
+  ]);
+
+  return { username, uid, gid };
+}
+
+/**
+ * @returns {string | undefined}
  */
 export function getDistro() {
   if (isMacOS) {
@@ -1427,21 +1922,25 @@ export function getDistro() {
   }
 
   if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      return "alpine";
+    }
+
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/ID=\"(.*)\"/);
+      const match = releaseFile.match(/^ID=(.*)/m);
       if (match) {
-        return match[1];
+        const [, id] = match;
+        return id.includes('"') ? JSON.parse(id) : id;
       }
     }
 
     const { error, stdout } = spawnSync(["lsb_release", "-is"]);
     if (!error) {
-      return stdout.trim();
+      return stdout.trim().toLowerCase();
     }
-
-    return "Linux";
   }
 
   if (isWindows) {
@@ -1449,17 +1948,13 @@ export function getDistro() {
     if (!error) {
       return stdout.trim();
     }
-
-    return "Windows";
   }
-
-  return `${process.platform} ${process.arch}`;
 }
 
 /**
  * @returns {string | undefined}
  */
-export function getDistroRelease() {
+export function getDistroVersion() {
   if (isMacOS) {
     const { error, stdout } = spawnSync(["sw_vers", "-productVersion"]);
     if (!error) {
@@ -1468,12 +1963,23 @@ export function getDistroRelease() {
   }
 
   if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      const release = readFile(alpinePath, { cache: true }).trim();
+      if (release.includes("_")) {
+        const [version] = release.split("_");
+        return `${version}-edge`;
+      }
+      return release;
+    }
+
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/VERSION_ID=\"(.*)\"/);
+      const match = releaseFile.match(/^VERSION_ID=(.*)/m);
       if (match) {
-        return match[1];
+        const [, release] = match;
+        return release.includes('"') ? JSON.parse(release) : release;
       }
     }
 
@@ -1492,9 +1998,252 @@ export function getDistroRelease() {
 }
 
 /**
- * @returns {Promise<number | undefined>}
+ * @returns {string | undefined}
+ */
+export function getShell() {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      return pwsh;
+    }
+  }
+
+  const sh = which(["bash", "sh"]);
+  if (sh) {
+    return sh;
+  }
+
+  return getEnv("SHELL", false);
+}
+
+/**
+ * @typedef {"aws" | "google"} Cloud
+ */
+
+/** @type {Cloud | undefined} */
+let detectedCloud;
+
+/**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAws() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "aws";
+  }
+
+  async function checkAws() {
+    if (isLinux) {
+      const kernel = release();
+      if (kernel.endsWith("-aws")) {
+        return true;
+      }
+
+      const { error: systemdError, stdout } = await spawn(["systemd-detect-virt"]);
+      if (!systemdError) {
+        if (stdout.includes("amazon")) {
+          return true;
+        }
+      }
+
+      const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
+      if (existsSync(dmiPath)) {
+        const dmiFile = readFileSync(dmiPath, { encoding: "utf-8" });
+        if (dmiFile.startsWith("i-")) {
+          return true;
+        }
+      }
+    }
+
+    if (isWindows) {
+      const executionEnv = getEnv("AWS_EXECUTION_ENV", false);
+      if (executionEnv === "EC2") {
+        return true;
+      }
+
+      const { error: powershellError, stdout } = await spawn([
+        "powershell",
+        "-Command",
+        "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
+      ]);
+      if (!powershellError) {
+        return stdout.includes("Amazon");
+      }
+    }
+  }
+
+  if (await checkAws()) {
+    detectedCloud = "aws";
+    return true;
+  }
+}
+
+/**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isGoogleCloud() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "google";
+  }
+
+  async function detectGoogleCloud() {
+    if (isLinux) {
+      const vendorPaths = [
+        "/sys/class/dmi/id/sys_vendor",
+        "/sys/class/dmi/id/bios_vendor",
+        "/sys/class/dmi/id/product_name",
+      ];
+
+      for (const vendorPath of vendorPaths) {
+        if (existsSync(vendorPath)) {
+          const vendorFile = readFileSync(vendorPath, { encoding: "utf-8" });
+          if (vendorFile.includes("Google")) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  if (await detectGoogleCloud()) {
+    detectedCloud = "google";
+    return true;
+  }
+}
+
+/**
+ * @returns {Promise<Cloud | undefined>}
+ */
+export async function getCloud() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud;
+  }
+
+  if (await isAws()) {
+    return "aws";
+  }
+
+  if (await isGoogleCloud()) {
+    return "google";
+  }
+}
+
+/**
+ * @param {string | Record<Cloud, string>} name
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export async function getCloudMetadata(name, cloud) {
+  cloud ??= await getCloud();
+  if (!cloud) {
+    return;
+  }
+
+  if (typeof name === "object") {
+    name = name[cloud];
+  }
+
+  let url;
+  let headers;
+  if (cloud === "aws") {
+    url = new URL(name, "http://169.254.169.254/latest/meta-data/");
+  } else if (cloud === "google") {
+    url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
+    headers = { "Metadata-Flavor": "Google" };
+  } else {
+    throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
+  }
+
+  const { error, body } = await curl(url, { headers, retries: 10 });
+  if (error) {
+    console.warn("Failed to get cloud metadata:", error);
+    return;
+  }
+
+  return body.trim();
+}
+
+/**
+ * @param {string} tag
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export function getCloudMetadataTag(tag, cloud) {
+  const metadata = {
+    "aws": `tags/instance/${tag}`,
+    "google": `labels/${tag.replace(":", "-")}`,
+  };
+
+  return getCloudMetadata(metadata, cloud);
+}
+
+/**
+ * @param {string} name
+ * @returns {Promise<string | undefined>}
+ */
+export async function getBuildMetadata(name) {
+  if (isBuildkite) {
+    const { error, stdout } = await spawn(["buildkite-agent", "meta-data", "get", name]);
+    if (!error) {
+      const value = stdout.trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+}
+
+/**
+ * @typedef ConnectOptions
+ * @property {string} hostname
+ * @property {number} port
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {ConnectOptions} options
+ * @returns {Promise<Error | undefined>}
+ */
+export async function waitForPort(options) {
+  const { hostname, port, retries = 10 } = options;
+  console.log("Connecting...", `${hostname}:${port}`);
+
+  let cause;
+  for (let i = 0; i < retries; i++) {
+    if (cause) {
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
+
+    const connected = new Promise((resolve, reject) => {
+      const socket = connect({ host: hostname, port });
+      socket.on("connect", () => {
+        socket.destroy();
+        console.log("Connected:", `${hostname}:${port}`);
+        resolve();
+      });
+      socket.on("error", error => {
+        socket.destroy();
+        reject(error);
+      });
+    });
+
+    try {
+      return await connected;
+    } catch (error) {
+      cause = error;
+    }
+  }
+
+  console.error("Connection failed:", `${hostname}:${port}`);
+  return cause;
+}
+/**
+ * @returns {Promise<number>}
  */
 export async function getCanaryRevision() {
+  if (isPullRequest() || isFork()) {
+    return 1;
+  }
+
   const repository = getRepository() || "oven-sh/bun";
   const { error: releaseError, body: release } = await curl(
     new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),
@@ -1537,10 +2286,332 @@ export function getGithubUrl() {
 }
 
 /**
+ * @param {string} string
+ * @returns {string}
+ */
+export function sha256(string) {
+  return createHash("sha256").update(Buffer.from(string)).digest("hex");
+}
+
+/**
+ * @param {string} [level]
+ * @returns {"info" | "warning" | "error"}
+ */
+function parseLevel(level) {
+  if (/error|fatal|fail/i.test(level)) {
+    return "error";
+  }
+  if (/warn|caution/i.test(level)) {
+    return "warning";
+  }
+  return "notice";
+}
+
+/**
+ * @typedef {Object} Annotation
+ * @property {string} title
+ * @property {string} [content]
+ * @property {string} [source]
+ * @property {"notice" | "warning" | "error"} [level]
+ * @property {string} [url]
+ * @property {string} [filename]
+ * @property {number} [line]
+ * @property {number} [column]
+ * @property {Record<string, string>} [metadata]
+ */
+
+/**
+ * @typedef {Object} AnnotationContext
+ * @property {string} [cwd]
+ * @property {string[]} [command]
+ */
+
+/**
+ * @param {Record<keyof Annotation, unknown>} options
+ * @param {AnnotationContext} [context]
+ * @returns {Annotation}
+ */
+export function parseAnnotation(options, context) {
+  const source = options["source"];
+  const level = parseLevel(options["level"]);
+  const title = options["title"] || (source ? `${source} ${level}` : level);
+  const filename = options["filename"];
+  const line = parseInt(options["line"]) || undefined;
+  const column = parseInt(options["column"]) || undefined;
+  const content = options["content"];
+  const lines = Array.isArray(content) ? content : content?.split(/(\r?\n)/) || [];
+  const metadata = Object.fromEntries(
+    Object.entries(options["metadata"] || {}).filter(([, value]) => value !== undefined),
+  );
+
+  const relevantLines = [];
+  let lastLine;
+  for (const line of lines) {
+    if (!lastLine && !line.trim()) {
+      continue;
+    }
+    lastLine = line.trim();
+    relevantLines.push(line);
+  }
+
+  return {
+    source,
+    title,
+    level,
+    filename,
+    line,
+    column,
+    content: relevantLines.join("\n"),
+    metadata,
+  };
+}
+
+/**
+ * @typedef {Object} AnnotationResult
+ * @property {Annotation[]} annotations
+ * @property {string} content
+ * @property {string} preview
+ */
+
+/**
+ * @param {string} content
+ * @param {AnnotationOptions} [options]
+ * @returns {AnnotationResult}
+ */
+export function parseAnnotations(content, options = {}) {
+  /** @type {Annotation[]} */
+  const annotations = [];
+
+  const originalLines = content.split(/(\r?\n)/);
+  const lines = [];
+
+  for (let i = 0; i < originalLines.length; i++) {
+    const originalLine = originalLines[i];
+    const line = stripAnsi(originalLine).trim();
+    const bufferedLines = [originalLine];
+
+    /**
+     * @param {RegExp} pattern
+     * @param {number} [maxLength]
+     * @returns {{lines: string[], match: string[] | undefined}}
+     */
+    const readUntil = (pattern, maxLength = 100) => {
+      let length = 0;
+      let match;
+
+      while (i + length <= originalLines.length && length < maxLength) {
+        const originalLine = originalLines[i + length++];
+        const line = stripAnsi(originalLine).trim();
+        const patternMatch = pattern.exec(line);
+        if (patternMatch) {
+          match = patternMatch;
+          break;
+        }
+      }
+
+      const lines = originalLines.slice(i + 1, (i += length));
+      bufferedLines.push(...lines);
+      return { lines, match };
+    };
+
+    // Github Actions
+    // https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
+    const githubAnnotation = line.match(/^::(error|warning|notice|debug)(?: (.*))?::(.*)$/);
+    if (githubAnnotation) {
+      const [, level, attributes, content] = githubAnnotation;
+      const { file, line, col, title } = Object.fromEntries(
+        attributes?.split(",")?.map(entry => entry.split("=")) || {},
+      );
+
+      const annotation = parseAnnotation({
+        level,
+        filename: file,
+        line,
+        column: col,
+        content: unescapeGitHubAction(title) + unescapeGitHubAction(content),
+      });
+      annotations.push(annotation);
+      continue;
+    }
+
+    const githubCommand = line.match(/^::(group|endgroup|add-mask|stop-commands)::$/);
+    if (githubCommand) {
+      continue;
+    }
+
+    // CMake error format
+    // e.g. CMake Error at /path/to/thing.cmake:123 (message): ...
+    const cmakeMessage = line.match(/CMake (Error|Warning|Deprecation Warning) at (.*):(\d+)/i);
+    if (cmakeMessage) {
+      let [, level, filename, line] = cmakeMessage;
+
+      const { match: callStackMatch } = readUntil(/Call Stack \(most recent call first\)/i);
+      if (callStackMatch) {
+        const { match: callFrameMatch } = readUntil(/(CMakeLists\.txt|[^\s]+\.cmake):(\d+)/i, 5);
+        if (callFrameMatch) {
+          const [, frame, location] = callFrameMatch;
+          filename = frame;
+          line = location;
+        }
+      }
+
+      const annotation = parseAnnotation({
+        source: "cmake",
+        level,
+        filename,
+        line,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    // Zig compiler error
+    // e.g. /path/to/build.zig:8:19: error: ...
+    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
+    if (zigMessage) {
+      const [, filename, line, column, level] = zigMessage;
+
+      const { match: callStackMatch } = readUntil(/referenced by:/i);
+      if (callStackMatch) {
+        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
+      }
+
+      const annotation = parseAnnotation({
+        source: "zig",
+        level,
+        filename,
+        line,
+        column,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
+    if (nodeJsError) {
+      const [, filename, line] = nodeJsError;
+
+      let metadata;
+      const { match: nodeJsVersionMatch } = readUntil(/^Node\.js v(\d+\.\d+\.\d+)/i);
+      if (nodeJsVersionMatch) {
+        const [, version] = nodeJsVersionMatch;
+        metadata = {
+          "node-version": version,
+        };
+      }
+
+      const annotation = parseAnnotation({
+        source: "node",
+        level: "error",
+        filename,
+        line,
+        content: bufferedLines,
+        metadata,
+      });
+      annotations.push(annotation);
+    }
+
+    const clangError = line.match(/^(.+\.(?:cpp|c|m|h)):(\d+):(\d+): (error|warning): (.+)/i);
+    if (clangError) {
+      const [, filename, line, column, level] = clangError;
+      readUntil(/^\d+ (?:error|warning)s? generated/);
+      const annotation = parseAnnotation({
+        source: "clang",
+        level,
+        filename,
+        line,
+        column,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    const shellMessage = line.match(/(.+\.sh): line (\d+): (.+)/i);
+    if (shellMessage) {
+      const [, filename, line] = shellMessage;
+      const annotation = parseAnnotation({
+        source: "shell",
+        level: "error",
+        filename,
+        line,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    lines.push(originalLine);
+  }
+
+  return {
+    annotations,
+    content: lines.join("\n"),
+  };
+}
+
+/**
+ * @param {object} obj
+ * @param {number} indent
+ * @returns {string}
+ */
+export function toYaml(obj, indent = 0) {
+  const spaces = " ".repeat(indent);
+  let result = "";
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null) {
+      result += `${spaces}${key}: null\n`;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      result += `${spaces}${key}:\n`;
+      value.forEach(item => {
+        if (typeof item === "object" && item !== null) {
+          result += `${spaces}- \n${toYaml(item, indent + 2)
+            .split("\n")
+            .map(line => `${spaces}  ${line}`)
+            .join("\n")}\n`;
+        } else {
+          result += `${spaces}- ${item}\n`;
+        }
+      });
+      continue;
+    }
+    if (typeof value === "object") {
+      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
+      continue;
+    }
+    if (
+      typeof value === "string" &&
+      (value.includes(":") ||
+        value.includes("#") ||
+        value.includes("'") ||
+        value.includes('"') ||
+        value.includes("\n") ||
+        value.includes("*"))
+    ) {
+      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      continue;
+    }
+    result += `${spaces}${key}: ${value}\n`;
+  }
+  return result;
+}
+
+/** @type {string | undefined} */
+let lastGroup;
+
+/**
  * @param {string} title
  * @param {function} [fn]
  */
 export function startGroup(title, fn) {
+  if (lastGroup && lastGroup !== title) {
+    lastGroup = title;
+    endGroup();
+  }
+
   if (isGithubAction) {
     console.log(`::group::${stripAnsi(title)}`);
   } else if (isBuildkite) {
@@ -1564,6 +2635,10 @@ export function startGroup(title, fn) {
 }
 
 export function endGroup() {
+  if (lastGroup) {
+    lastGroup = undefined;
+  }
+
   if (isGithubAction) {
     console.log("::endgroup::");
   } else {
@@ -1575,11 +2650,13 @@ export function printEnvironment() {
   startGroup("Machine", () => {
     console.log("Operating System:", getOs());
     console.log("Architecture:", getArch());
+    console.log("Kernel:", getKernel());
     if (isLinux) {
       console.log("ABI:", getAbi());
+      console.log("ABI Version:", getAbiVersion());
     }
     console.log("Distro:", getDistro());
-    console.log("Release:", getDistroRelease());
+    console.log("Distro Version:", getDistroVersion());
     console.log("Hostname:", getHostname());
     if (isCI) {
       console.log("Tailscale IP:", getTailscaleIp());
@@ -1588,6 +2665,11 @@ export function printEnvironment() {
     console.log("Username:", getUsername());
     console.log("Working Directory:", process.cwd());
     console.log("Temporary Directory:", tmpdir());
+    if (process.isBun) {
+      console.log("Bun Version:", Bun.version, Bun.revision);
+    } else {
+      console.log("Node Version:", process.version);
+    }
   });
 
   if (isCI) {
@@ -1596,6 +2678,15 @@ export function printEnvironment() {
         console.log(`${key}:`, value);
       }
     });
+
+    if (isPosix) {
+      startGroup("Limits", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
+        }
+      });
+    }
   }
 
   startGroup("Repository", () => {
@@ -1617,7 +2708,201 @@ export function printEnvironment() {
     startGroup("CI", () => {
       console.log("Build ID:", getBuildId());
       console.log("Build Label:", getBuildLabel());
-      console.log("Build URL:", `${getBuildUrl()}`);
+      console.log("Build URL:", getBuildUrl()?.toString());
     });
+  }
+}
+
+/**
+ * @returns {number | undefined}
+ */
+export function getLoggedInUserCountOrDetails() {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      const { error, stdout } = spawnSync([
+        pwsh,
+        "-Command",
+        `Get-CimInstance -ClassName Win32_Process -Filter "Name = 'sshd.exe'" | Get-CimAssociatedInstance -Association Win32_SessionProcess | Get-CimAssociatedInstance -Association Win32_LoggedOnUser | Where-Object {$_.Name -ne 'SYSTEM'} | Measure-Object | Select-Object -ExpandProperty Count`,
+      ]);
+      if (!error) {
+        return parseInt(stdout) || undefined;
+      }
+    }
+  }
+
+  const { error, stdout } = spawnSync(["who"]);
+  if (!error) {
+    const users = stdout
+      .split("\n")
+      .filter(line => /tty|pts/i.test(line))
+      .map(line => {
+        // who output format: username terminal date/time (ip)
+        const [username, terminal, datetime, ip] = line.split(/\s+/);
+        return {
+          username,
+          terminal,
+          datetime,
+          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
+        };
+      });
+
+    if (users.length === 0) {
+      return 0;
+    }
+
+    let message = `${users.length} currently logged in users:`;
+
+    for (const user of users) {
+      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+    }
+
+    return message;
+  }
+}
+
+/** @typedef {keyof typeof emojiMap} Emoji */
+
+const emojiMap = {
+  darwin: ["🍎", "darwin"],
+  linux: ["🐧", "linux"],
+  debian: ["🐧", "debian"],
+  ubuntu: ["🐧", "ubuntu"],
+  alpine: ["🐧", "alpine"],
+  aws: ["☁️", "aws"],
+  amazonlinux: ["🐧", "aws"],
+  nix: ["🐧", "nix"],
+  windows: ["🪟", "windows"],
+  true: ["✅", "white_check_mark"],
+  false: ["❌", "x"],
+  debug: ["🐞", "bug"],
+  assert: ["🔍", "mag"],
+  release: ["🏆", "trophy"],
+  gear: ["⚙️", "gear"],
+  clipboard: ["📋", "clipboard"],
+  rocket: ["🚀", "rocket"],
+};
+
+/**
+ * @param {Emoji} emoji
+ * @returns {string}
+ */
+export function getEmoji(emoji) {
+  const [unicode] = emojiMap[emoji] || [];
+  return unicode || "";
+}
+
+/**
+ * @param {Emoji} emoji
+ * @returns {string}
+ * @link https://github.com/buildkite/emojis#emoji-reference
+ */
+export function getBuildkiteEmoji(emoji) {
+  const [, name] = emojiMap[emoji] || [];
+  return name ? `:${name}:` : "";
+}
+
+/**
+ * @param {SshOptions} options
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ */
+export async function spawnSshSafe(options, spawnOptions = {}) {
+  return spawnSsh(options, { throwOnError: true, ...spawnOptions });
+}
+
+/**
+ * @param {SshOptions} options
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ */
+export async function spawnSsh(options, spawnOptions = {}) {
+  const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
+
+  if (!hostname.includes("@")) {
+    await waitForPort({
+      hostname,
+      port: port || 22,
+    });
+  }
+
+  const logPath = mkdtemp("ssh-", "ssh.log");
+  const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no"];
+  if (!password) {
+    command.push("-o", "BatchMode=yes");
+  }
+  if (port) {
+    command.push("-p", port);
+  }
+  if (username) {
+    command.push("-l", username);
+  }
+  if (password) {
+    const sshPass = which("sshpass", { required: true });
+    command.unshift(sshPass, "-p", password);
+  } else if (identityPaths) {
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
+  }
+  const stdio = spawnCommand ? "pipe" : "inherit";
+  if (spawnCommand) {
+    command.push(...spawnCommand);
+  }
+
+  /** @type {import("./utils.mjs").SpawnResult} */
+  let result;
+  for (let i = 0; i < retries; i++) {
+    result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
+
+    const { exitCode } = result;
+    if (exitCode !== 255) {
+      break;
+    }
+
+    const sshLogs = readFile(logPath, { encoding: "utf-8" });
+    if (sshLogs.includes("Authenticated")) {
+      break;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 15000));
+  }
+
+  if (spawnOptions?.throwOnError) {
+    const { error } = result;
+    if (error) {
+      throw error;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * @param {MachineOptions} options
+ * @returns {Promise<Machine>}
+ */
+export async function setupUserData(machine, options) {
+  const { os, userData } = options;
+  if (!userData) {
+    return;
+  }
+
+  // Write user data to a temporary file
+  const tmpFile = mkdtemp("user-data-", os === "windows" ? "setup.ps1" : "setup.sh");
+  await writeFile(tmpFile, userData);
+
+  try {
+    // Upload the script
+    const remotePath = os === "windows" ? "C:\\Windows\\Temp\\setup.ps1" : "/tmp/setup.sh";
+    await machine.upload(tmpFile, remotePath);
+
+    // Execute the script
+    if (os === "windows") {
+      await machine.spawnSafe(["powershell", remotePath], { stdio: "inherit" });
+    } else {
+      await machine.spawnSafe(["bash", remotePath], { stdio: "inherit" });
+    }
+  } finally {
+    // Clean up the temporary file
+    rm(tmpFile);
   }
 }

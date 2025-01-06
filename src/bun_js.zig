@@ -24,7 +24,7 @@ const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
@@ -64,6 +64,7 @@ pub const Run = struct {
                 .log = ctx.log,
                 .args = ctx.args,
                 .graph = graph_ptr,
+                .is_main_thread = true,
             }),
             .arena = arena,
             .ctx = ctx,
@@ -71,7 +72,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -93,7 +94,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.experimental_css = ctx.bundler_options.experimental_css;
+        b.options.experimental = ctx.bundler_options.experimental;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -155,7 +156,7 @@ pub const Run = struct {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
-        var bundle = try bun.Bundler.init(
+        var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
@@ -198,6 +199,7 @@ pub const Run = struct {
                     .smol = ctx.runtime_options.smol,
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
+                    .is_main_thread = true,
                 },
             ),
             .arena = arena,
@@ -206,7 +208,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -262,13 +264,13 @@ pub const Run = struct {
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         // Allow setting a custom timezone
-        if (vm.bundler.env.get("TZ")) |tz| {
+        if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
                 _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
             }
         }
 
-        vm.bundler.env.loadTracy();
+        vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
 
@@ -298,13 +300,14 @@ pub const Run = struct {
             else => {},
         }
 
-        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
-            this.entry_path = vm.bundler.fs.top_level_dir;
+        if (strings.eqlComptime(this.entry_path, ".") and vm.transpiler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.transpiler.fs.top_level_dir;
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
@@ -339,23 +342,19 @@ pub const Run = struct {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
                 Output.flush();
             }
+            // TODO: Do a event loop tick when we figure out how to watch the file that wasn't found
+            //   under hot reload mode
+            vm.exit_handler.exit_code = 1;
+            vm.onExit();
+            if (run.any_unhandled) {
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
-            if (vm.hot_reload != .none) {
-                vm.eventLoop().tick();
-                vm.eventLoop().tickPossiblyForever();
-            } else {
-                vm.exit_handler.exit_code = 1;
-                vm.onExit();
-                if (run.any_unhandled) {
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
-
-                    Output.prettyErrorln(
-                        "<r>\n<d>{s}<r>",
-                        .{Global.unhandled_error_bun_version_string},
-                    );
-                }
-                vm.globalExit();
+                Output.prettyErrorln(
+                    "<r>\n<d>{s}<r>",
+                    .{Global.unhandled_error_bun_version_string},
+                );
             }
+            vm.globalExit();
         }
 
         // don't run the GC if we don't actually need to
@@ -370,38 +369,23 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .rejected) {
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                }
+                vm.handlePendingInternalPromiseRejection();
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                            prev_promise = this.vm.pending_internal_promise;
-                            _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                            continue;
-                        }
+                        vm.handlePendingInternalPromiseRejection();
 
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
-                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                        prev_promise = this.vm.pending_internal_promise;
-                        _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                    }
+                    vm.handlePendingInternalPromiseRejection();
 
                     vm.eventLoop().tickPossiblyForever();
-                }
-
-                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                    prev_promise = this.vm.pending_internal_promise;
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
@@ -467,7 +451,7 @@ pub const Run = struct {
 };
 
 pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
@@ -475,7 +459,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);

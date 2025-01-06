@@ -31,23 +31,11 @@ const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFuncti
 const { kAutoDestroyed } = require("internal/shared");
 const {
   validateBoolean,
-  validateString,
-  validateNumber,
-  validateSignalName,
-  validateEncoding,
-  validatePort,
   validateInteger,
   validateInt32,
-  validateUint32,
-  validateArray,
-  validateBuffer,
   validateAbortSignal,
   validateFunction,
-  validatePlainFunction,
-  validateUndefined,
 } = require("internal/validators");
-
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const ProcessNextTick = process.nextTick;
 
@@ -69,14 +57,6 @@ $debug("node:stream loaded");
 //------------------------------------------------------------------------------
 // Node error polyfills
 //------------------------------------------------------------------------------
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  return new Error(`The argument '${name}' is invalid. Received '${value}' for type '${type}'`);
-}
-
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  return new Error(`The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`);
-}
 
 // node_modules/readable-stream/lib/ours/primordials.js
 var require_primordials = __commonJS({
@@ -517,18 +497,6 @@ var require_errors = __commonJS({
       TypeError,
     );
     E(
-      "ERR_INVALID_ARG_VALUE",
-      (name, value, reason = "is invalid") => {
-        let inspected = inspect(value);
-        if (inspected.length > 128) {
-          inspected = inspected.slice(0, 128) + "...";
-        }
-        const type = name.includes(".") ? "property" : "argument";
-        return `The ${type} '${name}' ${reason}. Received ${inspected}`;
-      },
-      TypeError,
-    );
-    E(
       "ERR_INVALID_RETURN_VALUE",
       (input, name, value) => {
         var _value$constructor;
@@ -623,10 +591,8 @@ var require_validators = __commonJS({
     } = require_primordials();
     var {
       hideStackFrames,
-      codes: { ERR_SOCKET_BAD_PORT, ERR_INVALID_ARG_TYPE, ERR_INVALID_ARG_VALUE, ERR_OUT_OF_RANGE, ERR_UNKNOWN_SIGNAL },
+      codes: { ERR_INVALID_ARG_TYPE },
     } = require_errors();
-    var { normalizeEncoding } = require_util();
-    var { isAsyncFunction, isArrayBufferView } = require_util().types;
     var signals = {};
     function isInt32(value) {
       return value === (value | 0);
@@ -642,7 +608,7 @@ var require_validators = __commonJS({
       }
       if (typeof value === "string") {
         if (!RegExpPrototypeTest(octalReg, value)) {
-          throw new ERR_INVALID_ARG_VALUE(name, value, modeDesc);
+          throw $ERR_INVALID_ARG_VALUE(name, value, modeDesc);
         }
         value = NumberParseInt(value, 8);
       }
@@ -656,7 +622,7 @@ var require_validators = __commonJS({
           ", ",
         );
         const reason = "must be one of: " + allowed;
-        throw new ERR_INVALID_ARG_VALUE(name, value, reason);
+        throw $ERR_INVALID_ARG_VALUE(name, value, reason);
       }
     });
     var validateObject = hideStackFrames((value, name, options) => {
@@ -2018,7 +1984,7 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
   if (hwm != null) {
     if (!NumberIsInteger(hwm) || hwm < 0) {
       const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-      throw new ERR_INVALID_ARG_VALUE(name, hwm);
+      throw $ERR_INVALID_ARG_VALUE(name, hwm);
     }
     return MathFloor(hwm);
   }
@@ -2467,7 +2433,7 @@ var require_readable = __commonJS({
       } = options;
 
       if (encoding !== undefined && !Buffer.isEncoding(encoding))
-        throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+        throw $ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
       validateBoolean(objectMode, "options.objectMode");
 
       // validateBoolean(native, "options.native");
@@ -5103,10 +5069,10 @@ var require_compose = __commonJS({
           continue;
         }
         if (n < streams.length - 1 && !isReadable(streams[n])) {
-          throw new ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
+          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
         }
         if (n > 0 && !isWritable(streams[n])) {
-          throw new ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
+          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
         }
       }
       let ondrain;
@@ -5371,14 +5337,18 @@ function createNativeStreamReadable(Readable) {
       }
 
       if (isClosed) {
-        nativeReadable.push(null);
+        ProcessNextTick(() => {
+          nativeReadable.push(null);
+        });
       }
 
       return remainder.byteLength > 0 ? remainder : undefined;
     }
 
     if (isClosed) {
-      nativeReadable.push(null);
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
     }
 
     return view;
@@ -5390,7 +5360,9 @@ function createNativeStreamReadable(Readable) {
     }
 
     if (isClosed) {
-      nativeReadable.push(null);
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
     }
 
     return view;
@@ -5441,8 +5413,7 @@ function createNativeStreamReadable(Readable) {
     ptr.onClose = this[_onClose].bind(this);
     ptr.onDrain = this[_onDrain].bind(this);
   }
-  NativeReadable.prototype = {};
-  ObjectSetPrototypeOf(NativeReadable.prototype, Readable.prototype);
+  $toClass(NativeReadable, "NativeReadable", Readable);
 
   NativeReadable.prototype[_onClose] = function () {
     this.push(null);
@@ -5657,8 +5628,7 @@ function NativeWritable(pathOrFdOrSink, options = {}) {
 
   this[_pathOrFdOrSink] = pathOrFdOrSink;
 }
-Object.setPrototypeOf(NativeWritable, Writable);
-NativeWritable.prototype = Object.create(Writable.prototype);
+$toClass(NativeWritable, "NativeWritable", Writable);
 
 // These are confusingly two different fns for construct which initially were the same thing because
 // `_construct` is part of the lifecycle of Writable and is not called lazily,

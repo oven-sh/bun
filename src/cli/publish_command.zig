@@ -281,11 +281,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -441,6 +440,8 @@ pub const PublishCommand = struct {
 
         if (manager.options.do.run_scripts) {
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            try context.script_env.map.put("npm_command", "publish");
+
             if (context.publish_script) |publish_script| {
                 _ = Run.runPackageScriptForeground(
                     context.command_ctx,

@@ -10,6 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
+pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -223,7 +226,7 @@ pub const UpgradedDuplex = struct {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
 
         if (JSC.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
@@ -2309,7 +2312,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 0, @sizeOf(Type));
+        return us_create_timer(loop, 0, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d}", .{std.c._errno().*});
     }
 
     pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
@@ -2318,7 +2321,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 1, @sizeOf(Type));
+        return us_create_timer(loop, 1, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d}", .{std.c._errno().*});
     }
 
     pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
@@ -2354,6 +2357,11 @@ pub const SocketContext = opaque {
 
     fn _deinit(this: *SocketContext) void {
         us_socket_context_free(@as(i32, 0), this);
+    }
+
+    pub fn ref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_ref(@intFromBool(ssl), this);
+        return this;
     }
 
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
@@ -2598,7 +2606,7 @@ pub const PosixLoop = extern struct {
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
-extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
+extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) ?*Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
 extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
 extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
@@ -2640,12 +2648,36 @@ pub const create_bun_socket_error_t = enum(i32) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+
+    pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this) {
+            .none => brk: {
+                bun.debugAssert(false);
+                break :brk .null;
+            },
+            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+        };
+    }
 };
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
+
+    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
+        const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
+
+        const fallback = JSC.SystemError{
+            .code = bun.String.createUTF8(code),
+            .message = bun.String.createUTF8(reason),
+        };
+
+        return fallback.toErrorInstance(globalObject);
+    }
 };
 pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
@@ -2852,6 +2884,13 @@ pub const AnyWebSocket = union(enum) {
         };
     }
 
+    pub fn memoryCost(this: AnyWebSocket) usize {
+        return switch (this) {
+            .ssl => this.ssl.memoryCost(),
+            .tcp => this.tcp.memoryCost(),
+        };
+    }
+
     pub fn close(this: AnyWebSocket) void {
         const ssl_flag = @intFromBool(this == .ssl);
         return uws_ws_close(ssl_flag, this.raw());
@@ -2942,7 +2981,13 @@ pub const AnyWebSocket = union(enum) {
     }
 };
 
-pub const RawWebSocket = opaque {};
+pub const RawWebSocket = opaque {
+    pub fn memoryCost(this: *RawWebSocket, ssl_flag: i32) usize {
+        return uws_ws_memory_cost(ssl_flag, this);
+    }
+
+    extern fn uws_ws_memory_cost(ssl: i32, ws: *RawWebSocket) usize;
+};
 
 pub const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.C) void;
 pub const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
@@ -3143,6 +3188,14 @@ pub const SocketAddress = struct {
 pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
+
+    pub fn init(response: anytype) AnyResponse {
+        return switch (@TypeOf(response)) {
+            *NewApp(true).Response => .{ .SSL = response },
+            *NewApp(false).Response => .{ .TCP = response },
+            else => @compileError(unreachable),
+        };
+    }
 
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
@@ -3657,11 +3710,6 @@ pub fn NewApp(comptime ssl: bool) type {
 
                 return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
             }
-            pub fn getRemoteAddress(res: *Response) ?[]const u8 {
-                var buf: [*]const u8 = undefined;
-                const size = uws_res_get_remote_address(ssl_flag, res.downcast(), &buf);
-                return if (size > 0) buf[0..size] else null;
-            }
             pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
                 var buf: [*]const u8 = undefined;
                 const size = uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
@@ -3925,6 +3973,11 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn sendWithOptions(this: *WebSocket, message: []const u8, opcode: Opcode, compress: bool, fin: bool) SendStatus {
                 return uws_ws_send_with_options(ssl_flag, this.raw(), message.ptr, message.len, opcode, compress, fin);
             }
+
+            pub fn memoryCost(this: *WebSocket) usize {
+                return this.raw().memoryCost(ssl_flag);
+            }
+
             // pub fn sendFragment(this: *WebSocket, message: []const u8) SendStatus {
             //     return uws_ws_send_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
             // }
@@ -3983,7 +4036,6 @@ pub fn NewApp(comptime ssl: bool) type {
 extern fn uws_res_end_stream(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
-extern fn uws_res_get_remote_address(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
@@ -4521,3 +4573,5 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+
+pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;

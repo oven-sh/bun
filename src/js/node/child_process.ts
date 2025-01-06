@@ -2,7 +2,6 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
-const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -22,18 +21,20 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
-var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeSort = Array.prototype.sort;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const ArrayPrototypePush = Array.prototype.push;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
 
-var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
@@ -74,9 +75,7 @@ var ReadableFromWeb;
 // TODO: Add these params after support added in Bun.spawn
 // uid <number> Sets the user identity of the process (see setuid(2)).
 // gid <number> Sets the group identity of the process (see setgid(2)).
-// detached <boolean> Prepare child to run independently of its parent process. Specific behavior depends on the platform, see options.detached).
 
-// TODO: Add support for ipc option, verify only one IPC channel in array
 // stdio <Array> | <string> Child's stdio configuration (see options.stdio).
 // Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
 // IPC FD passing support
@@ -554,24 +553,31 @@ function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
     }
   }
 
-  const {
-    stdout = null,
-    stderr = null,
-    success,
-    exitCode,
-    signalCode,
-  } = Bun.spawnSync({
-    cmd: options.args,
-    env: options.env || undefined,
-    cwd: options.cwd || undefined,
-    stdio: bunStdio,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
-    windowsHide: options.windowsHide,
-  });
+  var error;
+  try {
+    var {
+      stdout = null,
+      stderr = null,
+      success,
+      exitCode,
+      signalCode,
+    } = Bun.spawnSync({
+      cmd: options.args,
+      env: options.env || undefined,
+      cwd: options.cwd || undefined,
+      stdio: bunStdio,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+      windowsHide: options.windowsHide,
+    });
+  } catch (err) {
+    error = err;
+    stdout = null;
+    stderr = null;
+  }
 
   const result = {
     signal: signalCode ?? null,
@@ -579,6 +585,10 @@ function spawnSync(file, args, options) {
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
+
+  if (error) {
+    result.error = error;
+  }
 
   if (stdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
@@ -591,8 +601,11 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (!success) {
+  if (!success && error == null) {
     result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
+  }
+
+  if (result.error) {
     result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
@@ -683,7 +696,7 @@ function stdioStringToArray(stdio, channel) {
       options = [0, 1, 2];
       break;
     default:
-      throw ERR_INVALID_ARG_VALUE("stdio", stdio);
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
   if (channel) $arrayPush(options, channel);
@@ -781,7 +794,7 @@ function sanitizeKillSignal(killSignal) {
   if (typeof killSignal === "string" || typeof killSignal === "number") {
     return convertToValidSignal(killSignal);
   } else if (killSignal != null) {
-    throw ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
+    throw $ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
   }
 }
 
@@ -861,14 +874,14 @@ function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
-  if (file.length === 0) throw ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
+  if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
   if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args == null) {
     args = [];
   } else if (typeof args !== "object") {
-    throw ERR_INVALID_ARG_TYPE("args", "object", args);
+    throw $ERR_INVALID_ARG_TYPE("args", "object", args);
   } else {
     options = args;
     args = [];
@@ -893,17 +906,17 @@ function normalizeSpawnArguments(file, args, options) {
 
   // Validate the uid, if present.
   if (options.uid != null && !isInt32(options.uid)) {
-    throw ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
+    throw $ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
   }
 
   // Validate the gid, if present.
   if (options.gid != null && !isInt32(options.gid)) {
-    throw ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
+    throw $ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
   }
 
   // Validate the shell, if present.
   if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
-    throw ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
+    throw $ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
   }
 
   // Validate argv0, if present.
@@ -953,13 +966,38 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   const env = options.env || process.env;
-  const envPairs = env;
+  const envPairs = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
   // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
 
-  // TODO: Windows env support here...
+  let envKeys: string[] = [];
+  for (const key in env) {
+    ArrayPrototypePush.$call(envKeys, key);
+  }
+
+  if (process.platform === "win32") {
+    // On Windows env keys are case insensitive. Filter out duplicates, keeping only the first one (in lexicographic order)
+    const sawKey = new Set();
+    envKeys = ArrayPrototypeFilter.$call(ArrayPrototypeSort.$call(envKeys), key => {
+      const uppercaseKey = StringPrototypeToUpperCase.$call(key);
+      if (sawKey.has(uppercaseKey)) {
+        return false;
+      }
+      sawKey.add(uppercaseKey);
+      return true;
+    });
+  }
+
+  for (const key of envKeys) {
+    const value = env[key];
+    if (value !== undefined) {
+      validateArgumentNullCheck(key, `options.env['${key}']`);
+      validateArgumentNullCheck(value, `options.env['${key}']`);
+      envPairs[key] = value;
+    }
+  }
 
   return {
     // Make a shallow copy so we don't clobber the user's options object.
@@ -1299,7 +1337,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw ERR_INVALID_ARG_TYPE("options", "object", options);
+        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
 
@@ -1332,7 +1370,7 @@ class ChildProcess extends EventEmitter {
       $assert(this.connected);
       this.#handle.disconnect();
     } else if (!ok) {
-      this.emit("error", ERR_IPC_DISCONNECTED());
+      this.emit("error", $ERR_IPC_DISCONNECTED());
       return;
     }
     this.#handle.disconnect();
@@ -1391,7 +1429,7 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item, index) {
+function nodeToBun(item: string, index: number): string | number | null {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1460,6 +1498,7 @@ function fdToStdioName(fd) {
 
 function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
+  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1486,7 +1525,7 @@ function getBunStdioFromOptions(stdio) {
   return bunStdio;
 }
 
-function normalizeStdio(stdio) {
+function normalizeStdio(stdio): string[] {
   if (typeof stdio === "string") {
     switch (stdio) {
       case "ignore":
@@ -1575,7 +1614,7 @@ function validateMaxBuffer(maxBuffer) {
 
 function validateArgumentNullCheck(arg, propName) {
   if (typeof arg === "string" && StringPrototypeIncludes.$call(arg, "\u0000")) {
-    throw ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
+    throw $ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
 
@@ -1608,7 +1647,7 @@ const validateOneOf = (value, name, oneOf) => {
       ", ",
     );
     const reason = "must be one of: " + allowed;
-    throw ERR_INVALID_ARG_VALUE(name, value, reason);
+    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 };
 
@@ -1634,7 +1673,7 @@ const validateObject = (value, name, options = null) => {
     (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw ERR_INVALID_ARG_TYPE(name, "object", value);
+    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 };
 
@@ -1655,7 +1694,7 @@ function nullCheck(path, propName, throwError = true) {
     return;
   }
 
-  const err = ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
+  const err = $ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
   if (throwError) {
     throw err;
   }
@@ -1664,7 +1703,7 @@ function nullCheck(path, propName, throwError = true) {
 
 function validatePath(path, propName = "path") {
   if (typeof path !== "string" && !isUint8Array(path)) {
-    throw ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
+    throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
   }
 
   const err = nullCheck(path, propName, false);
@@ -1710,7 +1749,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "object", options);
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
   }
@@ -1893,12 +1932,6 @@ function ERR_UNKNOWN_SIGNAL(name) {
 function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
-  return err;
-}
-
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  const err = new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-  err.code = "ERR_INVALID_ARG_VALUE";
   return err;
 }
 

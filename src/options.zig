@@ -396,9 +396,8 @@ pub const Target = enum {
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Target {
-        if (!value.jsType().isStringLike()) {
-            global.throwInvalidArguments("target must be a string", .{});
-            return error.JSError;
+        if (!value.isString()) {
+            return global.throwInvalidArguments("target must be a string", .{});
         }
         return Map.fromJS(global, value);
     }
@@ -614,14 +613,12 @@ pub const Format = enum {
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) bun.JSError!?Format {
         if (format.isUndefinedOrNull()) return null;
 
-        if (!format.jsType().isStringLike()) {
-            global.throwInvalidArguments("format must be a string", .{});
-            return error.JSError;
+        if (!format.isString()) {
+            return global.throwInvalidArguments("format must be a string", .{});
         }
 
         return Map.fromJS(global, format) orelse {
-            global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
-            return error.JSError;
+            return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
 
@@ -647,6 +644,14 @@ pub const Loader = enum(u8) {
     bunsh,
     sqlite,
     sqlite_embedded,
+    html,
+
+    pub fn disableHTML(this: Loader) Loader {
+        return switch (this) {
+            .html => .file,
+            else => this,
+        };
+    }
 
     pub inline fn isSQLite(this: Loader) bool {
         return switch (this) {
@@ -655,29 +660,22 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
-        if (experimental_css) {
-            return switch (this) {
-                .file,
-                .css,
-                .napi,
-                .sqlite,
-                .sqlite_embedded,
-                // TODO: loader for reading bytes and creating module or instance
-                .wasm,
-                => true,
-                else => false,
-            };
-        }
+    pub const Experimental = struct {
+        css: bool = bun.FeatureFlags.breaking_changes_1_2,
+        html: bool = bun.FeatureFlags.breaking_changes_1_2,
+    };
+
+    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
         return switch (this) {
             .file,
-            .css,
             .napi,
             .sqlite,
             .sqlite_embedded,
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
+            .css => !experimental.css,
+            .html => !experimental.html,
             else => false,
         };
     }
@@ -688,6 +686,7 @@ pub const Loader = enum(u8) {
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
+            .html => bun.http.MimeType.html,
             else => bun.http.MimeType.other,
         };
     }
@@ -723,6 +722,7 @@ pub const Loader = enum(u8) {
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
+        map.set(.html, "input.html");
         break :brk map;
     };
 
@@ -733,9 +733,8 @@ pub const Loader = enum(u8) {
     pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue) bun.JSError!?Loader {
         if (loader.isUndefinedOrNull()) return null;
 
-        if (!loader.jsType().isStringLike()) {
-            global.throwInvalidArguments("loader must be a string", .{});
-            return error.JSError;
+        if (!loader.isString()) {
+            return global.throwInvalidArguments("loader must be a string", .{});
         }
 
         var zig_str = JSC.ZigString.init("");
@@ -743,8 +742,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
-            return error.JSError;
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -770,6 +768,7 @@ pub const Loader = enum(u8) {
         .{ "sh", .bunsh },
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
+        .{ "html", .html },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -793,6 +792,7 @@ pub const Loader = enum(u8) {
         .{ "text", .text },
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
+        .{ "html", .html },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -818,6 +818,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .html => .html,
             .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
@@ -846,6 +847,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .html => .html,
             .sqlite => .sqlite,
             _ => .file,
         };
@@ -905,6 +907,7 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+    .{ ".html", .html },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -915,9 +918,9 @@ pub const defaultLoaders = bun.ComptimeStringMap(Loader, default_loaders);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
-    default: ConditionsMap = undefined,
-    import: ConditionsMap = undefined,
-    require: ConditionsMap = undefined,
+    default: ConditionsMap,
+    import: ConditionsMap,
+    require: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
@@ -942,10 +945,25 @@ pub const ESMConditions = struct {
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
 
-        return ESMConditions{
+        return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+        };
+    }
+
+    pub fn clone(self: *const ESMConditions) !ESMConditions {
+        var default = try self.default.clone();
+        errdefer default.deinit();
+        var import = try self.import.clone();
+        errdefer import.deinit();
+        var require = try self.require.clone();
+        errdefer require.deinit();
+
+        return .{
+            .default = default,
+            .import = import,
+            .require = require,
         };
     }
 
@@ -955,9 +973,9 @@ pub const ESMConditions = struct {
         try self.require.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
-            self.default.putAssumeCapacityNoClobber(condition, {});
-            self.import.putAssumeCapacityNoClobber(condition, {});
-            self.require.putAssumeCapacityNoClobber(condition, {});
+            self.default.putAssumeCapacity(condition, {});
+            self.import.putAssumeCapacity(condition, {});
+            self.require.putAssumeCapacity(condition, {});
         }
     }
 };
@@ -1280,6 +1298,11 @@ const default_loader_ext = [_]string{
     ".txt",  ".text",
 };
 
+// Only set it for browsers by default.
+const default_loader_ext_browser = [_]string{
+    ".html",
+};
+
 const node_modules_default_loader_ext_bun = [_]string{".node"};
 const node_modules_default_loader_ext = [_]string{
     ".jsx",
@@ -1296,6 +1319,7 @@ const node_modules_default_loader_ext = [_]string{
     ".cts",
     ".wasm",
     ".text",
+    ".html",
 };
 
 pub const ResolveFileExtensions = struct {
@@ -1346,6 +1370,12 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (target == .browser) {
+        inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
@@ -1460,6 +1490,7 @@ pub const BundleOptions = struct {
     tsconfig_override: ?string = null,
     target: Target = Target.browser,
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
+    /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
@@ -1503,7 +1534,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
-    experimental_css: bool,
+    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1688,7 +1719,7 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental_css = false,
+            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };
@@ -2071,42 +2102,58 @@ pub const OutputFile = struct {
     }
 
     /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
-    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, longest_common_path: []const u8) ![]const u8 {
         switch (f.value) {
             .saved => {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                 }
                 return rel_path;
             },
             .buffer => |value| {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                     if (std.fs.path.dirname(rel_path)) |parent| {
-                        if (parent.len > root_dir_path.len) {
+                        if (parent.len > longest_common_path.len) {
                             try root_dir.makePath(parent);
                         }
                     }
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
-                    .data = .{ .buffer = .{
-                        .buffer = .{
-                            .ptr = @constCast(value.bytes.ptr),
-                            .len = value.bytes.len,
-                            .byte_len = value.bytes.len,
+                var handled_file_not_found = false;
+                while (true) {
+                    var path_buf: bun.PathBuffer = undefined;
+                    JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                        .data = .{ .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(value.bytes.ptr),
+                                .len = value.bytes.len,
+                                .byte_len = value.bytes.len,
+                            },
+                        } },
+                        .encoding = .buffer,
+                        .mode = if (f.is_executable) 0o755 else 0o644,
+                        .dirfd = bun.toFD(root_dir.fd),
+                        .file = .{ .path = .{
+                            .string = JSC.PathString.init(rel_path),
+                        } },
+                    }).unwrap() catch |err| switch (err) {
+                        error.FileNotFound, error.ENOENT => {
+                            if (handled_file_not_found) return err;
+                            handled_file_not_found = true;
+                            try root_dir.makePath(
+                                std.fs.path.dirname(rel_path) orelse
+                                    return err,
+                            );
+                            continue;
                         },
-                    } },
-                    .encoding = .buffer,
-                    .mode = if (f.is_executable) 0o755 else 0o644,
-                    .dirfd = bun.toFD(root_dir.fd),
-                    .file = .{ .path = .{
-                        .string = JSC.PathString.init(rel_path),
-                    } },
-                }).unwrap();
+                        else => return err,
+                    };
+                    break;
+                }
 
                 return rel_path;
             },

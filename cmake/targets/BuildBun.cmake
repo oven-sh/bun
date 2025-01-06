@@ -318,13 +318,13 @@ register_command(
   TARGET
     bun-bake-codegen
   COMMENT
-    "Bundling Kit Runtime"
+    "Bundling Bake Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
-        --codegen_root=${CODEGEN_PATH}
+        --codegen-root=${CODEGEN_PATH}
   SOURCES
     ${BUN_BAKE_RUNTIME_SOURCES}
     ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
@@ -332,6 +332,39 @@ register_command(
   OUTPUTS
     ${CODEGEN_PATH}/bake_empty_file
     ${BUN_BAKE_RUNTIME_OUTPUTS}
+)
+
+set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
+
+file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/**/*.bind.ts
+)
+
+set(BUN_BINDGEN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/GeneratedBindings.cpp
+)
+
+set(BUN_BINDGEN_ZIG_OUTPUTS
+  ${CWD}/src/bun.js/bindings/GeneratedBindings.zig
+)
+
+register_command(
+  TARGET
+    bun-binding-generator
+  COMMENT
+    "Processing \".bind.ts\" files"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      run
+      ${BUN_BINDGEN_SCRIPT}
+        --debug=${DEBUG}
+        --codegen-root=${CODEGEN_PATH}
+  SOURCES
+    ${BUN_BINDGEN_SOURCES}
+    ${BUN_BINDGEN_SCRIPT}
+  OUTPUTS
+    ${BUN_BINDGEN_CPP_OUTPUTS}
+    ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
@@ -384,7 +417,6 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
 )
-
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
@@ -461,6 +493,7 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+  ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_ZIG_GENERATED_SOURCES
@@ -482,16 +515,13 @@ endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
-
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
-  set(IS_ARM64 ON)
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   else()
     set(ZIG_CPU "native")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
-  set(IS_X86_64 ON)
   if(ENABLE_BASELINE)
     set(ZIG_CPU "nehalem")
   else()
@@ -546,6 +576,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/io/*.cpp
   ${CWD}/src/bun.js/modules/*.cpp
@@ -569,7 +600,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
 )
 
 if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
 endif()
 
 register_repository(
@@ -602,12 +634,14 @@ register_command(
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${BUN_ERROR_CODE_OUTPUTS}
   ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
+  ${BUN_BINDGEN_CPP_OUTPUTS}
 )
 
 if(WIN32)
@@ -617,11 +651,19 @@ if(WIN32)
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
   set(BUN_ICO_PATH ${CWD}/src/bun.ico)
+  configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
+    @ONLY
   )
-  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  add_custom_command(
+    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
+    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
+    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
+    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
+  )
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---
@@ -629,7 +671,7 @@ endif()
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)
@@ -647,7 +689,7 @@ elseif(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 else()
-  add_executable(${bun} ${BUN_CPP_SOURCES})
+  add_executable(${bun} ${BUN_CPP_SOURCES} ${WINDOWS_RESOURCES})
   target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
 endif()
 
@@ -761,8 +803,8 @@ if(NOT WIN32)
   )
   if(DEBUG)
     # TODO: this shouldn't be necessary long term
-    if (NOT IS_MUSL)
-      set(ABI_PUBLIC_FLAGS
+    if (NOT ABI STREQUAL "musl")
+      target_compile_options(${bun} PUBLIC
         -fsanitize=null
         -fsanitize-recover=all
         -fsanitize=bounds
@@ -773,13 +815,8 @@ if(NOT WIN32)
         -fsanitize=returns-nonnull-attribute
         -fsanitize=unreachable
       )
-      set(ABI_PRIVATE_FLAGS
+      target_link_libraries(${bun} PRIVATE
         -fsanitize=null
-      )
-    else()
-      set(ABI_PUBLIC_FLAGS
-      )
-      set(ABI_PRIVATE_FLAGS
       )
     endif()
 
@@ -798,10 +835,6 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-nullability-completeness
       -Werror
-      ${ABI_PUBLIC_FLAGS}
-    )
-    target_link_libraries(${bun} PRIVATE
-      ${ABI_PRIVATE_FLAGS}
     )
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -826,7 +859,7 @@ endif()
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
-    /STACK:0x1200000,0x100000
+    /STACK:0x1200000,0x200000
     /errorlimit:0
   )
   if(RELEASE)
@@ -846,107 +879,74 @@ if(WIN32)
       /delayload:IPHLPAPI.dll
     )
   endif()
-elseif(APPLE)
+endif()
+
+if(APPLE)
   target_link_options(${bun} PUBLIC
     -dead_strip
     -dead_strip_dylibs
+    -Wl,-ld_new
+    -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
   )
-else()
-  # Try to use lld-16 if available, otherwise fallback to lld
-  # Cache it so we don't have to re-run CMake to pick it up
-  if((NOT DEFINED LLD_NAME) AND (NOT CI OR BUN_LINK_ONLY))
-    find_program(LLD_EXECUTABLE_NAME lld-${LLVM_VERSION_MAJOR})
+endif()
 
-    if(NOT LLD_EXECUTABLE_NAME)
-      if(CI)
-        # Ensure we don't use a differing version of lld in CI vs clang
-        message(FATAL_ERROR "lld-${LLVM_VERSION_MAJOR} not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and set to lld-${LLVM_VERSION_MAJOR}")
-      endif()
-
-      # To make it easier for contributors, allow differing versions of lld vs clang/cmake
-      find_program(LLD_EXECUTABLE_NAME lld)
-    endif()
-
-    if(NOT LLD_EXECUTABLE_NAME)
-      message(FATAL_ERROR "LLD not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and lld is available in your PATH as lld-${LLVM_VERSION_MAJOR}")
-    endif()
-
-    # normalize to basename so it can be used with -fuse-ld
-    get_filename_component(LLD_NAME ${LLD_EXECUTABLE_NAME} NAME CACHE)
-    message(STATUS "Using linker: ${LLD_NAME} (${LLD_EXECUTABLE_NAME})")
-  elseif(NOT DEFINED LLD_NAME)
-    set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
-  endif()
-
-  if (NOT IS_MUSL)
-  if (IS_ARM64)
-    set(ARCH_WRAP_FLAGS
-      -Wl,--wrap=fcntl64
-      -Wl,--wrap=statx
-    )
-  elseif(IS_X86_64)
-    set(ARCH_WRAP_FLAGS
-      -Wl,--wrap=fcntl
-      -Wl,--wrap=fcntl64
-      -Wl,--wrap=fstat
-      -Wl,--wrap=fstat64
-      -Wl,--wrap=fstatat
-      -Wl,--wrap=fstatat64
-      -Wl,--wrap=lstat
-      -Wl,--wrap=lstat64
-      -Wl,--wrap=mknod
-      -Wl,--wrap=mknodat
-      -Wl,--wrap=stat
-      -Wl,--wrap=stat64
-      -Wl,--wrap=statx
-    )
-  endif()
-  else()
-    set(ARCH_WRAP_FLAGS
-    )
-  endif()
-
-  if (NOT IS_MUSL)
-    set(ABI_WRAP_FLAGS
-      -Wl,--wrap=cosf
+if(LINUX)
+  if(NOT ABI STREQUAL "musl")
+  # on arm64
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+    target_link_options(${bun} PUBLIC
       -Wl,--wrap=exp
       -Wl,--wrap=expf
-      -Wl,--wrap=fmod
-      -Wl,--wrap=fmodf
+      -Wl,--wrap=fcntl64
       -Wl,--wrap=log
-      -Wl,--wrap=log10f
       -Wl,--wrap=log2
       -Wl,--wrap=log2f
       -Wl,--wrap=logf
       -Wl,--wrap=pow
       -Wl,--wrap=powf
-      -Wl,--wrap=sincosf
-      -Wl,--wrap=sinf
-      -Wl,--wrap=tanf
     )
   else()
-    set(ABI_WRAP_FLAGS
+    target_link_options(${bun} PUBLIC
+      -Wl,--wrap=exp
+      -Wl,--wrap=expf
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=powf
+    )
+  endif()
+  endif()
+
+  if(NOT ABI STREQUAL "musl")
+    target_link_options(${bun} PUBLIC
+      -static-libstdc++
+      -static-libgcc
+    )
+  else()
+    target_link_options(${bun} PUBLIC
+      -lstdc++
+      -lgcc
     )
   endif()
 
   target_link_options(${bun} PUBLIC
-    -fuse-ld=${LLD_NAME}
+    --ld-path=${LLD_PROGRAM}
     -fno-pic
-    -static-libstdc++
-    -static-libgcc
     -Wl,-no-pie
     -Wl,-icf=safe
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    ${ARCH_WRAP_FLAGS}
-    ${ABI_WRAP_FLAGS}
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    -Wl,-z,combreloc
+    -Wl,--no-eh-frame-hdr
+    -Wl,--sort-section=name
+    -Wl,--hash-style=both
+    -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
 endif()
@@ -957,6 +957,7 @@ if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
   target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
+
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
   target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()
@@ -1087,6 +1088,18 @@ endif()
 # --- Packaging ---
 
 if(NOT BUN_CPP_ONLY)
+  set(CMAKE_STRIP_FLAGS "")
+  if(APPLE)
+    # We do not build with exceptions enabled. These are generated by lolhtml
+    # and other dependencies. We build lolhtml with abort on panic, so it
+    # shouldn't be including these in the first place.
+    set(CMAKE_STRIP_FLAGS --remove-section=__TEXT,__eh_frame --remove-section=__TEXT,__unwind_info --remove-section=__TEXT,__gcc_except_tab)
+  elseif(LINUX AND NOT ABI STREQUAL "musl")
+    # When you use llvm-strip to do this, it doesn't delete it from the binary and instead keeps it as [LOAD #2 [R]]
+    # So, we must use GNU strip to do this.
+    set(CMAKE_STRIP_FLAGS -R .eh_frame -R .gcc_except_table)
+  endif()
+
   if(bunStrip)
     register_command(
       TARGET
@@ -1098,6 +1111,7 @@ if(NOT BUN_CPP_ONLY)
       COMMAND
         ${CMAKE_STRIP}
           ${bunExe}
+          ${CMAKE_STRIP_FLAGS}
           --strip-all
           --strip-debug
           --discard-all
@@ -1173,10 +1187,12 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(CI)
+    set(bunTriplet bun-${OS}-${ARCH})
+    if(LINUX AND ABI STREQUAL "musl")
+      set(bunTriplet ${bunTriplet}-musl)
+    endif()
     if(ENABLE_BASELINE)
-      set(bunTriplet bun-${OS}-${ARCH}-baseline)
-    else()
-      set(bunTriplet bun-${OS}-${ARCH})
+      set(bunTriplet ${bunTriplet}-baseline)
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
     set(bunFiles ${bunExe} features.json)

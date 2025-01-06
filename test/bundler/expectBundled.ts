@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -194,6 +194,7 @@ export interface BundlerTestInput {
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
   experimentalCss?: boolean;
+  experimentalHtml?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -210,6 +211,7 @@ export interface BundlerTestInput {
   // pass subprocess.env
   env?: Record<string, any>;
   nodePaths?: string[];
+  dotenv?: "inline" | "disable" | string;
 
   // assertion options
 
@@ -277,8 +279,6 @@ export interface BundlerTestInput {
 
   /** Multiplier for test timeout */
   timeoutScale?: number;
-  /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
-  debugTimeoutScale?: number;
 
   /* determines whether or not anything should be passed to outfile, outdir, etc. */
   generateOutput?: boolean;
@@ -400,6 +400,12 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
+  if (!new Error().stack!.includes("test/bundler/")) {
+    throw new Error(
+      `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
+    );
+  }
+
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
@@ -443,8 +449,10 @@ function expectBundled(
     minifySyntax,
     minifyWhitespace,
     experimentalCss,
+    experimentalHtml,
     onAfterBundle,
     outdir,
+    dotenv,
     outfile,
     outputPaths,
     plugins,
@@ -544,6 +552,9 @@ function expectBundled(
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
+  }
+  if (ESBUILD && dotenv) {
+    throw new Error("dotenv not implemented in esbuild");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -654,7 +665,7 @@ function expectBundled(
       }
     }
 
-    // Run bun build cli. In the future we can move to using `Bun.Bundler`
+    // Run bun build cli. In the future we can move to using `Bun.Transpiler.`
     let warningReference: Record<string, ErrorMeta[]> = {};
     const expectedErrors = bundleErrors
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
@@ -686,11 +697,13 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
               experimentalCss && "--experimental-css",
+              experimentalHtml && "--experimental-html",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
@@ -1023,8 +1036,14 @@ function expectBundled(
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           experimentalCss,
+          html: experimentalHtml ? true : undefined,
           drop,
+          define: define ?? {},
         } as BuildConfig;
+
+        if (dotenv) {
+          buildConfig.env = dotenv as any;
+        }
 
         if (conditions?.length) {
           buildConfig.conditions = conditions;
@@ -1036,12 +1055,9 @@ function expectBundled(
             const debugFile = `import path from 'path';
 import assert from 'assert';
 const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
+const options = ${JSON.stringify({ ...buildConfig, throw: true, plugins: undefined }, null, 2)};
 options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
 const build = await Bun.build(options);
-if (build.logs) {
-  throw build.logs;
-}
 for (const [key, blob] of build.outputs) {
   await Bun.write(path.join(options.outdir, blob.path), blob.result);
 }
@@ -1572,7 +1588,7 @@ for (const [key, blob] of build.outputs) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
-          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, "");
+          result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1614,7 +1630,7 @@ for (const [key, blob] of build.outputs) {
     return testRef(id, opts);
   })();
 }
-let anyOnly = false;
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1647,8 +1663,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
@@ -1660,8 +1675,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
   );
 };
 
@@ -1680,12 +1694,6 @@ function formatError(err: ErrorMeta) {
 
 function filterMatches(id: string) {
   return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
-}
-
-interface SourceMapDecodedLocation {
-  line: number;
-  column: number;
-  source: string;
 }
 
 interface SourceMap {

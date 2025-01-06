@@ -14,7 +14,7 @@ To bail after a certain threshold of failures, optionally specify a number after
 
 ```sh
 # bail after 10 failures
-$ bun test --bail 10
+$ bun test --bail=10
 ```
 
 ---

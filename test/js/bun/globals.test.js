@@ -249,28 +249,4 @@ describe("globalThis.gc", () => {
       expect(delta).toBeGreaterThanOrEqual(0);
     });
   });
-
-  // it("is not present in the global scope if --expose-gc is not passed", () => {
-  //   expect(runAndPrint("'gc' in globalThis")).toEqual("false");
-  // });
-  // it("is a function", () => {
-  //   expect(globalThis).toHaveProperty("gc");
-  //   expect(globalThis.gc).toBeInstanceOf(Function);
-  // });
-
-  // it("is the same as calling gc directly", () => {
-  //   expect(globalThis.gc).toBe(gc);
-  // });
-
-  // it("cleans up memory", () => {
-  //   const start = process.memoryUsage().heapUsed;
-  //   // allocate a bunch of crap
-  //   for (let i = 0; i < 100; i++) {
-  //     new Array(100_000);
-  //   }
-  //   const before = process.memoryUsage().heapUsed;
-  //   globalThis.gc();
-  //   const after = process.memoryUsage().heapUsed;
-  //   expect(after).toBeLessThanOrEqual(before);
-  // });
 });

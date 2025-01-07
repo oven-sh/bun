@@ -9,6 +9,8 @@ const {
   validateString,
   validateAbortSignal,
   validateArray,
+  validateObject,
+  validateOneOf,
 } = require("internal/validators");
 
 var NetModule;
@@ -1629,53 +1631,6 @@ function validateTimeout(timeout) {
     throw ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
   }
 }
-
-/**
- * @callback validateOneOf
- * @template T
- * @param {T} value
- * @param {string} name
- * @param {T[]} oneOf
- */
-
-/** @type {validateOneOf} */
-const validateOneOf = (value, name, oneOf) => {
-  // const validateOneOf = hideStackFrames((value, name, oneOf) => {
-  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin.$call(
-      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
-      ", ",
-    );
-    const reason = "must be one of: " + allowed;
-    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-};
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-
-/** @type {validateObject} */
-const validateObject = (value, name, options = null) => {
-  // const validateObject = hideStackFrames((value, name, options = null) => {
-  const allowArray = options?.allowArray ?? false;
-  const allowFunction = options?.allowFunction ?? false;
-  const nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && $isJSArray(value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-};
 
 function isInt32(value) {
   return value === (value | 0);

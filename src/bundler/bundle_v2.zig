@@ -327,10 +327,15 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
 
+    const is_node = bun.strings.eqlComptime(path.namespace, "node");
+    if (is_node and bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path)) {
+        return path;
+    }
+
     // "file" namespace should use the relative file path for its display name.
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
-    if (path.isFile() or bun.strings.eqlComptime(path.namespace, "node")) {
+    if (path.isFile() or is_node) {
         const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -14097,7 +14102,7 @@ pub const LinkerContext = struct {
                                 },
                             ) catch unreachable;
                         }
-                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                    } else if (c.resolver.opts.target == .browser and bun.strings.hasPrefixComptime(next_source.path.text, NodeFallbackModules.import_path)) {
                         c.log.addRangeErrorFmtWithNote(
                             source,
                             r,

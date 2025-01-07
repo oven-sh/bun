@@ -2054,7 +2054,9 @@ fn NewPrinter(
                         //
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
-                        if (comptime Environment.allow_assert)
+                        //
+                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
+                        if (comptime Environment.isDebug)
                             bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);

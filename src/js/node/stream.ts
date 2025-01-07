@@ -35,6 +35,7 @@ const {
   validateInt32,
   validateAbortSignal,
   validateFunction,
+  validateObject,
 } = require("internal/validators");
 
 const ProcessNextTick = process.nextTick;
@@ -577,77 +578,6 @@ var require_errors = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/validators.js
-var require_validators = __commonJS({
-  "node_modules/readable-stream/lib/internal/validators.js"(exports, module) {
-    "use strict";
-    var {
-      ArrayPrototypeIncludes,
-      ArrayPrototypeJoin,
-      ArrayPrototypeMap,
-      NumberParseInt,
-      RegExpPrototypeTest,
-      String: String2,
-    } = require_primordials();
-    var {
-      hideStackFrames,
-      codes: { ERR_INVALID_ARG_TYPE },
-    } = require_errors();
-    var signals = {};
-    function isInt32(value) {
-      return value === (value | 0);
-    }
-    function isUint32(value) {
-      return value === value >>> 0;
-    }
-    var octalReg = /^[0-7]+$/;
-    var modeDesc = "must be a 32-bit unsigned integer or an octal string";
-    function parseFileMode(value, name, def) {
-      if (typeof value === "undefined") {
-        value = def;
-      }
-      if (typeof value === "string") {
-        if (!RegExpPrototypeTest(octalReg, value)) {
-          throw $ERR_INVALID_ARG_VALUE(name, value, modeDesc);
-        }
-        value = NumberParseInt(value, 8);
-      }
-      validateInt32(value, name, 0, 2 ** 32 - 1);
-      return value;
-    }
-    var validateOneOf = hideStackFrames((value, name, oneOf) => {
-      if (!ArrayPrototypeIncludes(oneOf, value)) {
-        const allowed = ArrayPrototypeJoin(
-          ArrayPrototypeMap(oneOf, v => (typeof v === "string" ? `'${v}'` : String2(v))),
-          ", ",
-        );
-        const reason = "must be one of: " + allowed;
-        throw $ERR_INVALID_ARG_VALUE(name, value, reason);
-      }
-    });
-    var validateObject = hideStackFrames((value, name, options) => {
-      const useDefaultOptions = options == null;
-      const allowArray = useDefaultOptions ? false : options.allowArray;
-      const allowFunction = useDefaultOptions ? false : options.allowFunction;
-      const nullable = useDefaultOptions ? false : options.nullable;
-      if (
-        (!nullable && value === null) ||
-        (!allowArray && $isJSArray(value)) ||
-        (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-      ) {
-        throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
-      }
-    });
-    module.exports = {
-      isInt32,
-      isUint32,
-      parseFileMode,
-      validateObject,
-      validateOneOf,
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/utils.js
 var require_utils = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/utils.js"(exports, module) {
@@ -941,7 +871,6 @@ var require_end_of_stream = __commonJS({
     var { AbortError, codes } = require_errors();
     var { ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = codes;
     var { once } = require_util();
-    var { validateObject } = require_validators();
     var { Promise: Promise2 } = require_primordials();
     var {
       isClosed,
@@ -1151,7 +1080,6 @@ var require_operators = __commonJS({
       codes: { ERR_INVALID_ARG_TYPE, ERR_MISSING_ARGS, ERR_OUT_OF_RANGE },
       AbortError,
     } = require_errors();
-    var { validateObject } = require_validators();
     var kWeakHandler = require_primordials().Symbol("kWeak");
     var { finished } = require_end_of_stream();
     var {
@@ -2558,7 +2486,6 @@ var require_readable = __commonJS({
         ERR_STREAM_UNSHIFT_AFTER_END_EVENT,
       },
     } = require_errors();
-    var { validateObject } = require_validators();
     var from = require_from();
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;

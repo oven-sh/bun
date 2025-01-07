@@ -21,7 +21,6 @@ const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
-const S3Bucket = @import("./webcore/S3Bucket.zig");
 pub const shim = Shimmer("Bun", "ConsoleObject", @This());
 pub const Type = *anyopaque;
 pub const name = "Bun::ConsoleObject";
@@ -2217,10 +2216,6 @@ pub const Formatter = struct {
                 );
             },
             .Class => {
-                if (S3Bucket.fromJS(value)) |s3bucket| {
-                    S3Bucket.writeFormat(s3bucket, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                }
                 var printable = ZigString.init(&name_buf);
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
@@ -2490,6 +2485,9 @@ pub const Formatter = struct {
                     return;
                 } else if (value.as(JSC.WebCore.Blob)) |blob| {
                     blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
+                } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
+                    s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.FetchHeaders) != null) {
                     if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {

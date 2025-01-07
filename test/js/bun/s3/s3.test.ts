@@ -1,10 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { bunExe, bunEnv, getSecret, tempDirWithFiles } from "harness";
 import { randomUUID } from "crypto";
-import { S3, s3, file } from "bun";
-import type { S3File, S3FileOptions } from "bun";
+import { S3Client, s3, file } from "bun";
+const S3 = (...args) => new S3Client(...args);
+import type { S3Options } from "bun";
 import path from "path";
-const s3Options: S3FileOptions = {
+const s3Options: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
   endpoint: getSecret("S3_R2_ENDPOINT"),
@@ -128,64 +129,64 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       });
     });
 
-    describe("Bun.S3", () => {
+    describe("Bun.S3Client", () => {
       describe(bucketInName ? "bucket in path" : "bucket in options", () => {
         const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
         const options = bucketInName ? null : { bucket: S3Bucket };
 
         var bucket = S3(s3Options);
         beforeAll(async () => {
-          const file = bucket(tmp_filename, options);
+          const file = bucket.file(tmp_filename, options);
           await file.write("Hello Bun!");
         });
 
         afterAll(async () => {
-          const file = bucket(tmp_filename, options);
+          const file = bucket.file(tmp_filename, options);
           await file.unlink();
         });
 
         it("should download file via Bun.s3().text()", async () => {
-          const file = bucket(tmp_filename, options);
+          const file = bucket.file(tmp_filename, options);
           const text = await file.text();
           expect(text).toBe("Hello Bun!");
         });
 
         it("should download range", async () => {
-          const file = bucket(tmp_filename, options);
+          const file = bucket.file(tmp_filename, options);
           const text = await file.slice(6, 10).text();
           expect(text).toBe("Bun!");
         });
 
         it("should check if a key exists or content-length", async () => {
-          const file = bucket(tmp_filename, options);
+          const file = bucket.file(tmp_filename, options);
           const exists = await file.exists();
           expect(exists).toBe(true);
-          const contentLength = await file.size;
-          expect(contentLength).toBe(10);
+          const stat = await file.stat();
+          expect(stat.size).toBe(10);
         });
 
         it("should check if a key does not exist", async () => {
-          const file = bucket(tmp_filename + "-does-not-exist", options);
+          const file = bucket.file(tmp_filename + "-does-not-exist", options);
           const exists = await file.exists();
           expect(exists).toBe(false);
         });
 
         it("should be able to set content-type", async () => {
           {
-            const s3file = bucket(tmp_filename, options);
+            const s3file = bucket.file(tmp_filename, options);
             await s3file.write("Hello Bun!", { type: "text/css" });
             const response = await fetch(s3file.presign());
             expect(response.headers.get("content-type")).toStartWith("text/css");
           }
           {
-            const s3file = bucket(tmp_filename, options);
+            const s3file = bucket.file(tmp_filename, options);
             await s3file.write("Hello Bun!", { type: "text/plain" });
             const response = await fetch(s3file.presign());
             expect(response.headers.get("content-type")).toStartWith("text/plain");
           }
 
           {
-            const s3file = bucket(tmp_filename, options);
+            const s3file = bucket.file(tmp_filename, options);
             const writer = s3file.writer({ type: "application/json" });
             writer.write("Hello Bun!");
             await writer.end();
@@ -195,7 +196,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
           {
             await bucket.write(tmp_filename, "Hello Bun!", { ...options, type: "application/xml" });
-            const response = await fetch(bucket(tmp_filename, options).presign());
+            const response = await fetch(bucket.file(tmp_filename, options).presign());
             expect(response.headers.get("content-type")).toStartWith("application/xml");
           }
         });
@@ -225,15 +226,16 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             await bucket.write(tmp_filename, bigPayload, options);
             expect(await bucket.size(tmp_filename, options)).toBe(Buffer.byteLength(bigPayload));
-            expect(await bucket(tmp_filename, options).text()).toBe(bigPayload);
+            expect(await bucket.file(tmp_filename, options).text()).toBe(bigPayload);
           }
         }, 10_000);
 
         it("should be able to upload large files in one go using S3File.write", async () => {
           {
-            const s3File = bucket(tmp_filename, options);
+            const s3File = bucket.file(tmp_filename, options);
             await s3File.write(bigPayload);
-            expect(await s3File.size).toBe(Buffer.byteLength(bigPayload));
+            const stat = await s3File.stat();
+            expect(stat.size).toBe(Buffer.byteLength(bigPayload));
             expect(await s3File.text()).toBe(bigPayload);
           }
         }, 10_000);
@@ -270,8 +272,8 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           const s3file = file(tmp_filename, options);
           const exists = await s3file.exists();
           expect(exists).toBe(true);
-          const contentLength = await s3file.size;
-          expect(contentLength).toBe(10);
+          const stat = await s3file.stat();
+          expect(stat.size).toBe(10);
         });
 
         it("should check if a key does not exist", async () => {
@@ -307,7 +309,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         it("should be able to upload large files in one go using Bun.write", async () => {
           {
             await Bun.write(file(tmp_filename, options), bigPayload);
-            expect(await s3(tmp_filename, options).size).toBe(Buffer.byteLength(bigPayload));
+            expect(await S3Client.size(tmp_filename, options)).toBe(Buffer.byteLength(bigPayload));
             expect(await file(tmp_filename, options).text()).toEqual(bigPayload);
           }
         }, 15_000);
@@ -316,7 +318,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3File = file(tmp_filename, options);
             await s3File.write(bigPayload);
-            expect(await s3File.size).toBe(Buffer.byteLength(bigPayload));
+            expect(s3File.size).toBeNaN();
             expect(await s3File.text()).toBe(bigPayload);
           }
         }, 10_000);
@@ -353,8 +355,12 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           const s3file = s3(tmp_filename, options);
           const exists = await s3file.exists();
           expect(exists).toBe(true);
-          const contentLength = await s3file.size;
-          expect(contentLength).toBe(10);
+          expect(s3file.size).toBeNaN();
+          const stat = await s3file.stat();
+          expect(stat.size).toBe(10);
+          expect(stat.etag).toBeDefined();
+
+          expect(stat.lastModified).toBeDefined();
         });
 
         it("should check if a key does not exist", async () => {
@@ -398,7 +404,11 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3file = s3(tmp_filename, options);
             await Bun.write(s3file, bigPayload);
-            expect(await s3file.size).toBe(Buffer.byteLength(bigPayload));
+            const stat = await s3file.stat();
+            expect(stat.size).toBe(Buffer.byteLength(bigPayload));
+            expect(stat.etag).toBeDefined();
+
+            expect(stat.lastModified).toBeDefined();
             expect(await s3file.text()).toBe(bigPayload);
           }
         }, 10_000);
@@ -407,7 +417,12 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           {
             const s3File = s3(tmp_filename, options);
             await s3File.write(bigPayload);
-            expect(await s3File.size).toBe(Buffer.byteLength(bigPayload));
+            const stat = await s3File.stat();
+            expect(stat.size).toBe(Buffer.byteLength(bigPayload));
+            expect(stat.etag).toBeDefined();
+
+            expect(stat.lastModified).toBeDefined();
+
             expect(await s3File.text()).toBe(bigPayload);
           }
         }, 10_000);
@@ -512,6 +527,21 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       expect().pass();
     });
   });
+
+  describe("static methods", () => {
+    it("should work", async () => {
+      const filename = randomUUID() + ".txt";
+      await S3Client.write(filename, "Hello Bun!", { ...s3Options, bucket: S3Bucket });
+      expect(await S3Client.file(filename, { ...s3Options, bucket: S3Bucket }).text()).toBe("Hello Bun!");
+      const stat = await S3Client.stat(filename, { ...s3Options, bucket: S3Bucket });
+      expect(stat.size).toBe(10);
+      expect(stat.etag).toBeDefined();
+      expect(stat.lastModified).toBeDefined();
+      expect(stat.type).toBe("text/plain;charset=utf-8");
+      await S3Client.unlink(filename, { ...s3Options, bucket: S3Bucket });
+      expect().pass();
+    });
+  });
   describe("errors", () => {
     it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
       try {
@@ -579,7 +609,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error when invalid method", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
           const s3file = fn("method-test", {
             ...s3Options,
             bucket: S3Bucket,
@@ -597,7 +627,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error when path is too long", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
           try {
             const s3file = fn("test" + "a".repeat(4096), {
               ...s3Options,
@@ -616,7 +646,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   describe("credentials", () => {
     it("should error with invalid access key id", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           const s3file = fn("s3://bucket/credentials-test", {
             ...s3Options,
             accessKeyId: "invalid",
@@ -633,7 +663,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
     it("should error with invalid secret key id", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           const s3file = fn("s3://bucket/credentials-test", {
             ...s3Options,
             secretAccessKey: "invalid",
@@ -650,7 +680,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error with invalid endpoint", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           try {
             const s3file = fn("s3://bucket/credentials-test", {
               ...s3Options,
@@ -666,7 +696,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
     it("should error with invalid endpoint", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           try {
             const s3file = fn("s3://bucket/credentials-test", {
               ...s3Options, // credentials and endpoint dont match
@@ -682,7 +712,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
     it("should error with invalid endpoint", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           try {
             const s3file = fn("s3://bucket/credentials-test", {
               ...s3Options,
@@ -699,7 +729,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error with invalid bucket", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           const s3file = fn("s3://credentials-test", {
             ...s3Options,
             bucket: "invalid",
@@ -718,7 +748,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error when missing credentials", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path), file].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
           const s3file = fn("s3://credentials-test", {
             bucket: "invalid",
           });
@@ -734,7 +764,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
     it("should error when presign missing credentials", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
           const s3file = fn("method-test", {
             bucket: S3Bucket,
           });
@@ -751,7 +781,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
 
     it("should error when presign with invalid endpoint", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
           let options = { ...s3Options, bucket: S3Bucket };
           options.endpoint = Buffer.alloc(1024, "a").toString();
 
@@ -768,7 +798,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     });
     it("should error when presign with invalid token", async () => {
       await Promise.all(
-        [s3, (path, ...args) => S3(...args)(path)].map(async fn => {
+        [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
           let options = { ...s3Options, bucket: S3Bucket };
           options.sessionToken = Buffer.alloc(4096, "a").toString();
 

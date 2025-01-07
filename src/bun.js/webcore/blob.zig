@@ -1010,7 +1010,7 @@ pub const Blob = struct {
             if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                 ctx,
                 source_blob,
-                @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                @truncate(s3.options.partSize),
             ), ctx)) |stream| {
                 return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
             } else {
@@ -1048,7 +1048,7 @@ pub const Blob = struct {
                         if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                             ctx,
                             source_blob,
-                            @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                            @truncate(s3.options.partSize),
                         ), ctx)) |stream| {
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -1113,7 +1113,7 @@ pub const Blob = struct {
                     if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                         ctx,
                         source_blob,
-                        @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                        @truncate(s3.options.partSize),
                     ), ctx)) |stream| {
                         return S3.uploadStream(
                             (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -4739,10 +4739,10 @@ pub const Blob = struct {
         }
     }
 
-    pub fn getSize(this: *Blob, globalThis: *JSC.JSGlobalObject) JSValue {
+    pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {
         if (this.size == Blob.max_size) {
             if (this.isS3()) {
-                return S3File.S3BlobStatTask.size(globalThis, this);
+                return JSC.JSValue.jsNumber(std.math.nan(f64));
             }
             this.resolveSize();
             if (this.size == Blob.max_size and this.store != null) {

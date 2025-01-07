@@ -160,11 +160,11 @@ pub const S3Credentials = struct {
                     }
                 }
 
-                if (try opts.getOptional(globalObject, "pageSize", i32)) |pageSize| {
-                    if (pageSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE_IN_MiB and pageSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE_IN_MiB) {
+                if (try opts.getOptional(globalObject, "pageSize", i64)) |pageSize| {
+                    if (pageSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE and pageSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                         return globalObject.throwRangeError(pageSize, .{
-                            .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE_IN_MiB),
-                            .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE_IN_MiB),
+                            .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE),
+                            .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE),
                             .field_name = "pageSize",
                         });
                     } else {

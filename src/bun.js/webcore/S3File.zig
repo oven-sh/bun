@@ -7,9 +7,9 @@ const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const strings = bun.strings;
 const Output = bun.Output;
-const S3Bucket = @import("./S3Bucket.zig");
+const S3Client = @import("./S3Client.zig");
 const S3 = bun.S3;
-
+const S3Stat = @import("./S3Stat.zig").S3Stat;
 pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
@@ -31,7 +31,7 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
         );
     }
 
-    try S3Bucket.writeFormatCredentials(credentials, s3.options, s3.acl, Formatter, formatter, writer, enable_ansi_colors);
+    try S3Client.writeFormatCredentials(credentials, s3.options, s3.acl, Formatter, formatter, writer, enable_ansi_colors);
     try formatter.writeIndent(@TypeOf(writer), writer);
     try writer.writeAll("}");
     formatter.resetLine();
@@ -99,7 +99,7 @@ pub fn unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 }
 
-pub fn upload(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
@@ -350,8 +350,27 @@ pub const S3BlobStatTask = struct {
         const globalThis = this.promise.globalObject().?;
 
         switch (result) {
-            .success => |stat| {
-                this.promise.resolve(globalThis, JSValue.jsNumber(stat.size));
+            .success => |stat_result| {
+                this.promise.resolve(globalThis, JSValue.jsNumber(stat_result.size));
+            },
+            inline .not_found, .failure => |err| {
+                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+            },
+        }
+    }
+
+    pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+        defer this.deinit();
+        const globalThis = this.promise.globalObject().?;
+        switch (result) {
+            .success => |stat_result| {
+                this.promise.resolve(globalThis, S3Stat.init(
+                    stat_result.size,
+                    stat_result.etag,
+                    stat_result.contentType,
+                    stat_result.lastModified,
+                    globalThis,
+                ).toJS(globalThis));
             },
             inline .not_found, .failure => |err| {
                 this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
@@ -373,7 +392,20 @@ pub const S3BlobStatTask = struct {
         S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
+    pub fn stat(globalThis: *JSC.JSGlobalObject, blob: *Blob) JSValue {
+        const this = S3BlobStatTask.new(.{
+            .promise = JSC.JSPromise.Strong.init(globalThis),
+            .store = blob.store.?,
+        });
+        this.store.ref();
+        const promise = this.promise.value();
+        const credentials = blob.store.?.data.s3.getCredentials();
+        const path = blob.store.?.data.s3.path();
+        const env = globalThis.bunVM().transpiler.env;
 
+        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        return promise;
+    }
     pub fn size(globalThis: *JSC.JSGlobalObject, blob: *Blob) JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
@@ -478,6 +510,44 @@ pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *J
     return getPresignUrlFrom(this, globalThis, if (args.len > 0) args.ptr[0] else null);
 }
 
+pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    return S3BlobStatTask.stat(globalThis, this);
+}
+
+pub fn stat(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const arguments = callframe.arguments_old(3).slice();
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    defer args.deinit();
+
+    // accept a path or a blob
+    var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
+    errdefer {
+        if (path_or_blob == .path) {
+            path_or_blob.path.deinit();
+        }
+    }
+
+    if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
+        return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
+    }
+
+    switch (path_or_blob) {
+        .path => |path| {
+            const options = args.nextEat();
+            if (path == .fd) {
+                return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
+            }
+            var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            defer blob.deinit();
+
+            return S3BlobStatTask.stat(globalThis, &blob);
+        },
+        .blob => |*blob| {
+            return S3BlobStatTask.stat(globalThis, blob);
+        },
+    }
+}
+
 pub fn constructInternalJS(
     globalObject: *JSC.JSGlobalObject,
     path: JSC.Node.PathLike,
@@ -532,10 +602,12 @@ comptime {
     @export(construct, .{ .name = "JSS3File__construct" });
     @export(hasInstance, .{ .name = "JSS3File__hasInstance" });
     @export(getBucket, .{ .name = "JSS3File__bucket" });
+    @export(getStat, .{ .name = "JSS3File__stat" });
 }
 
 pub const exports = struct {
     pub const JSS3File__presign = JSC.toJSHostFunctionWithContext(Blob, getPresignUrl);
+    pub const JSS3File__stat = JSC.toJSHostFunctionWithContext(Blob, getStat);
 };
 extern fn BUN__createJSS3File(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(JSC.conv) JSValue;
 extern fn BUN__createJSS3FileUnsafely(*JSC.JSGlobalObject, *Blob) callconv(JSC.conv) JSValue;

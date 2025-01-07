@@ -65,6 +65,8 @@ if (isDockerEnabled()) {
     if (!result.error.message.includes('The container name "/minio" is already in use by container'))
       throw result.error;
   }
+  // wait for minio to be ready
+  await Bun.sleep(1_000);
 
   /// create a bucket
   child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `http://localhost:9000/buntest`], {

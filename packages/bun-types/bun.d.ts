@@ -17,6 +17,7 @@ declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  import type { Stats } from "node:fs";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -1139,35 +1140,6 @@ declare module "bun" {
    * );
    * ```
    */
-  interface StatsBase<T> {
-    isFile(): boolean;
-    isDirectory(): boolean;
-    isBlockDevice(): boolean;
-    isCharacterDevice(): boolean;
-    isSymbolicLink(): boolean;
-    isFIFO(): boolean;
-    isSocket(): boolean;
-    dev: T;
-    ino: T;
-    mode: T;
-    nlink: T;
-    uid: T;
-    gid: T;
-    rdev: T;
-    size: T;
-    blksize: T;
-    blocks: T;
-    atimeMs: T;
-    mtimeMs: T;
-    ctimeMs: T;
-    birthtimeMs: T;
-    atime: Date;
-    mtime: Date;
-    ctime: Date;
-    birthtime: Date;
-  }
-  interface FileStats extends StatsBase<number> {}
-
   interface BunFile extends Blob {
     /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
@@ -1274,7 +1246,7 @@ declare module "bun" {
     /**
      * Get the stat of the file.
      */
-    stat(): Promise<FileStats>;
+    stat(): Promise<Stats>;
   }
 
   var S3Client: S3Client;

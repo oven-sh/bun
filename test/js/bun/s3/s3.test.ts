@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, getSecret, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
 import { randomUUID } from "crypto";
 import { S3Client, s3, file, which } from "bun";
 const S3 = (...args) => new S3Client(...args);
@@ -31,7 +31,8 @@ const allCredentials = [
   },
 ];
 
-if (isDockerEnabled()) {
+// TODO: figure out why minio is not creating a bucket on Linux, works on macOS and windows
+if (isDockerEnabled() && !isLinux) {
   const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",

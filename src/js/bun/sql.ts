@@ -65,7 +65,7 @@ function normalizeSSLMode(value: string): SSLMode {
     }
   }
 
-  throw $ERR_INVALID_ARG_VALUE(`Invalid SSL mode: ${value}`);
+  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
 class Query extends PublicPromise {
@@ -454,21 +454,33 @@ function loadOptions(o) {
   if (idleTimeout != null) {
     idleTimeout = Number(idleTimeout);
     if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
-      throw $ERR_INVALID_ARG_VALUE("idle_timeout must be a non-negative integer less than 2^31");
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.idle_timeout",
+        idleTimeout,
+        "must be a non-negative integer less than 2^31",
+      );
     }
   }
 
   if (connectionTimeout != null) {
     connectionTimeout = Number(connectionTimeout);
     if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
-      throw $ERR_INVALID_ARG_VALUE("connection_timeout must be a non-negative integer less than 2^31");
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.connection_timeout",
+        connectionTimeout,
+        "must be a non-negative integer less than 2^31",
+      );
     }
   }
 
   if (maxLifetime != null) {
     maxLifetime = Number(maxLifetime);
     if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
-      throw $ERR_INVALID_ARG_VALUE("max_lifetime must be a non-negative integer less than 2^31");
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.max_lifetime",
+        maxLifetime,
+        "must be a non-negative integer less than 2^31",
+      );
     }
   }
 

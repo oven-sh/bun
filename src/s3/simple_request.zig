@@ -13,6 +13,10 @@ pub const S3StatResult = union(enum) {
         size: usize = 0,
         /// etag is not owned and need to be copied if used after this callback
         etag: []const u8 = "",
+        /// format: Mon, 06 Jan 2025 22:40:57 GMT, lastModified is not owned and need to be copied if used after this callback
+        lastModified: []const u8 = "",
+        /// format: text/plain, contentType is not owned and need to be copied if used after this callback
+        contentType: []const u8 = "",
     },
     not_found: S3Error,
 
@@ -222,6 +226,8 @@ pub const S3HttpSimpleTask = struct {
                         callback(.{
                             .success = .{
                                 .etag = response.headers.get("etag") orelse "",
+                                .lastModified = response.headers.get("last-modified") orelse "",
+                                .contentType = response.headers.get("content-type") orelse "",
                                 .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
                             },
                         }, this.callback_context);

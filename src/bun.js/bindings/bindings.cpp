@@ -4808,6 +4808,23 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         return;
     }
 
+    if (value.isCell()) {
+        // This code is mostly here for debugging purposes if this spot is reached.
+        JSCell* cell = value.asCell();
+        auto type = cell->type();
+
+        switch (type) {
+        case JSC::SymbolType: {
+            except->message = Bun::toStringRef(jsCast<JSC::Symbol*>(cell)->descriptiveString());
+            return;
+        }
+
+        default: {
+            break;
+        }
+        }
+    }
+
     auto str = value.toWTFString(global);
     if (UNLIKELY(scope.exception())) {
         scope.clearExceptionExceptTermination();
@@ -4815,6 +4832,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     }
 
     except->message = Bun::toStringRef(str);
+}
+
+extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC__Exception* exception)
+{
+    JSC::Exception* jscException = jsCast<JSC::Exception*>(exception);
+    return JSC::JSValue::encode(jscException->value());
 }
 
 void JSC__VM__releaseWeakRefs(JSC__VM* arg0)

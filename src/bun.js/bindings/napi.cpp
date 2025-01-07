@@ -1198,7 +1198,6 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
 
-
     if (result) {
         *result = ref->data;
     }

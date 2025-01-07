@@ -1076,8 +1076,9 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   return array;
 }
 
-// Call two Node-API functions in a way that causes an error and log the
-// error code and message from both calls
+// Call Node-API functions in ways that result in different error handling
+// (erroneous call, valid call, or valid call while an exception is pending) and
+// log information from napi_get_last_error_info
 static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_extended_error_info *error;

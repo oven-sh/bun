@@ -1,6 +1,7 @@
 import { describe } from "bun:test";
 import { itBundled } from "../expectBundled";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -1010,12 +1011,68 @@ c {
     },
   });
 
+  const files = [
+    "/001/default/style.css",
+    "/001/relative-url/style.css",
+    "/at-charset/001/style.css",
+    "/at-keyframes/001/style.css",
+    "/at-layer/001/style.css",
+    "/at-layer/002/style.css",
+    "/at-layer/003/style.css",
+    "/at-layer/004/style.css",
+    "/at-layer/005/style.css",
+    "/at-layer/006/style.css",
+    "/at-layer/007/style.css",
+    "/at-layer/008/style.css",
+    "/at-media/001/default/style.css",
+    "/at-media/002/style.css",
+    "/at-media/003/style.css",
+    "/at-media/004/style.css",
+    "/at-media/005/style.css",
+    "/at-media/006/style.css",
+    "/at-media/007/style.css",
+    "/at-media/008/style.css",
+    "/at-supports/001/style.css",
+    "/at-supports/002/style.css",
+    "/at-supports/003/style.css",
+    "/at-supports/004/style.css",
+    "/at-supports/005/style.css",
+    "/cycles/001/style.css",
+    "/cycles/002/style.css",
+    "/cycles/003/style.css",
+    "/cycles/004/style.css",
+    "/cycles/005/style.css",
+    "/cycles/006/style.css",
+    "/cycles/007/style.css",
+    "/cycles/008/style.css",
+    "/data-urls/002/style.css",
+    "/data-urls/003/style.css",
+    "/duplicates/001/style.css",
+    "/duplicates/002/style.css",
+    "/empty/001/style.css",
+    "/relative-paths/001/style.css",
+    "/relative-paths/002/style.css",
+    "/subresource/001/style.css",
+    "/subresource/002/style.css",
+    "/subresource/004/style.css",
+    "/subresource/005/style.css",
+    "/subresource/007/style.css",
+    "/url-format/001/default/style.css",
+    "/url-format/001/relative-url/style.css",
+    "/url-format/002/default/style.css",
+    "/url-format/002/relative-url/style.css",
+    "/url-format/003/default/style.css",
+    "/url-format/003/relative-url/style.css",
+    "/url-fragments/001/style.css",
+    "/url-fragments/002/style.css",
+  ];
+
   // From: https://github.com/romainmenke/css-import-tests. These test cases just
   // serve to document any changes in bun's behavior. Any changes in behavior
   // should be tested to ensure they don't cause any regressions. The easiest way
   // to test the changes is to bundle https://github.com/evanw/css-import-tests
   // and visually inspect a browser's rendering of the resulting CSS file.
-  itBundled("css/CSSAtImportConditionsFromExternalRepoFUCK", {
+  itBundled("css/CSSAtImportConditionsFromExternalRepo", {
     experimentalCss: true,
     files: {
       "/001/default/a.css": `.box { background-color: green; }`,
@@ -1263,72 +1320,14 @@ c {
       "/url-fragments/002/b.css": `.box { background-color: red; }`,
       "/url-fragments/002/style.css": `@import url("./a.css#1"); @import url("./b.css#2"); @import url("./a.css#3");`,
     },
-    entryPoints: [
-      "/001/default/style.css",
-      "/001/relative-url/style.css",
-      "/at-charset/001/style.css",
-      "/at-keyframes/001/style.css",
-      "/at-layer/001/style.css",
-      "/at-layer/002/style.css",
-      "/at-layer/003/style.css",
-      "/at-layer/004/style.css",
-      "/at-layer/005/style.css",
-      "/at-layer/006/style.css",
-      "/at-layer/007/style.css",
-      "/at-layer/008/style.css",
-      "/at-media/001/default/style.css",
-      "/at-media/002/style.css",
-      "/at-media/003/style.css",
-      "/at-media/004/style.css",
-      "/at-media/005/style.css",
-      "/at-media/006/style.css",
-      "/at-media/007/style.css",
-      "/at-media/008/style.css",
-      "/at-supports/001/style.css",
-      "/at-supports/002/style.css",
-      "/at-supports/003/style.css",
-      "/at-supports/004/style.css",
-      "/at-supports/005/style.css",
-      "/cycles/001/style.css",
-      "/cycles/002/style.css",
-      "/cycles/003/style.css",
-      "/cycles/004/style.css",
-      "/cycles/005/style.css",
-      "/cycles/006/style.css",
-      "/cycles/007/style.css",
-      "/cycles/008/style.css",
-      "/data-urls/002/style.css",
-      "/data-urls/003/style.css",
-      "/duplicates/001/style.css",
-      "/duplicates/002/style.css",
-      "/empty/001/style.css",
-      "/relative-paths/001/style.css",
-      "/relative-paths/002/style.css",
-      "/subresource/001/style.css",
-      "/subresource/002/style.css",
-      "/subresource/004/style.css",
-      "/subresource/005/style.css",
-      "/subresource/007/style.css",
-      "/url-format/001/default/style.css",
-      "/url-format/001/relative-url/style.css",
-      "/url-format/002/default/style.css",
-      "/url-format/002/relative-url/style.css",
-      "/url-format/003/default/style.css",
-      "/url-format/003/relative-url/style.css",
-      "/url-fragments/001/style.css",
-      "/url-fragments/002/style.css",
-    ],
+    entryPoints: files,
+    outputPaths: files,
     outdir: "/out",
-    // loader: {
-    //   ".css": "css",
-    //   ".png": "base64",
-    // },
-    //     expectedScanLog: `relative-paths/001/a/a.css: WARNING: Expected ";" but found end of file
-    // relative-paths/002/a/a.css: WARNING: Expected ";" but found end of file
-    // url-format/003/default/style.css: WARNING: Expected ")" to go with "("
-    // url-format/003/default/style.css: NOTE: The unbalanced "(" is here:
-    // url-format/003/relative-url/style.css: WARNING: Expected ")" to go with "("
-    // url-format/003/relative-url/style.css: NOTE: The unbalanced "(" is here:`,
+    onAfterBundle(api) {
+      for (const file of files) {
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+      }
+    },
   });
 
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {

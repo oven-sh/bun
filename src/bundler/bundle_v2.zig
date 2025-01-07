@@ -131,6 +131,7 @@ const Loc = Logger.Loc;
 const bake = bun.bake;
 const lol = bun.LOLHTML;
 const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
+const DataURL = @import("../resolver/resolver.zig").DataURL;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -467,7 +468,7 @@ pub const BundleV2 = struct {
         visited: bun.bit_set.DynamicBitSet,
         all_import_records: []ImportRecord.List,
         all_loaders: []const Loader,
-        all_urls_for_css: []const ?[]const u8,
+        all_urls_for_css: []const []const u8,
         redirects: []u32,
         redirect_map: PathToSourceIndexMap,
         dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
@@ -538,7 +539,7 @@ pub const BundleV2 = struct {
                         }
 
                         // Mark if the file is imported by JS and its URL is inlined for CSS
-                        const is_inlined = v.all_urls_for_css[import_record.source_index.get()] != null;
+                        const is_inlined = v.all_urls_for_css[import_record.source_index.get()].len > 0;
                         if (is_js and is_inlined) {
                             v.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
                         } else if (is_css and is_inlined) {
@@ -642,8 +643,8 @@ pub const BundleV2 = struct {
         const additional_files = this.graph.input_files.items(.additional_files);
         const unique_keys = this.graph.input_files.items(.unique_key_for_additional_file);
         const content_hashes = this.graph.input_files.items(.content_hash_for_additional_file);
-        for (all_urls_for_css, 0..) |maybe_url_for_css, index| {
-            if (maybe_url_for_css != null) {
+        for (all_urls_for_css, 0..) |url_for_css, index| {
+            if (url_for_css.len > 0) {
                 // We like to inline additional files in CSS if they fit a size threshold
                 // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
                 if (additional_files_imported_by_css_and_inlined.isSet(index) and !additional_files_imported_by_js_and_inlined_in_css.isSet(index)) {
@@ -2431,6 +2432,7 @@ pub const BundleV2 = struct {
                     .range = import_record.range,
                     .original_target = original_target,
                 });
+
                 resolve.dispatch();
                 return true;
             }
@@ -2440,6 +2442,30 @@ pub const BundleV2 = struct {
     }
 
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
+        const had_matches = enqueueOnLoadPluginIfNeededImpl(this, parse);
+        if (had_matches) return true;
+
+        if (bun.strings.eqlComptime(parse.path.namespace, "dataurl")) {
+            const data_url = DataURL.parseWithoutCheck(parse.path.text) catch return false;
+            const maybe_decoded = data_url.decodeDataImpl(bun.default_allocator) catch return false;
+            if (maybe_decoded) |d| {
+                this.free_list.append(d) catch bun.outOfMemory();
+            }
+            parse.contents_or_fd = .{
+                .contents = maybe_decoded orelse data_url.data,
+            };
+            parse.loader = switch (data_url.decodeMimeType().category) {
+                .javascript => .js,
+                .css => .css,
+                .json => .json,
+                else => parse.loader,
+            };
+        }
+
+        return false;
+    }
+
+    pub fn enqueueOnLoadPluginIfNeededImpl(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
                 if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.transpiler.options.experimental)) {
@@ -3907,7 +3933,7 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, transpiler.options.experimental_css, &source, null, unique_key);
+        ast.addUrlForCss(allocator, transpiler.options.experimental, &source, null, unique_key);
         return ast;
     }
 
@@ -7430,7 +7456,7 @@ pub const LinkerContext = struct {
                                 const source = &input_files[id];
                                 const loader = loaders[record.source_index.get()];
                                 switch (loader) {
-                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .json => {
+                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html => {
                                         this.log.addErrorFmt(
                                             source,
                                             Loc.Empty,
@@ -7452,8 +7478,8 @@ pub const LinkerContext = struct {
                                 }
 
                                 // It has an inlined url for CSS
-                                if (urls_for_css[record.source_index.get()]) |url| {
-                                    record.path.text = url;
+                                if (urls_for_css[record.source_index.get()].len > 0) {
+                                    record.path.text = urls_for_css[record.source_index.get()];
                                 }
                                 // It is some external URL
                                 else if (unique_key_for_additional_file[record.source_index.get()].len > 0) {

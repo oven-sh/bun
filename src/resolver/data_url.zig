@@ -115,18 +115,32 @@ pub const DataURL = struct {
         return bun.http.MimeType.init(d.mime_type, null, null);
     }
 
+    /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
+        const data = decodeDataImpl(url, allocator) catch {
+            return allocator.dupe(u8, url.data);
+        };
+
+        if (data) |some| {
+            return some;
+        }
+
+        return allocator.dupe(u8, url.data);
+    }
+
+    /// Decodes the data from the data URL.
+    /// Returns null if the data is not base64 encoded or percent encoded.
+    pub fn decodeDataImpl(url: DataURL, allocator: std.mem.Allocator) !?[]u8 {
         if (url.is_base64) {
-            const len = bun.base64.decodeLen(percent_decoded);
+            const len = bun.base64.decodeLen(url.data);
             const buf = try allocator.alloc(u8, len);
-            const result = bun.base64.decode(buf, percent_decoded);
+            const result = bun.base64.decode(buf, url.data);
             if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;
             }
             return buf;
         }
 
-        return allocator.dupe(u8, percent_decoded);
+        return PercentEncoding.decodeUnstrict(allocator, url.data) catch null orelse null;
     }
 };

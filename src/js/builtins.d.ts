@@ -566,6 +566,7 @@ declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
 declare function $ERR_INVALID_CURSOR_POS(): Error;
 declare function $ERR_MULTIPLE_CALLBACK(): Error;
 declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
+declare function $ERR_STREAM_NULL_VALUES(): TypeError;
 
 /**
  * Convert a function to a class-like object.

@@ -1082,97 +1082,6 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
   return getDefaultHighWaterMark(state.objectMode);
 }
 
-// node_modules/readable-stream/lib/internal/streams/from.js
-var require_from = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/from.js"(exports, module) {
-    "use strict";
-    var { PromisePrototypeThen, SymbolAsyncIterator, SymbolIterator } = require_primordials();
-    var { ERR_INVALID_ARG_TYPE, ERR_STREAM_NULL_VALUES } = require_errors().codes;
-    function from(Readable, iterable, opts) {
-      let iterator;
-      if (typeof iterable === "string" || iterable instanceof Buffer) {
-        return new Readable({
-          objectMode: true,
-          ...opts,
-          read() {
-            this.push(iterable);
-            this.push(null);
-          },
-        });
-      }
-      let isAsync;
-      if (iterable && iterable[SymbolAsyncIterator]) {
-        isAsync = true;
-        iterator = iterable[SymbolAsyncIterator]();
-      } else if (iterable && iterable[SymbolIterator]) {
-        isAsync = false;
-        iterator = iterable[SymbolIterator]();
-      } else {
-        throw new ERR_INVALID_ARG_TYPE("iterable", ["Iterable"], iterable);
-      }
-      const readable = new Readable({
-        objectMode: true,
-        highWaterMark: 1,
-        ...opts,
-      });
-      let reading = false;
-      readable._read = function () {
-        if (!reading) {
-          reading = true;
-          next();
-        }
-      };
-      readable._destroy = function (error, cb) {
-        PromisePrototypeThen(
-          close(error),
-          () => ProcessNextTick(cb, error),
-          e => ProcessNextTick(cb, e || error),
-        );
-      };
-      async function close(error) {
-        const hadError = error !== void 0 && error !== null;
-        const hasThrow = typeof iterator.throw === "function";
-        if (hadError && hasThrow) {
-          const { value, done } = await iterator.throw(error);
-          await value;
-          if (done) {
-            return;
-          }
-        }
-        if (typeof iterator.return === "function") {
-          const { value } = await iterator.return();
-          await value;
-        }
-      }
-      async function next() {
-        for (;;) {
-          try {
-            const { value, done } = isAsync ? await iterator.next() : iterator.next();
-            if (done) {
-              readable.push(null);
-            } else {
-              const res = value && typeof value.then === "function" ? await value : value;
-              if (res === null) {
-                reading = false;
-                throw new ERR_STREAM_NULL_VALUES();
-              } else if (readable.push(res)) {
-                continue;
-              } else {
-                reading = false;
-              }
-            }
-          } catch (err) {
-            readable.destroy(err);
-          }
-          break;
-        }
-      }
-      return readable;
-    }
-    module.exports = from;
-  },
-});
-
 var _ReadableFromWeb;
 var _ReadableFromWebForUndici;
 
@@ -1649,7 +1558,7 @@ var require_readable = __commonJS({
         ERR_STREAM_UNSHIFT_AFTER_END_EVENT,
       },
     } = require_errors();
-    var from = require_from();
+    var from = require("internal/streams/from");
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;
 
@@ -3251,7 +3160,7 @@ var require_duplexify = __commonJS({
     var { destroyer } = require("internal/streams/destroy");
     var Duplex = require_duplex();
     var { createDeferredPromise } = require_util();
-    var from = require_from();
+    var from = require("internal/streams/from");
     var isBlob =
       typeof Blob !== "undefined"
         ? function isBlob2(b) {

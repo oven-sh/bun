@@ -176,8 +176,8 @@ function getPlatformLabel(platform) {
   if (profile && profile !== "release") {
     label += `-${profile}`;
   }
-  if (features?.length) {
-    label += `-with-${features.join("-")}`;
+  if (features?.includes("gvisor")) {
+    label = `${getEmoji("gvisor")} ${label}`;
   }
   return label;
 }

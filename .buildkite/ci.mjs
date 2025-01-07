@@ -169,15 +169,16 @@ function getPlatformKey(platform) {
  */
 function getPlatformLabel(platform) {
   const { os, arch, baseline, profile, distro, release, features } = platform;
-  let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
+  let emoji = getBuildkiteEmoji(distro || os);
+  if (features?.includes("gvisor")) {
+    emoji += ` ${getBuildkiteEmoji("gvisor")}`;
+  }
+  let label = `${emoji} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
-  }
-  if (features?.includes("gvisor")) {
-    label = `${getEmoji("gvisor")} ${label}`;
   }
   return label;
 }
@@ -193,14 +194,12 @@ function getImageKey(platform) {
   if (distro) {
     key += `-${distro}`;
   }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
-  }
-
   if (abi) {
     key += `-${abi}`;
   }
-
+  if (features?.length) {
+    key += `-with-${features.join("-")}`;
+  }
   return key;
 }
 
@@ -848,10 +847,11 @@ function getOptionsStep() {
         options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
           ([key, platform]) => {
             const { os, arch, abi, distro, release, features } = platform;
-            let label = `${getEmoji(os)} ${arch}`;
+            let emoji = getBuildkiteEmoji(os);
             if (features?.includes("gvisor")) {
-              label = `${getEmoji("gvisor")} ${label}`;
+              emoji += ` ${getBuildkiteEmoji("gvisor")}`;
             }
+            let label = `${emoji} ${arch}`;
             if (abi) {
               label += `-${abi}`;
             }

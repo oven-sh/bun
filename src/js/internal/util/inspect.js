@@ -145,9 +145,9 @@ const ONLY_ENUMERABLE = 2;
  * Fast path for {@link extractedSplitNewLines} for ASCII/Latin1 strings.
  * @returns `value` split on newlines (newline included at end), or `undefined`
  * if non-ascii UTF8/UTF16.
- * 
+ *
  * Passing this a non-string will cause a panic.
- * 
+ *
  * @type {(value: string) => string[] | undefined}
  */
 const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
@@ -457,7 +457,7 @@ const extractedSplitNewLines = value => {
     return extractedSplitNewLinesFastPathStringsOnly(value) || extractedSplitNewLinesSlow(value);
   }
   return extractedSplitNewLinesSlow(value);
-}
+};
 
 const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;

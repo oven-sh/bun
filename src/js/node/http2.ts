@@ -349,8 +349,7 @@ class Http2ServerRequest extends Readable {
 
   set method(method) {
     validateString(method, "method");
-    if (StringPrototypeTrim(method) === "")
-      throw $ERR_INVALID_ARG_VALUE(`The arguments method is invalid. Received ${method}`);
+    if (StringPrototypeTrim(method) === "") throw $ERR_INVALID_ARG_VALUE("method", method);
 
     this[kHeaders][HTTP2_HEADER_METHOD] = method;
   }
@@ -642,7 +641,7 @@ class Http2ServerResponse extends Stream {
         }
       } else {
         if (headers.length % 2 !== 0) {
-          throw $ERR_INVALID_ARG_VALUE(`The arguments headers is invalid.`);
+          throw $ERR_INVALID_ARG_VALUE("headers", headers);
         }
 
         for (i = 0; i < headers.length; i += 2) {
@@ -1637,7 +1636,7 @@ class Http2Stream extends Duplex {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isJSArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2048,7 +2047,7 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2099,7 +2098,7 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -3091,7 +3090,7 @@ class ClientHttp2Session extends Http2Session {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;

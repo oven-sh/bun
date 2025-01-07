@@ -59,7 +59,6 @@ public:
 
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
-    JSC::IsoHeapCellType m_heapCellTypeForJSS3Bucket;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
 
 private:

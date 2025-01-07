@@ -177,38 +177,41 @@ describe("adding and removing items", () => {
         expect(expected.size()).toBe(9990);
       });
     });
-
-    describe("when 1k items are pushed, then removed", () => {
-      beforeEach(() => {
-        for (let i = 0; i < 1_000; i++) {
-          queue.push(i);
-          expected.push(i);
-        }
-        expect(queue.size()).toBe(1_000);
-
-        while (queue.isNotEmpty()) {
-          expect(queue.shift()).toBe(expected.shift());
-        }
-      });
-
-      it("is now empty", () => {
-        expect(queue.size()).toBe(0);
-        expect(queue.isEmpty()).toBeTrue();
-        expect(queue.isNotEmpty()).toBeFalse();
-      });
-
-      it("when new items are added, the backing list is resized", () => {
-        for (let i = 0; i < 10_000; i++) {
-          queue.push(i);
-          expected.push(i);
-          expect(queue.size()).toBe(expected.size());
-          expect(queue.peek()).toBe(expected.peek());
-          expect(queue.isEmpty()).toBeFalse();
-          expect(queue.isNotEmpty()).toBeTrue();
-        }
-      });
-    }); // </when 1k items are pushed, then removed>
   }); // </when 10k items are pushed>
+
+  describe("when 1k items are pushed, then removed", () => {
+    beforeEach(() => {
+      queue = new Dequeue();
+      expected = new DequeueList();
+
+      for (let i = 0; i < 1_000; i++) {
+        queue.push(i);
+        expected.push(i);
+      }
+      expect(queue.size()).toBe(1_000);
+
+      while (queue.isNotEmpty()) {
+        expect(queue.shift()).toBe(expected.shift());
+      }
+    });
+
+    it("is now empty", () => {
+      expect(queue.size()).toBe(0);
+      expect(queue.isEmpty()).toBeTrue();
+      expect(queue.isNotEmpty()).toBeFalse();
+    });
+
+    it("when new items are added, the backing list is resized", () => {
+      for (let i = 0; i < 10_000; i++) {
+        queue.push(i);
+        expected.push(i);
+        expect(queue.size()).toBe(expected.size());
+        expect(queue.peek()).toBe(expected.peek());
+        expect(queue.isEmpty()).toBeFalse();
+        expect(queue.isNotEmpty()).toBeTrue();
+      }
+    });
+  }); // </when 1k items are pushed, then removed>
 
   it("pushing and shifting a lot of items affects the size and backing list correctly", () => {
     queue = new Dequeue();
@@ -239,4 +242,4 @@ describe("adding and removing items", () => {
       expect(queue.isNotEmpty()).toBeTrue();
     }
   }); // </pushing a lot of items affects the size and backing list correctly>
-});
+}); // </adding and removing items>

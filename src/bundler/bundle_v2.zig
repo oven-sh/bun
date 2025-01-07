@@ -4408,10 +4408,9 @@ pub const ParseTask = struct {
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
-        opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
+        opts.features.auto_polyfill_require = output_format == .esm;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
-        opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
         opts.features.auto_import_jsx = task.jsx.parse and transpiler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (transpiler.options.trim_unused_imports orelse false);
@@ -7002,18 +7001,17 @@ pub const LinkerContext = struct {
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-                if (expr.data == .e_call and expr.data.e_call.target.data == .e_require_call_target and
+                if (expr.data == .e_call and
+                    expr.data.e_call.target.data == .e_require_call_target and
                     // if it's commonjs, use require()
-                    this.options.output_format != .cjs and
-                    // if it's esm and bun, use import.meta.require(). the code for __require is not injected into the bundle.
-                    !this.options.target.isBun())
+                    this.options.output_format != .cjs)
                 {
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(1),
                         "__require",
                         1,
-                    ) catch {};
+                    );
                 }
             },
             else => {
@@ -7754,11 +7752,9 @@ pub const LinkerContext = struct {
 
                                     continue;
                                 } else {
-
                                     // We should use "__require" instead of "require" if we're not
                                     // generating a CommonJS output file, since it won't exist otherwise.
-                                    // Disabled for target bun because `import.meta.require` will be inlined.
-                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
+                                    if (shouldCallRuntimeRequire(output_format)) {
                                         runtime_require_uses += 1;
                                     }
 
@@ -9388,7 +9384,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         const result = c.generateCodeForFileInChunkJS(
             &buffer_writer,
@@ -9857,7 +9853,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun() or c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const print_options = js_printer.Options{
@@ -10017,7 +10013,7 @@ pub const LinkerContext = struct {
 
         switch (c.options.output_format) {
             .internal_bake_dev => {
-                const start = bun.bake.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+                const start = bun.bake.getHmrRuntime(if (c.options.target.isServerSide()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },

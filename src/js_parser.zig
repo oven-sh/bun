@@ -18863,22 +18863,20 @@ fn NewParser_(
                     }
                 },
                 .e_import_meta => {
-                    // Make `import.meta.url` side effect free.
-                    if (strings.eqlComptime(name, "url")) {
-                        return p.newExpr(
-                            E.Dot{
-                                .target = target,
-                                .name = name,
-                                .name_loc = name_loc,
-                                .can_be_removed_if_unused = true,
-                            },
-                            target.loc,
-                        );
-                    }
-
                     if (strings.eqlComptime(name, "main")) {
                         return p.valueForImportMetaMain(false, target.loc);
                     }
+
+                    // Make all property accesses on `import.meta.url` side effect free.
+                    return p.newExpr(
+                        E.Dot{
+                            .target = target,
+                            .name = name,
+                            .name_loc = name_loc,
+                            .can_be_removed_if_unused = true,
+                        },
+                        target.loc,
+                    );
                 },
                 .e_require_call_target => {
                     if (strings.eqlComptime(name, "main")) {

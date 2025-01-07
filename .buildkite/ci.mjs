@@ -104,43 +104,48 @@ function getTargetLabel(target) {
  * @type {Platform[]}
  */
 const buildPlatforms = [
+  /* macOS */
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
+  /* Linux GNU */
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+  /* Linux MUSL */
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-  { os: "windows", arch: "x64", release: "2019" },
-  { os: "windows", arch: "x64", baseline: true, release: "2019" },
+  /* Windows */
+  { os: "windows", arch: "x64", release: "2025" },
+  { os: "windows", arch: "x64", baseline: true, release: "2025" },
 ];
 
 /**
  * @type {Platform[]}
  */
 const testPlatforms = [
+  /* macOS */
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "aarch64", release: "13" },
   { os: "darwin", arch: "x64", release: "14" },
   { os: "darwin", arch: "x64", release: "13" },
+  /* Linux GNU */
   { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
   { os: "linux", arch: "x64", distro: "debian", release: "12" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-  { os: "windows", arch: "x64", release: "2019" },
-  { os: "windows", arch: "x64", release: "2019", baseline: true },
+  /* Linux MUSL */
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
+  /* Linux GVisor */
+  { os: "linux", arch: "x64", features: ["gvisor"], distro: "ubuntu", release: "24.04" },
+  { os: "linux", arch: "aarch64", features: ["gvisor"], distro: "alpine", release: "3.21" },
+  /* Windows */
+  { os: "windows", arch: "x64", release: "2025" },
+  { os: "windows", arch: "x64", release: "2025", baseline: true },
 ];
 
 /**
@@ -195,8 +200,9 @@ function getImageKey(platform) {
   if (abi) {
     key += `-${abi}`;
   }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
+  const buildFeatures = features?.filter(feature => feature === "docker");
+  if (buildFeatures?.length) {
+    key += `-with-${buildFeatures.join("-")}`;
   }
   return key;
 }
@@ -530,7 +536,7 @@ function getBuildBunStep(platform, options) {
  * @returns {Step}
  */
 function getTestBunStep(platform, options, testOptions = {}) {
-  const { os } = platform;
+  const { os, features } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
@@ -539,6 +545,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
   }
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  }
+  if (features?.includes("gvisor")) {
+    args.push("--gvisor");
   }
 
   const depends = [];

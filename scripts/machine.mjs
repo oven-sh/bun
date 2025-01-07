@@ -1215,8 +1215,9 @@ async function main() {
     name += `-musl`;
   }
 
-  if (features?.length) {
-    name += `-with-${features.join("-")}`;
+  const buildFeatures = features?.filter(feature => feature !== "gvisor");
+  if (buildFeatures?.length) {
+    name += `-with-${buildFeatures.join("-")}`;
   }
 
   let bootstrapPath, agentPath, dockerfilePath;

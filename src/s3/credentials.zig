@@ -556,6 +556,7 @@ pub const S3Credentials = struct {
         // detect service name and host from region or endpoint
         const host = brk_host: {
             if (this.endpoint.len > 0) {
+                if (this.endpoint.len >= 512) return error.InvalidEndpoint;
                 break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
             } else {
                 break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});

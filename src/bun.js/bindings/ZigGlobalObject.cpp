@@ -3708,8 +3708,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // set `force` to true
-    callFrame->setArgument(1, JSC::jsBoolean(true));
+    // set `force` to true. Note that `Bun.gc` reads from the 0th argument, which is normally reserved for `this`.
+    callFrame->setArgument(0, JSC::jsBoolean(true));
     return Generated::BunObject::jsGc(globalObject, callFrame);
 }
 

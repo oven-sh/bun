@@ -529,6 +529,17 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   });
 
   describe("static methods", () => {
+    it("its defined", () => {
+      expect(S3Client).toBeDefined();
+      expect(S3Client.write).toBeDefined();
+      expect(S3Client.file).toBeDefined();
+      expect(S3Client.stat).toBeDefined();
+      expect(S3Client.unlink).toBeDefined();
+      expect(S3Client.exists).toBeDefined();
+      expect(S3Client.presign).toBeDefined();
+      expect(S3Client.size).toBeDefined();
+      expect(S3Client.delete).toBeDefined();
+    });
     it("should work", async () => {
       const filename = randomUUID() + ".txt";
       await S3Client.write(filename, "Hello Bun!", { ...s3Options, bucket: S3Bucket });

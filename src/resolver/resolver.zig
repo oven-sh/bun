@@ -1102,6 +1102,7 @@ pub const Resolver = struct {
                 if (dir_info.enclosing_tsconfig_json) |tsconfig| {
                     if (tsconfig.paths.count() > 0) {
                         if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
+
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return .{
                                 .success = Result{
@@ -3521,7 +3522,14 @@ pub const Resolver = struct {
                 if (strings.indexOfChar(file.path[node_modules_folder_offset..], std.fs.path.sep)) |package_name_length| {
                     if ((r.dirInfoCached(file.path[0 .. node_modules_folder_offset + package_name_length]) catch null)) |package_dir_info| {
                         if (package_dir_info.package_json) |package_json| {
-                            return MatchResult{ .path_pair = .{ .primary = Path.init(file.path) }, .diff_case = file.diff_case, .dirname_fd = file.dirname_fd, .package_json = package_json, .file_fd = file.file_fd, .is_node_module = true };
+                            return MatchResult{
+                                .path_pair = .{ .primary = Path.init(file.path) },
+                                .diff_case = file.diff_case,
+                                .dirname_fd = file.dirname_fd,
+                                .package_json = package_json,
+                                .file_fd = file.file_fd,
+                                .is_node_module = true,
+                            };
                         }
                     }
                 }
@@ -3621,10 +3629,17 @@ pub const Resolver = struct {
                                     debug.addNoteFmt("The fallback path in case of \"require\" is {s}", .{auto_main_result.path_pair.primary.text});
                                 }
 
-                                return MatchResult{ .path_pair = .{
-                                    .primary = _result.path_pair.primary,
-                                    .secondary = auto_main_result.path_pair.primary,
-                                }, .diff_case = _result.diff_case, .dirname_fd = _result.dirname_fd, .package_json = package_json, .file_fd = auto_main_result.file_fd, .is_node_module = is_node_module_folder };
+                                return MatchResult{
+                                    .path_pair = .{
+                                        .primary = _result.path_pair.primary,
+                                        .secondary = auto_main_result.path_pair.primary,
+                                    },
+                                    .diff_case = _result.diff_case,
+                                    .dirname_fd = _result.dirname_fd,
+                                    .package_json = package_json,
+                                    .file_fd = auto_main_result.file_fd,
+                                    .is_node_module = is_node_module_folder,
+                                };
                             } else {
                                 if (r.debug_logs) |*debug| {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"{s}\" field in \"{s}\"", .{

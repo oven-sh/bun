@@ -196,3 +196,26 @@ it("errors thrown by native code should be TypeError", async () => {
   expect(() => Bun.dns.prefetch()).toThrowError(TypeError);
   expect(async () => await fetch("http://localhost", { body: "123" })).toThrowError(TypeError);
 });
+
+describe("globalThis.gc", () => {
+  it("is a function", () => {
+    expect(globalThis).toHaveProperty("gc");
+    expect(globalThis.gc).toBeInstanceOf(Function);
+  });
+
+  it("is the same as calling gc directly", () => {
+    expect(globalThis.gc).toBe(gc);
+  });
+
+  it("cleans up memory", () => {
+    const start = process.memoryUsage().heapUsed;
+    // allocate a bunch of crap
+    for (let i = 0; i < 100; i++) {
+      new Array(100_000);
+    }
+    const before = process.memoryUsage().heapUsed;
+    globalThis.gc();
+    const after = process.memoryUsage().heapUsed;
+    expect(after).toBeLessThanOrEqual(before);
+  });
+});

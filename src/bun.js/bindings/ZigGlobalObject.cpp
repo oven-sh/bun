@@ -60,6 +60,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunWorkerGlobalScope.h"
@@ -1759,6 +1760,14 @@ JSC_DEFINE_HOST_FUNCTION(functionATOB,
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
+}
+
+/// `globalThis.gc()` is an alias for `Bun.gc(true)`
+JSC_DEFINE_HOST_FUNCTION(functionJsGc,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    callFrame->setArgument(1, JSC::jsBoolean(true));
+    return Generated::BunObject::jsGc(globalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionReportError,

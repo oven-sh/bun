@@ -33,8 +33,6 @@
 const { pathToFileURL } = require("node:url");
 let BufferModule;
 
-const { validateObject } = require("internal/validators");
-
 const primordials = require("internal/primordials");
 const {
   Array,
@@ -355,6 +353,18 @@ const codes = {}; // exported from errors.js
     return error;
   };
 }
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {{ allowArray?: boolean, allowFunction?: boolean, nullable?: boolean }} [options] */
+const validateObject = (value, name, allowArray = false) => {
+  if (
+    value === null ||
+    (!allowArray && $isJSArray(value)) ||
+    (typeof value !== "object" && typeof value !== "function")
+  )
+    throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
+};
 
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(

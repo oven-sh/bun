@@ -200,9 +200,8 @@ function getImageKey(platform) {
   if (abi) {
     key += `-${abi}`;
   }
-  const buildFeatures = features?.filter(feature => feature === "docker");
-  if (buildFeatures?.length) {
-    key += `-with-${buildFeatures.join("-")}`;
+  if (features?.length) {
+    key += `-with-${features.join("-")}`;
   }
   return key;
 }
@@ -854,9 +853,9 @@ function getOptionsStep() {
         options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
           ([key, platform]) => {
             const { os, arch, abi, distro, release, features } = platform;
-            let emoji = getBuildkiteEmoji(os);
+            let emoji = getEmoji(os);
             if (features?.includes("gvisor")) {
-              emoji += ` ${getBuildkiteEmoji("gvisor")}`;
+              emoji += ` ${getEmoji("gvisor")}`;
             }
             let label = `${emoji} ${arch}`;
             if (abi) {

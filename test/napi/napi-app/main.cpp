@@ -1084,27 +1084,49 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
 
   // this function is implemented in C++
   // error because the result pointer is null
-  (void)napi_create_double(env, 1.0, nullptr);
+  printf("erroneous napi_create_double returned code %d\n",
+         napi_create_double(env, 1.0, nullptr));
   NODE_API_CALL(env, napi_get_last_error_info(env, &error));
-  printf("erroneous napi_create_double: code = %d, message = %s\n",
+  printf("erroneous napi_create_double info: code = %d, message = %s\n",
          error->error_code, error->error_message);
 
   // this function should succeed and the success should overwrite the error
   // from the last call
   napi_value js_number;
-  (void)napi_create_double(env, 5.0, &js_number);
+  printf("successful napi_create_double returned code %d\n",
+         napi_create_double(env, 5.0, &js_number));
   NODE_API_CALL(env, napi_get_last_error_info(env, &error));
-  printf("successful napi_create_double: code = %d, message = %s\n",
+  printf("successful napi_create_double info: code = %d, message = %s\n",
          error->error_code,
          error->error_message ? error->error_message : "(null)");
 
   // this function is implemented in zig
   // error because the value is not an array
   unsigned int len;
-  (void)napi_get_array_length(env, js_number, &len);
+  printf("erroneous napi_get_array_length returned code %d\n",
+         napi_get_array_length(env, js_number, &len));
   NODE_API_CALL(env, napi_get_last_error_info(env, &error));
-  printf("erroneous napi_get_value_bool: code = %d, message = %s\n",
+  printf("erroneous napi_get_array_length info: code = %d, message = %s\n",
          error->error_code, error->error_message);
+
+  // throw an exception
+  NODE_API_CALL(env, napi_throw_type_error(env, nullptr, "oops!"));
+  // nothing is wrong with this call by itself, but it should return
+  // napi_pending_exception without doing anything because an exception is
+  // pending
+  napi_value coerced_string;
+  printf("napi_coerce_to_string with pending exception returned code %d\n",
+         napi_coerce_to_string(env, js_number, &coerced_string));
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf(
+      "napi_coerce_to_string with pending exception info: code = %d, message = "
+      "%s\n",
+      error->error_code, error->error_message);
+
+  // clear the exception
+  napi_value exception;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+
   return ok(env);
 }
 

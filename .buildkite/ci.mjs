@@ -200,8 +200,9 @@ function getImageKey(platform) {
   if (abi) {
     key += `-${abi}`;
   }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
+  const buildFeatures = features?.filter(feature => feature !== "gvisor");
+  if (buildFeatures?.length) {
+    key += `-with-${buildFeatures.join("-")}`;
   }
   return key;
 }

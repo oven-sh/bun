@@ -23749,8 +23749,11 @@ fn NewParser_(
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
                 .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
                 .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
-                .uses_require_ref = p.runtime_imports.__require != null and
-                    p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0,
+                .uses_require_ref = if (p.options.bundle)
+                    p.runtime_imports.__require != null and
+                        p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0
+                else
+                    p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,

@@ -3464,10 +3464,12 @@ pub const ParseTask = struct {
         // and then that is either replaced with the module itself, or an import to the
         // runtime here.
         const runtime_require = switch (target) {
-            // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.require.resolve'
-            // Omitting it here acts as an extra assertion.
-            .bun, .bun_macro => "",
+            // Previously, Bun inlined `import.meta.require` at all usages. This broke
+            // code that called `fn.toString()` and parsed the code outside a module
+            // context.
+            .bun, .bun_macro =>
+            \\export var __require = import.meta.require;
+            ,
 
             .node =>
             \\import { createRequire } from "node:module";

@@ -621,8 +621,7 @@ function expectedException(actual, expected, message, fn) {
       if (expected instanceof Error) {
         ArrayPrototypePush(keys, "name", "message");
       } else if (keys.length === 0) {
-        // throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
-        throw $ERR_INVALID_ARG_VALUE(`The argument 'error' may not be an empty object. Received: {}`);
+        throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
       }
       for (const key of keys) {
         if (

@@ -286,12 +286,8 @@ test('assert.throws()', () => {
       message: 'Expected "actual" to be reference-equal to "expected":\n' +
         '+ actual - expected\n' +
         '\n' +
-        '+ [Error: foo] {\n' +
-        '+   originalColumn: 53,\n' +
-        '- [Error: foobar] {\n' +
-        '-   originalColumn: 71,\n' +
-        '    originalLine: 184\n' +
-        '  }\n',
+        '+ [Error: foo]\n' +
+        '- [Error: foobar]\n'
     }
   );
 });
@@ -1052,7 +1048,8 @@ test('Additional asserts', () => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "error" argument must be of type Object, Error, Function or RegExp. Received: "Error message"',
+      // message: 'The "error" argument must be of type Object, Error, Function or RegExp. Received: "Error message"',
+      message: 'The "error" argument must be of type Object, Error, Function or RegExp.' + invalidArgTypeHelper('Error message'),
     }
   );
 
@@ -1144,7 +1141,7 @@ test('Throws accepts objects', () => {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
       message: 'The "expected" argument must be of type Function or ' +
-        'RegExp. Received: [object Object]'
+        'RegExp.' + invalidArgTypeHelper({foo: 'bar'})
     }
   );
 
@@ -1194,7 +1191,7 @@ test('Additional assert', () => {
   assert.throws(
     () => assert.throws(() => {throw new Error();}, {}),
     {
-      message: "The argument 'error' may not be an empty object. Received: {}",
+      message: "The argument 'error' may not be an empty object. Received {}",
       code: 'ERR_INVALID_ARG_VALUE'
     }
   );
@@ -1496,8 +1493,8 @@ test('Additional assert', () => {
       () => assert.match(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp. ' +
-          'Received: "string"'
+        message: 'The "regexp" argument must be of type RegExp.' +
+          invalidArgTypeHelper('string')
       }
     );
     assert.throws(
@@ -1533,6 +1530,9 @@ test('Additional assert', () => {
         expected: /abc/,
         operator: 'match',
         message: 'The "string" argument must be of type string. ' +
+        // NOTE: invalidArgTypeHelper just says "received instanceof Object",
+        // as does message formatters in ErrorCode.cpp. we may want to change that in the future.
+        // invalidArgTypeHelper({abc: 123}),
           'Received type object ({ abc: 123 })',
         generatedMessage: true
       }
@@ -1546,8 +1546,8 @@ test('Additional assert', () => {
       () => assert.doesNotMatch(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp. ' +
-          'Received: "string"'
+        message: 'The "regexp" argument must be of type RegExp.' +
+        invalidArgTypeHelper('string')
       }
     );
     assert.throws(

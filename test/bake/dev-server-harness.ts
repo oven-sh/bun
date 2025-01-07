@@ -202,14 +202,34 @@ function snapshotCallerLocation(): string {
   }
   throw new Error("Couldn't find caller location in stack trace");
 }
-
 function stackTraceFileName(line: string): string {
-  const match = /(?:at (?:<[^>]+> )?\(|at )?((?:[A-Za-z]:)?[^:)]+)/.exec(line);
-  let result = match![1].trim();
+  let result = line.trim();
+
+  // Remove leading "at " and any parentheses
   if (result.startsWith("at ")) {
     result = result.slice(3);
   }
-  return result.replaceAll("\\", "/").trim();
+
+  // Handle case with angle brackets like "<anonymous>"
+  const angleStart = result.indexOf("<");
+  const angleEnd = result.indexOf(">");
+  if (angleStart >= 0 && angleEnd > angleStart) {
+    result = result.slice(angleEnd + 1);
+  }
+
+  // Remove parentheses and everything after colon
+  const openParen = result.indexOf("(");
+  if (openParen >= 0) {
+    result = result.slice(openParen + 1);
+  }
+
+  const colon = result.indexOf(":");
+  if (colon >= 0) {
+    result = result.slice(0, colon);
+  }
+
+  result = result.trim();
+  return result.replaceAll("\\", "/");
 }
 
 async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {

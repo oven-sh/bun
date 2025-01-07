@@ -1,3 +1,6 @@
+const ObjectFreeze = Object.freeze;
+const ReflectApply = Reflect.apply;
+
 class NotImplementedError extends Error {
   code: string;
   constructor(feature: string, issue?: number, extra?: string) {
@@ -80,6 +83,20 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+  let called = false;
+  let returnValue;
+  return function (...args) {
+    if (called) return returnValue;
+    called = true;
+    const result = ReflectApply(callback, this, args);
+    returnValue = preserveReturnValue ? result : undefined;
+    return result;
+  };
+}
+
+const kEmptyObject = ObjectFreeze({ __proto__: null });
+
 //
 
 export default {
@@ -89,6 +106,9 @@ export default {
   warnNotImplementedOnce,
   fileSinkSymbol,
   ExceptionWithHostPort,
+  once,
+
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kEmptyObject,
 };

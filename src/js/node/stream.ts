@@ -578,214 +578,6 @@ var require_errors = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/streams/end-of-stream.js
-var require_end_of_stream = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/end-of-stream.js"(exports, module) {
-    "use strict";
-    var { AbortError, codes } = require_errors();
-    var { ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = codes;
-    var { once } = require_util();
-    var { Promise: Promise2 } = require_primordials();
-    var {
-      isClosed,
-      isReadable,
-      isReadableNodeStream,
-      isReadableFinished,
-      isReadableErrored,
-      isWritable,
-      isWritableNodeStream,
-      isWritableFinished,
-      isWritableErrored,
-      isNodeStream,
-      willEmitClose: _willEmitClose,
-    } = require("internal/streams/utils");
-    function isRequest(stream) {
-      return stream.setHeader && typeof stream.abort === "function";
-    }
-    var nop = () => {};
-    function eos(stream, options, callback) {
-      var _options$readable, _options$writable;
-      if (arguments.length === 2) {
-        callback = options;
-        options = {};
-      } else if (options == null) {
-        options = {};
-      } else {
-        validateObject(options, "options");
-      }
-      validateFunction(callback, "callback");
-      validateAbortSignal(options.signal, "options.signal");
-      callback = once(callback);
-      const readable =
-        (_options$readable = options.readable) !== null && _options$readable !== void 0
-          ? _options$readable
-          : isReadableNodeStream(stream);
-      const writable =
-        (_options$writable = options.writable) !== null && _options$writable !== void 0
-          ? _options$writable
-          : isWritableNodeStream(stream);
-      if (!isNodeStream(stream)) {
-        throw new ERR_INVALID_ARG_TYPE("stream", "Stream", stream);
-      }
-      const wState = stream._writableState;
-      const rState = stream._readableState;
-      const onlegacyfinish = () => {
-        if (!stream.writable) {
-          onfinish();
-        }
-      };
-      let willEmitClose =
-        _willEmitClose(stream) &&
-        isReadableNodeStream(stream) === readable &&
-        isWritableNodeStream(stream) === writable;
-      let writableFinished = isWritableFinished(stream, false);
-      const onfinish = () => {
-        writableFinished = true;
-        if (stream.destroyed) {
-          willEmitClose = false;
-        }
-        if (willEmitClose && (!stream.readable || readable)) {
-          return;
-        }
-        if (!readable || readableFinished) {
-          callback.$call(stream);
-        }
-      };
-      let readableFinished = isReadableFinished(stream, false);
-      const onend = () => {
-        readableFinished = true;
-        if (stream.destroyed) {
-          willEmitClose = false;
-        }
-        if (willEmitClose && (!stream.writable || writable)) {
-          return;
-        }
-        if (!writable || writableFinished) {
-          callback.$call(stream);
-        }
-      };
-      const onerror = err => {
-        callback.$call(stream, err);
-      };
-      let closed = isClosed(stream);
-      const onclose = () => {
-        closed = true;
-        const errored = isWritableErrored(stream) || isReadableErrored(stream);
-        if (errored && typeof errored !== "boolean") {
-          return callback.$call(stream, errored);
-        }
-        if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-          if (!isReadableFinished(stream, false)) return callback.$call(stream, new ERR_STREAM_PREMATURE_CLOSE());
-        }
-        if (writable && !writableFinished) {
-          if (!isWritableFinished(stream, false)) return callback.$call(stream, new ERR_STREAM_PREMATURE_CLOSE());
-        }
-        callback.$call(stream);
-      };
-      const onrequest = () => {
-        stream.req.on("finish", onfinish);
-      };
-      if (isRequest(stream)) {
-        stream.on("complete", onfinish);
-        if (!willEmitClose) {
-          stream.on("abort", onclose);
-        }
-        if (stream.req) {
-          onrequest();
-        } else {
-          stream.on("request", onrequest);
-        }
-      } else if (writable && !wState) {
-        stream.on("end", onlegacyfinish);
-        stream.on("close", onlegacyfinish);
-      }
-      if (!willEmitClose && typeof stream.aborted === "boolean") {
-        stream.on("aborted", onclose);
-      }
-      stream.on("end", onend);
-      stream.on("finish", onfinish);
-      if (options.error !== false) {
-        stream.on("error", onerror);
-      }
-      stream.on("close", onclose);
-      if (closed) {
-        ProcessNextTick(onclose);
-      } else if (
-        (wState !== null && wState !== void 0 && wState.errorEmitted) ||
-        (rState !== null && rState !== void 0 && rState.errorEmitted)
-      ) {
-        if (!willEmitClose) {
-          ProcessNextTick(onclose);
-        }
-      } else if (
-        !readable &&
-        (!willEmitClose || isReadable(stream)) &&
-        (writableFinished || isWritable(stream) === false)
-      ) {
-        ProcessNextTick(onclose);
-      } else if (
-        !writable &&
-        (!willEmitClose || isWritable(stream)) &&
-        (readableFinished || isReadable(stream) === false)
-      ) {
-        ProcessNextTick(onclose);
-      } else if (rState && stream.req && stream.aborted) {
-        ProcessNextTick(onclose);
-      }
-      const cleanup = () => {
-        callback = nop;
-        stream.removeListener("aborted", onclose);
-        stream.removeListener("complete", onfinish);
-        stream.removeListener("abort", onclose);
-        stream.removeListener("request", onrequest);
-        if (stream.req) stream.req.removeListener("finish", onfinish);
-        stream.removeListener("end", onlegacyfinish);
-        stream.removeListener("close", onlegacyfinish);
-        stream.removeListener("finish", onfinish);
-        stream.removeListener("end", onend);
-        stream.removeListener("error", onerror);
-        stream.removeListener("close", onclose);
-      };
-      if (options.signal && !closed) {
-        const abort = () => {
-          const endCallback = callback;
-          cleanup();
-          endCallback.$call(
-            stream,
-            new AbortError(void 0, {
-              cause: options.signal.reason,
-            }),
-          );
-        };
-        if (options.signal.aborted) {
-          ProcessNextTick(abort);
-        } else {
-          const originalCallback = callback;
-          callback = once((...args) => {
-            options.signal.removeEventListener("abort", abort);
-            originalCallback.$apply(stream, args);
-          });
-          options.signal.addEventListener("abort", abort);
-        }
-      }
-      return cleanup;
-    }
-    function finished(stream, opts) {
-      const { promise, resolve, reject } = $newPromiseCapability(Promise);
-      eos(stream, opts, err => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-      return promise;
-    }
-    module.exports = eos;
-    module.exports.finished = finished;
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/operators.js
 var require_operators = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/operators.js"(exports, module) {
@@ -795,7 +587,7 @@ var require_operators = __commonJS({
       AbortError,
     } = require_errors();
     var kWeakHandler = require_primordials().Symbol("kWeak");
-    var { finished } = require_end_of_stream();
+    var { finished } = require("internal/streams/end-of-stream");
     var {
       ArrayPrototypePush,
       MathFloor,
@@ -1305,7 +1097,7 @@ var require_add_abort_signal = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/add-abort-signal.js"(exports, module) {
     "use strict";
     var { AbortError, codes } = require_errors();
-    var eos = require_end_of_stream();
+    var eos = require("internal/streams/end-of-stream");
     var { ERR_INVALID_ARG_TYPE } = codes;
     function isNodeStream(obj) {
       return !!(obj && typeof obj.pipe === "function");
@@ -1851,7 +1643,7 @@ var require_readable = __commonJS({
     _ReadableFromWeb = newStreamReadableFromReadableStream;
 
     var { addAbortSignal } = require_add_abort_signal();
-    var eos = require_end_of_stream();
+    var eos = require("internal/streams/end-of-stream");
     // function maybeReadMore(stream, state) {
     //   ProcessNextTick(_maybeReadMore, stream, state);
     // }
@@ -3533,7 +3325,7 @@ var require_duplexify = __commonJS({
       isWritableNodeStream,
       isDuplexNodeStream,
     } = require("internal/streams/utils");
-    var eos = require_end_of_stream();
+    var eos = require("internal/streams/end-of-stream");
     var {
       AbortError,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE },
@@ -4098,7 +3890,7 @@ var require_pipeline = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/pipeline.js"(exports, module) {
     "use strict";
     var { Promise: Promise2, SymbolAsyncIterator } = require_primordials();
-    var eos = require_end_of_stream();
+    var eos = require("internal/streams/end-of-stream");
     var { once } = require_util();
     var destroyImpl = require("internal/streams/destroy");
     var {
@@ -4558,7 +4350,7 @@ var require_promises = __commonJS({
     var { ArrayPrototypePop, Promise: Promise2 } = require_primordials();
     var { isIterable, isNodeStream } = require("internal/streams/utils");
     var { pipelineImpl: pl } = require_pipeline();
-    var { finished } = require_end_of_stream();
+    var { finished } = require("internal/streams/end-of-stream");
     function pipeline(...streams) {
       const { promise, resolve, reject } = $newPromiseCapability(Promise);
       let signal;
@@ -4608,7 +4400,7 @@ var require_stream = __commonJS({
     var compose = require_compose();
     var { pipeline } = require_pipeline();
     var { destroyer } = require("internal/streams/destroy");
-    var eos = require_end_of_stream();
+    var eos = require("internal/streams/end-of-stream");
     var promises = require_promises();
     var utils = require("internal/streams/utils");
     var Stream = (module.exports = require_legacy().Stream);
@@ -5137,7 +4929,7 @@ Object.defineProperty(exports, "promises", {
 });
 
 exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici, kEnsureConstructed };
-exports.eos = require_end_of_stream();
+exports.eos = require("internal/streams/end-of-stream");
 exports.EventEmitter = EE;
 
 export default exports;

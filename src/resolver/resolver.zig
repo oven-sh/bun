@@ -483,9 +483,7 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
 
 pub fn isNodeModulePackageFolder(path: []const u8) bool {
     if (std.fs.path.dirname(path)) |dirname| {
-        const res = strings.endsWith(dirname, std.fs.path.sep_str ++ "node_modules");
-        std.log.info("is node module result {s} {?} bn={s}", .{ path, res, dirname });
-        return res;
+        return strings.endsWith(dirname, std.fs.path.sep_str ++ "node_modules");
     }
     return false;
 }
@@ -891,7 +889,6 @@ pub const Resolver = struct {
 
                 r.flushDebugLogs(.success) catch {};
                 result.import_kind = kind;
-                std.log.info("RESOLVE SUCCESS: path={s} ise={?} isfn={?}", .{ result.path().?.text, result.is_external, result.is_from_node_modules });
 
                 if (r.opts.packages == .external and result.is_from_node_modules) {
                     result.is_external = true;
@@ -3565,8 +3562,6 @@ pub const Resolver = struct {
         var package_json: ?*PackageJSON = null;
 
         const is_node_module_folder = isNodeModulePackageFolder(path);
-
-        std.log.info("is_node_module_folder isInsideNodeModules={?} {s} ?= {?} {s} {s}", .{ dir_info.isInsideNodeModules(), path, is_node_module_folder, dir_info.abs_path, dir_info.abs_real_path });
 
         // Try using the main field(s) from "package.json"
         if (dir_info.package_json) |pkg_json| {

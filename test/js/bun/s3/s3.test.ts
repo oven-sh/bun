@@ -546,9 +546,14 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       expect(await S3Client.file(filename, { ...s3Options, bucket: S3Bucket }).text()).toBe("Hello Bun!");
       const stat = await S3Client.stat(filename, { ...s3Options, bucket: S3Bucket });
       expect(stat.size).toBe(10);
-      expect(stat.etag).toBeDefined();
-      expect(stat.lastModified).toBeDefined();
+      expect(stat.etag).toBeString();
+      expect(stat.lastModified).toBeValidDate();
       expect(stat.type).toBe("text/plain;charset=utf-8");
+      const url = S3Client.presign(filename, { ...s3Options, bucket: S3Bucket });
+      expect(url).toBeDefined();
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("Hello Bun!");
       await S3Client.unlink(filename, { ...s3Options, bucket: S3Bucket });
       expect().pass();
     });

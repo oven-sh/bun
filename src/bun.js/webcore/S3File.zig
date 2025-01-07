@@ -1,3 +1,4 @@
+const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

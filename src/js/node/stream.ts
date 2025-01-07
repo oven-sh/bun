@@ -2361,7 +2361,7 @@ var require_readable = __commonJS({
       } = options;
 
       if (encoding !== undefined && !Buffer.isEncoding(encoding))
-        throw $ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+        throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
       validateBoolean(objectMode, "options.objectMode");
 
       // validateBoolean(native, "options.native");

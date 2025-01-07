@@ -198,24 +198,79 @@ it("errors thrown by native code should be TypeError", async () => {
 });
 
 describe("globalThis.gc", () => {
-  it("is a function", () => {
-    expect(globalThis).toHaveProperty("gc");
-    expect(globalThis.gc).toBeInstanceOf(Function);
+  /**
+   * @param {string} expr
+   * @param {string[]} args
+   * @returns {string}
+   */
+  const runAndPrint = (expr, ...args) => {
+    const result = Bun.spawnSync([bunExe(), ...args, "--print", expr], {
+      env: bunEnv,
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    return result.stdout.toString("utf8").trim();
+  };
+
+  describe("when --expose-gc is not passed", () => {
+    it("globalThis.gc === undefined", () => {
+      expect(runAndPrint("typeof globalThis.gc")).toEqual("undefined");
+    });
+    it(".gc does not take up a property slot", () => {
+      expect(runAndPrint("'gc' in globalThis")).toEqual("false");
+    });
   });
 
-  it("is the same as calling gc directly", () => {
-    expect(globalThis.gc).toBe(gc);
+  describe("when --expose-gc is passed", () => {
+    it("is a function", () => {
+      expect(runAndPrint("typeof globalThis.gc", "--expose-gc")).toEqual("function");
+    });
+
+    it("gc is the same as globalThis.gc", () => {
+      expect(runAndPrint("gc === globalThis.gc", "--expose-gc")).toEqual("true");
+    });
+
+    it("cleans up memory", () => {
+      const src = /* js */ `
+      let arr = []
+      for (let i = 0; i < 100; i++) {
+        arr.push(new Array(100_000));
+      }
+      arr.length = 0;
+
+      const before = process.memoryUsage().heapUsed;
+      globalThis.gc();
+      const after = process.memoryUsage().heapUsed;
+      return before - after;
+      `;
+      const expr = /* js */ `(function() { ${src} })()`;
+
+      const delta = Number.parseInt(runAndPrint(expr, "--expose-gc"));
+      expect(delta).not.toBeNaN();
+      expect(delta).toBeGreaterThanOrEqual(0);
+    });
   });
 
-  it("cleans up memory", () => {
-    const start = process.memoryUsage().heapUsed;
-    // allocate a bunch of crap
-    for (let i = 0; i < 100; i++) {
-      new Array(100_000);
-    }
-    const before = process.memoryUsage().heapUsed;
-    globalThis.gc();
-    const after = process.memoryUsage().heapUsed;
-    expect(after).toBeLessThanOrEqual(before);
-  });
+  // it("is not present in the global scope if --expose-gc is not passed", () => {
+  //   expect(runAndPrint("'gc' in globalThis")).toEqual("false");
+  // });
+  // it("is a function", () => {
+  //   expect(globalThis).toHaveProperty("gc");
+  //   expect(globalThis.gc).toBeInstanceOf(Function);
+  // });
+
+  // it("is the same as calling gc directly", () => {
+  //   expect(globalThis.gc).toBe(gc);
+  // });
+
+  // it("cleans up memory", () => {
+  //   const start = process.memoryUsage().heapUsed;
+  //   // allocate a bunch of crap
+  //   for (let i = 0; i < 100; i++) {
+  //     new Array(100_000);
+  //   }
+  //   const before = process.memoryUsage().heapUsed;
+  //   globalThis.gc();
+  //   const after = process.memoryUsage().heapUsed;
+  //   expect(after).toBeLessThanOrEqual(before);
+  // });
 });

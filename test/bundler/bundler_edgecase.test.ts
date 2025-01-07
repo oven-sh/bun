@@ -1344,10 +1344,6 @@ describe("bundler", () => {
         import { a } from "foo";
         console.log(a);
       `,
-    },
-    packages: "external",
-    target: "bun",
-    runtimeFiles: {
       "/node_modules/foo/index.js": `export const a = "Hello World";`,
       "/node_modules/foo/package.json": /* json */ `
         {
@@ -1356,6 +1352,11 @@ describe("bundler", () => {
           "main": "index.js"
         }
       `,
+    },
+    packages: "external",
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toInclude(`Hello World`);
     },
     run: {
       stdout: `
@@ -1391,6 +1392,66 @@ describe("bundler", () => {
     packages: "external",
     run: {
       stdout: "foo bar nested absolute",
+    },
+  });
+  itBundled.only("edgecase/PackageExternalDoNotBundleWorkspaceMembers", {
+    files: {
+      "/package.json": /* json */ `
+      {
+        "name": "x",
+        "module": "entry.ts",
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "latest"
+        },
+        "peerDependencies": {
+          "typescript": "^5.0.0"
+        },
+        "workspaces": ["packages/*"]
+      }
+    `,
+      "/packages/a/index.ts": /* ts */ `
+      import { get } from "lodash";
+      import { f } from "b";
+      console.log({ get, f });
+    `,
+      "/packages/a/package.json": /* json */ `
+      {
+        "name": "a",
+        "version": "0.1.0",
+        "dependencies": {
+          "b": "workspace:*",
+          "lodash": "^4.17.21"
+        },
+        "devDependencies": {
+          "@types/lodash": "^4.17.13"
+        }
+      }
+    `,
+      "/packages/b/index.ts": /* ts */ `export const f = 'meaningful_value';`,
+      "/packages/b/package.json": /* json */ `
+      {
+        "name": "b",
+        "version": "1.0.0",
+        "main": "index.ts"
+      }
+    `,
+      "/node_modules/lodash/index.js": /* ts */ `export const get = 'fake_lodash_string';`,
+      "/node_modules/lodash/package.json": /* json */ `
+      {
+        "name": "lodash",
+        "version": "4.17.21",
+        "main": "index.js"
+      }
+    `,
+    },
+    root: ".",
+    entryPoints: ["packages/a/index.ts"],
+    // packages: "external",
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toInclude(`fake_lodash_string`);
+      api.expectFile("/out.js").toInclude(`meaningful_value`);
     },
   });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {

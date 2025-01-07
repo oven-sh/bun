@@ -1329,15 +1329,15 @@ describe("bundler", () => {
     ],
   });
   // Stack overflow possibility
-  // itBundled("edgecase/AwsCdkLib", {
-  //   files: {
-  //     "entry.js": `import * as aws from ${JSON.stringify(require.resolve("aws-cdk-lib"))}; aws;`,
-  //   },
-  //   target: "bun",
-  //   run: true,
-  //   todo: isBroken && isWindows,
-  //   timeoutScale: 5,
-  // });
+  itBundled("edgecase/AwsCdkLib", {
+    files: {
+      "entry.js": `import * as aws from ${JSON.stringify(require.resolve("aws-cdk-lib"))}; aws;`,
+    },
+    target: "bun",
+    run: true,
+    todo: isBroken && isWindows,
+    timeoutScale: 5,
+  });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
       "/entry.ts": /* ts */ `

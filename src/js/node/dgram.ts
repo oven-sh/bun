@@ -684,6 +684,9 @@ function doSend(ex, self, ip, list, address, port, callback) {
   // TODO check if this makes sense
   if (callback) {
     if (err) {
+      err.address = ip;
+      err.port = port;
+      err.message = `send ${err.code} ${ip}:${port}`;
       process.nextTick(callback, err);
     } else {
       const sent = success ? data.length : 0;

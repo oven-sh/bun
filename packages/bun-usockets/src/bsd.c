@@ -82,7 +82,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
         while (1) {
             int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
             if (ret >= 0) return ret;
-            // If we receive EMMSGSIZE, we should use the fallback code.
+            // If we receive EMSGSIZE, we should use the fallback code.
             if (errno == EMSGSIZE) break;
             if (errno != EINTR) return ret;
         }

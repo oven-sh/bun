@@ -246,10 +246,6 @@ check_features() {
 			osxcross="1"
 			print "Cross-compiling to macOS: enabled"
 			;;
-		*--gvisor*)
-			gvisor="1"
-			print "gVisor: enabled"
-			;;
 		*--gcc-13*)
 			gcc_version="13"
 			print "GCC 13: enabled"
@@ -1075,7 +1071,7 @@ install_docker() {
 }
 
 install_gvisor() {
-	if ! [ "$gvisor" = "1" ] || ! [ "$os" = "linux" ]; then
+	if ! [ "$os" = "linux" ]; then
 		return
 	fi
 

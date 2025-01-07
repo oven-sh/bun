@@ -381,8 +381,6 @@ describe("workspace aliases", async () => {
       ),
     ]);
 
-    console.log({ packageDir });
-
     await runBunInstall(env, packageDir);
     const files = await Promise.all(
       ["a0", "a1", "a2", "a3", "a4", "a5"].map(name =>
@@ -1282,3 +1280,349 @@ for (const version of versions) {
     });
   });
 }
+
+describe("install --filter", () => {
+  test("does not run root scripts if root is filtered out", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: {
+            postinstall: `${bunExe()} root.js`,
+          },
+        }),
+      ),
+      write(join(packageDir, "root.js"), `require("fs").writeFileSync("root.txt", "")`),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          scripts: {
+            postinstall: `${bunExe()} pkg1.js`,
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "pkg1.js"), `require("fs").writeFileSync("pkg1.txt", "")`),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "root.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "packages", "pkg1", "pkg1.txt"))).toBeTrue();
+
+    await rm(join(packageDir, "packages", "pkg1", "pkg1.txt"));
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "root"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "root.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "packages", "pkg1.txt"))).toBeFalse();
+  });
+
+  test("basic", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+      ]),
+    ).toEqual([false, false]);
+
+    // add workspace
+    await write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+      ]),
+    ).toEqual([false, true]);
+  });
+
+  test("all but one or two", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!pkg2", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([true, { name: "no-deps", version: "2.0.0" }, false]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // exclude the root by name
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!root"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        exists(join(packageDir, "node_modules", "no-deps")),
+        exists(join(packageDir, "node_modules", "pkg1")),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([false, true, true, true]);
+  });
+
+  test("matched workspace depends on filtered workspace", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "pkg1")),
+        exists(join(packageDir, "node_modules", "pkg2")),
+      ]),
+    ).toEqual([true, { name: "no-deps", version: "2.0.0" }, true, true]);
+  });
+
+  test("filter with a path", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "path-pattern",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    async function checkRoot() {
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "a-dep")),
+          exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+          exists(join(packageDir, "node_modules", "pkg1")),
+        ]),
+      ).toEqual([true, false, false]);
+    }
+
+    async function checkWorkspace() {
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "node_modules", "a-dep")),
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          exists(join(packageDir, "node_modules", "pkg1")),
+        ]),
+      ).toEqual([false, { name: "no-deps", version: "2.0.0" }, true]);
+    }
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "./packages/pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    await checkWorkspace();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "./packages/*"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    await checkWorkspace();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!./packages/pkg1"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    await checkRoot();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!./packages/*"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    await checkRoot();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "!./"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    await checkWorkspace();
+  });
+});

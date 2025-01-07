@@ -15,7 +15,7 @@ pub const UserOptions = struct {
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
-    root: []const u8,
+    root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
@@ -78,9 +78,9 @@ pub const UserOptions = struct {
 const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.slice();
+        return str.sliceZ();
     }
 
     pub fn free(al: *StringRefList) void {

@@ -11,7 +11,8 @@
 // These ones don't need to be in BunBuiltinNames.h
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
 #define BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(macro) \
-    macro(SystemError)
+    macro(SystemError) \
+    macro(S3Error)
 // clang-format on
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                           \

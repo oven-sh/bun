@@ -2,7 +2,7 @@ import { file, write, spawn } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { cp, mkdir, rm, exists } from "fs/promises";
+import { cp, mkdir, rm, exists, readdir } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -1626,3 +1626,169 @@ describe("install --filter", () => {
     await checkWorkspace();
   });
 });
+
+describe("workspace exclusions", async () => {
+    test("excluded package dependencies should not be installed", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              workspaces: ["packages/*", "!packages/excluded-pkg"],
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "included-pkg", "package.json"),
+            JSON.stringify({
+              name: "included-pkg",
+              dependencies: { },
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "excluded-pkg", "package.json"),
+            JSON.stringify({
+              name: "excluded-pkg",
+              dependencies: {
+                lodash: "latest",
+              },
+            }),
+          )
+        ]);
+
+        const {err} = await runBunInstall(env, packageDir);
+        console.log(err);
+        // TODO: check cli output for num packages installed
+
+        const filesInNodeModules = await readdir(join(packageDir, "node_modules"));
+
+        expect(filesInNodeModules).not.toContain("excluded-pkg");
+        expect(filesInNodeModules).not.toContain("lodash");
+        expect(filesInNodeModules).toContain("included-pkg");
+
+        rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    })
+    test("successive negation supported", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              workspaces: ["!!packages/*", "!!!packages/excluded-pkg"],
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "included-pkg", "package.json"),
+            JSON.stringify({
+              name: "included-pkg",
+              dependencies: { },
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "excluded-pkg", "package.json"),
+            JSON.stringify({
+              name: "excluded-pkg",
+              dependencies: {
+                lodash: "latest",
+              },
+            }),
+          )
+        ]);
+
+        const {err} = await runBunInstall(env, packageDir);
+        console.log(err);
+
+        const filesInNodeModules = await readdir(join(packageDir, "node_modules"));
+
+        expect(filesInNodeModules).not.toContain("excluded-pkg");
+        expect(filesInNodeModules).not.toContain("lodash");
+        expect(filesInNodeModules).toContain("included-pkg");
+
+        rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    })
+    test("workspace entry order matters", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              workspaces: [
+                  "packages/*",
+                  "!packages/re-excluded-pkg",
+                  "packages/re-excluded-pkg",
+                  "!packages/re-excluded-pkg",
+                  "!packages/re-included-pkg",
+                  "packages/re-included-pkg",
+              ],
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "re-excluded-pkg", "package.json"),
+            JSON.stringify({
+              name: "re-excluded-pkg",
+              dependencies: { },
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "re-included-pkg", "package.json"),
+            JSON.stringify({
+              name: "re-included-pkg",
+              dependencies: { },
+            }),
+          )
+        ]);
+
+        await runBunInstall(env, packageDir);
+
+        const filesInNodeModules = await readdir(join(packageDir, "node_modules"));
+
+        expect(filesInNodeModules).not.toContain("re-excluded-pkg");
+        expect(filesInNodeModules).toContain("re-included-pkg");
+
+        rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    })
+    test("nesting", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              workspaces: [
+                  "packages/**",
+                  "!packages/excluded/*",
+              ],
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "excluded", "excluded-pkg", "package.json"),
+            JSON.stringify({
+              name: "excluded-pkg",
+              dependencies: {
+                lodash: "lastest"
+              },
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "included", "included-pkg", "package.json"),
+            JSON.stringify({
+              name: "included-pkg",
+              dependencies: { },
+            }),
+          )
+        ]);
+
+        const {err} = await runBunInstall(env, packageDir);
+        console.log(err);
+
+        const filesInNodeModules = await readdir(join(packageDir, "node_modules"));
+
+        expect(filesInNodeModules).not.toContain("excluded-pkg");
+        expect(filesInNodeModules).not.toContain("lodash");
+        expect(filesInNodeModules).toContain("included-pkg");
+
+        rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    })
+})

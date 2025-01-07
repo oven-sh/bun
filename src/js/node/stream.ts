@@ -1218,267 +1218,6 @@ var require_operators = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/streams/destroy.js
-var require_destroy = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/destroy.js"(exports, module) {
-    "use strict";
-    var {
-      aggregateTwoErrors,
-      codes: { ERR_MULTIPLE_CALLBACK },
-      AbortError,
-    } = require_errors();
-    var { Symbol: Symbol2 } = require_primordials();
-    var { kDestroyed, isDestroyed, isFinished, isServerRequest } = require("internal/streams/utils");
-    var kDestroy = Symbol.for("kDestroy");
-    var kConstruct = Symbol.for("kConstruct");
-    function checkError(err, w, r) {
-      if (err) {
-        err.stack;
-        if (w && !w.errored) {
-          w.errored = err;
-        }
-        if (r && !r.errored) {
-          r.errored = err;
-        }
-      }
-    }
-    function destroy(err, cb) {
-      const r = this._readableState;
-      const w = this._writableState;
-      const s = w || r;
-      if ((w && w.destroyed) || (r && r.destroyed)) {
-        if (typeof cb === "function") {
-          cb();
-        }
-        return this;
-      }
-      checkError(err, w, r);
-      if (w) {
-        w.destroyed = true;
-      }
-      if (r) {
-        r.destroyed = true;
-      }
-      if (!s.constructed) {
-        this.once(kDestroy, er => {
-          _destroy(this, aggregateTwoErrors(er, err), cb);
-        });
-      } else {
-        _destroy(this, err, cb);
-      }
-      return this;
-    }
-    function _destroy(self, err, cb) {
-      let called = false;
-      function onDestroy(err2) {
-        if (called) {
-          return;
-        }
-        called = true;
-        const r = self._readableState;
-        const w = self._writableState;
-        checkError(err2, w, r);
-        if (w) {
-          w.closed = true;
-        }
-        if (r) {
-          r.closed = true;
-        }
-        if (typeof cb === "function") {
-          cb(err2);
-        }
-        if (err2) {
-          ProcessNextTick(emitErrorCloseNT, self, err2);
-        } else {
-          ProcessNextTick(emitCloseNT, self);
-        }
-      }
-      try {
-        self._destroy(err || null, onDestroy);
-      } catch (err2) {
-        onDestroy(err2);
-      }
-    }
-    function emitErrorCloseNT(self, err) {
-      emitErrorNT(self, err);
-      emitCloseNT(self);
-    }
-    function emitCloseNT(self) {
-      const r = self._readableState;
-      const w = self._writableState;
-      if (w) {
-        w.closeEmitted = true;
-      }
-      if (r) {
-        r.closeEmitted = true;
-      }
-      if ((w && w.emitClose) || (r && r.emitClose)) {
-        self.emit("close");
-      }
-    }
-    function emitErrorNT(self, err) {
-      const r = self?._readableState;
-      const w = self?._writableState;
-      if (w?.errorEmitted || r?.errorEmitted) {
-        return;
-      }
-      if (w) {
-        w.errorEmitted = true;
-      }
-      if (r) {
-        r.errorEmitted = true;
-      }
-      self?.emit?.("error", err);
-    }
-    function undestroy() {
-      const r = this._readableState;
-      const w = this._writableState;
-      if (r) {
-        r.constructed = true;
-        r.closed = false;
-        r.closeEmitted = false;
-        r.destroyed = false;
-        r.errored = null;
-        r.errorEmitted = false;
-        r.reading = false;
-        r.ended = r.readable === false;
-        r.endEmitted = r.readable === false;
-      }
-      if (w) {
-        w.constructed = true;
-        w.destroyed = false;
-        w.closed = false;
-        w.closeEmitted = false;
-        w.errored = null;
-        w.errorEmitted = false;
-        w.finalCalled = false;
-        w.prefinished = false;
-        w.ended = w.writable === false;
-        w.ending = w.writable === false;
-        w.finished = w.writable === false;
-      }
-    }
-    function errorOrDestroy(stream, err, sync?: boolean) {
-      const r = stream?._readableState;
-      const w = stream?._writableState;
-      if ((w && w.destroyed) || (r && r.destroyed)) {
-        return this;
-      }
-      if ((r && r.autoDestroy) || (w && w.autoDestroy)) stream.destroy(err);
-      else if (err) {
-        Error.captureStackTrace(err);
-        if (w && !w.errored) {
-          w.errored = err;
-        }
-        if (r && !r.errored) {
-          r.errored = err;
-        }
-        if (sync) {
-          ProcessNextTick(emitErrorNT, stream, err);
-        } else {
-          emitErrorNT(stream, err);
-        }
-      }
-    }
-    function construct(stream, cb) {
-      if (typeof stream._construct !== "function") {
-        return;
-      }
-      const r = stream._readableState;
-      const w = stream._writableState;
-      if (r) {
-        r.constructed = false;
-      }
-      if (w) {
-        w.constructed = false;
-      }
-      stream.once(kConstruct, cb);
-      if (stream.listenerCount(kConstruct) > 1) {
-        return;
-      }
-      ProcessNextTick(constructNT, stream);
-    }
-    function constructNT(stream) {
-      let called = false;
-      function onConstruct(err) {
-        if (called) {
-          errorOrDestroy(stream, err !== null && err !== void 0 ? err : new ERR_MULTIPLE_CALLBACK());
-          return;
-        }
-        called = true;
-        const r = stream._readableState;
-        const w = stream._writableState;
-        const s = w || r;
-        if (r) {
-          r.constructed = true;
-        }
-        if (w) {
-          w.constructed = true;
-        }
-        if (s.destroyed) {
-          stream.emit(kDestroy, err);
-        } else if (err) {
-          errorOrDestroy(stream, err, true);
-        } else {
-          ProcessNextTick(emitConstructNT, stream);
-        }
-      }
-      try {
-        stream._construct(onConstruct);
-      } catch (err) {
-        onConstruct(err);
-      }
-    }
-    function emitConstructNT(stream) {
-      stream.emit(kConstruct);
-    }
-    function isRequest(stream) {
-      return stream && stream.setHeader && typeof stream.abort === "function";
-    }
-    function emitCloseLegacy(stream) {
-      stream.emit("close");
-    }
-    function emitErrorCloseLegacy(stream, err) {
-      stream.emit("error", err);
-      ProcessNextTick(emitCloseLegacy, stream);
-    }
-    function destroyer(stream, err) {
-      if (!stream || isDestroyed(stream)) {
-        return;
-      }
-      if (!err && !isFinished(stream)) {
-        err = new AbortError();
-      }
-      if (isServerRequest(stream)) {
-        stream.socket = null;
-        stream.destroy(err);
-      } else if (isRequest(stream)) {
-        stream.abort();
-      } else if (isRequest(stream.req)) {
-        stream.req.abort();
-      } else if (typeof stream.destroy === "function") {
-        stream.destroy(err);
-      } else if (typeof stream.close === "function") {
-        stream.close();
-      } else if (err) {
-        ProcessNextTick(emitErrorCloseLegacy, stream);
-      } else {
-        ProcessNextTick(emitCloseLegacy, stream);
-      }
-      if (!stream.destroyed) {
-        stream[kDestroyed] = true;
-      }
-    }
-    module.exports = {
-      construct,
-      destroyer,
-      destroy,
-      undestroy,
-      errorOrDestroy,
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/legacy.js
 var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
@@ -2189,7 +1928,7 @@ var require_readable = __commonJS({
       flow(stream);
     }
 
-    var destroyImpl = require_destroy();
+    var destroyImpl = require("internal/streams/destroy");
     var {
       aggregateTwoErrors,
       codes: {
@@ -3144,7 +2883,7 @@ var require_writable = __commonJS({
     } = require_primordials();
 
     var Stream = require_legacy().Stream;
-    var destroyImpl = require_destroy();
+    var destroyImpl = require("internal/streams/destroy");
     var { addAbortSignal } = require_add_abort_signal();
     var {
       ERR_INVALID_ARG_TYPE,
@@ -3799,7 +3538,7 @@ var require_duplexify = __commonJS({
       AbortError,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE },
     } = require_errors();
-    var { destroyer } = require_destroy();
+    var { destroyer } = require("internal/streams/destroy");
     var Duplex = require_duplex();
     var { createDeferredPromise } = require_util();
     var from = require_from();
@@ -4361,7 +4100,7 @@ var require_pipeline = __commonJS({
     var { Promise: Promise2, SymbolAsyncIterator } = require_primordials();
     var eos = require_end_of_stream();
     var { once } = require_util();
-    var destroyImpl = require_destroy();
+    var destroyImpl = require("internal/streams/destroy");
     var {
       aggregateTwoErrors,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE, ERR_MISSING_ARGS, ERR_STREAM_DESTROYED },
@@ -4684,7 +4423,7 @@ var require_compose = __commonJS({
     "use strict";
     var { pipeline } = require_pipeline();
     var Duplex = require_duplex();
-    var { destroyer } = require_destroy();
+    var { destroyer } = require("internal/streams/destroy");
     var { isNodeStream, isReadable, isWritable } = require("internal/streams/utils");
     var {
       AbortError,
@@ -4868,7 +4607,7 @@ var require_stream = __commonJS({
     } = require_errors();
     var compose = require_compose();
     var { pipeline } = require_pipeline();
-    var { destroyer } = require_destroy();
+    var { destroyer } = require("internal/streams/destroy");
     var eos = require_end_of_stream();
     var promises = require_promises();
     var utils = require("internal/streams/utils");

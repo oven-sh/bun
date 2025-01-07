@@ -564,6 +564,7 @@ declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
 declare function $ERR_INVALID_CURSOR_POS(): Error;
+declare function $ERR_MULTIPLE_CALLBACK(): Error;
 
 /**
  * Convert a function to a class-like object.

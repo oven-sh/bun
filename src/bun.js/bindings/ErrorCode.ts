@@ -63,6 +63,7 @@ export default [
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
   ["ERR_INVALID_CURSOR_POS", TypeError],
+  ["ERR_MULTIPLE_CALLBACK", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

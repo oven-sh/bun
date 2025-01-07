@@ -37,6 +37,7 @@ const {
   validateInteger,
   validateUint32,
 } = require("internal/validators");
+const { AbortError } = require("internal/errors");
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
@@ -275,14 +276,6 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
     super("This socket has been ended by the other party", {
       code: "ERR_USE_AFTER_CLOSE",
     });
-  }
-}
-
-class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
   }
 }
 

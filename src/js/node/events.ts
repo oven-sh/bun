@@ -23,6 +23,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const { AbortError } = require("internal/errors");
 const { ERR_UNHANDLED_ERROR } = require("internal/errors");
 const {
   validateObject,
@@ -701,17 +702,6 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
     emitter.addEventListener(name, listener, flags);
   } else {
     throw $ERR_INVALID_ARG_TYPE("emitter", "EventEmitter", emitter);
-  }
-}
-
-class AbortError extends Error {
-  constructor(message = "The operation was aborted", options = undefined) {
-    if (options !== undefined && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    super(message, options);
-    this.code = "ABORT_ERR";
-    this.name = "AbortError";
   }
 }
 

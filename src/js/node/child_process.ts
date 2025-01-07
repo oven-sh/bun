@@ -3,6 +3,7 @@ const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
+const { AbortError } = require("internal/errors");
 const {
   validateBoolean,
   validateFunction,
@@ -1742,18 +1743,6 @@ function toPathIfFileURL(fileURLOrPath) {
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
 var RangeError = globalThis.RangeError;
-
-// Node uses a slightly different abort error than standard DOM. See: https://github.com/nodejs/node/blob/main/lib/internal/errors.js
-class AbortError extends Error {
-  code = "ABORT_ERR";
-  name = "AbortError";
-  constructor(message = "The operation was aborted", options = undefined) {
-    if (options !== undefined && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    super(message, options);
-  }
-}
 
 function genericNodeError(message, options) {
   const err = new Error(message);

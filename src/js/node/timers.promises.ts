@@ -2,15 +2,9 @@
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 
 const { validateBoolean, validateAbortSignal, validateObject } = require("internal/validators");
+const { AbortError } = require("internal/errors");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
-
-class AbortError extends Error {
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
-  }
-}
 
 function asyncIterator({ next: nextFunction, return: returnFunction }) {
   const result = {};

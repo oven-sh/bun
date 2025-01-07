@@ -47,11 +47,12 @@ const fileSinkSymbol = Symbol("fileSink");
 
 //
 
-let util;
+let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
   port?: number;
+  address;
 
   constructor(err, syscall, address, port) {
     // TODO(joyeecheung): We have to use the type-checked

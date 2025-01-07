@@ -1655,7 +1655,7 @@ pub const BundleV2 = struct {
                     .entry_points = config.entry_points.keys(),
                     .target = config.target.toAPI(),
                     .absolute_working_dir = if (config.dir.list.items.len > 0)
-                        config.dir.slice()
+                        config.dir.sliceWithSentinel()
                     else
                         null,
                     .inject = &.{},

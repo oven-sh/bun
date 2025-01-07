@@ -581,7 +581,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            _ = bun.sys.chdir(tmpdir_z);
+            _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =

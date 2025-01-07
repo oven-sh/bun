@@ -1115,7 +1115,8 @@ it("readdirSync throws when given a file path", () => {
     readdirSync(import.meta.path);
     throw new Error("should not get here");
   } catch (exception: any) {
-    expect(exception.name).toBe("ENOTDIR");
+    expect(exception.name).toBe("Error");
+    expect(exception.code).toBe("ENOTDIR");
   }
 });
 
@@ -1126,7 +1127,8 @@ it("readdirSync throws when given a path that doesn't exist", () => {
   } catch (exception: any) {
     // the correct error to return in this case is actually ENOENT (which we do on windows),
     // but on posix we return ENOTDIR
-    expect(exception.name).toMatch(/ENOTDIR|ENOENT/);
+    expect(exception.name).toBe("Error");
+    expect(exception.code).toMatch(/ENOTDIR|ENOENT/);
   }
 });
 
@@ -1135,7 +1137,8 @@ it("readdirSync throws when given a file path with trailing slash", () => {
     readdirSync(import.meta.path + "/");
     throw new Error("should not get here");
   } catch (exception: any) {
-    expect(exception.name).toBe("ENOTDIR");
+    expect(exception.name).toBe("Error");
+    expect(exception.code).toBe("ENOTDIR");
   }
 });
 

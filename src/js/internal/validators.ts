@@ -1,6 +1,10 @@
 const { hideFromStack } = require("internal/shared");
 const { ArrayIsArray } = require("internal/primordials");
+
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const ArrayPrototypeIncludes = Array.prototype.includes;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -65,6 +69,18 @@ function validateObject(value, name) {
 }
 hideFromStack(validateObject);
 
+function validateOneOf(value, name, oneOf) {
+  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
+    const allowed = ArrayPrototypeJoin.$call(
+      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
+      ", ",
+    );
+    const reason = "must be one of: " + allowed;
+    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
+  }
+}
+hideFromStack(validateOneOf);
+
 export default {
   validateObject: validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
@@ -103,4 +119,6 @@ export default {
   validateUndefined: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUndefined", 0),
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
+  /** `(value, name, oneOf)` */
+  validateOneOf,
 };

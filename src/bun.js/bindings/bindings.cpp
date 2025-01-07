@@ -4837,7 +4837,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC__Exception* exception)
 {
     JSC::Exception* jscException = jsCast<JSC::Exception*>(exception);
-    return JSC::JSValue::encode(jscException->value());
+    return JSC::JSValue::encode(jscException);
 }
 
 void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
@@ -4987,11 +4987,21 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
         return;
     }
 
-    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
-        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), jscException->value());
+    if (value.classInfoOrNull() == JSC::Exception::info()) {
+        auto* jscException = jsCast<JSC::Exception*>(value);
+        JSValue unwrapped = jscException->value();
+
+        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(unwrapped)) {
+            fromErrorInstance(exception, global, error, &jscException->stack(), unwrapped);
             return;
         }
+
+        if (jscException->stack().size() > 0) {
+            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global);
+        }
+
+        exceptionFromString(exception, unwrapped, global);
+        return;
     }
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {

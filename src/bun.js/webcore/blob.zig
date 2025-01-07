@@ -3478,12 +3478,9 @@ pub const Blob = struct {
 
         pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this.pathlike) {
-                .path => switch (globalThis.bunVM().nodeFS().unlink(.{
-                    .path = this.pathlike.path,
-                }, .sync)) {
-                    .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
-                    else => JSC.JSPromise.resolvedPromiseValue(globalThis, .true),
-                },
+                .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
+                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                }, globalThis.bunVM()),
                 .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
             };
         }
@@ -4739,21 +4736,15 @@ pub const Blob = struct {
         }
     }
     pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
+        const store = this.store orelse return JSC.JSValue.jsUndefined();
         // TODO: make this async for files
-        return switch (this.store.?.data) {
+        return switch (store.data) {
             .file => |*file| {
-                if (file.pathlike == .fd) {
-                    return switch (JSC.Node.NodeFS.fstat(globalThis.bunVM().nodeFS(), .{ .fd = file.pathlike.fd }, .sync)) {
-                        .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
-                        .result => |stat| JSC.JSPromise.resolvedPromiseValue(globalThis, stat.toJSNewlyCreated(globalThis)),
-                    };
-                }
-
-                return switch (JSC.Node.NodeFS.stat(globalThis.bunVM().nodeFS(), .{
-                    .path = file.pathlike.path,
-                }, .sync)) {
-                    .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
-                    .result => |stat| JSC.JSPromise.resolvedPromiseValue(globalThis, stat.toJSNewlyCreated(globalThis)),
+                return switch (file.pathlike) {
+                    .path => |path_like| JSC.Node.Async.stat.create(globalThis, undefined, .{
+                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                    }, globalThis.bunVM()),
+                    .fd => |fd| JSC.Node.Async.fstat.create(globalThis, undefined, .{ .fd = fd }, globalThis.bunVM()),
                 };
             },
             .s3 => S3File.getStat(this, globalThis, callback),

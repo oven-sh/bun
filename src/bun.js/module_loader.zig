@@ -2553,6 +2553,7 @@ pub const ModuleLoader = struct {
                 .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
                 .@"node:_stream_passthrough" => return jsSyntheticModule(.@"node:_stream_passthrough", specifier),
                 .@"node:_stream_readable" => return jsSyntheticModule(.@"node:_stream_readable", specifier),
+                .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2770,6 +2771,7 @@ pub const HardcodedModule = enum {
     @"node:_stream_duplex",
     @"node:_stream_passthrough",
     @"node:_stream_readable",
+    @"node:_stream_transform",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2849,6 +2851,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_duplex", .@"node:_stream_duplex" },
             .{ "_stream_passthrough", .@"node:_stream_passthrough" },
             .{ "_stream_readable", .@"node:_stream_readable" },
+            .{ "_stream_transform", .@"node:_stream_transform" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2932,7 +2935,7 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "node:_stream_passthrough", .{ .path = "_stream_passthrough" } },
             .{ "node:_stream_readable", .{ .path = "_stream_readable" } },
-            .{ "node:_stream_transform", .{ .path = "stream" } },
+            .{ "node:_stream_transform", .{ .path = "_stream_transform" } },
             .{ "node:_stream_writable", .{ .path = "stream" } },
             .{ "node:_stream_wrap", .{ .path = "stream" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
@@ -3007,7 +3010,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "_stream_passthrough", .{ .path = "_stream_passthrough" } },
             .{ "_stream_readable", .{ .path = "_stream_readable" } },
-            .{ "_stream_transform", .{ .path = "stream" } },
+            .{ "_stream_transform", .{ .path = "_stream_transform" } },
             .{ "_stream_writable", .{ .path = "stream" } },
             .{ "_stream_wrap", .{ .path = "stream" } },
             .{ "_tls_wrap", .{ .path = "tls" } },

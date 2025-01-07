@@ -21,7 +21,6 @@ const Environment = bun.Environment;
 const ScriptArguments = opaque {};
 const JSPromise = JSC.JSPromise;
 const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
@@ -30,6 +29,17 @@ const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+
+pub const Exception = opaque {
+    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
+    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void {
+        JSC__Exception__getStackTrace(this, global, stack);
+    }
+
+    pub fn value(this: *Exception) JSValue {
+        return JSValue.fromCell(this);
+    }
+};
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -676,9 +686,17 @@ pub const ZigStackFrame = extern struct {
 
             switch (this.code_type) {
                 .Eval => {
-                    try writer.writeAll("(eval)");
+                    if (this.enable_color) {
+                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                    } else {
+                        try writer.writeAll("eval");
+                    }
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                        } else {
+                            try std.fmt.format(writer, " {}", .{name});
+                        }
                     }
                 },
                 .Function => {
@@ -688,15 +706,15 @@ pub const ZigStackFrame = extern struct {
                         } else {
                             try std.fmt.format(writer, "{}", .{name});
                         }
-                    }
-                },
-                .Global => {
-                    if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
-                        try writer.writeAll("globalThis");
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                        } else {
+                            try writer.writeAll("<anonymous>");
+                        }
                     }
                 },
+                .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
                         try std.fmt.format(writer, "{}", .{name});

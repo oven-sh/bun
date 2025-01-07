@@ -1389,6 +1389,87 @@ c {
     },
   });
 
+  itBundled("css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile", {
+    experimentalCss: true,
+    files: {
+      "/a.css": `@layer first { body { color: red } }`,
+      "/b.css": `@layer last { body { color: green } }`,
+
+      "/case1.css": /* css */ `
+        @import url(a.css);
+        @import url(a.css);
+      `,
+
+      "/case2.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+
+      "/case3.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+      `,
+
+      "/case4.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+
+      "/case5.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+      `,
+
+      "/case6.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+    },
+    entryPoints: ["/case1.css", "/case2.css", "/case3.css", "/case4.css", "/case5.css", "/case6.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const snapshotFiles = ["case1.css", "case2.css", "case3.css", "case4.css", "case5.css", "case6.css"];
+      for (const file of snapshotFiles) {
+        console.log("Checking snapshot:", file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+      }
+    },
+  });
+
+  itBundled("css/CSSAtImportConditionsChainExternal", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `
+        @import "a.css" layer(a) not print;
+      `,
+      "/a.css": /* css */ `
+        @import "http://example.com/external1.css";
+        @import "b.css" layer(b) not tv;
+        @import "http://example.com/external2.css" layer(a2);
+      `,
+      "/b.css": /* css */ `
+        @import "http://example.com/external3.css";
+        @import "http://example.com/external4.css" layer(b2);
+      `,
+    },
+    outfile: "/out.css",
+  });
+
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     experimentalCss: true,
 

@@ -9875,7 +9875,7 @@ pub const LinkerContext = struct {
                                     c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {s}", .{@errorName(e)}) catch bun.outOfMemory();
                                     continue;
                                 };
-                                p.* = bun.fs.Path.init(print_result.code);
+                                p.* = bun.fs.Path.init(DataURL.encodeStringAsShortestDataURL(allocator, "text/css", std.mem.trim(u8, print_result.code, " \n\r\t")));
                             }
                         }
 

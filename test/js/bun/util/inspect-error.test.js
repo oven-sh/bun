@@ -120,7 +120,6 @@ test("Error inside minified file (no color) ", () => {
 error: error inside long minified file!
       at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
       at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-      at require (9:26)
       at <anonymous> ([dir]/inspect-error.test.js:102:5)"
 `);
   }
@@ -152,8 +151,7 @@ test("Error inside minified file (color) ", () => {
 error: error inside long minified file!
       at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
       at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-      at require (9:26)
-      at <anonymous> ([dir]/inspect-error.test.js:131:5)"
+      at <anonymous> ([dir]/inspect-error.test.js:130:5)"
 `);
   }
 });
@@ -167,7 +165,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:162:19)"
+    at <anonymous> ([file]:160:19)"
 `);
 });
 

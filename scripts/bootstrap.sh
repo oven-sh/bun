@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 9
+# Version: 10
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -19,9 +19,7 @@ print() {
 
 error() {
 	print "error: $@" >&2
-	if ! [ "$$" = "$pid" ]; then
-		kill -s TERM "$pid"
-	fi
+	kill -s TERM "$pid"
 	exit 1
 }
 
@@ -59,14 +57,14 @@ execute_as_user() {
 }
 
 grant_to_user() {
-	path="$1"
-	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
-		error "Could not find file or directory: \"$path\""
+	file_path="$1"
+	if ! [ -f "$file_path" ] && ! [ -d "$file_path" ]; then
+		error "Could not find file or directory: \"$file_path\""
 	fi
 
 	chown="$(require chown)"
-	execute_sudo "$chown" -R "$user:$group" "$path"
-	execute_sudo chmod -R 777 "$path"
+	execute_sudo "$chown" -R "$user:$group" "$file_path"
+	execute_sudo chmod -R 777 "$file_path"
 }
 
 which() {
@@ -74,11 +72,11 @@ which() {
 }
 
 require() {
-	path="$(which "$1")"
-	if ! [ -f "$path" ]; then
+	bin_path="$(which "$1")"
+	if ! [ -f "$bin_path" ]; then
 		error "Command \"$1\" is required, but is not installed."
 	fi
-	print "$path"
+	print "$bin_path"
 }
 
 fetch() {
@@ -106,79 +104,79 @@ compare_version() {
 }
 
 create_directory() {
-	path="$1"
-	path_dir="$path"
-	while ! [ -d "$path_dir" ]; do
-		path_dir="$(dirname "$path_dir")"
+	dir_path="$1"
+	dir_parent_path="$dir_path"
+	while ! [ -d "$dir_parent_path" ]; do
+		dir_parent_path="$(dirname "$dir_parent_path")"
 	done
 
-	path_needs_sudo="0"
-	if ! [ -r "$path_dir" ] || ! [ -w "$path_dir" ]; then
-		path_needs_sudo="1"
+	dir_needs_sudo="0"
+	if ! [ -r "$dir_parent_path" ] || ! [ -w "$dir_parent_path" ]; then
+		dir_needs_sudo="1"
 	fi
 
 	mkdir="$(require mkdir)"
-	if [ "$path_needs_sudo" = "1" ]; then
-		execute_sudo "$mkdir" -p "$path"
+	if [ "$dir_needs_sudo" = "1" ]; then
+		execute_sudo "$mkdir" -p "$dir_path"
 	else
-		execute "$mkdir" -p "$path"
+		execute "$mkdir" -p "$dir_path"
 	fi
 
-	grant_to_user "$path"
+	grant_to_user "$dir_path"
 }
 
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
-	path="$(execute "$mktemp" -d)"
-	grant_to_user "$path"	
-	print "$path"
+	tmp_dir_path="$(execute "$mktemp" -d)"
+	grant_to_user "$tmp_dir_path"
+	print "$tmp_dir_path"
 }
 
 create_file() {
-	path="$1"
-	path_dir="$(dirname "$path")"
-	if ! [ -d "$path_dir" ]; then
-		create_directory "$path_dir"
+	file_path="$1"
+	file_parent_path="$(dirname "$file_path")"
+	if ! [ -d "$file_parent_path" ]; then
+		create_directory "$file_parent_path"
 	fi
 
-	path_needs_sudo="0"
-	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
-		path_needs_sudo="1"
+	file_needs_sudo="0"
+	if ! [ -r "$file_parent_path" ] || ! [ -w "$file_parent_path" ]; then
+		file_needs_sudo="1"
 	fi
 
-	if [ "$path_needs_sudo" = "1" ]; then
-		execute_sudo touch "$path"
+	if [ "$file_needs_sudo" = "1" ]; then
+		execute_sudo touch "$file_path"
 	else
-		execute touch "$path"
+		execute touch "$file_path"
 	fi
 
-	content="$2"
-	if [ -n "$content" ]; then
-		append_file "$path" "$content"
+	file_content="$2"
+	if [ -n "$file_content" ]; then
+		append_file "$file_path" "$file_content"
 	fi
 
-	grant_to_user "$path"
+	grant_to_user "$file_path"
 }
 
 append_file() {
-	path="$1"
-	if ! [ -f "$path" ]; then
-		create_file "$path"
+	file_path="$1"
+	if ! [ -f "$file_path" ]; then
+		create_file "$file_path"
 	fi
 
-	path_needs_sudo="0"
-	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
-		path_needs_sudo="1"
+	file_needs_sudo="0"
+	if ! [ -r "$file_path" ] || ! [ -w "$file_path" ]; then
+		file_needs_sudo="1"
 	fi
 
-	content="$2"
-	print "$content" | while read -r line; do
-		if ! grep -q "$line" "$path"; then
+	file_content="$2"
+	print "$file_content" | while read -r line; do
+		if ! grep -q "$line" "$file_path"; then
 		  sh="$(require sh)"
-			if [ "$path_needs_sudo" = "1" ]; then
-				execute_sudo "$sh" -c "echo '$line' >> '$path'"
+			if [ "$file_needs_sudo" = "1" ]; then
+				execute_sudo "$sh" -c "echo '$line' >> '$file_path'"
 			else
-				execute "$sh" -c "echo '$line' >> '$path'"
+				execute "$sh" -c "echo '$line' >> '$file_path'"
 			fi
 		fi
 	done
@@ -196,25 +194,26 @@ download_file() {
 }
 
 append_to_profile() {
-	content="$1"
+	profile_content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
-	for profile in $profiles; do
-		for profile_path in "$current_home/$profile" "$home/$profile"; do
+
+	for profile_name in $profiles; do
+		for profile_path in "$current_home/$profile_name" "$home/$profile_name"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
-				append_file "$profile_path" "$content"
+				append_file "$profile_path" "$profile_content"
 			fi
 		done
 	done
 }
 
 append_to_path() {
-	path="$1"
-	if ! [ -d "$path" ]; then
-		error "Could not find directory: \"$path\""
+	dir_path="$1"
+	if ! [ -d "$dir_path" ]; then
+		error "Could not find directory: \"$dir_path\""
 	fi
 
-	append_to_profile "export PATH=\"$path:\$PATH\""
-	export PATH="$path:$PATH"
+	append_to_profile "export PATH=\"$dir_path:\$PATH\""
+	export PATH="$dir_path:$PATH"
 }
 
 move_to_bin() {
@@ -240,12 +239,16 @@ check_features() {
 	for arg in "$@"; do
 		case "$arg" in
 		*--ci*)
-			ci=1
+			ci="1"
 			print "CI: enabled"
 			;;
 		*--osxcross*)
-			osxcross=1
+			osxcross="1"
 			print "Cross-compiling to macOS: enabled"
+			;;
+		*--gvisor*)
+			gvisor="1"
+			print "gVisor: enabled"
 			;;
 		*--gcc-13*)
 			gcc_version="13"
@@ -365,12 +368,12 @@ check_inside_docker() {
 	print "Checking if inside Docker..."
 
 	if [ -f "/.dockerenv" ]; then
-		docker=1
+		docker="1"
 	else
 		if [ -f "/proc/1/cgroup" ]; then
 			case "$(cat /proc/1/cgroup)" in
 			*/docker/*)
-				docker=1
+				docker="1"
 				;;
 			esac
 		fi
@@ -378,7 +381,7 @@ check_inside_docker() {
 		if [ -f "/proc/self/mountinfo" ]; then
 			case "$(cat /proc/self/mountinfo)" in
 			*/docker/*)
-				docker=1
+				docker="1"
 				;;
 			esac
 		fi
@@ -444,8 +447,8 @@ check_user() {
 	print "Group: $group"
 
 	home="$(execute_as_user echo '~')"
-	if [ -z "$home" ] || [ "$home" = "~" ]; then
-		error "Could not determine home directory for user: $user"
+	if [ "$home" = "~" ] || ! [ -d "$home" ]; then
+		error "Could not determine home directory for $user: $home"
 	fi
 	print "Home: $home"
 
@@ -461,6 +464,21 @@ check_user() {
 	current_user="$user"
 	current_group="$group"
 	current_home="$home"
+}
+
+check_locale() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	print "Checking locale..."
+	case "$os" in
+	linux)
+		if [ -f "$(which sudo)" ]; then
+			execute sudo touch "/var/lib/cloud/instance/locale-check.skip"
+		fi
+		;;
+	esac
 }
 
 check_ulimit() {
@@ -526,24 +544,6 @@ check_ulimit() {
 	if [ -f "$systemctl" ]; then
 		execute_sudo "$systemctl" daemon-reload
 	fi
-
-	# Configure dpkg and apt for faster operation in CI environments
-	if [ "$ci" = "1" ] && [ "$pm" = "apt" ]; then
-		dpkg_conf="/etc/dpkg/dpkg.cfg.d/01-ci-options"
-		execute_sudo create_directory "$(dirname "$dpkg_conf")"
-		append_file "$dpkg_conf" "force-unsafe-io"
-		append_file "$dpkg_conf" "no-debsig"
-
-		apt_conf="/etc/apt/apt.conf.d/99-ci-options" 
-		execute_sudo create_directory "$(dirname "$apt_conf")"
-		append_file "$apt_conf" 'Acquire::Languages "none";'
-		append_file "$apt_conf" 'Acquire::GzipIndexes "true";'
-		append_file "$apt_conf" 'Acquire::CompressionTypes::Order:: "gz";'
-		append_file "$apt_conf" 'APT::Get::Install-Recommends "false";'
-		append_file "$apt_conf" 'APT::Get::Install-Suggests "false";'
-		append_file "$apt_conf" 'Dpkg::Options { "--force-confdef"; "--force-confold"; }'
-	fi
-
 }
 
 package_manager() {
@@ -894,6 +894,7 @@ install_build_essentials() {
 	install_ccache
 	install_rust
 	install_docker
+	install_gvisor
 }
 
 llvm_version_exact() {
@@ -1073,6 +1074,25 @@ install_docker() {
 	fi
 }
 
+install_gvisor() {
+	if ! [ "$gvisor" = "1" ] || ! [ "$os" = "linux" ]; then
+		return
+	fi
+
+	runsc_arch="$(execute uname -m)"
+	runsc_url="https://storage.googleapis.com/gvisor/releases/release/latest/$runsc_arch/runsc"
+	runsc_bin="$(download_file "$runsc_url")"
+	move_to_bin "$runsc_bin"
+
+	runsc_exe="$(require runsc)"
+	execute_sudo "$runsc_exe" install
+
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ] && ! [ "$docker" = "1" ]; then
+		execute_sudo "$systemctl" reload docker
+	fi
+}
+
 macos_sdk_version() {
 	# https://github.com/alexey-lysiuk/macos-sdk/releases
 	print "13.3"
@@ -1177,8 +1197,8 @@ create_buildkite_user() {
 	fi
 
 	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
-	for path in $buildkite_paths; do
-		create_directory "$path"
+	for buildkite_path in $buildkite_paths; do
+		create_directory "$buildkite_path"
 	done
 
 	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
@@ -1316,6 +1336,7 @@ main() {
 	check_features "$@"
 	check_operating_system
 	check_inside_docker
+	check_locale
 	check_user
 	check_ulimit
 	check_package_manager

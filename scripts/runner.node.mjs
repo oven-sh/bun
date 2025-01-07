@@ -39,6 +39,7 @@ import {
   startGroup,
   tmpdir,
   unzip,
+  which,
 } from "./utils.mjs";
 import { userInfo } from "node:os";
 let isQuiet = false;
@@ -105,6 +106,18 @@ const { values: options, positionals: filters } = parseArgs({
     ["retries"]: {
       type: "string",
       default: isCI ? "4" : "0", // N retries = N+1 attempts
+    },
+    ["gvisor"]: {
+      type: "boolean",
+      default: false,
+    },
+    ["strace"]: {
+      type: "boolean",
+      default: false,
+    },
+    ["strace-filter"]: {
+      type: "string",
+      multiple: true,
     },
   },
 });
@@ -569,10 +582,28 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     }
     bunEnv["TEMP"] = tmpdirPath;
   }
+  let command = execPath;
+  let commandArgs = args || [];
+  if (bunEnv["gvisor"]) {
+    const runsc = which("runsc", { required: true });
+    const runscArgs = ["--rootless", "--ignore-cgroups", "--network=host"];
+    if (bunEnv["strace"]) {
+      runscArgs.push("--strace");
+    }
+    if (bunEnv["strace-filter"]) {
+      const syscalls = bunEnv["strace-filter"]
+        .split(",")
+        .map(syscall => syscall.trim())
+        .join(",");
+      runscArgs.push("--strace-syscalls", syscalls);
+    }
+    commandArgs = [...runscArgs, "do", command, ...commandArgs];
+    command = runsc;
+  }
   try {
     return await spawnSafe({
-      command: execPath,
-      args,
+      command,
+      args: commandArgs,
       cwd,
       timeout,
       env: bunEnv,
@@ -580,11 +611,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    // try {
-    //   rmSync(tmpdirPath, { recursive: true, force: true });
-    // } catch (error) {
-    //   console.warn(error);
-    // }
+    try {
+      rmSync(tmpdirPath, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(error);
+    }
   }
 }
 

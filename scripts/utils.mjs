@@ -1997,6 +1997,27 @@ export function getDistroVersion() {
   }
 }
 
+/** @type {boolean | undefined} */
+let gvisorDetected;
+
+/**
+ * @returns {boolean | undefined}
+ */
+export function isGVisor() {
+  if (typeof gvisorDetected === "boolean") {
+    return gvisorDetected;
+  }
+
+  if (isLinux) {
+    const { error, stdout } = spawnSync(["dmesg"]);
+    if (!error && stdout.includes("Starting gVisor")) {
+      return (gvisorDetected = true);
+    }
+  }
+
+  return (gvisorDetected = false);
+}
+
 /**
  * @returns {string | undefined}
  */

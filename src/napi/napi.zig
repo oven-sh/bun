@@ -81,7 +81,7 @@ pub const NapiHandleScope = opaque {
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: napi_env, value: JSC.JSValue) void {
-        NapiHandleScope__append(env.toJS(), @intFromEnum(value));
+        NapiHandleScope__append(env.toJS(), value);
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
@@ -431,7 +431,7 @@ pub export fn napi_get_value_bool(env: napi_env, value_: napi_value, result_: ?*
     const value = value_.get();
 
     result.* = value.to(bool);
-    return env.ok;
+    return env.ok();
 }
 inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
     if (doit) {
@@ -500,7 +500,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
     log("napi_get_value_string_utf16", .{});
     const value = value_.get();
     defer value.ensureStillAlive();
-    const str = value.toBunString(env);
+    const str = value.toBunString(env.toJS());
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -548,28 +548,28 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
 pub export fn napi_coerce_to_bool(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_bool", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSValue.jsBoolean(value.coerce(bool, env)));
+    result.set(env, JSValue.jsBoolean(value.coerce(bool, env.toJS())));
     return env.ok();
 }
 pub export fn napi_coerce_to_number(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_number", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
+    result.set(env, JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.toJS().ref(), value.asObjectRef(), TODO_EXCEPTION)));
     return env.ok();
 }
 pub export fn napi_coerce_to_object(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_object", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSValue.c(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
+    result.set(env, JSValue.c(JSC.C.JSValueToObject(env.toJS().ref(), value.asObjectRef(), TODO_EXCEPTION)));
     return env.ok();
 }
 pub export fn napi_get_prototype(env: napi_env, object_: napi_value, result_: ?*napi_value) napi_status {
@@ -601,7 +601,7 @@ pub export fn napi_set_element(env: napi_env, object_: napi_value, index: c_uint
     if (!object.jsType().isIndexable()) {
         return env.setLastError(.array_expected);
     }
-    if (value.isEmpty())
+    if (value == .zero)
         return env.invalidArg();
     JSC.C.JSObjectSetPropertyAtIndex(env.toJS().ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
     return env.ok();
@@ -988,7 +988,7 @@ pub export fn napi_is_promise(env: napi_env, value_: napi_value, is_promise_: ?*
         return env.invalidArg();
     };
 
-    if (value.isEmpty()) {
+    if (value == .zero) {
         return env.invalidArg();
     }
 
@@ -1575,7 +1575,7 @@ pub const ThreadSafeFunction = struct {
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
     fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
-        const globalObject = this.env;
+        const globalObject = this.env.toJS();
         if (!is_first) {
             this.event_loop.drainMicrotasks();
         }
@@ -1596,9 +1596,9 @@ pub const ThreadSafeFunction = struct {
             .c => |cb| {
                 const js = cb.js.get() orelse .undefined;
 
-                const handle_scope = NapiHandleScope.open(globalObject, false);
-                defer if (handle_scope) |scope| scope.close(globalObject);
-                cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, js), this.ctx, task);
+                const handle_scope = NapiHandleScope.open(this.env, false);
+                defer if (handle_scope) |scope| scope.close(this.env);
+                cb.napi_threadsafe_function_call_js(this.env, napi_value.create(this.env, js), this.ctx, task);
             },
         }
     }
@@ -1612,22 +1612,23 @@ pub const ThreadSafeFunction = struct {
             }
         } else {
             if (this.queue.isBlocked()) {
-                return .queue_full;
+                // don't set the error on the env as this is run from another thread
+                return @intFromEnum(NapiStatus.queue_full);
             }
         }
 
         if (this.isClosing()) {
             if (this.thread_count.load(.seq_cst) <= 0) {
-                return .invalid_arg;
+                return @intFromEnum(NapiStatus.invalid_arg);
             }
             _ = this.release(.release, true);
-            return .closing;
+            return @intFromEnum(NapiStatus.closing);
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
         this.queue.data.writeItem(ctx) catch bun.outOfMemory();
         this.scheduleDispatch();
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 
     fn scheduleDispatch(this: *ThreadSafeFunction) void {
@@ -1650,7 +1651,7 @@ pub const ThreadSafeFunction = struct {
         if (this.finalizer.fun) |fun| {
             const handle_scope = NapiHandleScope.open(this.env, false);
             defer if (handle_scope) |scope| scope.close(this.env);
-            fun(this.event_loop.global, this.finalizer.data, this.ctx);
+            fun(this.env, this.finalizer.data, this.ctx);
         }
 
         this.callback.deinit();
@@ -1670,10 +1671,10 @@ pub const ThreadSafeFunction = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (this.isClosing()) {
-            return .closing;
+            return @intFromEnum(NapiStatus.closing);
         }
         _ = this.thread_count.fetchAdd(1, .seq_cst);
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 
     pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
@@ -1681,7 +1682,7 @@ pub const ThreadSafeFunction = struct {
         defer if (!already_locked) this.lock.unlock();
 
         if (this.thread_count.load(.seq_cst) < 0) {
-            return .invalid_arg;
+            return @intFromEnum(NapiStatus.invalid_arg);
         }
 
         const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
@@ -1699,7 +1700,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 };
 
@@ -1721,22 +1722,23 @@ pub export fn napi_create_threadsafe_function(
         return env.invalidArg();
     };
     const func = func_.get();
+    const global = env.toJS();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.toJS().vm()))) {
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(global.vm()))) {
         return env.setLastError(.function_expected);
     }
 
-    const vm = env.bunVM();
+    const vm = global.bunVM();
     var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
         .env = env,
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(global), vm.global),
             },
         } else .{
-            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(global), vm.global),
         },
         .ctx = context,
         .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

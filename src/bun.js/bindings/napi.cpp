@@ -160,7 +160,9 @@ void napi_log(long line, const char* function, const char* fmt, ...)
 // extended error info.
 //
 // Usually, you should use the above macros instead of this function.
-static napi_status napi_set_last_error(napi_env env, napi_status status)
+//
+// This is not part of Node-API, it's a convenience function for Bun.
+extern "C" napi_status napi_set_last_error(napi_env env, napi_status status)
 {
     if (env) {
         // napi_get_last_error_info will fill in the other fields if they are requested

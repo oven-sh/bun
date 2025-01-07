@@ -2552,6 +2552,7 @@ pub const ModuleLoader = struct {
                 .ws => return jsSyntheticModule(.ws, specifier),
                 .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
                 .@"node:_stream_passthrough" => return jsSyntheticModule(.@"node:_stream_passthrough", specifier),
+                .@"node:_stream_readable" => return jsSyntheticModule(.@"node:_stream_readable", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2768,6 +2769,7 @@ pub const HardcodedModule = enum {
     //
     @"node:_stream_duplex",
     @"node:_stream_passthrough",
+    @"node:_stream_readable",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2846,6 +2848,7 @@ pub const HardcodedModule = enum {
 
             .{ "_stream_duplex", .@"node:_stream_duplex" },
             .{ "_stream_passthrough", .@"node:_stream_passthrough" },
+            .{ "_stream_readable", .@"node:_stream_readable" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2928,7 +2931,7 @@ pub const HardcodedModule = enum {
             .{ "node:_http_server", .{ .path = "http" } },
             .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "node:_stream_passthrough", .{ .path = "_stream_passthrough" } },
-            .{ "node:_stream_readable", .{ .path = "stream" } },
+            .{ "node:_stream_readable", .{ .path = "_stream_readable" } },
             .{ "node:_stream_transform", .{ .path = "stream" } },
             .{ "node:_stream_writable", .{ .path = "stream" } },
             .{ "node:_stream_wrap", .{ .path = "stream" } },
@@ -3003,7 +3006,7 @@ pub const HardcodedModule = enum {
             .{ "_http_server", .{ .path = "http" } },
             .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "_stream_passthrough", .{ .path = "_stream_passthrough" } },
-            .{ "_stream_readable", .{ .path = "stream" } },
+            .{ "_stream_readable", .{ .path = "_stream_readable" } },
             .{ "_stream_transform", .{ .path = "stream" } },
             .{ "_stream_writable", .{ .path = "stream" } },
             .{ "_stream_wrap", .{ .path = "stream" } },

@@ -1010,88 +1010,6 @@ var require_operators = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/streams/legacy.js
-var require_legacy = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
-    "use strict";
-    var { ObjectSetPrototypeOf } = require_primordials();
-
-    function Stream(options) {
-      if (!(this instanceof Stream)) return new Stream(options);
-      EE.$call(this, options);
-    }
-    Stream.prototype = {};
-    ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
-    Stream.prototype.constructor = Stream; // Re-add constructor which got lost when setting prototype
-    ObjectSetPrototypeOf(Stream, EE);
-
-    Stream.prototype.pipe = function (dest, options) {
-      const source = this;
-      function ondata(chunk) {
-        if (dest.writable && dest.write(chunk) === false && source.pause) {
-          source.pause();
-        }
-      }
-      source.on("data", ondata);
-      function ondrain() {
-        if (source.readable && source.resume) {
-          source.resume();
-        }
-      }
-      dest.on("drain", ondrain);
-      if (!dest._isStdio && (!options || options.end !== false)) {
-        source.on("end", onend);
-        source.on("close", onclose);
-      }
-      let didOnEnd = false;
-      function onend() {
-        if (didOnEnd) return;
-        didOnEnd = true;
-        dest.end();
-      }
-      function onclose() {
-        if (didOnEnd) return;
-        didOnEnd = true;
-        if (typeof dest.destroy === "function") dest.destroy();
-      }
-      function onerror(er) {
-        cleanup();
-        if (EE.listenerCount(this, "error") === 0) {
-          this.emit("error", er);
-        }
-      }
-      prependListener(source, "error", onerror);
-      prependListener(dest, "error", onerror);
-      function cleanup() {
-        source.removeListener("data", ondata);
-        dest.removeListener("drain", ondrain);
-        source.removeListener("end", onend);
-        source.removeListener("close", onclose);
-        source.removeListener("error", onerror);
-        dest.removeListener("error", onerror);
-        source.removeListener("end", cleanup);
-        source.removeListener("close", cleanup);
-        dest.removeListener("close", cleanup);
-      }
-      source.on("end", cleanup);
-      source.on("close", cleanup);
-      dest.on("close", cleanup);
-      dest.emit("pipe", source);
-      return dest;
-    };
-    function prependListener(emitter, event, fn) {
-      if (typeof emitter.prependListener === "function") return emitter.prependListener(event, fn);
-      if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);
-      else if ($isJSArray(emitter._events[event])) emitter._events[event].unshift(fn);
-      else emitter._events[event] = [fn, emitter._events[event]];
-    }
-    module.exports = {
-      Stream,
-      prependListener,
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/add-abort-signal.js
 var require_add_abort_signal = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/add-abort-signal.js"(exports, module) {
@@ -1278,7 +1196,7 @@ var require_readable = __commonJS({
       Symbol,
     } = require_primordials();
 
-    var { Stream, prependListener } = require_legacy();
+    var { Stream, prependListener } = require("internal/streams/legacy");
 
     const BufferList = $cpp("JSBufferList.cpp", "getBufferList");
 
@@ -2674,7 +2592,7 @@ var require_writable = __commonJS({
       SymbolHasInstance,
     } = require_primordials();
 
-    var Stream = require_legacy().Stream;
+    var Stream = require("internal/streams/legacy").Stream;
     var destroyImpl = require("internal/streams/destroy");
     var { addAbortSignal } = require_add_abort_signal();
     var {
@@ -4403,7 +4321,7 @@ var require_stream = __commonJS({
     var eos = require("internal/streams/end-of-stream");
     var promises = require_promises();
     var utils = require("internal/streams/utils");
-    var Stream = (module.exports = require_legacy().Stream);
+    var Stream = (module.exports = require("internal/streams/legacy").Stream);
     Stream.isDisturbed = utils.isDisturbed;
     Stream.isErrored = utils.isErrored;
     Stream.isWritable = utils.isWritable;

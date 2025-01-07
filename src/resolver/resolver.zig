@@ -3564,7 +3564,7 @@ pub const Resolver = struct {
         }) orelse return null;
         var package_json: ?*PackageJSON = null;
 
-        const is_node_module_folder = isNodeModulePackageFolder(dir_info.abs_real_path);
+        const is_node_module_folder = isNodeModulePackageFolder(path);
 
         std.log.info("is_node_module_folder isInsideNodeModules={?} {s} ?= {?} {s} {s}", .{ dir_info.isInsideNodeModules(), path, is_node_module_folder, dir_info.abs_path, dir_info.abs_real_path });
 

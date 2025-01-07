@@ -1363,6 +1363,36 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/PackageExternalRespectTSPathAliases", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { value } from "alias/foo";
+        import { other } from "@scope/bar";
+        import { nested } from "deep/path";
+        import { absolute } from "abs/path";
+        console.log(value, other, nested, absolute);
+      `,
+      "/src/actual/foo.ts": `export const value = "foo";`,
+      "/src/lib/bar.ts": `export const other = "bar";`,
+      "/src/nested/deep/file.ts": `export const nested = "nested";`,
+      "/src/absolute.ts": `export const absolute = "absolute";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "alias/*": ["actual/*"],
+            "@scope/*": ["lib/*"],
+            "deep/path": ["nested/deep/file.ts"],
+            "abs/*": ["\${configDir}/absolute.ts"]
+          }
+        }
+      }`,
+    },
+    packages: "external",
+    run: {
+      stdout: "foo bar nested absolute",
+    },
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `

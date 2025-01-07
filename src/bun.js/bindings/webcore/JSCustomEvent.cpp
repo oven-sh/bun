@@ -47,6 +47,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "../ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -58,7 +59,8 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
-        throwTypeError(&lexicalGlobalObject, throwScope);
+        Bun::throwError(&lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "The \"options\" argument must be of type object."_s);
         return {};
     }
     CustomEvent::Init result;

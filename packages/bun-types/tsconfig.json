@@ -1,16 +1,14 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
     "skipLibCheck": false,
-    "strict": true,
-    "target": "esnext",
-    "module": "esnext",
-    "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
-    "disableSolutionSearching": true,
-    "noUnusedLocals": true,
-    "noEmit": true,
-    "resolveJsonModule": true
+
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "declarationDir": "out"
   },
+  "files": ["ambient.d.ts"], // ambient defines .txt and .toml loaders
+  "include": ["**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

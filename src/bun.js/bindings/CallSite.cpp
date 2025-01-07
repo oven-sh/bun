@@ -6,6 +6,7 @@
 #include "config.h"
 #include "CallSite.h"
 
+#include "JavaScriptCore/CallData.h"
 #include "helpers.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -89,8 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
 
-    return JSValue::encode(
-        JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
 }
 
 JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)

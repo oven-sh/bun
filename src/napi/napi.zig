@@ -1032,26 +1032,8 @@ pub export fn napi_create_bigint_uint64(env: napi_env, value: u64, result_: ?*na
     return .ok;
 }
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
-// TODO: lossless
-pub export fn napi_get_value_bigint_int64(_: napi_env, value_: napi_value, result_: ?*i64, _: *bool) napi_status {
-    log("napi_get_value_bigint_int64", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    result.* = value.toInt64();
-    return .ok;
-}
-// TODO: lossless
-pub export fn napi_get_value_bigint_uint64(_: napi_env, value_: napi_value, result_: ?*u64, _: *bool) napi_status {
-    log("napi_get_value_bigint_uint64", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    result.* = value.toUInt64NoTruncate();
-    return .ok;
-}
+pub extern fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: ?*i64, lossless: ?*bool) napi_status;
+pub extern fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: ?*u64, lossless: ?*bool) napi_status;
 
 pub extern fn napi_get_value_bigint_words(env: napi_env, value: napi_value, sign_bit: [*c]c_int, word_count: [*c]usize, words: [*c]u64) napi_status;
 pub extern fn napi_get_all_property_names(env: napi_env, object: napi_value, key_mode: napi_key_collection_mode, key_filter: napi_key_filter, key_conversion: napi_key_conversion, result: *napi_value) napi_status;
@@ -1885,6 +1867,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
+    pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1955,6 +1938,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
 };
 
 // To update this list, use find + multi-cursor in your editor.

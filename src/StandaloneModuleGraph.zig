@@ -430,7 +430,11 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
+    pub const InjectOptions = struct {
+        windows_hide_console: bool = false,
+    };
+
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -439,6 +443,11 @@ pub const StandaloneModuleGraph = struct {
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+                // Ensure we own the file
+                if (Environment.isPosix) {
+                    // Make the file writable so we can delete it
+                    _ = Syscall.fchmod(fd, 0o777);
+                }
                 _ = Syscall.close(fd);
                 _ = Syscall.unlink(name);
             }
@@ -465,7 +474,7 @@ pub const StandaloneModuleGraph = struct {
                     bun.invalid_fd,
                     out,
                     // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
                     // create disposition
                     w.FILE_OPEN,
                     // create options
@@ -632,6 +641,15 @@ pub const StandaloneModuleGraph = struct {
             _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
         }
 
+        if (Environment.isWindows and inject_options.windows_hide_console) {
+            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
+                Output.err(err, "failed to disable console on executable", .{});
+                cleanup(zname, cloned_executable_fd);
+
+                Global.exit(1);
+            };
+        }
+
         return cloned_executable_fd;
     }
 
@@ -659,6 +677,8 @@ pub const StandaloneModuleGraph = struct {
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
         output_format: bun.options.Format,
+        windows_hide_console: bool,
+        windows_icon: ?[]const u8,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
@@ -675,6 +695,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
+            .{ .windows_hide_console = windows_hide_console },
         );
         fd.assertKind(.system);
 
@@ -699,6 +720,15 @@ pub const StandaloneModuleGraph = struct {
 
                 Global.exit(1);
             };
+            _ = bun.sys.close(fd);
+
+            if (windows_icon) |icon_utf8| {
+                var icon_buf: bun.OSPathBuffer = undefined;
+                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
+                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
+                    Output.warn("Failed to set executable icon", .{});
+                };
+            }
             return;
         }
 

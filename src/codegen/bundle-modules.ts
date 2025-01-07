@@ -81,6 +81,16 @@ for (let i = 0; i < moduleList.length; i++) {
   try {
     let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
 
+    // NOTE: internal modules are parsed as functions. They must use ESM to export and require to import.
+    // TODO: Bother @paperdave and have him check for module.exports, and create/return a module object if detected.
+    if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
+      if (input.includes("module.exports")) {
+        throw new Error("Cannot use CommonJS module.exports in ESM modules. Use `export default { ... }` instead.");
+      } else {
+        throw new Error("Internal modules must have an `export default` statement.");
+      }
+    }
+
     const scannedImports = t.scanImports(input);
     for (const imp of scannedImports) {
       if (imp.kind === "import-statement") {
@@ -111,8 +121,7 @@ for (let i = 0; i < moduleList.length; i++) {
       true,
       x => requireTransformer(x, moduleList[i]),
     );
-    let fileToTranspile = `// @ts-nocheck
-// GENERATED TEMP FILE - DO NOT EDIT
+    let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
 ${importStatements.join("\n")}
 
@@ -139,7 +148,8 @@ ${processed.result.slice(1).trim()}
     if (!fs.existsSync(path.dirname(outputPath))) {
       verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
     }
-    // await Bun.sleep(10);
+
+    fileToTranspile = "// @ts-nocheck\n" + fileToTranspile;
 
     try {
       await writeFile(outputPath, fileToTranspile);
@@ -402,12 +412,11 @@ writeIfNotChanged(
     ESM = 5,
     JSONForObjectLoader = 6,
     ExportsObject = 7,
-
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
 ${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
-    
+
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),

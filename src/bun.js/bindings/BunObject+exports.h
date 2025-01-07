@@ -31,6 +31,7 @@
     macro(unsafe) \
     macro(semver) \
     macro(embeddedFiles) \
+    macro(S3Client) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
@@ -57,6 +58,7 @@
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
+    macro(s3) \
     macro(serve) \
     macro(sha) \
     macro(shrink) \

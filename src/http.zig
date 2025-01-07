@@ -69,7 +69,7 @@ var shared_request_headers_buf: [256]picohttp.Header = undefined;
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
-const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
+pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const Signals = struct {
     header_progress: ?*std.atomic.Value(bool) = null,
@@ -118,11 +118,32 @@ pub const FetchRedirect = enum(u8) {
 pub const HTTPRequestBody = union(enum) {
     bytes: []const u8,
     sendfile: Sendfile,
+    stream: struct {
+        buffer: bun.io.StreamBuffer,
+        ended: bool,
+        has_backpressure: bool = false,
 
+        pub fn hasEnded(this: *@This()) bool {
+            return this.ended and this.buffer.isEmpty();
+        }
+    },
+
+    pub fn isStream(this: *const HTTPRequestBody) bool {
+        return this.* == .stream;
+    }
+
+    pub fn deinit(this: *HTTPRequestBody) void {
+        switch (this.*) {
+            .sendfile, .bytes => {},
+            .stream => |*stream| stream.buffer.deinit(),
+        }
+    }
     pub fn len(this: *const HTTPRequestBody) usize {
         return switch (this.*) {
             .bytes => this.bytes.len,
             .sendfile => this.sendfile.content_size,
+            // unknow amounts
+            .stream => std.math.maxInt(usize),
         };
     }
 };
@@ -553,6 +574,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         fn getTagged(ptr: *anyopaque) ActiveSocket {
             return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+        }
+
+        pub fn getTaggedFromSocket(socket: HTTPSocket) ActiveSocket {
+            if (socket.ext(anyopaque)) |ctx| {
+                return getTagged(ctx);
+            }
+            return ActiveSocket.init(&dead_socket);
         }
 
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
@@ -1001,6 +1029,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 const Queue = UnboundedQueue(AsyncHTTP, .next);
 const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
+const RequestWriteQueue = UnboundedQueue(AsyncHTTP, .next);
 
 pub const HTTPThread = struct {
     loop: *JSC.MiniEventLoop,
@@ -1010,7 +1039,10 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
 
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
+    queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
+
     queued_shutdowns_lock: bun.Lock = .{},
+    queued_writes_lock: bun.Lock = .{},
 
     queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
 
@@ -1020,7 +1052,14 @@ pub const HTTPThread = struct {
     lazy_libdeflater: ?*LibdeflateState = null,
 
     const threadlog = Output.scoped(.HTTPThread, true);
-
+    const WriteMessage = struct {
+        data: []const u8,
+        async_http_id: u32,
+        flags: packed struct {
+            is_tls: bool,
+            ended: bool,
+        },
+    };
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
@@ -1109,7 +1148,8 @@ pub const HTTPThread = struct {
 
         if (Environment.isWindows) {
             _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
-                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                bun.Output.errGeneric("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                Global.crash();
             };
         }
 
@@ -1176,11 +1216,13 @@ pub const HTTPThread = struct {
             }
         }
         if (client.http_proxy) |url| {
-            // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            if (url.href.len > 0) {
+                // https://github.com/oven-sh/bun/issues/11343
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                }
+                return error.UnsupportedProxyProtocol;
             }
-            return error.UnsupportedProxyProtocol;
         }
         return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
     }
@@ -1206,6 +1248,65 @@ pub const HTTPThread = struct {
                 }
             }
             this.queued_shutdowns.clearRetainingCapacity();
+        }
+        {
+            this.queued_writes_lock.lock();
+            defer this.queued_writes_lock.unlock();
+            for (this.queued_writes.items) |write| {
+                const ended = write.flags.ended;
+                defer if (!strings.eqlComptime(write.data, end_of_chunked_http1_1_encoding_response_body) and write.data.len > 0) {
+                    // "0\r\n\r\n" is always a static so no need to free
+                    bun.default_allocator.free(write.data);
+                };
+                if (socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
+                    if (write.flags.is_tls) {
+                        const socket = uws.SocketTLS.fromAny(socket_ptr);
+                        if (socket.isClosed() or socket.isShutdown()) {
+                            continue;
+                        }
+                        const tagged = NewHTTPContext(true).getTaggedFromSocket(socket);
+                        if (tagged.get(HTTPClient)) |client| {
+                            if (client.state.original_request_body == .stream) {
+                                var stream = &client.state.original_request_body.stream;
+                                if (write.data.len > 0) {
+                                    stream.buffer.write(write.data) catch {};
+                                }
+                                stream.ended = ended;
+                                if (!stream.has_backpressure) {
+                                    client.onWritable(
+                                        false,
+                                        true,
+                                        socket,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        const socket = uws.SocketTCP.fromAny(socket_ptr);
+                        if (socket.isClosed() or socket.isShutdown()) {
+                            continue;
+                        }
+                        const tagged = NewHTTPContext(false).getTaggedFromSocket(socket);
+                        if (tagged.get(HTTPClient)) |client| {
+                            if (client.state.original_request_body == .stream) {
+                                var stream = &client.state.original_request_body.stream;
+                                if (write.data.len > 0) {
+                                    stream.buffer.write(write.data) catch {};
+                                }
+                                stream.ended = ended;
+                                if (!stream.has_backpressure) {
+                                    client.onWritable(
+                                        false,
+                                        false,
+                                        socket,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            this.queued_writes.clearRetainingCapacity();
         }
 
         while (this.queued_proxy_deref.popOrNull()) |http| {
@@ -1276,6 +1377,23 @@ pub const HTTPThread = struct {
             this.queued_shutdowns.append(bun.default_allocator, .{
                 .async_http_id = http.async_http_id,
                 .is_tls = http.client.isHTTPS(),
+            }) catch bun.outOfMemory();
+        }
+        if (this.has_awoken.load(.monotonic))
+            this.loop.loop.wakeup();
+    }
+
+    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, data: []const u8, ended: bool) void {
+        {
+            this.queued_writes_lock.lock();
+            defer this.queued_writes_lock.unlock();
+            this.queued_writes.append(bun.default_allocator, .{
+                .async_http_id = http.async_http_id,
+                .data = data,
+                .flags = .{
+                    .is_tls = http.client.isHTTPS(),
+                    .ended = ended,
+                },
             }) catch bun.outOfMemory();
         }
         if (this.has_awoken.load(.monotonic))
@@ -1488,7 +1606,12 @@ pub fn onClose(
         tunnel.detachAndDeref();
     }
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
-
+    if (client.state.flags.is_redirect_pending) {
+        // if the connection is closed and we are pending redirect just do the redirect
+        // in this case we will re-connect or go to a different socket if needed
+        client.doRedirect(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+        return;
+    }
     if (in_progress) {
         // if the peer closed after a full chunk, treat this
         // as if the transfer had complete, browsers appear to ignore
@@ -1847,6 +1970,7 @@ pub const InternalState = struct {
             info.deinit(bun.default_allocator);
         }
 
+        this.original_request_body.deinit();
         this.* = .{
             .body_out_str = body_msg,
             .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
@@ -2000,6 +2124,7 @@ pub const Flags = packed struct {
     proxy_tunneling: bool = false,
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
+    is_streaming_request_body: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -2131,6 +2256,7 @@ pub const Encoding = enum {
 
 const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
+const chunked_encoded_header = picohttp.Header{ .name = "Transfer-Encoding", .value = "chunked" };
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
 const connection_closing_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
@@ -2745,10 +2871,14 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (body_len > 0 or this.method.hasRequestBody()) {
-        request_headers_buf[header_count] = .{
-            .name = content_length_header_name,
-            .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
-        };
+        if (this.flags.is_streaming_request_body) {
+            request_headers_buf[header_count] = chunked_encoded_header;
+        } else {
+            request_headers_buf[header_count] = .{
+                .name = content_length_header_name,
+                .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
+            };
+        }
         header_count += 1;
     }
 
@@ -2766,8 +2896,17 @@ pub fn doRedirect(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    log("doRedirect", .{});
+    if (this.state.original_request_body == .stream) {
+        // we cannot follow redirect from a stream right now
+        // NOTE: we can use .tee(), reset the readable stream and cancel/wait pending write requests before redirecting. node.js just errors here so we just closeAndFail too.
+        this.closeAndFail(error.UnexpectedRedirect, is_ssl, socket);
+        return;
+    }
+
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
+    // TODO: what we do with stream body?
     const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
         this.state.original_request_body.bytes
     else
@@ -2802,6 +2941,7 @@ pub fn doRedirect(
         return;
     }
     this.state.reset(this.allocator);
+    log("doRedirect state reset", .{});
     // also reset proxy to redirect
     this.flags.proxy_tunneling = false;
     if (this.proxy_tunnel) |tunnel| {
@@ -3032,6 +3172,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     this.state.request_stage = .proxy_handshake;
                 } else {
                     this.state.request_stage = .body;
+                    if (this.flags.is_streaming_request_body) {
+                        // lets signal to start streaming the body
+                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    }
                 }
                 return;
             }
@@ -3041,11 +3185,15 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     this.state.request_stage = .proxy_handshake;
                 } else {
                     this.state.request_stage = .body;
+                    if (this.flags.is_streaming_request_body) {
+                        // lets signal to start streaming the body
+                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    }
                 }
                 assert(
-                    // we should have leftover data OR we use sendfile()
+                    // we should have leftover data OR we use sendfile/stream
                     (this.state.original_request_body == .bytes and this.state.request_body.len > 0) or
-                        this.state.original_request_body == .sendfile,
+                        this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
                 // we sent everything, but there's some body leftover
@@ -3076,6 +3224,32 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         return;
                     }
                 },
+                .stream => {
+                    var stream = &this.state.original_request_body.stream;
+                    stream.has_backpressure = false;
+                    // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+                    if (stream.buffer.isNotEmpty()) {
+                        const to_send = stream.buffer.slice();
+                        const amount = socket.write(to_send, true);
+                        if (amount < 0) {
+                            this.closeAndFail(error.WriteFailed, is_ssl, socket);
+                            return;
+                        }
+                        this.state.request_sent_len += @as(usize, @intCast(amount));
+                        stream.buffer.cursor += @intCast(amount);
+                        if (amount < to_send.len) {
+                            stream.has_backpressure = true;
+                        }
+                        if (stream.buffer.isEmpty()) {
+                            stream.buffer.reset();
+                        }
+                    }
+                    if (stream.hasEnded()) {
+                        this.state.request_stage = .done;
+                        stream.buffer.deinit();
+                        return;
+                    }
+                },
                 .sendfile => |*sendfile| {
                     if (comptime is_ssl) {
                         @panic("sendfile is only supported without SSL. This code should never have been reached!");
@@ -3098,21 +3272,48 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .proxy_body => {
-            if (this.state.original_request_body != .bytes) {
-                @panic("sendfile is only supported without SSL. This code should never have been reached!");
-            }
             if (this.proxy_tunnel) |proxy| {
-                this.setTimeout(socket, 5);
+                switch (this.state.original_request_body) {
+                    .bytes => {
+                        this.setTimeout(socket, 5);
 
-                const to_send = this.state.request_body;
-                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                        const to_send = this.state.request_body;
+                        const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                this.state.request_sent_len += @as(usize, @intCast(amount));
-                this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                        this.state.request_sent_len += @as(usize, @intCast(amount));
+                        this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
 
-                if (this.state.request_body.len == 0) {
-                    this.state.request_stage = .done;
-                    return;
+                        if (this.state.request_body.len == 0) {
+                            this.state.request_stage = .done;
+                            return;
+                        }
+                    },
+                    .stream => {
+                        var stream = &this.state.original_request_body.stream;
+                        stream.has_backpressure = false;
+
+                        // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+                        if (stream.buffer.isNotEmpty()) {
+                            const to_send = stream.buffer.slice();
+                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                            this.state.request_sent_len += amount;
+                            stream.buffer.cursor += @truncate(amount);
+                            if (amount < to_send.len) {
+                                stream.has_backpressure = true;
+                            }
+                            if (stream.buffer.isEmpty()) {
+                                stream.buffer.reset();
+                            }
+                        }
+                        if (stream.hasEnded()) {
+                            this.state.request_stage = .done;
+                            stream.buffer.deinit();
+                            return;
+                        }
+                    },
+                    .sendfile => {
+                        @panic("sendfile is only supported without SSL. This code should never have been reached!");
+                    },
                 }
             }
         },
@@ -3175,6 +3376,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
                 if (has_sent_headers) {
                     this.state.request_stage = .proxy_body;
+                    if (this.flags.is_streaming_request_body) {
+                        // lets signal to start streaming the body
+                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    }
                     assert(this.state.request_body.len > 0);
 
                     // we sent everything, but there's some body leftover
@@ -3558,6 +3763,7 @@ pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
     redirected: bool = false,
+    can_stream: bool = false,
 
     fail: ?anyerror = null,
 
@@ -3665,6 +3871,8 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
+        // we can stream the request_body at this stage
+        .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
     };
 }
 

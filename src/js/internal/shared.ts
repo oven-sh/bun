@@ -1,10 +1,11 @@
 class NotImplementedError extends Error {
   code: string;
-  constructor(feature: string, issue?: number) {
+  constructor(feature: string, issue?: number, extra?: string) {
     super(
       feature +
         " is not yet implemented in Bun." +
-        (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : ""),
+        (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : "") +
+        (!!extra ? ". " + extra : ""),
     );
     this.name = "NotImplementedError";
     this.code = "ERR_NOT_IMPLEMENTED";
@@ -14,11 +15,11 @@ class NotImplementedError extends Error {
   }
 }
 
-function throwNotImplemented(feature: string, issue?: number): never {
+function throwNotImplemented(feature: string, issue?: number, extra?: string): never {
   // in the definition so that it isn't bundled unless used
   hideFromStack(throwNotImplemented);
 
-  throw new NotImplementedError(feature, issue);
+  throw new NotImplementedError(feature, issue, extra);
 }
 
 function hideFromStack(...fns) {

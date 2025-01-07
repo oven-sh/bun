@@ -731,6 +731,8 @@ pub const EventLoopTimer = struct {
         StatWatcherScheduler,
         UpgradedDuplex,
         WindowsNamedPipe,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -740,6 +742,8 @@ pub const EventLoopTimer = struct {
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     } else enum {
@@ -748,6 +752,8 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -756,6 +762,8 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     };
@@ -808,11 +816,14 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
+            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }
+
                 if (comptime t.Type() == StatWatcherScheduler) {
                     return container.timerCallback();
                 }

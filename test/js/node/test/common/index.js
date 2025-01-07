@@ -119,6 +119,10 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--expose-gc" && process.versions.bun) {
+        globalThis.gc ??= () => Bun.gc(true);
+        break;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),
@@ -128,7 +132,7 @@ if (process.argv.length === 2 &&
       const options = { encoding: 'utf8', stdio: 'inherit' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
-        process.kill(0, result.signal);
+        process.kill(process.pid, result.signal);
       } else {
         process.exit(result.status);
       }
@@ -381,6 +385,57 @@ if (global.Storage) {
     global.localStorage,
     global.sessionStorage,
     global.Storage,
+  );
+}
+
+if (global.Bun) {
+  knownGlobals.push(
+    global.addEventListener,
+    global.alert,
+    global.confirm,
+    global.dispatchEvent,
+    global.postMessage,
+    global.prompt,
+    global.removeEventListener,
+    global.reportError,
+    global.Bun,
+    global.File,
+    global.process,
+    global.Blob,
+    global.Buffer,
+    global.BuildError,
+    global.BuildMessage,
+    global.HTMLRewriter,
+    global.Request,
+    global.ResolveError,
+    global.ResolveMessage,
+    global.Response,
+    global.TextDecoder,
+    global.AbortSignal,
+    global.BroadcastChannel,
+    global.CloseEvent,
+    global.DOMException,
+    global.ErrorEvent,
+    global.Event,
+    global.EventTarget,
+    global.FormData,
+    global.Headers,
+    global.MessageChannel,
+    global.MessageEvent,
+    global.MessagePort,
+    global.PerformanceEntry,
+    global.PerformanceObserver,
+    global.PerformanceObserverEntryList,
+    global.PerformanceResourceTiming,
+    global.PerformanceServerTiming,
+    global.PerformanceTiming,
+    global.TextEncoder,
+    global.URL,
+    global.URLSearchParams,
+    global.WebSocket,
+    global.Worker,
+    global.onmessage,
+    global.onerror
   );
 }
 
@@ -843,6 +898,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 

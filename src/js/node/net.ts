@@ -24,7 +24,6 @@ const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
-const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -98,6 +97,15 @@ function detachSocket(self) {
 function finishSocket(hasError) {
   detachSocket(this);
   this.emit("close", hasError);
+}
+
+function destroyNT(self, err) {
+  self.destroy(err);
+}
+function destroyWhenAborted(err) {
+  if (!this.destroyed) {
+    this.destroy(err.target.reason);
+  }
 }
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
@@ -479,9 +487,12 @@ const Socket = (function (InternalSocket) {
           },
         };
       }
-
       if (signal) {
-        signal.addEventListener("abort", () => this.destroy());
+        if (signal.aborted) {
+          process.nextTick(destroyNT, this, signal.reason);
+        } else {
+          signal.addEventListener("abort", destroyWhenAborted.bind(this));
+        }
       }
     }
 
@@ -1110,7 +1121,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this._handle) {
         this.once("close", function close() {
-          callback(ERR_SERVER_NOT_RUNNING());
+          callback($ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);

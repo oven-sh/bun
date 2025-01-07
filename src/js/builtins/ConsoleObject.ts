@@ -142,6 +142,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
+  const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
+  const kMaxGroupIndentation = 1000;
+
   const StringPrototypeIncludes = String.prototype.includes;
   const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace];
   const ArrayPrototypeUnshift = Array.prototype.unshift;
@@ -289,28 +292,25 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     } = options;
 
     if (!stdout || typeof stdout.write !== "function") {
-      // throw new ERR_CONSOLE_WRITABLE_STREAM("stdout");
-      throw new TypeError("stdout is not a writable stream");
+      throw $ERR_CONSOLE_WRITABLE_STREAM("stdout is not a writable stream");
     }
     if (!stderr || typeof stderr.write !== "function") {
-      // throw new ERR_CONSOLE_WRITABLE_STREAM("stderr");
-      throw new TypeError("stderr is not a writable stream");
+      throw $ERR_CONSOLE_WRITABLE_STREAM("stderr is not a writable stream");
     }
 
-    if (typeof colorMode !== "boolean" && colorMode !== "auto") {
-      // throw new ERR_INVALID_ARG_VALUE("colorMode", colorMode);
-      throw new TypeError("colorMode must be a boolean or 'auto'");
-    }
+    validateOneOf(colorMode, "colorMode", ["auto", true, false]);
 
     if (groupIndentation !== undefined) {
-      // validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);
+      validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);
     }
 
     if (inspectOptions !== undefined) {
-      // validateObject(inspectOptions, "options.inspectOptions");
+      validateObject(inspectOptions, "options.inspectOptions");
 
       if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
-        // throw new ERR_INCOMPATIBLE_OPTION_PAIR("options.inspectOptions.color", "colorMode");
+        throw $ERR_INCOMPATIBLE_OPTION_PAIR(
+          'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
+        );
       }
       optionsMap.set(this, inspectOptions);
     }
@@ -455,12 +455,17 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           // Add and later remove a noop error handler to catch synchronous
           // errors.
           if (stream.listenerCount("error") === 0) stream.once("error", noop);
-
           stream.write(string, errorHandler);
         } catch (e) {
           // Console is a debugging utility, so it swallowing errors is not
           // desirable even in edge cases such as low stack space.
-          // if (isStackOverflowError(e)) throw e;
+          if (
+            e != null &&
+            typeof e === "object" &&
+            e.name === "RangeError" &&
+            e.message === "Maximum call stack size exceeded."
+          )
+            throw e;
           // Sorry, there's no proper way to pass along the error here.
         } finally {
           stream.removeListener("error", noop);
@@ -472,7 +477,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          if (process.env.FORCE_COLOR !== undefined) {
+          if (Bun.env["FORCE_COLOR"] !== undefined) {
             color = Bun.enableANSIColors;
           } else {
             color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
@@ -595,7 +600,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     clear() {
       // It only makes sense to clear if _stdout is a TTY.
       // Otherwise, do nothing.
-      if (this._stdout.isTTY && process.env.TERM !== "dumb") {
+      if (this._stdout.isTTY && Bun.env["TERM"] !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }
     },
@@ -643,7 +648,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     // https://console.spec.whatwg.org/#table
     table(tabularData, properties) {
       if (properties !== undefined) {
-        // validateArray(properties, "properties");
+        validateArray(properties, "properties");
       }
 
       if (tabularData === null || typeof tabularData !== "object") return this.log(tabularData);

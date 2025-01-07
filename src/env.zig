@@ -19,7 +19,6 @@ pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
 pub const isPosix = !isWindows and !isWasm;
 pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
-pub const isRelease = std.builtin.Mode.Debug != @import("builtin").mode and !isTest;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
@@ -27,6 +26,11 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
+
+/// All calls to `@export` should be gated behind this check, so that code
+/// generators that compile Zig code know not to reference and compile a ton of
+/// unused code.
+pub const export_cpp_apis = @import("builtin").output_mode == .Obj;
 
 pub const build_options = @import("build_options");
 

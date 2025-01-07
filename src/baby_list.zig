@@ -304,6 +304,8 @@ pub fn BabyList(comptime Type: type) type {
             var list__ = this.listManaged(allocator);
             const writer = list__.writer();
             try writer.print(fmt, args);
+
+            this.update(list__);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {

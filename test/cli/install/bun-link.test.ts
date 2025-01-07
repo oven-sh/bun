@@ -1,16 +1,18 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { access, mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toBeValidBin, toHaveBins, stderrForInstall } from "harness";
-import { basename, join } from "path";
 import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  package_dir,
+  bunExe,
+  bunEnv as env,
+  runBunInstall,
+  tmpdirSync,
+  toBeValidBin,
+  toHaveBins,
+  stderrForInstall,
   readdirSorted,
-} from "./dummy.registry";
+} from "harness";
+import { basename, join } from "path";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);

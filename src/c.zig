@@ -398,7 +398,6 @@ pub fn getRelease(buf: []u8) []const u8 {
     }
 }
 
-pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub extern fn cfmakeraw(*std.posix.termios) void;
 
 const LazyStatus = enum {
@@ -500,3 +499,7 @@ pub extern fn strlen(ptr: [*c]const u8) usize;
 pub const passwd = translated.passwd;
 pub const geteuid = translated.geteuid;
 pub const getpwuid_r = translated.getpwuid_r;
+
+export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
+    return @tagName(bun.C.SystemErrno.init(err) orelse return null);
+}

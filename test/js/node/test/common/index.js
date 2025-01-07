@@ -120,8 +120,8 @@ if (process.argv.length === 2 &&
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--expose-gc" && process.versions.bun) {
-        globalThis.gc ??= Bun.gc;
-        continue;
+        globalThis.gc ??= () => Bun.gc(true);
+        break;
       }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
@@ -132,7 +132,7 @@ if (process.argv.length === 2 &&
       const options = { encoding: 'utf8', stdio: 'inherit' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
-        process.kill(0, result.signal);
+        process.kill(process.pid, result.signal);
       } else {
         process.exit(result.status);
       }
@@ -898,6 +898,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 

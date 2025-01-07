@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins, readdirSorted } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -10,7 +10,6 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  readdirSorted,
   requested,
   root_url,
   setHandler,

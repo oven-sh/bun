@@ -220,7 +220,8 @@ it("should reject on connection error, calling both connectError() and rejecting
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
+        expect(error.code).toBe("ECONNREFUSED");
         expect(error.message).toBe("Failed to connect");
       },
       data() {
@@ -246,7 +247,8 @@ it("should reject on connection error, calling both connectError() and rejecting
     () => done(new Error("Promise should reject instead")),
     err => {
       expect(err).toBeDefined();
-      expect(err.name).toBe("ECONNREFUSED");
+      expect(err.name).toBe("Error");
+      expect(err.code).toBe("ECONNREFUSED");
       expect(err.message).toBe("Failed to connect");
 
       done();
@@ -293,7 +295,7 @@ it("should handle connection error", done => {
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
         expect(error.message).toBe("Failed to connect");
         expect((error as any).code).toBe("ECONNREFUSED");
         done();
@@ -372,7 +374,7 @@ it("should allow large amounts of data to be sent and received", async () => {
 
 it("it should not crash when getting a ReferenceError on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
@@ -413,7 +415,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
 
 it("it should not crash when returning a Error on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
@@ -595,6 +597,7 @@ it("should not call drain before handshake", async () => {
 });
 it("upgradeTLS handles errors", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");
@@ -699,6 +702,7 @@ it("upgradeTLS handles errors", async () => {
 });
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");

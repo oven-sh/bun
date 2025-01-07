@@ -389,13 +389,7 @@ static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
     }
 
     const JSC::SourceCode& source = codeBlock->source();
-    if (auto* provider = source.provider()) {
-        const auto& url = provider->sourceURL();
-        if (!url.isEmpty()) {
-            return true;
-        }
-    }
-    return false;
+    return !Zig::sourceURL(source).isEmpty();
 }
 
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
@@ -512,36 +506,24 @@ JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
 
 ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 {
-    static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
-    static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
+    static const auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
 
     if (m_isWasmFrame) {
         return String(sourceURLWasmString);
     }
 
+    auto url = Zig::sourceURL(m_codeBlock);
+    if (!url.isEmpty()) {
+        return url;
+    }
+
     if (m_callee && m_callee->isObject()) {
         if (auto* jsFunction = jsDynamicCast<JSFunction*>(m_callee)) {
-            if (auto* executable = jsFunction->executable()) {
-                if (!executable->isHostFunction()) {
-                    auto* jsExectuable = jsFunction->jsExecutable();
-                    if (jsExectuable) {
-                        const auto* sourceProvider = jsExectuable->source().provider();
-                        if (sourceProvider) {
-                            return sourceProvider->sourceURL();
-                        }
-                    }
-                }
+            WTF::String url = Zig::sourceURL(m_vm, jsFunction);
+            if (!url.isEmpty()) {
+                return url;
             }
         }
-    }
-
-    if (!m_codeBlock) {
-        return String(sourceURLNativeString);
-    }
-
-    auto* provider = m_codeBlock->source().provider();
-    if (provider) {
-        return provider->sourceURL();
     }
 
     return String();
@@ -549,8 +531,8 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 
 ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
-    static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
-    static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
+    static const auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
+    static const auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 
     if (m_isWasmFrame) {
         return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
@@ -616,6 +598,100 @@ bool JSCStackFrame::calculateSourcePositions()
     m_sourcePositions.column = location.column();
 
     return true;
+}
+
+String sourceURL(const JSC::SourceOrigin& origin)
+{
+    if (origin.isNull()) {
+        return String();
+    }
+
+    return origin.string();
+}
+
+String sourceURL(JSC::SourceProvider* sourceProvider)
+{
+    if (UNLIKELY(!sourceProvider)) {
+        return String();
+    }
+
+    String url = sourceProvider->sourceURLDirective();
+    if (!url.isEmpty()) {
+        return url;
+    }
+
+    url = sourceProvider->sourceURL();
+    if (!url.isEmpty()) {
+        return url;
+    }
+
+    const auto& origin = sourceProvider->sourceOrigin();
+    return sourceURL(origin);
+}
+
+String sourceURL(const JSC::SourceCode& sourceCode)
+{
+    return sourceURL(sourceCode.provider());
+}
+
+String sourceURL(JSC::CodeBlock* codeBlock)
+{
+    if (UNLIKELY(!codeBlock)) {
+        return String();
+    }
+
+    if (!codeBlock->ownerExecutable()) {
+        return String();
+    }
+
+    const auto& source = codeBlock->source();
+    return sourceURL(source);
+}
+
+String sourceURL(JSC::VM& vm, JSC::StackFrame& frame)
+{
+    if (frame.isWasmFrame()) {
+        return "[wasm code]"_s;
+    }
+
+    if (UNLIKELY(!frame.codeBlock())) {
+        return "[native code]"_s;
+    }
+
+    return sourceURL(frame.codeBlock());
+}
+
+String sourceURL(JSC::StackVisitor& visitor)
+{
+    switch (visitor->codeType()) {
+    case JSC::StackVisitor::Frame::Eval:
+    case JSC::StackVisitor::Frame::Module:
+    case JSC::StackVisitor::Frame::Function:
+    case JSC::StackVisitor::Frame::Global: {
+        return sourceURL(visitor->codeBlock());
+    }
+    case JSC::StackVisitor::Frame::Native:
+        return "[native code]"_s;
+    case JSC::StackVisitor::Frame::Wasm:
+        return "[wasm code]"_s;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
+{
+    auto* executable = function->executable();
+    if (!executable || executable->isHostFunction()) {
+        return String();
+    }
+
+    auto* jsExecutable = function->jsExecutable();
+    if (!jsExecutable) {
+        return String();
+    }
+
+    return Zig::sourceURL(jsExecutable->source());
 }
 
 }

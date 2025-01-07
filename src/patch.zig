@@ -915,7 +915,7 @@ const PatchLinesParser = struct {
     fn parseHunkHeaderLineImpl(text_: []const u8) ParseErr!struct { line_nr: u32, line_count: u32, rest: []const u8 } {
         var text = text_;
         const DIGITS = brk: {
-            var set = std.bit_set.IntegerBitSet(256).initEmpty();
+            var set = bun.bit_set.IntegerBitSet(256).initEmpty();
             for ('0'..'9' + 1) |c| set.set(c);
             break :brk set;
         };
@@ -1026,8 +1026,8 @@ const PatchLinesParser = struct {
 
         const delimiter_start = std.mem.indexOf(u8, line, "..") orelse return null;
 
-        const VALID_CHARS: std.bit_set.IntegerBitSet(256) = comptime brk: {
-            var bitset = std.bit_set.IntegerBitSet(256).initEmpty();
+        const VALID_CHARS: bun.bit_set.IntegerBitSet(256) = comptime brk: {
+            var bitset = bun.bit_set.IntegerBitSet(256).initEmpty();
             // TODO: the regex uses \w which is [a-zA-Z0-9_]
             for ('0'..'9' + 1) |c| bitset.set(c);
             for ('a'..'z' + 1) |c| bitset.set(c);

@@ -58,7 +58,13 @@ export interface ClassDefinition {
   values?: string[];
   JSType?: string;
   noConstructor?: boolean;
-  wantsThis?: boolean;
+
+  final?: boolean;
+
+  // Do not try to track the `this` value in the constructor automatically.
+  // That is a memory leak.
+  wantsThis?: never;
+
   /**
    * Called from any thread.
    *

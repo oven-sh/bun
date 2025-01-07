@@ -22,7 +22,6 @@ pub const S3Credentials = struct {
 
     ref_count: u32 = 1,
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
-    pub const EMPTY_BODY_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     pub fn estimatedSize(this: *const @This()) usize {
         return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;

@@ -141,21 +141,6 @@ const kRejected = Symbol("kRejected"); // state ID 2
 const ALL_PROPERTIES = 0;
 const ONLY_ENUMERABLE = 2;
 
-/**
- * Fast path for {@link extractedSplitNewLines} for ASCII/Latin1 strings.
- * @returns `value` split on newlines (newline included at end), or `undefined`
- * if non-ascii UTF8/UTF16.
- * 
- * Passing this a non-string will cause a panic.
- * 
- * @type {(value: string) => string[] | undefined}
- */
-const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
-  "node_util_binding.zig",
-  "extractedSplitNewLinesFastPathStringsOnly",
-  1,
-);
-
 const isAsyncFunction = v =>
   typeof v === "function" && StringPrototypeStartsWith(FunctionPrototypeToString(v), "async");
 const isGeneratorFunction = v =>
@@ -430,8 +415,6 @@ try {
     "[\\x00-\\x1f\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
     "g",
   );
-  const extractedNewLineRe = new RegExp("(?<=\\n)");
-  extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
   // CI doesn't run in an elderly runtime
 } catch {
   // These are from a previous version of node,
@@ -453,11 +436,24 @@ try {
 }
 
 const extractedSplitNewLines = value => {
-  if (typeof value === "string") {
-    return extractedSplitNewLinesFastPathStringsOnly(value) || extractedSplitNewLinesSlow(value);
+  const lines = StringPrototypeSplit(value, "\n");
+  let i = 0;
+  for (let j = 0, length = lines.length; j < length; j++) {
+      const line = lines[j];
+     if (line !== "")
+          lines[i++] = line + "\n";
   }
-  return extractedSplitNewLinesSlow(value);
-}
+  lines.length = i;
+  return lines;
+  for (let i = 0; i < lines.length; i++) {
+    if (i !== lines.length - 1) {
+      lines[i] += "\n";
+      continue;
+    }
+    if (lines[i] === "") lines.pop();
+  }
+  return lines;
+};
 
 const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;

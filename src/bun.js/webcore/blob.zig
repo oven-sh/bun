@@ -4738,7 +4738,28 @@ pub const Blob = struct {
             _ = Bun__Blob__getSizeForBindings;
         }
     }
+    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
+        // TODO: make this async for files
+        return switch (this.store.?.data) {
+            .file => |*file| {
+                if (file.pathlike == .fd) {
+                    return switch (JSC.Node.NodeFS.fstat(globalThis.bunVM().nodeFS(), .{ .fd = file.pathlike.fd }, .sync)) {
+                        .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
+                        .result => |stat| JSC.JSPromise.resolvedPromiseValue(globalThis, stat.toJSNewlyCreated(globalThis)),
+                    };
+                }
 
+                return switch (JSC.Node.NodeFS.stat(globalThis.bunVM().nodeFS(), .{
+                    .path = file.pathlike.path,
+                }, .sync)) {
+                    .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
+                    .result => |stat| JSC.JSPromise.resolvedPromiseValue(globalThis, stat.toJSNewlyCreated(globalThis)),
+                };
+            },
+            .s3 => S3File.getStat(this, globalThis, callback),
+            else => JSC.JSValue.jsUndefined(),
+        };
+    }
     pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {
         if (this.size == Blob.max_size) {
             if (this.isS3()) {

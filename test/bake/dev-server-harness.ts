@@ -204,7 +204,12 @@ function snapshotCallerLocation(): string {
 }
 
 function stackTraceFileName(line: string): string {
-  return / \(((?:[A-Za-z]:)?.*?)[:)]/.exec(line)![1].replaceAll("\\", "/");
+  const match = /(?:at (?:<[^>]+> )?\(|at )?((?:[A-Za-z]:)?[^:)]+)/.exec(line);
+  let result = match![1].trim();
+  if (result.startsWith("at ")) {
+    result = result.slice(3);
+  }
+  return result.replaceAll("\\", "/").trim();
 }
 
 async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {

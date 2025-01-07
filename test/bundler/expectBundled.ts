@@ -1558,7 +1558,7 @@ for (const [key, blob] of build.outputs) {
 
             if (run.errorLineMatch) {
               const stackTraceLine = stack.pop()!;
-              const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
+              const match = /at (?:<[^>]+> \()?([^)]+):(\d+):(\d+)\)?$/.exec(stackTraceLine);
               if (match) {
                 const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
                 if (!run.errorLineMatch.test(line)) {

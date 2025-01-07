@@ -36,6 +36,7 @@ import {
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
  * @typedef {"release" | "assert" | "debug"} Profile
+ * @typedef {"docker" | "gvisor"} Feature
  */
 
 /**
@@ -45,6 +46,7 @@ import {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {Feature[]} [features]
  */
 
 /**
@@ -95,7 +97,7 @@ function getTargetLabel(target) {
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
- * @property {string[]} [features]
+ * @property {Feature[]} [features]
  */
 
 /**
@@ -137,6 +139,8 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", features: ["gvisor"] },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", features: ["gvisor"] },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
@@ -146,13 +150,17 @@ const testPlatforms = [
  * @returns {string}
  */
 function getPlatformKey(platform) {
-  const { distro, release } = platform;
+  const { distro, release, features } = platform;
   const target = getTargetKey(platform);
   const version = release.replace(/\./g, "");
+  let key = `${target}-${version}`;
   if (distro) {
-    return `${target}-${distro}-${version}`;
+    key += `-${distro}`;
   }
-  return `${target}-${version}`;
+  if (features?.includes("gvisor")) {
+    key += "-gvisor";
+  }
+  return key;
 }
 
 /**
@@ -160,13 +168,16 @@ function getPlatformKey(platform) {
  * @returns {string}
  */
 function getPlatformLabel(platform) {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, baseline, profile, distro, release, features } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (features?.includes("gvisor")) {
+    label += "-gvisor";
   }
   return label;
 }
@@ -813,7 +824,7 @@ function getOptionsStep() {
         multiple: true,
         default: [],
         options: buildPlatforms.map(platform => {
-          const { os, arch, abi, baseline } = platform;
+          const { os, arch, abi, baseline, features } = platform;
           let label = `${getEmoji(os)} ${arch}`;
           if (abi) {
             label += `-${abi}`;
@@ -836,8 +847,11 @@ function getOptionsStep() {
         default: [],
         options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
           ([key, platform]) => {
-            const { os, arch, abi, distro, release } = platform;
+            const { os, arch, abi, distro, release, features } = platform;
             let label = `${getEmoji(os)} ${arch}`;
+            if (features?.includes("gvisor")) {
+              label = `${getEmoji("gvisor")} ${label}`;
+            }
             if (abi) {
               label += `-${abi}`;
             }

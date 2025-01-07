@@ -2802,6 +2802,7 @@ const emojiMap = {
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
   rocket: ["🚀", "rocket"],
+  gvisor: ["👾", "gcloud"],
 };
 
 /**

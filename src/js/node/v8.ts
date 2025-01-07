@@ -36,7 +36,7 @@ function getHeapSnapshot() {
     class HeapSnapshotReadable extends Readable {
       constructor() {
         super();
-        this.push(Bun.generateHeapSnapshot("v8"));
+        this.push(Bun.generateV8HeapSnapshot());
         this.push(null);
       }
     }
@@ -142,7 +142,7 @@ function writeHeapSnapshot(path, options) {
   if (!fs) {
     fs = require("node:fs");
   }
-  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
+  fs.writeFileSync(path, Bun.generateV8HeapSnapshot(), "utf-8");
 
   return path;
 }

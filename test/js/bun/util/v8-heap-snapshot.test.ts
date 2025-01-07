@@ -5,7 +5,7 @@ import * as v8 from "v8";
 import * as v8HeapSnapshot from "v8-heapsnapshot";
 
 test("v8 heap snapshot", async () => {
-  const snapshot = Bun.generateHeapSnapshot("v8");
+  const snapshot = Bun.generateV8HeapSnapshot();
   // Sanity check: run the validations from this library
   const parsed = await v8HeapSnapshot.parseSnapshot(JSON.parse(snapshot));
 

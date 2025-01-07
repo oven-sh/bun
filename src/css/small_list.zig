@@ -525,9 +525,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             this.insertSlice(allocator, this.len(), items);
         }
 
-        pub fn insertSlice(this: *@This(), allocator: Allocator, index: u32, items: []const T) void {
-            this.reserve(allocator, @intCast(items.len));
+        pub fn appendSliceAssumeCapacity(this: *@This(), items: []const T) void {
+            bun.assert(this.len() + items.len <= this.capacity);
+            this.insertSliceAssumeCapacity(this.len(), items);
+        }
 
+        pub inline fn insertSlice(this: *@This(), allocator: Allocator, index: u32, items: []const T) void {
+            this.reserve(allocator, @intCast(items.len));
+            this.insertSliceAssumeCapacity(index, items);
+        }
+
+        pub inline fn insertSliceAssumeCapacity(this: *@This(), index: u32, items: []const T) void {
             const length = this.len();
             bun.assert(index <= length);
             const ptr: [*]T = this.as_ptr()[index..];

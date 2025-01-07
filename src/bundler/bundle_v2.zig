@@ -6760,6 +6760,7 @@ pub const LinkerContext = struct {
             @memcpy(order.slice(), wip_order.slice());
             wip_order.clearRetainingCapacity();
         }
+        debugCssOrder(this, &order, .AFTER_HOISTING);
 
         // Next, optimize import order. If there are duplicate copies of an imported
         // file, replace all but the last copy with just the layers that are in that
@@ -6814,6 +6815,7 @@ pub const LinkerContext = struct {
                 }
             }
         }
+        debugCssOrder(this, &order, .AFTER_REMOVING_DUPLICATES);
 
         // Then optimize "@layer" rules by removing redundant ones. This loop goes
         // forward instead of backward because "@layer" takes effect at the first
@@ -6826,6 +6828,7 @@ pub const LinkerContext = struct {
             var layer_duplicates = bun.BabyList(DuplicateEntry){};
 
             next_forward: for (order.slice()) |*entry| {
+                debugCssOrder(this, &wip_order, .WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES);
                 switch (entry.kind) {
                     // Simplify the conditions since we know they only wrap "@layer"
                     .layers => |*layers| {
@@ -6848,7 +6851,7 @@ pub const LinkerContext = struct {
                             //   }
                             //
                             if (conditions.hasAnonymousLayer()) {
-                                _ = entry.conditions.orderedRemove(i);
+                                entry.conditions.len = @intCast(i);
                                 layers.replace(temp_allocator, .{});
                                 break;
                             }
@@ -6991,10 +6994,13 @@ pub const LinkerContext = struct {
                 wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
             }
 
+            debugCssOrder(this, &wip_order, .WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES);
+
             order.len = wip_order.len;
             @memcpy(order.slice(), wip_order.slice());
             wip_order.clearRetainingCapacity();
         }
+        debugCssOrder(this, &order, .AFTER_OPTIMIZING_REDUNDANT_LAYER_RULES);
 
         // Finally, merge adjacent "@layer" rules with identical conditions together.
         {
@@ -7016,9 +7022,32 @@ pub const LinkerContext = struct {
                 }
             }
         }
+        debugCssOrder(this, &order, .AFTER_MERGING_ADJACENT_LAYER_RULES);
 
-        if (bun.Environment.isDebug) {
-            debug("CSS order:\n", .{});
+        return order;
+    }
+
+    const CssOrderDebugStep = enum {
+        AFTER_HOISTING,
+        AFTER_REMOVING_DUPLICATES,
+        WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES,
+        AFTER_OPTIMIZING_REDUNDANT_LAYER_RULES,
+        AFTER_MERGING_ADJACENT_LAYER_RULES,
+    };
+
+    fn debugCssOrder(this: *LinkerContext, order: *const BabyList(Chunk.CssImportOrder), comptime step: CssOrderDebugStep) void {
+        if (comptime bun.Environment.isDebug) {
+            const env_var = "BUN_DEBUG_CSS_ORDER_" ++ @tagName(step);
+            const enable_all = bun.getenvTruthy("BUN_DEBUG_CSS_ORDER");
+            if (enable_all or bun.getenvTruthy(env_var)) {
+                debugCssOrderImpl(this, order, step);
+            }
+        }
+    }
+
+    fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImportOrder), comptime step: CssOrderDebugStep) void {
+        if (comptime bun.Environment.isDebug) {
+            debug("CSS order {s}:\n", .{@tagName(step)});
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             for (order.slice(), 0..) |entry, i| {
@@ -7047,11 +7076,9 @@ pub const LinkerContext = struct {
                     break :conditions_str arrlist.items;
                 } else "[]";
 
-                debug("  {d}: {} {s}\n", .{ i, entry, conditions_str });
+                debug("  {d}: {} {s}\n", .{ i, entry.fmt(this), conditions_str });
             }
         }
-
-        return order;
     }
 
     fn importConditionsAreEqual(a: []const bun.css.ImportConditions, b: []const bun.css.ImportConditions) bool {
@@ -7066,35 +7093,35 @@ pub const LinkerContext = struct {
         return true;
     }
 
-    // Given two "@import" rules for the same source index (an earlier one and a
-    // later one), the earlier one is masked by the later one if the later one's
-    // condition list is a prefix of the earlier one's condition list.
-    //
-    // For example:
-    //
-    //    // entry.css
-    //    @import "foo.css" supports(display: flex);
-    //    @import "bar.css" supports(display: flex);
-    //
-    //    // foo.css
-    //    @import "lib.css" screen;
-    //
-    //    // bar.css
-    //    @import "lib.css";
-    //
-    // When we bundle this code we'll get an import order as follows:
-    //
-    //  1. lib.css [supports(display: flex), screen]
-    //  2. foo.css [supports(display: flex)]
-    //  3. lib.css [supports(display: flex)]
-    //  4. bar.css [supports(display: flex)]
-    //  5. entry.css []
-    //
-    // For "lib.css", the entry with the conditions [supports(display: flex)] should
-    // make the entry with the conditions [supports(display: flex), screen] redundant.
-    //
-    // Note that all of this deliberately ignores the existence of "@layer" because
-    // that is handled separately. All of this is only for handling unlayered styles.
+    /// Given two "@import" rules for the same source index (an earlier one and a
+    /// later one), the earlier one is masked by the later one if the later one's
+    /// condition list is a prefix of the earlier one's condition list.
+    ///
+    /// For example:
+    ///
+    ///    // entry.css
+    ///    @import "foo.css" supports(display: flex);
+    ///    @import "bar.css" supports(display: flex);
+    ///
+    ///    // foo.css
+    ///    @import "lib.css" screen;
+    ///
+    ///    // bar.css
+    ///    @import "lib.css";
+    ///
+    /// When we bundle this code we'll get an import order as follows:
+    ///
+    ///  1. lib.css [supports(display: flex), screen]
+    ///  2. foo.css [supports(display: flex)]
+    ///  3. lib.css [supports(display: flex)]
+    ///  4. bar.css [supports(display: flex)]
+    ///  5. entry.css []
+    ///
+    /// For "lib.css", the entry with the conditions [supports(display: flex)] should
+    /// make the entry with the conditions [supports(display: flex), screen] redundant.
+    ///
+    /// Note that all of this deliberately ignores the existence of "@layer" because
+    /// that is handled separately. All of this is only for handling unlayered styles.
     pub fn isConditionalImportRedundant(earlier: *const BabyList(bun.css.ImportConditions), later: *const BabyList(bun.css.ImportConditions)) bool {
         if (later.len > earlier.len) return false;
 
@@ -9788,7 +9815,7 @@ pub const LinkerContext = struct {
                             }) catch bun.outOfMemory();
                         }
                         var ast = bun.css.BundlerStyleSheet{
-                            .rules = .{},
+                            .rules = rules,
                             .sources = .{},
                             .source_map_urls = .{},
                             .license_comments = .{},
@@ -15896,27 +15923,40 @@ pub const Chunk = struct {
             }
         }
 
-        pub fn format(this: *const CssImportOrder, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try writer.print("{s} = ", .{@tagName(this.kind)});
-            switch (this.kind) {
-                .layers => |layers| {
-                    try writer.print("[", .{});
-                    const l = layers.inner();
-                    for (l.sliceConst(), 0..) |*layer, i| {
-                        if (i > 0) try writer.print(", ", .{});
-                        try writer.print("\"{}\"", .{layer});
-                    }
-
-                    try writer.print("]", .{});
-                },
-                .external_path => |path| {
-                    try writer.print("\"{s}\"", .{path.pretty});
-                },
-                .source_index => |source_index| {
-                    try writer.print("{d}", .{source_index.get()});
-                },
-            }
+        pub fn fmt(this: *const CssImportOrder, ctx: *LinkerContext) CssImportOrderDebug {
+            return .{
+                .inner = this,
+                .ctx = ctx,
+            };
         }
+
+        const CssImportOrderDebug = struct {
+            inner: *const CssImportOrder,
+            ctx: *LinkerContext,
+
+            pub fn format(this: *const CssImportOrderDebug, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.print("{s} = ", .{@tagName(this.inner.kind)});
+                switch (this.inner.kind) {
+                    .layers => |layers| {
+                        try writer.print("[", .{});
+                        const l = layers.inner();
+                        for (l.sliceConst(), 0..) |*layer, i| {
+                            if (i > 0) try writer.print(", ", .{});
+                            try writer.print("\"{}\"", .{layer});
+                        }
+
+                        try writer.print("]", .{});
+                    },
+                    .external_path => |path| {
+                        try writer.print("\"{s}\"", .{path.pretty});
+                    },
+                    .source_index => |source_index| {
+                        const source = this.ctx.parse_graph.input_files.items(.source)[source_index.get()];
+                        try writer.print("{d} ({s})", .{ source_index.get(), source.path.text });
+                    },
+                }
+            }
+        };
     };
 
     pub const ImportsFromOtherChunks = std.AutoArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List);

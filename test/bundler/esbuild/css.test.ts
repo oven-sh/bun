@@ -1330,6 +1330,65 @@ c {
     },
   });
 
+  itBundled("css/CSSAtImportConditionsAtLayerBundle", {
+    experimentalCss: true,
+    files: {
+      "/case1.css": /* css */ `
+        @import url(case1-foo.css) layer(first.one);
+        @import url(case1-foo.css) layer(last.one);
+        @import url(case1-foo.css) layer(first.one);
+      `,
+      "/case1-foo.css": `body { color: red }`,
+
+      "/case2.css": /* css */ `
+        @import url(case2-foo.css);
+        @import url(case2-bar.css);
+        @import url(case2-foo.css);
+      `,
+      "/case2-foo.css": `@layer first.one { body { color: red } }`,
+      "/case2-bar.css": `@layer last.one { body { color: green } }`,
+
+      "/case3.css": /* css */ `
+        @import url(case3-foo.css);
+        @import url(case3-bar.css);
+        @import url(case3-foo.css);
+      `,
+      "/case3-foo.css": `@layer { body { color: red } }`,
+      "/case3-bar.css": `@layer only.one { body { color: green } }`,
+
+      "/case4.css": /* css */ `
+        @import url(case4-foo.css) layer(first);
+        @import url(case4-foo.css) layer(last);
+        @import url(case4-foo.css) layer(first);
+      `,
+      "/case4-foo.css": `@layer one { @layer two, three.four; body { color: red } }`,
+
+      "/case5.css": /* css */ `
+        @import url(case5-foo.css) layer;
+        @import url(case5-foo.css) layer(middle);
+        @import url(case5-foo.css) layer;
+      `,
+      "/case5-foo.css": `@layer one { @layer two, three.four; body { color: red } }`,
+
+      // Note: There was a bug that only showed up in this case. We need at least this many cases.
+      "/case6.css": /* css */ `
+        @import url(case6-foo.css) layer(first);
+        @import url(case6-foo.css) layer(last);
+        @import url(case6-foo.css) layer(first);
+      `,
+      "/case6-foo.css": `@layer { @layer two, three.four; body { color: red } }`,
+    },
+    entryPoints: ["/case1.css", "/case2.css", "/case3.css", "/case4.css", "/case5.css", "/case6.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const snapshotFiles = ["case1.css", "case2.css", "case3.css", "case4.css", "case5.css", "case6.css"];
+      for (const file of snapshotFiles) {
+        console.log("Checking snapshot:", file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+      }
+    },
+  });
+
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     experimentalCss: true,
 

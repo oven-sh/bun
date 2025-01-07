@@ -1293,6 +1293,18 @@ pub const DefaultAtRuleParser = struct {
         pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
 
         pub fn onLayerRule(_: *This, _: *const bun.css.SmallList(LayerName, 1)) void {}
+
+        pub fn enclosingLayerLength(_: *This) u32 {
+            return 0;
+        }
+
+        pub fn setEnclosingLayer(_: *This, _: LayerName) void {}
+
+        pub fn pushToEnclosingLayer(_: *This, _: LayerName) void {}
+
+        pub fn resetEnclosingLayer(_: *This, _: u32) void {}
+
+        pub fn bumpAnonLayerCount(_: *This, _: i32) void {}
     };
 };
 
@@ -1306,6 +1318,20 @@ pub const BundlerAtRuleParser = struct {
     import_records: *bun.BabyList(ImportRecord),
     layer_names: bun.BabyList(LayerName) = .{},
     options: *const ParserOptions,
+
+    /// Having _named_ layers nested inside of an _anonymous_ layer
+    /// has no effect:
+    ///
+    /// ```css
+    /// @layer {
+    ///   @layer foo { /* layer 1 */ }
+    ///   @layer foo { /* also layer 1 */ }
+    /// }
+    /// ```
+    ///
+    /// See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
+    anon_layer_count: u32 = 0,
+    enclosing_layer: LayerName = .{},
 
     pub const CustomAtRuleParser = struct {
         pub const Prelude = if (ENABLE_TAILWIND_PARSING) union(enum) {
@@ -1370,9 +1396,46 @@ pub const BundlerAtRuleParser = struct {
         }
 
         pub fn onLayerRule(this: *This, layers: *const bun.css.SmallList(LayerName, 1)) void {
+            if (this.anon_layer_count > 0) return;
+
             this.layer_names.ensureUnusedCapacity(this.allocator, layers.len()) catch bun.outOfMemory();
+
             for (layers.slice()) |*layer| {
-                this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
+                if (this.enclosing_layer.v.len() > 0) {
+                    var cloned = LayerName{
+                        .v = SmallList([]const u8, 1){},
+                    };
+                    cloned.v.ensureTotalCapacity(this.allocator, this.enclosing_layer.v.len() + layer.v.len());
+                    cloned.v.appendSliceAssumeCapacity(this.enclosing_layer.v.slice());
+                    cloned.v.appendSliceAssumeCapacity(layer.v.slice());
+                    this.layer_names.push(this.allocator, cloned) catch bun.outOfMemory();
+                } else {
+                    this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
+                }
+            }
+        }
+
+        pub fn enclosingLayerLength(this: *This) u32 {
+            return this.enclosing_layer.v.len();
+        }
+
+        pub fn setEnclosingLayer(this: *This, layer: LayerName) void {
+            this.enclosing_layer = layer;
+        }
+
+        pub fn pushToEnclosingLayer(this: *This, name: LayerName) void {
+            this.enclosing_layer.v.appendSlice(this.allocator, name.v.slice());
+        }
+
+        pub fn resetEnclosingLayer(this: *This, len: u32) void {
+            this.enclosing_layer.v.setLen(len);
+        }
+
+        pub fn bumpAnonLayerCount(this: *This, amount: i32) void {
+            if (amount > 0) {
+                this.anon_layer_count += @intCast(amount);
+            } else {
+                this.anon_layer_count -= @intCast(@abs(amount));
             }
         }
     };
@@ -1433,6 +1496,12 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     _ = T.CustomAtRuleParser.onImportRule;
 
     _ = T.CustomAtRuleParser.onLayerRule;
+
+    _ = T.CustomAtRuleParser.enclosingLayerLength;
+    _ = T.CustomAtRuleParser.setEnclosingLayer;
+    _ = T.CustomAtRuleParser.pushToEnclosingLayer;
+    _ = T.CustomAtRuleParser.resetEnclosingLayer;
+    _ = T.CustomAtRuleParser.bumpAnonLayerCount;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1759,9 +1828,6 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         }
                         var nested_parser = this.nested();
                         const result = NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
-                        if (result.isOk()) {
-                            AtRuleParserT.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
-                        }
                         return result;
                     },
                     .charset => return .{ .result = {} },
@@ -2266,10 +2332,23 @@ pub fn NestedRuleParser(comptime T: type) type {
                             break :names prelude.layer.at(0).*;
                         } else return .{ .err = input.newError(.at_rule_body_invalid) };
 
+                        T.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
+                        const old_len = T.CustomAtRuleParser.enclosingLayerLength(this.at_rule_parser);
+                        if (name != null) {
+                            T.CustomAtRuleParser.pushToEnclosingLayer(this.at_rule_parser, name.?);
+                        } else {
+                            T.CustomAtRuleParser.bumpAnonLayerCount(this.at_rule_parser, 1);
+                        }
+
                         const rules = switch (this.parseStyleBlock(input)) {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
+
+                        if (name == null) {
+                            T.CustomAtRuleParser.bumpAnonLayerCount(this.at_rule_parser, -1);
+                        }
+                        T.CustomAtRuleParser.resetEnclosingLayer(this.at_rule_parser, old_len);
 
                         this.rules.v.append(input.allocator(), .{
                             .layer_block = css_rules.layer.LayerBlockRule(T.CustomAtRuleParser.AtRule){ .name = name, .rules = rules, .loc = loc },
@@ -2371,6 +2450,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         if (this.is_in_style_rule or prelude.layer.len() == 0) {
                             return .{ .err = {} };
                         }
+
+                        T.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
 
                         this.rules.v.append(
                             this.allocator,
@@ -2909,6 +2990,24 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
                 },
             };
+        }
+
+        pub fn debugLayerRuleSanityCheck(this: *const @This()) void {
+            if (comptime !bun.Environment.isDebug) return;
+
+            const layer_names_field_len = this.layer_names.len;
+            _ = layer_names_field_len; // autofix
+            var actual_layer_rules_len: usize = 0;
+
+            for (this.rules.v.items) |*rule| {
+                switch (rule.*) {
+                    .layer_block => {
+                        actual_layer_rules_len += 1;
+                    },
+                }
+            }
+
+            // bun.debugAssert()
         }
 
         pub fn containsTailwindDirectives(this: *const @This()) bool {

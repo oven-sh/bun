@@ -4181,8 +4181,8 @@ pub fn Cow(comptime T: type, comptime VTable: type) type {
         pub fn replace(this: *@This(), allocator: std.mem.Allocator, newval: T) void {
             if (this.* == .owned) {
                 this.deinit(allocator);
-                this.* = .{ .owned = newval };
             }
+            this.* = .{ .owned = newval };
         }
 
         /// Get the underlying value.

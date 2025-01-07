@@ -2025,3 +2025,157 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragmen
 
 "
 `;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case1.css 1`] = `
+"@layer first.one;
+
+/* case1-foo.css */
+@layer last.one {
+  body {
+    color: red;
+  }
+}
+
+/* case1-foo.css */
+@layer first.one {
+  body {
+    color: red;
+  }
+}
+
+/* case1.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case2.css 1`] = `
+"@layer first.one;
+
+/* case2-bar.css */
+@layer last.one {
+  body {
+    color: green;
+  }
+}
+
+/* case2-foo.css */
+@layer first.one {
+  body {
+    color: red;
+  }
+}
+
+/* case2.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case3.css 1`] = `
+"/* case3-bar.css */
+@layer only.one {
+  body {
+    color: green;
+  }
+}
+
+/* case3-foo.css */
+@layer {
+  body {
+    color: red;
+  }
+}
+
+/* case3.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case4.css 1`] = `
+"@layer first {
+  @layer one, one.two, one.three.four;
+}
+
+/* case4-foo.css */
+@layer last {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case4-foo.css */
+@layer first {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case4.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case5.css 1`] = `
+"/* case5-foo.css */
+@layer middle {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case5-foo.css */
+@layer {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case5.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case6.css 1`] = `
+"@layer first;
+
+/* case6-foo.css */
+@layer last {
+  @layer {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case6-foo.css */
+@layer first {
+  @layer {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case6.css */
+
+"
+`;

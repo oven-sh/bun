@@ -19,28 +19,22 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const { Buffer } = require("node:buffer");
+
+const ArrayIsArray = Array.isArray;
+const MathAbs = Math.abs;
+const NumberIsFinite = Number.isFinite;
+const ObjectKeys = Object.keys;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const NumberPrototypeToString = Number.prototype.toString;
+
 var __commonJS =
   (cb, mod: typeof module | undefined = undefined) =>
   () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
 var require_src = __commonJS((exports, module) => {
-  const {
-    Array,
-    ArrayIsArray,
-    Int8Array,
-    MathAbs,
-    NumberIsFinite,
-    ObjectKeys,
-    String,
-    StringPrototypeCharCodeAt,
-    StringPrototypeSlice,
-    decodeURIComponent,
-    StringPrototypeToUpperCase,
-    NumberPrototypeToString,
-  } = require("internal/primordials");
-
-  const { Buffer } = require("node:buffer");
-
   /**
    * @param {string} str
    * @param {Int8Array} noEscapeTable
@@ -56,22 +50,22 @@ var require_src = __commonJS((exports, module) => {
     let i = 0;
 
     outer: for (; i < len; i++) {
-      let c = StringPrototypeCharCodeAt(str, i);
+      let c = StringPrototypeCharCodeAt.$call(str, i);
 
       // ASCII
       while (c < 0x80) {
         if (noEscapeTable[c] !== 1) {
-          if (lastPos < i) out += StringPrototypeSlice(str, lastPos, i);
+          if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
           lastPos = i + 1;
           out += hexTable[c];
         }
 
         if (++i === len) break outer;
 
-        c = StringPrototypeCharCodeAt(str, i);
+        c = StringPrototypeCharCodeAt.$call(str, i);
       }
 
-      if (lastPos < i) out += StringPrototypeSlice(str, lastPos, i);
+      if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
 
       // Multi-byte characters ...
       if (c < 0x800) {
@@ -92,7 +86,7 @@ var require_src = __commonJS((exports, module) => {
       // completion's sake anyway.
       if (i >= len) throw $ERR_INVALID_URI("URI malformed");
 
-      const c2 = StringPrototypeCharCodeAt(str, i) & 0x3ff;
+      const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
 
       lastPos = i + 1;
       c = 0x10000 + (((c & 0x3ff) << 10) | c2);
@@ -103,13 +97,13 @@ var require_src = __commonJS((exports, module) => {
         hexTable[0x80 | (c & 0x3f)];
     }
     if (lastPos === 0) return str;
-    if (lastPos < len) return out + StringPrototypeSlice(str, lastPos);
+    if (lastPos < len) return out + StringPrototypeSlice.$call(str, lastPos);
     return out;
   }
 
   const hexTable = new Array(256);
   for (let i = 0; i < 256; ++i)
-    hexTable[i] = "%" + StringPrototypeToUpperCase((i < 16 ? "0" : "") + NumberPrototypeToString(i, 16));
+    hexTable[i] = "%" + StringPrototypeToUpperCase.$call((i < 16 ? "0" : "") + NumberPrototypeToString.$call(i, 16));
   // prettier-ignore
   const isHexTable = new Int8Array([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
@@ -181,20 +175,20 @@ var require_src = __commonJS((exports, module) => {
     // Flag to know if some hex chars have been decoded
     let hasHex = false;
     while (index < s.length) {
-      currentChar = StringPrototypeCharCodeAt(s, index);
+      currentChar = StringPrototypeCharCodeAt.$call(s, index);
       if (currentChar === 43 /* '+' */ && decodeSpaces) {
         out[outIndex++] = 32; // ' '
         index++;
         continue;
       }
       if (currentChar === 37 /* '%' */ && index < maxLength) {
-        currentChar = StringPrototypeCharCodeAt(s, ++index);
+        currentChar = StringPrototypeCharCodeAt.$call(s, ++index);
         hexHigh = unhexTable[currentChar];
         if (!(hexHigh >= 0)) {
           out[outIndex++] = 37; // '%'
           continue;
         } else {
-          nextChar = StringPrototypeCharCodeAt(s, ++index);
+          nextChar = StringPrototypeCharCodeAt.$call(s, ++index);
           hexLow = unhexTable[nextChar];
           if (!(hexLow >= 0)) {
             out[outIndex++] = 37; // '%'
@@ -349,9 +343,9 @@ var require_src = __commonJS((exports, module) => {
    */
   function charCodes(str) {
     if (str.length === 0) return [];
-    if (str.length === 1) return [StringPrototypeCharCodeAt(str, 0)];
+    if (str.length === 1) return [StringPrototypeCharCodeAt.$call(str, 0)];
     const ret = new Array(str.length);
-    for (let i = 0; i < str.length; ++i) ret[i] = StringPrototypeCharCodeAt(str, i);
+    for (let i = 0; i < str.length; ++i) ret[i] = StringPrototypeCharCodeAt.$call(str, i);
     return ret;
   }
   const defSepCodes = [38]; // &
@@ -423,7 +417,7 @@ var require_src = __commonJS((exports, module) => {
     const plusChar = customDecode ? "%20" : " ";
     let encodeCheck = 0;
     for (let i = 0; i < qs.length; ++i) {
-      const code = StringPrototypeCharCodeAt(qs, i);
+      const code = StringPrototypeCharCodeAt.$call(qs, i);
 
       // Try matching key/value pair separator (e.g. '&')
       if (code === sepCodes[sepIdx]) {
@@ -434,7 +428,7 @@ var require_src = __commonJS((exports, module) => {
             // We didn't find the (entire) key/value separator
             if (lastPos < end) {
               // Treat the substring as part of the key instead of the value
-              key += StringPrototypeSlice(qs, lastPos, end);
+              key += StringPrototypeSlice.$call(qs, lastPos, end);
             } else if (key.length === 0) {
               // We saw an empty substring between separators
               if (--pairs === 0) return obj;
@@ -443,7 +437,7 @@ var require_src = __commonJS((exports, module) => {
               continue;
             }
           } else if (lastPos < end) {
-            value += StringPrototypeSlice(qs, lastPos, end);
+            value += StringPrototypeSlice.$call(qs, lastPos, end);
           }
 
           addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
@@ -463,7 +457,7 @@ var require_src = __commonJS((exports, module) => {
             if (++eqIdx === eqLen) {
               // Key/value separator match!
               const end = i - eqIdx + 1;
-              if (lastPos < end) key += StringPrototypeSlice(qs, lastPos, end);
+              if (lastPos < end) key += StringPrototypeSlice.$call(qs, lastPos, end);
               encodeCheck = 0;
               lastPos = i + 1;
             }
@@ -487,14 +481,14 @@ var require_src = __commonJS((exports, module) => {
             }
           }
           if (code === 43 /* + */) {
-            if (lastPos < i) key += StringPrototypeSlice(qs, lastPos, i);
+            if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
             key += plusChar;
             lastPos = i + 1;
             continue;
           }
         }
         if (code === 43 /* + */) {
-          if (lastPos < i) value += StringPrototypeSlice(qs, lastPos, i);
+          if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);
           value += plusChar;
           lastPos = i + 1;
         } else if (!valEncoded) {
@@ -515,8 +509,8 @@ var require_src = __commonJS((exports, module) => {
 
     // Deal with any leftover key or value data
     if (lastPos < qs.length) {
-      if (eqIdx < eqLen) key += StringPrototypeSlice(qs, lastPos);
-      else if (sepIdx < sepLen) value += StringPrototypeSlice(qs, lastPos);
+      if (eqIdx < eqLen) key += StringPrototypeSlice.$call(qs, lastPos);
+      else if (sepIdx < sepLen) value += StringPrototypeSlice.$call(qs, lastPos);
     } else if (eqIdx === 0 && key.length === 0) {
       // We ended on an empty substring
       return obj;

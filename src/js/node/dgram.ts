@@ -42,16 +42,12 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-const {
-  FunctionPrototypeBind,
-  ObjectSetPrototypeOf,
-  SymbolAsyncDispose,
-  SymbolDispose,
-  StringPrototypeTrim,
-  NumberIsNaN,
-} = require("internal/primordials");
-
 const EventEmitter = require("node:events");
+
+const SymbolDispose = Symbol.dispose;
+const SymbolAsyncDispose = Symbol.asyncDispose;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const FunctionPrototypeBind = Function.prototype.bind;
 
 class ERR_SOCKET_BUFFER_SIZE extends Error {
   constructor(ctx) {
@@ -92,9 +88,9 @@ function newHandle(type, lookup) {
 
   const handle = {};
   if (type === "udp4") {
-    handle.lookup = FunctionPrototypeBind(lookup4, handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
-    handle.lookup = FunctionPrototypeBind(lookup6, handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup6, handle, lookup);
   } else {
     throw $ERR_SOCKET_BAD_TYPE();
   }
@@ -328,7 +324,7 @@ Socket.prototype.connect = function (port, address, callback) {
   if (state.bindState === BIND_STATE_UNBOUND) this.bind({ port: 0, exclusive: true }, null);
 
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, FunctionPrototypeBind(_connect, this, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(_connect, this, port, address, callback));
     return;
   }
 
@@ -534,7 +530,7 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
   // If the socket hasn't been bound yet, push the outbound packet onto the
   // send queue and send after binding is complete.
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, FunctionPrototypeBind(this.send, this, list, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(this.send, this, list, port, address, callback));
     return;
   }
 
@@ -642,7 +638,7 @@ Socket.prototype.close = function (callback) {
   if (typeof callback === "function") this.on("close", callback);
 
   if (queue !== undefined) {
-    queue.push(FunctionPrototypeBind(this.close, this));
+    queue.push(FunctionPrototypeBind.$call(this.close, this));
     return this;
   }
 

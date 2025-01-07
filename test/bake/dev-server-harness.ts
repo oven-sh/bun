@@ -193,11 +193,12 @@ class DevFetchPromise extends Promise<Response> {
 
 function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
-  const lines = stack.split("\n");
+  const lines = stack.replaceAll("\r\n", "\n").split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.filename)) {
-      return lines[i];
+    const line = lines[i].replaceAll("\\", "/");
+    if (line.includes(import.meta.path.replaceAll("\\", "/"))) {
+      return line;
     }
   }
   throw new Error("Couldn't find caller location in stack trace");
@@ -207,23 +208,31 @@ function stackTraceFileName(line: string): string {
 
   // Remove leading "at " and any parentheses
   if (result.startsWith("at ")) {
-    result = result.slice(3);
+    result = result.slice(3).trim();
   }
 
   // Handle case with angle brackets like "<anonymous>"
   const angleStart = result.indexOf("<");
   const angleEnd = result.indexOf(">");
   if (angleStart >= 0 && angleEnd > angleStart) {
-    result = result.slice(angleEnd + 1);
+    result = result.slice(angleEnd + 1).trim();
   }
 
   // Remove parentheses and everything after colon
   const openParen = result.indexOf("(");
   if (openParen >= 0) {
-    result = result.slice(openParen + 1);
+    result = result.slice(openParen + 1).trim();
   }
 
-  const colon = result.indexOf(":");
+  // Handle drive letters (e.g. C:) and line numbers
+  let colon = result.indexOf(":");
+
+  // Check for drive letter (e.g. C:) by looking for single letter before colon
+  if (colon > 0 && /[a-zA-Z]/.test(result[colon - 1])) {
+    // On Windows, skip past drive letter colon to find line number colon
+    colon = result.indexOf(":", colon + 1);
+  }
+
   if (colon >= 0) {
     result = result.slice(0, colon);
   }

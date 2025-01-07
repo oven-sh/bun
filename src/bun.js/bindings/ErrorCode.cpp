@@ -820,6 +820,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg0 = callFrame->argument(1);
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
+
+        // TODO: remove this if; this switch case was added but not all the callsites using bare $ERR_INVALID_ARG_VALUE(msg) were updated
+        if (callFrame->argumentCount() == 2 && arg0.isString()) {
+            auto message = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, error, message));
+        }
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
 

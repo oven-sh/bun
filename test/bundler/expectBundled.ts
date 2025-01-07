@@ -1589,6 +1589,11 @@ for (const [key, blob] of build.outputs) {
 
           // no idea why this logs. ¯\_(ツ)_/¯
           result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
+          // when the inspector runs (can be due to VSCode extension), there is
+          // a bug that in debug modes the console logs extra stuff
+          if (process.env.BUN_INSPECT_CONNECT_TO) {
+            result = result.replace(/^.*: CONSOLE LOG/gm, "");
+          }
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();

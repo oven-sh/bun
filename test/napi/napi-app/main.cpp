@@ -1076,6 +1076,38 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   return array;
 }
 
+// Call two Node-API functions in a way that causes an error and log the
+// error code and message from both calls
+static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const napi_extended_error_info *error;
+
+  // this function is implemented in C++
+  // error because the result pointer is null
+  (void)napi_create_double(env, 1.0, nullptr);
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("erroneous napi_create_double: code = %d, message = %s\n",
+         error->error_code, error->error_message);
+
+  // this function should succeed and the success should overwrite the error
+  // from the last call
+  napi_value js_number;
+  (void)napi_create_double(env, 5.0, &js_number);
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("successful napi_create_double: code = %d, message = %s\n",
+         error->error_code,
+         error->error_message ? error->error_message : "(null)");
+
+  // this function is implemented in zig
+  // error because the value is not an array
+  unsigned int len;
+  (void)napi_get_array_length(env, js_number, &len);
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("erroneous napi_get_value_bool: code = %d, message = %s\n",
+         error->error_code, error->error_message);
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1147,6 +1179,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("bigint_to_64_null", Napi::Function::New(env, bigint_to_64_null));
   exports.Set("create_weird_bigints",
               Napi::Function::New(env, create_weird_bigints));
+  exports.Set("test_extended_error_messages",
+              Napi::Function::New(env, test_extended_error_messages));
 
   napitests::register_wrap_tests(env, exports);
 

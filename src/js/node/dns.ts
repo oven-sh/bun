@@ -150,13 +150,13 @@ function validateFlagsOption(options) {
   validateNumber(options.flags);
 
   if ((options.flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
-    throw $ERR_INVALID_ARG_VALUE(`The "hints" option is invalid. Received: ${options.flags}`);
+    throw $ERR_INVALID_ARG_VALUE("hints", options.flags, "is invalid");
   }
 }
 
 function validateFamily(family) {
   if (family !== 6 && family !== 4 && family !== 0) {
-    throw $ERR_INVALID_ARG_VALUE(`The "family" option must be one of 0, 4 or 6. Received: ${String(family)}`);
+    throw $ERR_INVALID_ARG_VALUE("family", family, "must be one of 0, 4 or 6");
   }
 }
 
@@ -190,7 +190,7 @@ function validateVerbatimOption(options) {
 
 function validateOrder(order) {
   if (!["ipv4first", "ipv6first", "verbatim"].includes(order)) {
-    throw $ERR_INVALID_ARG_VALUE(`The "order" argument is invalid. Received: ${String(order)}`);
+    throw $ERR_INVALID_ARG_VALUE("order", order, "is invalid");
   }
 }
 

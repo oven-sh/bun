@@ -1603,7 +1603,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
 
     if (UNLIKELY(!result)) {
-        return napi_invalid_arg;
+        return napi_set_last_error(env, napi_invalid_arg);
     }
 
     auto globalObject = toJS(env);
@@ -1754,11 +1754,6 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
-
-    if (UNLIKELY(!result)) {
-        return napi_invalid_arg;
-    }
-
     Zig::GlobalObject* globalObject = toJS(env);
     *result = toNapi(globalObject->globalThis(), globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2357,23 +2352,16 @@ static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "All NAPI bigint functi
 
 extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value value, int64_t* result, bool* lossless)
 {
-    NAPI_PREMABLE
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+    NAPI_CHECK_ARG(env, lossless);
     JSValue jsValue = toJS(value);
-    if (!env || jsValue.isEmpty() || !result || !lossless) {
-        return napi_invalid_arg;
-    }
-    if (!jsValue.isHeapBigInt()) {
-        return napi_bigint_expected;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    *result = jsValue.toBigInt64(toJS(env));
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here, but we should check just in case
-    scope.assertNoException();
+    // hit an exception here and it's okay to assert at the end
+    *result = jsValue.toBigInt64(toJS(env));
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
     uint64_t digit = bigint->length() > 0 ? bigint->digit(0) : 0;
@@ -2391,35 +2379,28 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
         *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
     }
 
-    return napi_ok;
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value value, uint64_t* result, bool* lossless)
 {
-    NAPI_PREMABLE
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+    NAPI_CHECK_ARG(env, lossless);
     JSValue jsValue = toJS(value);
-    if (!env || jsValue.isEmpty() || !result || !lossless) {
-        return napi_invalid_arg;
-    }
-    if (!jsValue.isHeapBigInt()) {
-        return napi_bigint_expected;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
+    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
+    // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
-    // toBigUInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here, but we should check just in case
-    scope.assertNoException();
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive
     JSBigInt* bigint = jsValue.asHeapBigInt();
     *lossless = (bigint->length() <= 1 && bigint->sign() == false);
 
-    return napi_ok;
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_get_value_bigint_words(napi_env env,
@@ -2671,39 +2652,31 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
 
 extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, const napi_type_tag* type_tag)
 {
-    NAPI_PREMABLE
-    if (!env || !value || !type_tag) {
-        return napi_invalid_arg;
-    }
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
-    if (!js_object) {
-        return napi_object_expected;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
 
     auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
     // cannot tag an object that is already tagged
-    if (existing_tag) {
-        return napi_invalid_arg;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
     auto& vm = globalObject->vm();
     auto* new_tag = Bun::NapiTypeTag::create(vm, globalObject->NapiTypeTagStructure(), *type_tag);
     globalObject->napiTypeTags()->set(vm, js_object, new_tag);
-    return napi_ok;
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value, const napi_type_tag* type_tag, bool* result)
 {
-    NAPI_PREMABLE
-    if (!env || !value || !type_tag) {
-        return napi_invalid_arg;
-    }
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
-    if (!js_object) {
-        return napi_object_expected;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
 
     bool match = false;
     auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
@@ -2713,5 +2686,5 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     if (LIKELY(result)) {
         *result = match;
     }
-    return napi_ok;
+    NAPI_RETURN_SUCCESS(env);
 }

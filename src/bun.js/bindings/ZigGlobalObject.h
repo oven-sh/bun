@@ -53,7 +53,7 @@ class GlobalInternals;
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
-#include <js_native_api_types.h>
+#include <js_native_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;

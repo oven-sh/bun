@@ -32,6 +32,7 @@ const allCredentials = [
 ];
 
 if (isDockerEnabled()) {
+  const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",
     [
@@ -48,7 +49,7 @@ if (isDockerEnabled()) {
       "-e",
       "MINIO_ROOT_PASSWORD=minioadmin",
       "-v",
-      "~/minio/data:/data",
+      `${minio_dir}:/data`,
       "minio/minio",
       "server",
       "--console-address",

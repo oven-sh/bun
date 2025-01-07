@@ -2550,6 +2550,7 @@ pub const ModuleLoader = struct {
                 .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
+                .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2763,6 +2764,8 @@ pub const HardcodedModule = enum {
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
     @"internal/test/binding",
+    //
+    @"node:_stream_duplex",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2838,6 +2841,8 @@ pub const HardcodedModule = enum {
             .{ "wasi", HardcodedModule.@"node:wasi" },
             .{ "worker_threads", HardcodedModule.@"node:worker_threads" },
             .{ "zlib", HardcodedModule.@"node:zlib" },
+
+            .{ "_stream_duplex", .@"node:_stream_duplex" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2918,7 +2923,7 @@ pub const HardcodedModule = enum {
             .{ "node:_http_incoming", .{ .path = "http" } },
             .{ "node:_http_outgoing", .{ .path = "http" } },
             .{ "node:_http_server", .{ .path = "http" } },
-            .{ "node:_stream_duplex", .{ .path = "stream" } },
+            .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "node:_stream_passthrough", .{ .path = "stream" } },
             .{ "node:_stream_readable", .{ .path = "stream" } },
             .{ "node:_stream_transform", .{ .path = "stream" } },
@@ -2993,7 +2998,7 @@ pub const HardcodedModule = enum {
             .{ "_http_incoming", .{ .path = "http" } },
             .{ "_http_outgoing", .{ .path = "http" } },
             .{ "_http_server", .{ .path = "http" } },
-            .{ "_stream_duplex", .{ .path = "stream" } },
+            .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
             .{ "_stream_passthrough", .{ .path = "stream" } },
             .{ "_stream_readable", .{ .path = "stream" } },
             .{ "_stream_transform", .{ .path = "stream" } },

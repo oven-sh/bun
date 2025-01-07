@@ -142,7 +142,7 @@ const testPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
   /* Linux GVisor */
   { os: "linux", arch: "x64", features: ["gvisor"], distro: "ubuntu", release: "24.04" },
-  { os: "linux", arch: "aarch64", features: ["gvisor"], distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "aarch64", abi: "musl", features: ["gvisor"], distro: "alpine", release: "3.21" },
   /* Windows */
   { os: "windows", arch: "x64", release: "2025" },
   { os: "windows", arch: "x64", release: "2025", baseline: true },

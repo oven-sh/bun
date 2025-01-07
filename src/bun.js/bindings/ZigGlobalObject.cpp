@@ -3699,7 +3699,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }
 
-
 // ===================== start conditional builtin globals =====================
 // These functions register globals based on runtime conditions (e.g. CLI flags,
 // environment variables, etc.). See `Run.addConditionalGlobals()` in bun_js.zig
@@ -3714,11 +3713,11 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     return Generated::BunObject::jsGc(globalObject, callFrame);
 }
 
-extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject) {
+extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)
+{
     JSC::VM& vm = globalObject->vm();
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
-
 
 // ====================== end conditional builtin globals ======================
 

@@ -11,9 +11,8 @@ const S3Error = @import("./error.zig").S3Error;
 
 pub const MultiPartUpload = struct {
     const OneMiB: usize = MultiPartUploadOptions.OneMiB;
-    const MAX_SINGLE_UPLOAD_SIZE_IN_MiB: usize = MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE_IN_MiB; // we limit to 5 GiB
-    const MAX_SINGLE_UPLOAD_SIZE: usize = MAX_SINGLE_UPLOAD_SIZE_IN_MiB * OneMiB; // we limit to 5 GiB
-    const MIN_SINGLE_UPLOAD_SIZE_IN_MiB: usize = MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE_IN_MiB;
+    const MAX_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE; // we limit to 5 GiB
+    const MIN_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE;
     const DefaultPartSize = MultiPartUploadOptions.DefaultPartSize;
     const MAX_QUEUE_SIZE = MultiPartUploadOptions.MAX_QUEUE_SIZE;
     const AWS = S3Credentials;
@@ -496,7 +495,7 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn partSizeInBytes(this: *@This()) usize {
-        return this.options.partSize * OneMiB;
+        return this.options.partSize;
     }
 
     pub fn continueStream(this: *@This()) void {

@@ -1,9 +1,17 @@
 import { file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync, stderrForInstall } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+  stderrForInstall,
+  readdirSorted,
+} from "harness";
 import { join } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
 
@@ -591,22 +599,53 @@ it("should pass arguments correctly in scripts", async () => {
   }
 });
 
-it("should run with bun instead of npm even with leading spaces", async () => {
-  const dir = tempDirWithFiles("test", {
-    "package.json": JSON.stringify({
-      workspaces: ["a", "b"],
-      scripts: { "root_script": "   npm run other_script    ", "other_script": "   echo hi    " },
-    }),
-  });
-  {
-    const { stdout, stderr, exitCode } = spawnSync({
-      cmd: [bunExe(), "run", "root_script"],
-      cwd: dir,
-      env: bunEnv,
-    });
+const cases = [
+  ["yarn run", "run"],
+  ["yarn add", "passthrough"],
+  ["yarn audit", "passthrough"],
+  ["yarn -abcd run", "passthrough"],
+  ["yarn info", "passthrough"],
+  ["yarn generate-lock-entry", "passthrough"],
+  ["yarn", "run"],
+  ["npm run", "run"],
+  ["npx", "x"],
+  ["pnpm run", "run"],
+  ["pnpm dlx", "x"],
+  ["pnpx", "x"],
+];
+describe("should handle run case", () => {
+  for (const ccase of cases) {
+    it(ccase[0], async () => {
+      const dir = tempDirWithFiles("test", {
+        "package.json": JSON.stringify({
+          scripts: {
+            "root_script": `   ${ccase[0]} target_script%    `,
+            "target_script%": "   echo target_script    ",
+          },
+        }),
+      });
+      {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "root_script"],
+          cwd: dir,
+          env: bunEnv,
+        });
 
-    expect(stderr.toString()).toMatch(/\$    bun(-debug)? run other_script    \n\$    echo hi    \n/);
-    expect(stdout.toString()).toEndWith("hi\n");
-    expect(exitCode).toBe(0);
+        if (ccase[1] === "run") {
+          expect(stderr.toString()).toMatch(
+            /^\$    bun(-debug)? run target_script%    \n\$    echo target_script    \n/,
+          );
+          expect(stdout.toString()).toEndWith("target_script\n");
+          expect(exitCode).toBe(0);
+        } else if (ccase[1] === "x") {
+          expect(stderr.toString()).toMatch(
+            /^\$    bun(-debug)? x target_script%    \nerror: unrecognised dependency format: target_script%/,
+          );
+          expect(exitCode).toBe(1);
+        } else {
+          expect(stderr.toString()).toStartWith(`$    ${ccase[0]} target_script%    \n`);
+        }
+      }
+    });
   }
 });

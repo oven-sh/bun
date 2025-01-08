@@ -13,7 +13,7 @@ pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
-    root: []const u8,
+    root: [:0]const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,

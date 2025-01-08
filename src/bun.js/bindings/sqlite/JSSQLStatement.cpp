@@ -1670,7 +1670,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     }
 
     bool shouldThrowOnError = (throwOnError.isEmpty() || throwOnError.isUndefined()) ? false : throwOnError.toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     sqlite3* db = databases()[dbIndex]->db;
     // no-op if already closed
@@ -2368,7 +2367,6 @@ JSC_DEFINE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers, (JSGlobalObject * lexica
     CHECK_PREPARED
 
     bool value = JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, false);
     castedThis->useBigInt64 = value;
 
     return true;

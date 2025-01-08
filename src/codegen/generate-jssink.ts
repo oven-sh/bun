@@ -1,12 +1,6 @@
 import { join, resolve } from "path";
 
-const classes = [
-  "ArrayBufferSink",
-  "FileSink",
-  "HTTPResponseSink",
-  "HTTPSResponseSink",
-  "FetchTaskletChunkedRequestSink",
-];
+const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink", "NetworkSink"];
 
 function names(name) {
   return {
@@ -736,24 +730,43 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
 
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);    
     auto* thisObject = jsCast<${className}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+    
 }
 
 void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);
     auto* thisObject = jsCast<${controller}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+
+    auto& vm = cell->vm();
+    
+    if (thisObject->m_onPull) {
+        JSValue onPull = thisObject->m_onPull.get();
+        if (onPull.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onPull"_s);
+            analyzer.analyzePropertyNameEdge(cell, onPull.asCell(), id.impl());
+        }
+    }
+
+    if (thisObject->m_onClose) {
+        JSValue onClose = thisObject->m_onClose.get();
+        if (onClose.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onClose"_s);
+            analyzer.analyzePropertyNameEdge(cell, onClose.asCell(), id.impl());
+        }
+    }
 }
 
 
@@ -763,8 +776,11 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${controller}* thisObject = jsCast<${controller}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_onPull);
-    visitor.append(thisObject->m_onClose);
+    
+    // Avoid duplicating in the heap snapshot
+    visitor.appendHidden(thisObject->m_onPull);
+    visitor.appendHidden(thisObject->m_onClose);
+    
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);

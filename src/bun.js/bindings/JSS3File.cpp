@@ -1,125 +1,206 @@
+
 #include "root.h"
+
+#include "ZigGlobalObject.h"
 #include "ZigGeneratedClasses.h"
-#include <JavaScriptCore/ObjectConstructor.h>
+
+#include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "JSS3File.h"
+#include <JavaScriptCore/GetterSetter.h>
 #include "JavaScriptCore/JSCJSValue.h"
+#include "ErrorCode.h"
 
+#include "JSS3File.h"
+
+namespace Bun {
 using namespace JSC;
+using namespace WebCore;
 
-extern "C" SYSV_ABI void* JSS3File__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
-extern "C" SYSV_ABI bool JSS3File__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
-
+// External C functions declarations
 extern "C" {
+SYSV_ABI void* JSS3File__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+SYSV_ABI EncodedJSValue JSS3File__bucket(void* ptr, JSC::JSGlobalObject*);
+SYSV_ABI bool JSS3File__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+}
 
-JSC::EncodedJSValue BUN__createJSS3FileConstructor(JSGlobalObject* lexicalGlobalObject)
+// Forward declarations
+JSC_DECLARE_HOST_FUNCTION(functionS3File_presign);
+JSC_DECLARE_HOST_FUNCTION(functionS3File_stat);
+static JSC_DECLARE_CUSTOM_GETTER(getterS3File_bucket);
+static JSC_DEFINE_CUSTOM_GETTER(getterS3File_bucket, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    return JSValue::encode(globalObject->JSS3FileConstructor());
+    auto* thisObject = jsDynamicCast<JSS3File*>(JSValue::decode(thisValue));
+    if (!thisObject) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
+        return {};
+    }
+
+    return JSS3File__bucket(thisObject->wrapped(), globalObject);
 }
-}
-
-// TODO: make this inehrit from JSBlob instead of InternalFunction
-// That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.
-class JSS3File : public JSC::InternalFunction {
-    using Base = JSC::InternalFunction;
-
+static const HashTableValue JSS3FilePrototypeTableValues[] = {
+    { "presign"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3File_presign, 1 } },
+    { "stat"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3File_stat, 1 } },
+    { "bucket"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, getterS3File_bucket, 0 } },
+};
+class JSS3FilePrototype final : public WebCore::JSBlobPrototype {
 public:
-    JSS3File(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, call, construct)
+    using Base = WebCore::JSBlobPrototype;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSS3FilePrototype* create(
+        JSC::VM& vm,
+        JSC::JSGlobalObject* globalObject,
+        JSC::Structure* structure)
     {
+        JSS3FilePrototype* prototype = new (NotNull, JSC::allocateCell<JSS3FilePrototype>(vm)) JSS3FilePrototype(vm, globalObject, structure);
+        prototype->finishCreation(vm, globalObject);
+        return prototype;
+    }
+
+    static JSC::Structure* createStructure(
+        JSC::VM& vm,
+        JSC::JSGlobalObject* globalObject,
+        JSC::JSValue prototype)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
     }
 
     DECLARE_INFO;
 
-    static constexpr unsigned StructureFlags = (Base::StructureFlags & ~ImplementsDefaultHasInstance) | ImplementsHasInstance;
-
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return &vm.internalFunctionSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSS3FilePrototype, Base);
+        return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm)
+protected:
+    JSS3FilePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, globalObject, structure)
     {
-        Base::finishCreation(vm, 2, "S3"_s);
     }
 
-    static JSS3File* create(JSC::VM& vm, JSGlobalObject* globalObject)
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
-        auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
-        auto* object = new (NotNull, JSC::allocateCell<JSS3File>(vm)) JSS3File(vm, structure);
-        object->finishCreation(vm);
+        Base::finishCreation(vm, globalObject);
+        ASSERT(inherits(info()));
+        reifyStaticProperties(vm, JSS3File::info(), JSS3FilePrototypeTableValues, *this);
 
-        // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-
-        return object;
-    }
-
-    static bool customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-    {
-        if (!value.isObject())
-            return false;
-
-        // Note: this breaks [Symbol.hasInstance]
-        // We must do this for now until we update the code generator to export classes
-        return JSS3File__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
-    }
-
-    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-    {
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-        JSC::VM& vm = globalObject->vm();
-        JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSS3FileConstructor();
-
-        Structure* structure = globalObject->JSBlobStructure();
-        if (constructor != newTarget) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-                // ShadowRealm functions belong to a different global object.
-                getFunctionRealm(globalObject, newTarget));
-            RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(
-                globalObject,
-                newTarget,
-                functionGlobalObject->JSBlobStructure());
-        }
-
-        void* ptr = JSS3File__construct(globalObject, callFrame);
-
-        if (UNLIKELY(!ptr)) {
-            return JSValue::encode(JSC::jsUndefined());
-        }
-
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
-    }
-
-    static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-    {
-        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-        throwTypeError(lexicalGlobalObject, scope, "Class constructor S3 cannot be invoked without 'new'"_s);
-        return {};
+        this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsOwnedString(vm, "S3File"_s), 0);
     }
 };
 
-const JSC::ClassInfo JSS3File::s_info = { "S3"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3File) };
-
-namespace Bun {
-
-JSC::JSObject* createJSS3FileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+// Implementation of JSS3File methods
+void JSS3File::destroy(JSCell* cell)
 {
-    return JSS3File::create(vm, globalObject);
+    static_cast<JSS3File*>(cell)->JSS3File::~JSS3File();
+}
+
+JSS3File::~JSS3File()
+{
+    // Base class destructor will be called automatically
+}
+
+JSS3File* JSS3File::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ptr)
+{
+    JSS3File* thisObject = new (NotNull, JSC::allocateCell<JSS3File>(vm)) JSS3File(vm, structure, ptr);
+    thisObject->finishCreation(vm);
+    return thisObject;
+}
+
+JSValue constructS3FileInternal(JSC::JSGlobalObject* lexicalGlobalObject, void* ptr)
+{
+    ASSERT(ptr);
+    JSC::VM& vm = lexicalGlobalObject->vm();
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* structure = globalObject->m_JSS3FileStructure.getInitializedOnMainThread(lexicalGlobalObject);
+    return JSS3File::create(vm, globalObject, structure, ptr);
+}
+
+JSValue constructS3File(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* ptr = JSS3File__construct(globalObject, callframe);
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(ptr);
+
+    return constructS3FileInternal(globalObject, ptr);
+}
+
+JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+
+    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSBlobPrototype();
+    auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
+    auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
+}
+
+static bool customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isObject())
+        return false;
+
+    return JSS3File__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
+}
+
+Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return JSS3File::createStructure(globalObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionS3File_presign, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto* thisObject = jsDynamicCast<JSS3File*>(callframe->thisValue());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!thisObject) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
+        return {};
+    }
+
+    return JSS3File__presign(thisObject->wrapped(), globalObject, callframe);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto* thisObject = jsDynamicCast<JSS3File*>(callframe->thisValue());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!thisObject) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
+        return {};
+    }
+    return JSS3File__stat(thisObject->wrapped(), globalObject, callframe);
+}
+
+const JSC::ClassInfo JSS3FilePrototype::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3FilePrototype) };
+const JSC::ClassInfo JSS3File::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3File) };
+
+extern "C" {
+SYSV_ABI EncodedJSValue BUN__createJSS3File(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    return JSValue::encode(constructS3File(globalObject, callframe));
+};
+
+SYSV_ABI EncodedJSValue BUN__createJSS3FileUnsafely(JSC::JSGlobalObject* globalObject, void* ptr)
+{
+    return JSValue::encode(constructS3FileInternal(globalObject, ptr));
+};
 }
 
 }

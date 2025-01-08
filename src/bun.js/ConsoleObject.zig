@@ -21,12 +21,12 @@ const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
-
 pub const shim = Shimmer("Bun", "ConsoleObject", @This());
 pub const Type = *anyopaque;
 pub const name = "Bun::ConsoleObject";
 pub const include = "\"ConsoleObject.h\"";
 pub const namespace = shim.namespace;
+
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
@@ -378,13 +378,13 @@ pub const TablePrinter = struct {
                     }
                 }
             } else {
-                var cols_iter = JSC.JSPropertyIterator(.{
+                var cols_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(this.globalObject, row_value);
                 defer cols_iter.deinit();
 
-                while (cols_iter.next()) |col_key| {
+                while (try cols_iter.next()) |col_key| {
                     const value = cols_iter.value;
 
                     // find or create the column for the property
@@ -561,13 +561,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
-                var rows_iter = JSC.JSPropertyIterator(.{
+                var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
-                while (rows_iter.next()) |row_key| {
+                while (try rows_iter.next()) |row_key| {
                     try this.updateColumnsForRow(&columns, .{ .str = String.init(row_key) }, rows_iter.value);
                 }
             }
@@ -634,13 +634,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
-                var rows_iter = JSC.JSPropertyIterator(.{
+                var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
-                while (rows_iter.next()) |row_key| {
+                while (try rows_iter.next()) |row_key| {
                     try this.printRow(Writer, writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
                 }
             }
@@ -2486,6 +2486,9 @@ pub const Formatter = struct {
                 } else if (value.as(JSC.WebCore.Blob)) |blob| {
                     blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
+                } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
+                    s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
                 } else if (value.as(JSC.FetchHeaders) != null) {
                     if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
@@ -2995,7 +2998,7 @@ pub const Formatter = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    var props_iter = JSC.JSPropertyIterator(.{
+                    var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = true,
 
                         .include_value = true,
@@ -3009,7 +3012,7 @@ pub const Formatter = struct {
                             defer this.indent -|= 1;
                             const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
-                            while (props_iter.next()) |prop| {
+                            while (try props_iter.next()) |prop| {
                                 if (prop.eqlComptime("children"))
                                     continue;
 

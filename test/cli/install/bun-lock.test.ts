@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { spawn, write, file } from "bun";
 import { expect, it } from "bun:test";
 import { access, copyFile, open, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
@@ -45,7 +45,41 @@ it("should write plaintext lockfiles", async () => {
   }
   expect(stat.mode).toBe(mode);
 
-  expect(await file.readFile({ encoding: "utf8" })).toEqual(
-    `{\n  \"lockfileVersion\": 0,\n  \"workspaces\": {\n    \"\": {\n      \"dependencies\": {\n        \"dummy-package\": \"file:./bar-0.0.2.tgz\",\n      },\n    },\n  },\n  \"packages\": {\n    \"dummy-package\": [\"bar@./bar-0.0.2.tgz\", {}],\n  }\n}\n`,
-  );
+  expect(await file.readFile({ encoding: "utf8" })).toMatchSnapshot();
+});
+
+// won't work on windows, " is not a valid character in a filename
+it.skipIf(isWindows)("should escape names", async () => {
+  const packageDir = tmpdirSync();
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "quote-in-dependency-name",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(join(packageDir, "packages", '"', "package.json"), JSON.stringify({ name: '"' })),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          '"': "*",
+        },
+      }),
+    ),
+  ]);
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "ignore",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  expect(await file(join(packageDir, "bun.lock")).text()).toMatchSnapshot();
 });

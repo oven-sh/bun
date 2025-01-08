@@ -15,6 +15,7 @@ const C = bun.C;
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -688,6 +689,9 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            install_root_dependencies: if (method == .filter) bool else void,
+            path_buf: []u8,
 
             pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
                 this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -858,6 +862,79 @@ pub const Tree = struct {
                     }
 
                     continue;
+                }
+
+                if (builder.manager.subcommand == .install) dont_skip: {
+                    // only do this when parent is root. workspaces are always dependencies of the root
+                    // package, and the root package is always called with `processSubtree`
+                    if (parent_pkg_id == 0 and builder.workspace_filters.len > 0) {
+                        if (!builder.dependencies[dep_id].behavior.isWorkspaceOnly()) {
+                            if (builder.install_root_dependencies) {
+                                break :dont_skip;
+                            }
+
+                            continue;
+                        }
+
+                        var match = false;
+
+                        for (builder.workspace_filters) |workspace_filter| {
+                            const res_id = builder.resolutions[dep_id];
+
+                            const pattern, const path_or_name = switch (workspace_filter) {
+                                .name => |pattern| .{ pattern, pkg_names[res_id].slice(builder.buf()) },
+
+                                .path => |pattern| path: {
+                                    const res = &pkg_resolutions[res_id];
+                                    if (res.tag != .workspace) {
+                                        break :dont_skip;
+                                    }
+                                    const res_path = res.value.workspace.slice(builder.buf());
+
+                                    // occupy `builder.path_buf`
+                                    var abs_res_path = strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
+                                        FileSystem.instance.top_level_dir,
+                                        builder.path_buf,
+                                        &.{res_path},
+                                        .auto,
+                                    ));
+
+                                    if (comptime Environment.isWindows) {
+                                        abs_res_path = abs_res_path[Path.windowsVolumeNameLen(abs_res_path)[0]..];
+                                        Path.dangerouslyConvertPathToPosixInPlace(u8, builder.path_buf[0..abs_res_path.len]);
+                                    }
+
+                                    break :path .{
+                                        pattern,
+                                        abs_res_path,
+                                    };
+                                },
+
+                                .all => {
+                                    match = true;
+                                    continue;
+                                },
+                            };
+
+                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                                .match, .negate_match => match = true,
+
+                                .negate_no_match => {
+                                    // always skip if a pattern specifically says "!<name>"
+                                    match = false;
+                                    break;
+                                },
+
+                                .no_match => {
+                                    // keep current
+                                },
+                            }
+                        }
+
+                        if (!match) {
+                            continue;
+                        }
+                    }
                 }
             }
 
@@ -1478,7 +1555,7 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            try this.lockfile.hoist(this.log, .resolvable, {});
+            try this.lockfile.resolve(this.log);
         }
 
         // capacity is used for calculating byte size
@@ -1488,15 +1565,37 @@ const Cloner = struct {
     }
 };
 
+pub fn resolve(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .resolvable, {}, {}, {});
+}
+
+pub fn filter(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+    manager: *PackageManager,
+    install_root_dependencies: bool,
+    workspace_filters: []const WorkspaceFilter,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
+}
+
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
 pub fn hoist(
     lockfile: *Lockfile,
     log: *logger.Log,
     comptime method: Tree.BuilderMethod,
     manager: if (method == .filter) *PackageManager else void,
+    install_root_dependencies: if (method == .filter) bool else void,
+    workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
+
+    var path_buf: bun.PathBuffer = undefined;
+
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = TreeFiller.init(allocator),
@@ -1507,6 +1606,9 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
+        .path_buf = &path_buf,
+        .install_root_dependencies = install_root_dependencies,
+        .workspace_filters = workspace_filters,
     };
 
     try (Tree{}).processSubtree(
@@ -1579,7 +1681,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
+            _ = bun.sys.chdir("", std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 
@@ -7125,7 +7227,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     return digest;
 }
 
-pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
+pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
     const buf = this.buffers.string_bytes.items;

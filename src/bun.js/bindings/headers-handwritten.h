@@ -125,6 +125,7 @@ typedef struct SystemError {
     BunString path;
     BunString syscall;
     int fd;
+    BunString dest;
 } SystemError;
 
 typedef void* ArrayBufferSink;

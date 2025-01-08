@@ -2772,6 +2772,67 @@ pub const PackageManager = struct {
     last_reported_slow_lifecycle_script_at: u64 = 0,
     cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
+    pub const WorkspaceFilter = union(enum) {
+        all,
+        name: []const u32,
+        path: []const u32,
+
+        pub fn init(allocator: std.mem.Allocator, input: string, cwd: string, path_buf: []u8) OOM!WorkspaceFilter {
+            if ((input.len == 1 and input[0] == '*') or strings.eqlComptime(input, "**")) {
+                return .all;
+            }
+
+            var remain = input;
+
+            var prepend_negate = false;
+            while (remain.len > 0 and remain[0] == '!') {
+                prepend_negate = !prepend_negate;
+                remain = remain[1..];
+            }
+
+            const is_path = remain.len > 0 and remain[0] == '.';
+
+            const filter = if (is_path)
+                strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(cwd, path_buf, &.{remain}, .posix))
+            else
+                remain;
+
+            if (filter.len == 0) {
+                // won't match anything
+                return .{ .path = &.{} };
+            }
+
+            // TODO(dylan-conway): finish encoding agnostic glob matcher so we don't
+            // need to convert
+            const len = bun.simdutf.length.utf32.from.utf8.le(filter) + @intFromBool(prepend_negate);
+            const buf = try allocator.alloc(u32, len);
+
+            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(filter, buf[@intFromBool(prepend_negate)..]);
+            if (!result.isSuccessful()) {
+                // won't match anything
+                return .{ .path = &.{} };
+            }
+
+            if (prepend_negate) {
+                buf[0] = '!';
+            }
+
+            const pattern = buf[0..len];
+
+            return if (is_path)
+                .{ .path = pattern }
+            else
+                .{ .name = pattern };
+        }
+
+        pub fn deinit(this: WorkspaceFilter, allocator: std.mem.Allocator) void {
+            switch (this) {
+                .path, .name => |pattern| allocator.free(pattern),
+                .all => {},
+            }
+        }
+    };
+
     pub fn reportSlowLifecycleScripts(this: *PackageManager, log_level: Options.LogLevel) void {
         if (log_level == .silent) return;
         if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
@@ -3533,7 +3594,7 @@ pub const PackageManager = struct {
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir = fetchCacheDirectoryPath(this.env);
+                const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
                 this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
@@ -6234,9 +6295,15 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
-    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
+    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
         if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        }
+
+        if (options) |opts| {
+            if (opts.cache_directory.len > 0) {
+                return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory}), .is_node_modules = false };
+            }
         }
 
         if (env.get("BUN_INSTALL")) |dir| {
@@ -7119,6 +7186,8 @@ pub const PackageManager = struct {
 
         save_text_lockfile: bool = false,
 
+        lockfile_only: bool = false,
+
         pub const PublishConfig = struct {
             access: ?Access = null,
             tag: string = "",
@@ -7176,6 +7245,7 @@ pub const PackageManager = struct {
         pub const Update = struct {
             development: bool = false,
             optional: bool = false,
+            peer: bool = false,
         };
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
@@ -7274,6 +7344,10 @@ pub const PackageManager = struct {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
             if (bun_install_) |config| {
+                if (config.cache_directory) |cache_directory| {
+                    this.cache_directory = cache_directory;
+                }
+
                 if (config.scoped) |scoped| {
                     for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
                         var registry = registry_.*;
@@ -7360,6 +7434,10 @@ pub const PackageManager = struct {
 
                 if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
+                }
+
+                if (config.cache_directory) |cache_dir| {
+                    this.cache_directory = cache_dir;
                 }
 
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -7465,6 +7543,10 @@ pub const PackageManager = struct {
                     this.scope.url = URL.parse(cli.registry);
                 }
 
+                if (cli.cache_dir) |cache_dir| {
+                    this.cache_directory = cache_dir;
+                }
+
                 if (cli.exact) {
                     this.enable.exact_versions = true;
                 }
@@ -7529,6 +7611,8 @@ pub const PackageManager = struct {
                     this.save_text_lockfile = save_text_lockfile;
                 }
 
+                this.lockfile_only = cli.lockfile_only;
+
                 const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
 
                 if (cli.verbose) {
@@ -7576,8 +7660,13 @@ pub const PackageManager = struct {
                     this.enable.force_save_lockfile = true;
                 }
 
-                this.update.development = cli.development;
-                if (!this.update.development) this.update.optional = cli.optional;
+                if (cli.development) {
+                    this.update.development = cli.development;
+                } else if (cli.optional) {
+                    this.update.optional = cli.optional;
+                } else if (cli.peer) {
+                    this.update.peer = cli.peer;
+                }
 
                 switch (cli.patch) {
                     .nothing => {},
@@ -8537,6 +8626,7 @@ pub const PackageManager = struct {
         pub fn supportsWorkspaceFiltering(this: Subcommand) bool {
             return switch (this) {
                 .outdated => true,
+                .install => true,
                 // .pack => true,
                 else => false,
             };
@@ -8753,7 +8843,7 @@ pub const PackageManager = struct {
                                 } else child_path;
 
                                 if (strings.eqlLong(maybe_workspace_path, path, true)) {
-                                    fs.top_level_dir = parent;
+                                    fs.top_level_dir = try bun.default_allocator.dupeZ(u8, parent);
                                     found = true;
                                     child_json.close();
                                     if (comptime Environment.isWindows) {
@@ -8770,16 +8860,15 @@ pub const PackageManager = struct {
                 }
             }
 
-            fs.top_level_dir = child_cwd;
+            fs.top_level_dir = try bun.default_allocator.dupeZ(u8, child_cwd);
             break :root_package_json_file child_json;
         };
 
-        try bun.sys.chdir(fs.top_level_dir).unwrap();
+        try bun.sys.chdir(fs.top_level_dir, fs.top_level_dir).unwrap();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
-        cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
-        cwd_buf[fs.top_level_dir.len + 1] = 0;
-        fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
+        cwd_buf[fs.top_level_dir.len] = 0;
+        fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
         package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
@@ -9344,7 +9433,7 @@ pub const PackageManager = struct {
         } else {
             // bun link lodash
             switch (manager.options.log_level) {
-                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
             }
         }
     }
@@ -9508,6 +9597,7 @@ pub const PackageManager = struct {
         clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
         clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
         clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
+        clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9515,7 +9605,9 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -9536,6 +9628,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
@@ -9565,7 +9658,7 @@ pub const PackageManager = struct {
 
     const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-        clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
@@ -9586,7 +9679,7 @@ pub const PackageManager = struct {
     });
 
     pub const CommandLineArguments = struct {
-        cache_dir: string = "",
+        cache_dir: ?string = null,
         lockfile: string = "",
         token: string = "",
         global: bool = false,
@@ -9619,6 +9712,7 @@ pub const PackageManager = struct {
 
         development: bool = false,
         optional: bool = false,
+        peer: bool = false,
 
         omit: ?Omit = null,
 
@@ -9636,6 +9730,8 @@ pub const PackageManager = struct {
         ca_file_name: string = "",
 
         save_text_lockfile: ?bool = null,
+
+        lockfile_only: bool = false,
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9969,6 +10065,11 @@ pub const PackageManager = struct {
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
             cli.ca = args.options("--ca");
+            cli.lockfile_only = args.flag("--lockfile-only");
+
+            if (args.option("--cache-dir")) |cache_dir| {
+                cli.cache_dir = cache_dir;
+            }
 
             if (args.option("--cafile")) |ca_file_name| {
                 cli.ca_file_name = ca_file_name;
@@ -10088,6 +10189,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add or subcommand == .install) {
                 cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
+                cli.peer = args.flag("--peer");
                 cli.exact = args.flag("--exact");
             }
 
@@ -10110,7 +10212,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                bun.sys.chdir(final_path).unwrap() catch |err| {
+                bun.sys.chdir("", final_path).unwrap() catch |err| {
                     Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
                     Global.crash();
                 };
@@ -10438,7 +10540,7 @@ pub const PackageManager = struct {
         }
 
         switch (manager.options.log_level) {
-            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
         }
 
         if (manager.options.patch_features == .patch) {
@@ -10569,6 +10671,7 @@ pub const PackageManager = struct {
     fn updatePackageJSONAndInstallWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
         var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch bun.outOfMemory();
@@ -10602,6 +10705,7 @@ pub const PackageManager = struct {
             ctx,
             updates,
             manager.subcommand,
+            original_cwd,
             log_level,
         );
     }
@@ -10611,6 +10715,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         updates: []UpdateRequest,
         subcommand: Subcommand,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
         if (manager.log.errors > 0) {
@@ -10674,6 +10779,8 @@ pub const PackageManager = struct {
             "devDependencies"
         else if (manager.options.update.optional)
             "optionalDependencies"
+        else if (manager.options.update.peer)
+            "peerDependencies"
         else
             "dependencies";
         var any_changes = false;
@@ -10876,7 +10983,7 @@ pub const PackageManager = struct {
             break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
         };
 
-        try manager.installWithManager(ctx, root_package_json_source, log_level);
+        try manager.installWithManager(ctx, root_package_json_source, original_cwd, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
             for (updates) |request| {
@@ -12145,7 +12252,7 @@ pub const PackageManager = struct {
 
         // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
         // and cleanup install/add subcommand usage
-        var manager, _ = try init(ctx, cli, .install);
+        var manager, const original_cwd = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (subcommand == .add) {
@@ -12155,7 +12262,7 @@ pub const PackageManager = struct {
                 Output.flush();
             }
             return try switch (manager.options.log_level) {
-                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
+                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
             };
         }
 
@@ -12173,7 +12280,7 @@ pub const PackageManager = struct {
         };
 
         try switch (manager.options.log_level) {
-            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, log_level),
+            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, original_cwd, log_level),
         };
 
         if (manager.any_failed_to_install) {
@@ -13807,12 +13914,14 @@ pub const PackageManager = struct {
     pub fn installPackages(
         this: *PackageManager,
         ctx: Command.Context,
+        workspace_filters: []const WorkspaceFilter,
+        install_root_dependencies: bool,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-        try this.lockfile.hoist(this.log, .filter, this);
+        try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
 
         defer {
             this.lockfile.buffers.trees = original_trees;
@@ -14276,6 +14385,7 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         ctx: Command.Context,
         root_package_json_contents: string,
+        original_cwd: string,
         comptime log_level: Options.LogLevel,
     ) !void {
 
@@ -14890,10 +15000,99 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
+        const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
+            .text
+        else switch (load_result) {
+            .not_found => .binary,
+            .err => |err| err.format,
+            .ok => |ok| ok.format,
+        };
+
+        if (manager.options.lockfile_only) {
+            // save the lockfile and exit. make sure metahash is generated for binary lockfile
+
+            manager.lockfile.meta_hash = try manager.lockfile.generateMetaHash(
+                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+                packages_len_before_install,
+            );
+
+            try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
+
+            if (manager.options.do.summary) {
+                // TODO(dylan-conway): packages aren't installed but we can still print
+                // added/removed/updated direct dependencies.
+                Output.pretty(
+                    \\
+                    \\Saved <green>{s}<r> ({d} package{s}) 
+                , .{
+                    switch (save_format) {
+                        .text => "bun.lock",
+                        .binary => "bun.lockb",
+                    },
+                    manager.lockfile.packages.len,
+                    if (manager.lockfile.packages.len == 1) "" else "s",
+                });
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                Output.pretty("\n", .{});
+            }
+            Output.flush();
+            return;
+        }
+
+        var path_buf: bun.PathBuffer = undefined;
+        var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+        // only populated when subcommand is `.install`
+        if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
+            try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
+            for (manager.options.filter_patterns) |pattern| {
+                try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
+            }
+        }
+        defer workspace_filters.deinit(manager.allocator);
+
+        var install_root_dependencies = workspace_filters.items.len == 0;
+        if (!install_root_dependencies) {
+            const pkg_names = manager.lockfile.packages.items(.name);
+
+            const abs_root_path = abs_root_path: {
+                if (comptime !Environment.isWindows) {
+                    break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+                }
+
+                var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
+                break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
+            };
+
+            for (workspace_filters.items) |filter| {
+                const pattern, const path_or_name = switch (filter) {
+                    .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
+                    .path => |pattern| .{ pattern, abs_root_path },
+                    .all => {
+                        install_root_dependencies = true;
+                        continue;
+                    },
+                };
+
+                switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                    .match, .negate_match => install_root_dependencies = true,
+
+                    .negate_no_match => {
+                        // always skip if a pattern specifically says "!<name>"
+                        install_root_dependencies = false;
+                        break;
+                    },
+
+                    .no_match => {},
+                }
+            }
+        }
+
         var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
+                workspace_filters.items,
+                install_root_dependencies,
                 log_level,
             );
         }
@@ -14925,79 +15124,8 @@ pub const PackageManager = struct {
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
             (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
-        save: {
-            if (manager.lockfile.isEmpty()) {
-                if (!manager.options.dry_run) delete: {
-                    const delete_format = switch (load_result) {
-                        .not_found => break :delete,
-                        .err => |err| err.format,
-                        .ok => |ok| ok.format,
-                    };
-
-                    std.fs.cwd().deleteFileZ(if (delete_format == .text) "bun.lock" else "bun.lockb") catch |err| brk: {
-                        // we don't care
-                        if (err == error.FileNotFound) {
-                            if (had_any_diffs) break :save;
-                            break :brk;
-                        }
-
-                        if (log_level != .silent) Output.prettyErrorln("\n<red>error: {s} deleting empty lockfile", .{@errorName(err)});
-                        break :save;
-                    };
-                }
-                if (!manager.options.global) {
-                    if (log_level != .silent) {
-                        switch (manager.subcommand) {
-                            .remove => Output.prettyErrorln("\npackage.json has no dependencies! Deleted empty lockfile", .{}),
-                            else => Output.prettyErrorln("No packages! Deleted empty lockfile", .{}),
-                        }
-                    }
-                }
-
-                break :save;
-            }
-
-            var save_node: *Progress.Node = undefined;
-
-            if (comptime log_level.showProgress()) {
-                manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-                save_node = manager.progress.start(ProgressStrings.save(), 0);
-                save_node.activate();
-
-                manager.progress.refresh();
-            }
-
-            const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
-                .text
-            else switch (load_result) {
-                .not_found => .binary,
-                .err => |err| err.format,
-                .ok => |ok| ok.format,
-            };
-
-            manager.lockfile.saveToDisk(save_format, manager.options.log_level.isVerbose());
-
-            if (comptime Environment.allow_assert) {
-                if (load_result.loadedFromTextLockfile()) {
-                    if (!try manager.lockfile.eql(lockfile_before_install, packages_len_before_install, manager.allocator)) {
-                        Output.panic("Lockfile non-deterministic after saving", .{});
-                    }
-                } else {
-                    if (manager.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
-                        Output.panic("Lockfile metahash non-deterministic after saving", .{});
-                    }
-                }
-            }
-
-            if (comptime log_level.showProgress()) {
-                save_node.end();
-                manager.progress.refresh();
-                manager.progress.root.end();
-                manager.progress = .{};
-            } else if (comptime log_level != .silent) {
-                Output.prettyErrorln("Saved lockfile", .{});
-                Output.flush();
-            }
+        {
+            try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
         }
 
         if (needs_new_lockfile) {
@@ -15024,7 +15152,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.do.run_scripts) {
+        if (manager.options.do.run_scripts and install_root_dependencies) {
             if (manager.root_lifecycle_scripts) |scripts| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(scripts.total > 0);
@@ -15048,94 +15176,8 @@ pub const PackageManager = struct {
             }
         }
 
-        var printed_timestamp = false;
         if (comptime log_level != .silent) {
-            if (manager.options.do.summary) {
-                var printer = Lockfile.Printer{
-                    .lockfile = manager.lockfile,
-                    .options = manager.options,
-                    .updates = manager.update_requests,
-                    .successfully_installed = install_summary.successfully_installed,
-                };
-
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        try Lockfile.Printer.Tree.print(&printer, manager, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-                    },
-                }
-
-                if (!did_meta_hash_change) {
-                    manager.summary.remove = 0;
-                    manager.summary.add = 0;
-                    manager.summary.update = 0;
-                }
-
-                if (install_summary.success > 0) {
-                    // it's confusing when it shows 3 packages and says it installed 1
-                    const pkgs_installed = @max(
-                        install_summary.success,
-                        @as(
-                            u32,
-                            @truncate(manager.update_requests.len),
-                        ),
-                    );
-                    Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary, manager.options.global);
-
-                    if (manager.summary.remove > 0) {
-                        Output.pretty("Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
-                    }
-                } else if (manager.summary.remove > 0) {
-                    if (manager.subcommand == .remove) {
-                        for (manager.update_requests) |request| {
-                            Output.prettyln("<r><red>-<r> {s}", .{request.name});
-                        }
-                    }
-
-                    Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary, manager.options.global);
-                } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.update_requests.len == 0) {
-                    const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
-                    if (count != install_summary.skipped) {
-                        Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
-                            install_summary.skipped,
-                            if (install_summary.skipped == 1) "" else "s",
-                            count,
-                            if (count == 1) "" else "s",
-                        });
-                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                        printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary, manager.options.global);
-                    } else {
-                        Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
-                            install_summary.skipped,
-                            if (install_summary.skipped == 1) "" else "s",
-                        });
-                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                        printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary, manager.options.global);
-                    }
-                }
-
-                if (install_summary.fail > 0) {
-                    Output.prettyln("<r>Failed to install <red><b>{d}<r> package{s}\n", .{ install_summary.fail, if (install_summary.fail == 1) "" else "s" });
-                    Output.flush();
-                }
-            }
-        }
-
-        if (comptime log_level != .silent) {
-            if (manager.options.do.summary) {
-                if (!printed_timestamp) {
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    Output.prettyln("<d> done<r>", .{});
-                    printed_timestamp = true;
-                }
-            }
+            try manager.printInstallSummary(ctx, &install_summary, did_meta_hash_change, log_level);
         }
 
         if (install_summary.fail > 0) {
@@ -15145,7 +15187,182 @@ pub const PackageManager = struct {
         Output.flush();
     }
 
-    fn printBlockedPackagesInfo(summary: PackageInstall.Summary, global: bool) void {
+    fn printInstallSummary(
+        this: *PackageManager,
+        ctx: Command.Context,
+        install_summary: *const PackageInstall.Summary,
+        did_meta_hash_change: bool,
+        comptime log_level: Options.LogLevel,
+    ) !void {
+        var printed_timestamp = false;
+        if (this.options.do.summary) {
+            var printer = Lockfile.Printer{
+                .lockfile = this.lockfile,
+                .options = this.options,
+                .updates = this.update_requests,
+                .successfully_installed = install_summary.successfully_installed,
+            };
+
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
+                },
+            }
+
+            if (!did_meta_hash_change) {
+                this.summary.remove = 0;
+                this.summary.add = 0;
+                this.summary.update = 0;
+            }
+
+            if (install_summary.success > 0) {
+                // it's confusing when it shows 3 packages and says it installed 1
+                const pkgs_installed = @max(
+                    install_summary.success,
+                    @as(
+                        u32,
+                        @truncate(this.update_requests.len),
+                    ),
+                );
+                Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                printed_timestamp = true;
+                printBlockedPackagesInfo(install_summary, this.options.global);
+
+                if (this.summary.remove > 0) {
+                    Output.pretty("Removed: <cyan>{d}<r>\n", .{this.summary.remove});
+                }
+            } else if (this.summary.remove > 0) {
+                if (this.subcommand == .remove) {
+                    for (this.update_requests) |request| {
+                        Output.prettyln("<r><red>-<r> {s}", .{request.name});
+                    }
+                }
+
+                Output.pretty("<r><b>{d}<r> package{s} removed ", .{ this.summary.remove, if (this.summary.remove == 1) "" else "s" });
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                printed_timestamp = true;
+                printBlockedPackagesInfo(install_summary, this.options.global);
+            } else if (install_summary.skipped > 0 and install_summary.fail == 0 and this.update_requests.len == 0) {
+                const count = @as(PackageID, @truncate(this.lockfile.packages.len));
+                if (count != install_summary.skipped) {
+                    Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
+                        install_summary.skipped,
+                        if (install_summary.skipped == 1) "" else "s",
+                        count,
+                        if (count == 1) "" else "s",
+                    });
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
+                    printBlockedPackagesInfo(install_summary, this.options.global);
+                } else {
+                    Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
+                        install_summary.skipped,
+                        if (install_summary.skipped == 1) "" else "s",
+                    });
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
+                    printBlockedPackagesInfo(install_summary, this.options.global);
+                }
+            }
+
+            if (install_summary.fail > 0) {
+                Output.prettyln("<r>Failed to install <red><b>{d}<r> package{s}\n", .{ install_summary.fail, if (install_summary.fail == 1) "" else "s" });
+                Output.flush();
+            }
+        }
+
+        if (this.options.do.summary) {
+            if (!printed_timestamp) {
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                Output.prettyln("<d> done<r>", .{});
+                printed_timestamp = true;
+            }
+        }
+    }
+
+    fn saveLockfile(
+        this: *PackageManager,
+        load_result: *const Lockfile.LoadResult,
+        save_format: Lockfile.LoadResult.LockfileFormat,
+        had_any_diffs: bool,
+        // TODO(dylan-conway): this and `packages_len_before_install` can most likely be deleted
+        // now that git dependnecies don't append to lockfile during installation.
+        lockfile_before_install: *const Lockfile,
+        packages_len_before_install: usize,
+        log_level: Options.LogLevel,
+    ) OOM!void {
+        if (this.lockfile.isEmpty()) {
+            if (!this.options.dry_run) delete: {
+                const delete_format = switch (load_result.*) {
+                    .not_found => break :delete,
+                    .err => |err| err.format,
+                    .ok => |ok| ok.format,
+                };
+
+                std.fs.cwd().deleteFileZ(if (delete_format == .text) "bun.lock" else "bun.lockb") catch |err| brk: {
+                    // we don't care
+                    if (err == error.FileNotFound) {
+                        if (had_any_diffs) return;
+                        break :brk;
+                    }
+
+                    if (log_level != .silent) {
+                        Output.err(err, "failed to delete empty lockfile", .{});
+                    }
+                    return;
+                };
+            }
+            if (!this.options.global) {
+                if (log_level != .silent) {
+                    switch (this.subcommand) {
+                        .remove => Output.prettyErrorln("\npackage.json has no dependencies! Deleted empty lockfile", .{}),
+                        else => Output.prettyErrorln("No packages! Deleted empty lockfile", .{}),
+                    }
+                }
+            }
+
+            return;
+        }
+
+        var save_node: *Progress.Node = undefined;
+
+        if (log_level.showProgress()) {
+            this.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+            save_node = this.progress.start(ProgressStrings.save(), 0);
+            save_node.activate();
+
+            this.progress.refresh();
+        }
+
+        this.lockfile.saveToDisk(save_format, this.options.log_level.isVerbose());
+
+        if (comptime Environment.allow_assert) {
+            if (load_result.* != .not_found) {
+                if (load_result.loadedFromTextLockfile()) {
+                    if (!try this.lockfile.eql(lockfile_before_install, packages_len_before_install, this.allocator)) {
+                        Output.panic("Lockfile non-deterministic after saving", .{});
+                    }
+                } else {
+                    if (this.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
+                        Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                    }
+                }
+            }
+        }
+
+        if (log_level.showProgress()) {
+            save_node.end();
+            this.progress.refresh();
+            this.progress.root.end();
+            this.progress = .{};
+        } else if (log_level != .silent) {
+            Output.prettyErrorln("Saved lockfile", .{});
+            Output.flush();
+        }
+    }
+
+    fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool) void {
         const packages_count = summary.packages_with_blocked_scripts.count();
         var scripts_count: usize = 0;
         for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;

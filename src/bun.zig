@@ -1399,10 +1399,10 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 pub const getcwd = std.posix.getcwd;
 
-pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
-    return allocator.dupe(u8, temp_slice);
+    return allocator.dupeZ(u8, temp_slice);
 }
 
 /// Get the absolute path to a file descriptor.
@@ -4221,3 +4221,5 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
     pub fn deleteAll() void {}
 };
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3/client.zig");

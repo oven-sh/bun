@@ -1342,7 +1342,6 @@ class Server extends EventEmitter {
       });
     } else {
       this._handle = Bun.listen({
-        exclusive,
         port,
         hostname,
         tls,

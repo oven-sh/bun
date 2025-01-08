@@ -3974,15 +3974,7 @@ pub const VirtualMachine = struct {
 
                     // We special-case the code property. Let's avoid printing it twice.
                     if (field.eqlComptime("code")) {
-                        if (value.isString()) {
-                            const str = value.toBunString(this.global);
-                            defer str.deref();
-                            if (!str.isEmpty()) {
-                                if (str.eql(name)) {
-                                    continue;
-                                }
-                            }
-                        }
+                        if (!iterator.tried_code_property) continue;
                     }
 
                     const kind = value.jsType();
@@ -4018,7 +4010,7 @@ pub const VirtualMachine = struct {
 
                         try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
 
-                        // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                        // When we're printing errors for a top-level uncaught exception / rejection, suppress further errors here.
                         if (allow_side_effects) {
                             if (this.global.hasException()) {
                                 this.global.clearException();
@@ -4039,7 +4031,7 @@ pub const VirtualMachine = struct {
                         ) catch {};
 
                         if (allow_side_effects) {
-                            // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                            // When we're printing errors for a top-level uncaught exception / rejection, suppress further errors here.
                             if (this.global.hasException()) {
                                 this.global.clearException();
                             }

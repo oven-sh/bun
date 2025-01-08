@@ -927,14 +927,6 @@ const libSymbols = {
     returns: "int",
     args: ["ptr", "ptr", "usize"],
   },
-  pthread_attr_getguardsize: {
-    returns: "int",
-    args: ["ptr", "ptr"],
-  },
-  pthread_attr_setguardsize: {
-    returns: "int",
-    args: ["ptr", "usize"],
-  },
   login_tty: {
     returns: "int",
     args: ["int"],

@@ -147,7 +147,7 @@ describe("napi", () => {
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
-      expect(result).toStartWith("data = 1234, context = 42");
+      expect(result).toStartWith("data: nullptr");
     });
   });
 
@@ -263,18 +263,18 @@ describe("napi", () => {
 
   describe("napi_run_script", () => {
     it("evaluates a basic expression", () => {
-      checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
+      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
     });
     it("provides the right this value", () => {
-      checkSameOutput("test_napi_run_script", ["this === global"]);
+      checkSameOutput("eval_wrapper", ["this === global"]);
     });
     it("propagates exceptions", () => {
-      checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
+      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
-      let bunResult = runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
+      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(

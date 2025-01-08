@@ -8,7 +8,6 @@ namespace napitests {
 static napi_ref ref_to_wrapped_object = nullptr;
 static bool wrap_finalize_called = false;
 
-// TODO: this needs https://github.com/oven-sh/bun/pulls/14501 to work
 // static void delete_the_ref(napi_env env, void *_data, void *_hint) {
 //   printf("delete_the_ref\n");
 //   // not using NODE_API_ASSERT as this runs in a finalizer where allocating
@@ -67,7 +66,7 @@ static napi_value create_wrap(const Napi::CallbackInfo &info) {
   return js_object;
 }
 
-// get_wrap_data(js_object: object): number|undefined
+// get_wrap_data(js_object: object): number
 static napi_value get_wrap_data(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value js_object = info[0];
@@ -87,7 +86,7 @@ static napi_value get_wrap_data(const Napi::CallbackInfo &info) {
   return js_number;
 }
 
-// get_object_from_ref(): object|undefined
+// get_object_from_ref(): object
 static napi_value get_object_from_ref(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 

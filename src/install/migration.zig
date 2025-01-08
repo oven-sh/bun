@@ -1010,7 +1010,7 @@ pub fn migrateNPMLockfile(
             // but after we write all the data, there is no excuse for this to fail.
             //
             // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
-            bun.assert(this.getPackageID(this.packages.items(.name_hash)[i], null, &r) != null);
+            bun.assert(this.getPackageID(this.packages.items(.name_hash)[i], &r) != null);
         }
     }
     if (is_missing_resolutions) {

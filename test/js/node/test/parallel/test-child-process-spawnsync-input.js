@@ -49,6 +49,7 @@ function checkSpawnSyncRet(ret) {
 function verifyBufOutput(ret) {
   checkSpawnSyncRet(ret);
   assert.deepStrictEqual(ret.stdout, msgOutBuf);
+  assert.deepStrictEqual(ret.stderr.toString('utf8'), msgErrBuf.toString('utf8'));
   assert.deepStrictEqual(ret.stderr, msgErrBuf);
 }
 
@@ -69,6 +70,7 @@ if (process.argv.includes('spawnchild')) {
   return;
 }
 
+console.log(process.env)
 verifyBufOutput(spawnSync(process.execPath, [__filename, 'spawnchild', 1]));
 verifyBufOutput(spawnSync(process.execPath, [__filename, 'spawnchild', 2]));
 

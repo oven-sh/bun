@@ -254,6 +254,7 @@ async function runTests() {
             timeout: 10_000,
             env: {
               FORCE_COLOR: "0",
+              NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),

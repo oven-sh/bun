@@ -2004,7 +2004,7 @@ extern "C" napi_status napi_define_class(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result || !env || (property_count > 0 && !properties))) {
+    if (UNLIKELY(!result || !env || (property_count > 0 && !properties)) || !constructor) {
         return napi_invalid_arg;
     }
 

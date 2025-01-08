@@ -47,9 +47,15 @@ class WebCoreOpaqueRoot;
 
 struct StructuredSerializeOptions;
 
-class MessagePort final : /* public ActiveDOMObject, */ public ContextDestructionObserver, public EventTarget {
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
+
+class MessagePort final : /* public ActiveDOMObject, */ public ContextDestructionObserver, public EventTarget, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePort> {
     WTF_MAKE_NONCOPYABLE(MessagePort);
+#if ENABLE(MALLOC_BREAKDOWN)
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MessagePort);
+#else
     WTF_MAKE_ISO_ALLOCATED(MessagePort);
+#endif
 
 public:
     static Ref<MessagePort> create(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);
@@ -82,15 +88,21 @@ public:
     const MessagePortIdentifier& identifier() const { return m_identifier; }
     const MessagePortIdentifier& remoteIdentifier() const { return m_remoteIdentifier; }
 
-    WEBCORE_EXPORT void ref() const;
-    WEBCORE_EXPORT void deref() const;
+    void ref() const
+    {
+        ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref();
+    }
+    void deref() const
+    {
+        ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref();
+    }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final
     {
         return MessagePortEventTargetInterfaceType;
     }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ScriptExecutionContext::getScriptExecutionContext(contextIdForMessagePortId(m_identifier)); }
+    ScriptExecutionContext* scriptExecutionContext() const final { return this->ContextDestructionObserver::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -102,8 +114,6 @@ public:
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
 
     bool hasPendingActivity() const;
-
-    static ScriptExecutionContextIdentifier contextIdForMessagePortId(MessagePortIdentifier);
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
@@ -117,8 +127,7 @@ private:
 
     // ActiveDOMObject
     // const char* activeDOMObjectName() const final;
-    // void contextDestroyed() final;
-    // void stop() final { close(); }
+    void contextDestroyed() final;
     // bool virtualHasPendingActivity() const final;
 
     EventTargetData* eventTargetData() final { return &m_eventTargetData; }

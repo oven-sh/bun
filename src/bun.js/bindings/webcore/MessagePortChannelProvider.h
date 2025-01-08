@@ -32,16 +32,24 @@
 #include <wtf/Vector.h>
 
 namespace WebCore {
+class MessagePortChannelProvider;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MessagePortChannelProvider> : std::true_type {};
+}
+
+namespace WebCore {
 
 class ScriptExecutionContext;
 struct MessagePortIdentifier;
 struct MessageWithMessagePorts;
 
-class MessagePortChannelProvider {
+class MessagePortChannelProvider : public CanMakeWeakPtr<MessagePortChannelProvider> {
 public:
     static MessagePortChannelProvider& fromContext(ScriptExecutionContext&);
     static MessagePortChannelProvider& singleton();
-    // WEBCORE_EXPORT static void setSharedProvider(MessagePortChannelProvider&);
 
     virtual ~MessagePortChannelProvider() {}
 
@@ -53,7 +61,6 @@ public:
 
     virtual void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) = 0;
     virtual std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&) = 0;
-
     virtual void postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget) = 0;
 };
 

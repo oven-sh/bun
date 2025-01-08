@@ -22,7 +22,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
-
+#include "root.h"
 #include "config.h"
 #include "MessagePortChannelProviderImpl.h"
 
@@ -32,9 +32,7 @@
 
 namespace WebCore {
 
-MessagePortChannelProviderImpl::MessagePortChannelProviderImpl()
-{
-}
+MessagePortChannelProviderImpl::MessagePortChannelProviderImpl() = default;
 
 MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 {
@@ -48,7 +46,7 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didEntangleLocalToRemote(local, remote, WebCore::Process::identifier());
+    m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
@@ -71,7 +69,7 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
 {
     // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
     auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
-        // ASSERT(isMainThread());
+        ASSERT(isMainThread());
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 

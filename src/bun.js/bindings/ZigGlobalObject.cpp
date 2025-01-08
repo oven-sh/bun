@@ -1211,6 +1211,7 @@ GlobalObject::~GlobalObject()
 
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
+        ctx->deref();
     }
 }
 

@@ -11,6 +11,7 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
+#include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
 #include <wtf/LazyRef.h>
 
@@ -33,9 +34,14 @@ class ScriptExecutionContext;
 class EventLoopTask;
 
 using ScriptExecutionContextIdentifier = uint32_t;
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 
-class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
+class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
+#if ENABLE(MALLOC_BREAKDOWN)
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#else
     WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
+#endif
 
 public:
     ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
@@ -63,6 +69,8 @@ public:
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
     void refEventLoop();
     void unrefEventLoop();
+    using RefCounted::deref;
+    using RefCounted::ref;
 
     const WTF::URL& url() const
     {
@@ -188,6 +196,10 @@ public:
             return m_connected_client_websockets_ctx;
         }
     }
+
+#if ASSERT_ENABLED
+    bool m_inScriptExecutionContextDestructor = false;
+#endif
 };
 
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);

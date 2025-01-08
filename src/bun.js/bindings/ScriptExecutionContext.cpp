@@ -31,6 +31,8 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 }
 #endif
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
     : m_vm(vm)
     , m_globalObject(globalObject)
@@ -39,6 +41,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
         lazyRef.set(BunBroadcastChannelRegistry::create());
     })
 {
+    relaxAdoptionRequirement();
     addToContextsMap();
 }
 
@@ -50,11 +53,15 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
         lazyRef.set(BunBroadcastChannelRegistry::create());
     })
 {
+    relaxAdoptionRequirement();
     addToContextsMap();
 }
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
+
+#if !ENABLE(MALLOC_BREAKDOWN)
 WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
+#endif
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -123,10 +130,13 @@ ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
 
+#if ASSERT_ENABLED
     {
         Locker locker { allScriptExecutionContextsMapLock };
         ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
     }
+    m_inScriptExecutionContextDestructor = true;
+#endif // ASSERT_ENABLED
 
     auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
     for (auto& completionHandler : postMessageCompletionHandlers)
@@ -134,6 +144,10 @@ ScriptExecutionContext::~ScriptExecutionContext()
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();
+
+#if ASSERT_ENABLED
+    m_inScriptExecutionContextDestructor = false;
+#endif // ASSERT_ENABLED
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
@@ -150,12 +164,17 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
-    // ASSERT(!m_inScriptExecutionContextDestructor);
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
     m_destructionObservers.add(&observer);
 }
 
 void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
     m_destructionObservers.remove(&observer);
 }
 
@@ -207,7 +226,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
 ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
 {
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(1);
+    return allScriptExecutionContextsMap().get(2);
 }
 
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
@@ -251,16 +270,14 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
 
 void ScriptExecutionContext::checkConsistency() const
 {
-    // for (auto* messagePort : m_messagePorts)
-    //     ASSERT(messagePort->scriptExecutionContext() == this);
+#if ASSERT_ENABLED
+    for (auto* messagePort : m_messagePorts)
+        ASSERT(messagePort->scriptExecutionContext() == this);
 
-    // for (auto* destructionObserver : m_destructionObservers)
-    //     ASSERT(destructionObserver->scriptExecutionContext() == this);
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
 
-    // for (auto* activeDOMObject : m_activeDOMObjects) {
-    //     ASSERT(activeDOMObject->scriptExecutionContext() == this);
-    //     activeDOMObject->assertSuspendIfNeededWasCalled();
-    // }
+#endif // ASSERT_ENABLED
 }
 
 void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)

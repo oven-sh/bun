@@ -13,7 +13,8 @@ class ContextDestructionObserver {
 public:
     WEBCORE_EXPORT virtual void contextDestroyed();
 
-    ScriptExecutionContext* scriptExecutionContext() const { return m_context; }
+    ScriptExecutionContext* scriptExecutionContext() const { return m_context.get(); }
+    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
 
 protected:
     WEBCORE_EXPORT ContextDestructionObserver(ScriptExecutionContext*);
@@ -21,7 +22,7 @@ protected:
     void observeContext(ScriptExecutionContext*);
 
 private:
-    ScriptExecutionContext* m_context;
+    WeakPtr<ScriptExecutionContext> m_context;
 };
 
 }

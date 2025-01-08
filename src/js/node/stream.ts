@@ -1400,140 +1400,6 @@ var require_duplexify = __commonJS({
 
 const Duplex = require("internal/streams/duplex");
 
-// node_modules/readable-stream/lib/internal/streams/compose.js
-var require_compose = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/compose.js"(exports, module) {
-    "use strict";
-    var { pipeline } = require_pipeline();
-    var Duplex = require_duplex();
-    var { destroyer } = require("internal/streams/destroy");
-    var { isNodeStream, isReadable, isWritable } = require("internal/streams/utils");
-    var {
-      AbortError,
-      codes: { ERR_INVALID_ARG_VALUE, ERR_MISSING_ARGS },
-    } = require_errors();
-    module.exports = function compose(...streams) {
-      if (streams.length === 0) {
-        throw new ERR_MISSING_ARGS("streams");
-      }
-      if (streams.length === 1) {
-        return Duplex.from(streams[0]);
-      }
-      const orgStreams = [...streams];
-      if (typeof streams[0] === "function") {
-        streams[0] = Duplex.from(streams[0]);
-      }
-      if (typeof streams[streams.length - 1] === "function") {
-        const idx = streams.length - 1;
-        streams[idx] = Duplex.from(streams[idx]);
-      }
-      for (let n = 0; n < streams.length; ++n) {
-        if (!isNodeStream(streams[n])) {
-          continue;
-        }
-        if (n < streams.length - 1 && !isReadable(streams[n])) {
-          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
-        }
-        if (n > 0 && !isWritable(streams[n])) {
-          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
-        }
-      }
-      let ondrain;
-      let onfinish;
-      let onreadable;
-      let onclose;
-      let d;
-      function onfinished(err) {
-        const cb = onclose;
-        onclose = null;
-        if (cb) {
-          cb(err);
-        } else if (err) {
-          d.destroy(err);
-        } else if (!readable && !writable) {
-          d.destroy();
-        }
-      }
-      const head = streams[0];
-      const tail = pipeline(streams, onfinished);
-      const writable = !!isWritable(head);
-      const readable = !!isReadable(tail);
-      d = new Duplex({
-        writableObjectMode: !!(head !== null && head !== void 0 && head.writableObjectMode),
-        readableObjectMode: !!(tail !== null && tail !== void 0 && tail.writableObjectMode),
-        writable,
-        readable,
-      });
-      if (writable) {
-        d._write = function (chunk, encoding, callback) {
-          if (head.write(chunk, encoding)) {
-            callback();
-          } else {
-            ondrain = callback;
-          }
-        };
-        d._final = function (callback) {
-          head.end();
-          onfinish = callback;
-        };
-        head.on("drain", function () {
-          if (ondrain) {
-            const cb = ondrain;
-            ondrain = null;
-            cb();
-          }
-        });
-        tail.on("finish", function () {
-          if (onfinish) {
-            const cb = onfinish;
-            onfinish = null;
-            cb();
-          }
-        });
-      }
-      if (readable) {
-        tail.on("readable", function () {
-          if (onreadable) {
-            const cb = onreadable;
-            onreadable = null;
-            cb();
-          }
-        });
-        tail.on("end", function () {
-          d.push(null);
-        });
-        d._read = function () {
-          while (true) {
-            const buf = tail.read();
-            if (buf === null) {
-              onreadable = d._read;
-              return;
-            }
-            if (!d.push(buf)) {
-              return;
-            }
-          }
-        };
-      }
-      d._destroy = function (err, callback) {
-        if (!err && onclose !== null) {
-          err = new AbortError();
-        }
-        onreadable = null;
-        ondrain = null;
-        onfinish = null;
-        if (onclose === null) {
-          callback(err);
-        } else {
-          onclose = callback;
-          destroyer(tail, err);
-        }
-      };
-      return d;
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/stream/promises.js
 var require_promises = __commonJS({
   "node_modules/readable-stream/lib/stream/promises.js"(exports, module) {
@@ -1588,7 +1454,7 @@ var require_stream = __commonJS({
     var {
       codes: { ERR_ILLEGAL_CONSTRUCTOR },
     } = require_errors();
-    var compose = require_compose();
+    var compose = require("internal/streams/compose");
     var { pipeline } = require("internal/streams/pipeline");
     var { destroyer } = require("internal/streams/destroy");
     var eos = require("internal/streams/end-of-stream");

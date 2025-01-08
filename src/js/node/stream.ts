@@ -1400,112 +1400,12 @@ var require_duplexify = __commonJS({
 
 const Duplex = require("internal/streams/duplex");
 
-// node_modules/readable-stream/lib/internal/streams/transform.js
-var require_transform = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/transform.js"(exports, module) {
-    "use strict";
-    var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
-    var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
-    function Transform(options) {
-      if (!(this instanceof Transform)) return new Transform(options);
-
-      Duplex.$call(this, options);
-
-      this._readableState.sync = false;
-      this[kCallback] = null;
-
-      if (options) {
-        if (typeof options.transform === "function") this._transform = options.transform;
-        if (typeof options.flush === "function") this._flush = options.flush;
-      } else {
-        this.allowHalfOpen = true;
-      }
-
-      this.on("prefinish", prefinish.bind(this));
-    }
-    Transform.prototype = {};
-    ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
-    Transform.prototype.constructor = Transform; // Re-add constructor which got lost when setting prototype
-    ObjectSetPrototypeOf(Transform, Duplex);
-
-    module.exports = Transform;
-    var kCallback = Symbol2("kCallback");
-    function final(cb) {
-      if (typeof this._flush === "function" && !this.destroyed) {
-        this._flush((er, data) => {
-          if (er) {
-            if (cb) {
-              cb(er);
-            } else {
-              this.destroy(er);
-            }
-            return;
-          }
-          if (data != null) {
-            this.push(data);
-          }
-          this.push(null);
-          if (cb) {
-            cb();
-          }
-        });
-      } else {
-        this.push(null);
-        if (cb) {
-          cb();
-        }
-      }
-    }
-    function prefinish() {
-      if (this._final !== final) {
-        final.$call(this);
-      }
-    }
-    Transform.prototype._final = final;
-    Transform.prototype._transform = function (chunk, encoding, callback) {
-      throw new ERR_METHOD_NOT_IMPLEMENTED("_transform()");
-    };
-    Transform.prototype._write = function (chunk, encoding, callback) {
-      const rState = this._readableState;
-      const wState = this._writableState;
-      const length = rState.length;
-      this._transform(chunk, encoding, (err, val) => {
-        if (err) {
-          callback(err);
-          return;
-        }
-        if (val != null) {
-          this.push(val);
-        }
-        if (
-          wState.ended ||
-          length === rState.length ||
-          rState.length < rState.highWaterMark ||
-          rState.highWaterMark === 0 ||
-          rState.length === 0
-        ) {
-          callback();
-        } else {
-          this[kCallback] = callback;
-        }
-      });
-    };
-    Transform.prototype._read = function () {
-      if (this[kCallback]) {
-        const callback = this[kCallback];
-        this[kCallback] = null;
-        callback();
-      }
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/passthrough.js
 var require_passthrough = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/passthrough.js"(exports, module) {
     "use strict";
     var { ObjectSetPrototypeOf } = require_primordials();
-    var Transform = require_transform();
+    var Transform = require("internal/streams/transform");
 
     function PassThrough(options) {
       if (!(this instanceof PassThrough)) return new PassThrough(options);
@@ -2093,7 +1993,7 @@ var require_stream = __commonJS({
     }
     Stream.Writable = require("internal/streams/writable");
     Stream.Duplex = require("internal/streams/duplex");
-    Stream.Transform = require_transform();
+    Stream.Transform = require("internal/streams/transform");
     Stream.PassThrough = require_passthrough();
     Stream.pipeline = pipeline;
     var { addAbortSignal } = require("internal/streams/add-abort-signal");

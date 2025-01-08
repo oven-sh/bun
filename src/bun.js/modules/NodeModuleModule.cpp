@@ -286,11 +286,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(
-        globalObject, scope,
-        createError(globalObject,
-            "module.SourceMap is not yet implemented in Bun"_s));
-    return {};
+    // We haven't implemented this yet, but erroring breaks other things.
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,

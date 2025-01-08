@@ -159,6 +159,7 @@ pub const ModuleInfo = struct {
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
+    exported_names: std.AutoArrayHashMapUnmanaged(StringID, void),
     contains_import_meta: bool,
     finalized: bool = false,
 
@@ -207,16 +208,27 @@ pub const ModuleInfo = struct {
         try self._addRecord(.import_info_namespace, &.{ try self.str(module_name), try self.str("*"), try self.str(local_name) });
     }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: []const u8, import_name: []const u8, module_name: []const u8) !void {
-        try self._addRecord(.export_info_indirect, &.{ try self.str(export_name), try self.str(import_name), try self.str(module_name) });
+        const export_name_id = try self.str(export_name);
+        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_indirect, &.{ export_name_id, try self.str(import_name), try self.str(module_name) });
     }
     pub fn addExportInfoLocal(self: *ModuleInfo, export_name: []const u8, local_name: []const u8) !void {
-        try self._addRecord(.export_info_local, &.{ try self.str(export_name), try self.str(local_name), @enumFromInt(std.math.maxInt(u32)) });
+        const export_name_id = try self.str(export_name);
+        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_local, &.{ export_name_id, try self.str(local_name), @enumFromInt(std.math.maxInt(u32)) });
     }
     pub fn addExportInfoNamespace(self: *ModuleInfo, export_name: []const u8, module_name: []const u8) !void {
-        try self._addRecord(.export_info_namespace, &.{ try self.str(export_name), try self.str(module_name) });
+        const export_name_id = try self.str(export_name);
+        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_namespace, &.{ export_name_id, try self.str(module_name) });
     }
     pub fn addExportInfoStar(self: *ModuleInfo, module_name: []const u8) !void {
         try self._addRecord(.export_info_star, &.{try self.str(module_name)});
+    }
+
+    pub fn _hasOrAddExportedName(self: *ModuleInfo, name: StringID) !bool {
+        if (try self.exported_names.fetchPut(self.gpa, name, {}) != null) return true;
+        return false;
     }
 
     pub fn create(gpa: std.mem.Allocator) !*ModuleInfo {
@@ -230,6 +242,7 @@ pub const ModuleInfo = struct {
             .strings_map = .{},
             .strings_buf = .{},
             .strings_lens = .{},
+            .exported_names = .{},
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .buffer = std.ArrayList(StringID).init(allocator),
             .record_kinds = std.ArrayList(RecordKind).init(allocator),
@@ -240,6 +253,7 @@ pub const ModuleInfo = struct {
         self.strings_map.deinit(self.gpa);
         self.strings_buf.deinit(self.gpa);
         self.strings_lens.deinit(self.gpa);
+        self.exported_names.deinit(self.gpa);
         self.requested_modules.deinit();
         self.buffer.deinit();
         self.record_kinds.deinit();

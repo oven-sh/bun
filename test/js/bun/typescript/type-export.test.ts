@@ -139,21 +139,29 @@ describe("through export merge", () => {
         ["direct2", "export const value = 'abc'; export {value};"],
         ["ns", "export * as value from './c'; export * as value from './c';"],
       ]) {
-        test(name, () => {
+        describe(name, () => {
           const dir = tempDirWithFiles("type-import", {
             ["main." + fmt]: "import {value} from './a'; console.log(value);",
             ["a." + fmt]: mode,
             ["b." + fmt]: fmt === "ts" ? "export type value = 'b';" : "",
             ["c." + fmt]: "export const value = 'c';",
           });
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), "main." + fmt],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          expect(result.stderr?.toString().trim()).toInclude("SyntaxError: Cannot export a duplicate name 'value'.");
-          expect(result.exitCode).toBe(1);
+          for (const file of ["main." + fmt, "a." + fmt]) {
+            test(file, () => {
+              const result = Bun.spawnSync({
+                cmd: [bunExe(), file],
+                cwd: dir,
+                env: bunEnv,
+                stdio: ["inherit", "pipe", "pipe"],
+              });
+              expect(result.stderr?.toString().trim()).toInclude(
+                file === "a." + fmt
+                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
+                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
+              );
+              expect(result.exitCode).toBe(1);
+            });
+          }
         });
       }
     });

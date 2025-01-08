@@ -528,9 +528,9 @@ pub const S3Credentials = struct {
                     }
                 } else {
                     if (session_token != null) {
-                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
                     } else {
-                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                        break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
                     }
                 }
             } else {

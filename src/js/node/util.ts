@@ -31,11 +31,12 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
+const codesWarned = new Set();
 function deprecate(fn, msg, code) {
   if (process.noDeprecation === true) {
     return fn;
   }
-  validateString(code, "code");
+  if (code !== undefined) validateString(code, "code");
 
   var warned = false;
   function deprecated() {
@@ -47,7 +48,15 @@ function deprecate(fn, msg, code) {
       } else if (process.traceDeprecation) {
         console.trace(msg);
       } else {
-        console.error(msg);
+        if (code !== undefined) {
+          // only warn for each code once
+          if (codesWarned.has(code)) {
+            process.emitWarning(msg, "DeprecationWarning", code);
+          }
+          codesWarned.add(code);
+        } else {
+          process.emitWarning(msg, "DeprecationWarning");
+        }
       }
       warned = true;
     }

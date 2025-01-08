@@ -1388,6 +1388,11 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 // never calls toString, never throws
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
     JSValue js_code = toJS(code);
@@ -1396,14 +1401,15 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    auto* globalObject = toJS(env);
-
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     auto wtf_message = js_message.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(
         createErrorWithCode(globalObject, wtf_code, wtf_message, type),
         globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1673,7 +1679,7 @@ extern "C" napi_status node_api_create_syntax_error(napi_env env,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::SyntaxError, result);
 }
 
@@ -1696,7 +1702,7 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
 
@@ -1704,7 +1710,7 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::Error, result);
 }
 extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
@@ -1764,7 +1770,7 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::RangeError, result);
 }
 
@@ -2147,6 +2153,7 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
 
     Zig::GlobalObject* globalObject = toJS(env);
     String view = jsValue.asCell()->getString(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
     size_t length = view.length();
 
     if (buf == nullptr) {
@@ -2484,6 +2491,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String code = scriptValue.getString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
@@ -2575,6 +2583,7 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
         NAPI_RETURN_EARLY_IF_FALSE(env, descriptionValue.isString(), napi_string_expected);
 
         WTF::String descriptionString = descriptionValue.getString(globalObject);
+        NAPI_RETURN_IF_EXCEPTION(env);
 
         if (descriptionString.length() > 0) {
             *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString),

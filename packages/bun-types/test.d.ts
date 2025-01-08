@@ -1050,7 +1050,7 @@ declare module "bun:test" {
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
-  `  * expect(o).toContainAnyValues(['qux', 'foo']);
+     * expect(o).toContainAnyValues(['qux', 'foo']);
      * expect(o).toContainAnyValues(['qux', 'bar']);
      * expect(o).toContainAnyValues(['qux', 'baz']);
      * expect(o).not.toContainAnyValues(['qux']);
@@ -1060,6 +1060,8 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
+     * 
+     * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);

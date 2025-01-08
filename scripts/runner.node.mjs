@@ -245,8 +245,8 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(sep, "/");
-      if (title.startsWith("test/js/node/test/parallel/")) {
+      const title = relative(cwd, join(testsPath, testPath)).replaceAll(sep, "/");
+      if (isNodeParallelTest(testPath)) {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
@@ -853,11 +853,19 @@ function isJavaScriptTest(path) {
 }
 
 /**
+ * @param {string} testPath
+ * @returns {boolean}
+ */
+function isNodeParallelTest(testPath) {
+  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/");
+}
+
+/**
  * @param {string} path
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
+  if (isNodeParallelTest(path) && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
@@ -1037,7 +1045,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(testPath => testPath.replace(sep, "/").includes("js/node/test/parallel/"));
+    tests = tests.filter(isNodeParallelTest);
   }
 
   const isMatch = (testPath, filter) => {

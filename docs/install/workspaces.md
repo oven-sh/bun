@@ -35,11 +35,29 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
     "example-package-in-monorepo": "workspace:*"
   }
 }
+
 ```
 
+You can exclude specific directories from your workspaces using the standard glob negation syntax. In the example below, `!packages/excluded-pkg` excludes a specific package, while `!packages/test-*` excludes all packages that start with `test-`. This is useful when you have directories within your monorepo that shouldn't be treated as workspaces (i.e. they should not be importable by other packages in the workspace), such as scripts and utilites or testing packages.
+
+```json
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*",
+    "!packages/excluded-pkg",
+    "!packages/test-*"
+  ]
+}
+```
+
+
 {% callout %}
-**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.sh/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
+**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.sh/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax) for both included and excluded packages.
 {% /callout %}
+
+
 
 Each workspace has it's own `package.json`. When referencing other packages in the monorepo, semver or workspace protocols (e.g. `workspace:*`) can be used as the version field in your `package.json`.
 

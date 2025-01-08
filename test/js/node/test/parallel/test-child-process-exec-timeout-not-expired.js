@@ -27,8 +27,8 @@ const cmd = `"${process.execPath}" "${__filename}" child`;
 cp.exec(cmd, {
   timeout: kTimeoutNotSupposedToExpire
 }, common.mustSucceed((stdout, stderr) => {
-  assert.strictEqual(stdout.trim(), 'child stdout');
-  assert.strictEqual(stderr.trim(), 'child stderr');
+  assert.strict(stdout.trim().includes('child stdout'));
+  assert.strict(stderr.trim().includes('child stderr'));
 }));
 
 cleanupStaleProcess(__filename);

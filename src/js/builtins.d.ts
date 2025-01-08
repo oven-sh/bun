@@ -550,6 +550,10 @@ declare interface Error {
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
+declare function $ERR_STREAM_DESTROYED(method: string): Error;
+declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
+declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -567,6 +571,8 @@ declare function $ERR_INVALID_CURSOR_POS(): Error;
 declare function $ERR_MULTIPLE_CALLBACK(): Error;
 declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
 declare function $ERR_STREAM_NULL_VALUES(): TypeError;
+declare function $ERR_STREAM_CANNOT_PIPE(): Error;
+declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 
 /**
  * Convert a function to a class-like object.

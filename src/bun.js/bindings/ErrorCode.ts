@@ -27,11 +27,11 @@ export default [
   ["ERR_PARSE_ARGS_UNKNOWN_OPTION", TypeError],
   ["ERR_SERVER_NOT_RUNNING", Error],
   ["ERR_SOCKET_BAD_TYPE", TypeError],
-  ["ERR_STREAM_ALREADY_FINISHED", TypeError],
-  ["ERR_STREAM_CANNOT_PIPE", TypeError],
+  ["ERR_STREAM_ALREADY_FINISHED", Error],
+  ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", TypeError],
   ["ERR_STREAM_NULL_VALUES", TypeError],
-  ["ERR_STREAM_WRITE_AFTER_END", TypeError],
+  ["ERR_STREAM_WRITE_AFTER_END", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_STRING_TOO_LONG", Error],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error],
@@ -65,6 +65,7 @@ export default [
   ["ERR_INVALID_CURSOR_POS", TypeError],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
+  ["ERR_METHOD_NOT_IMPLEMENTED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

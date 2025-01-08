@@ -830,6 +830,37 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unknown encoding: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_DESTROYED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Cannot call "_s, str0, " after a stream was destroyed"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED: {
+        auto arg0 = callFrame->argument(1);
+        auto method = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, error, makeString("The "_s, method, " method is not implemented"_s)));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_ALREADY_FINISHED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Cannot call "_s, str0, " after a stream was finished"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -862,6 +893,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PREMATURE_CLOSE, "Premature close"_s));
     case ErrorCode::ERR_STREAM_NULL_VALUES:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_NULL_VALUES, "May not write null values to stream"_s));
+    case ErrorCode::ERR_STREAM_CANNOT_PIPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_CANNOT_PIPE, "Cannot pipe, not readable"_s));
+    case ErrorCode::ERR_STREAM_WRITE_AFTER_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "write after end"_s));
 
     default: {
         break;

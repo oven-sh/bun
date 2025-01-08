@@ -1,5 +1,3 @@
 "use strict";
 
-const { Writable } = require("node:stream");
-
-export default Writable;
+export default require("internal/streams/writable");

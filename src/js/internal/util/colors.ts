@@ -1,12 +1,12 @@
 // Taken from Node - lib/internal/util/colors.js
 "use strict";
 
-// TODO: add internal/tty module.
-// let internalTTy;
-// function lazyInternalTTY() {
-//   internalTTy ??= require("internal/tty");
-//   return internalTTy;
-// }
+type WriteStream = import("node:tty").WriteStream;
+type GetColorDepth = (this: import("node:tty").WriteStream, env?: NodeJS.ProcessEnv) => number;
+
+let getColorDepth: undefined | GetColorDepth;
+const lazyGetColorDepth = (): GetColorDepth =>
+  (getColorDepth ??= require("node:tty").WriteStream.prototype.getColorDepth);
 
 let exports = {
   blue: "",
@@ -18,16 +18,12 @@ let exports = {
   clear: "",
   reset: "",
   hasColors: false,
-  shouldColorize(stream) {
-    // if (process.env.FORCE_COLOR !== undefined) {
-    //   return lazyInternalTTY().getColorDepth() > 2;
-    // }
-    return (
-      stream?.isTTY &&
-      process.env.FORCE_COLOR !== "0" &&
-      process.env.NO_COLOR != "!" &&
-      (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true)
-    );
+  shouldColorize(stream: WriteStream) {
+    if (stream?.isTTY) return lazyGetColorDepth().$call(stream) > 2;
+
+    // do not cache these since users may update them as the process runs
+    const { NO_COLOR, NODE_DISABLE_COLORS, FORCE_COLOR } = process.env;
+    return NO_COLOR === undefined && NODE_DISABLE_COLORS === undefined && FORCE_COLOR !== "0";
   },
   refresh(): void {
     if (exports.shouldColorize(process.stderr)) {

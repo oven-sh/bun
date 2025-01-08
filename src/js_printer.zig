@@ -434,6 +434,7 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
+    bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,
     to_esm_ref: Ref = Ref.None,
@@ -474,22 +475,6 @@ pub const Options = struct {
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
-
-    // TODO: remove this
-    // The reason for this is:
-    // 1. You're bundling a React component
-    // 2. jsx auto imports are prepended to the list of parts
-    // 3. The AST modification for bundling only applies to the final part
-    // 4. This means that it will try to add a toplevel part which is not wrapped in the arrow function, which is an error
-    //     TypeError: $30851277 is not a function. (In '$30851277()', '$30851277' is undefined)
-    //        at (anonymous) (0/node_modules.server.e1b5ffcd183e9551.jsb:1463:21)
-    //        at #init_react/jsx-dev-runtime.js (0/node_modules.server.e1b5ffcd183e9551.jsb:1309:8)
-    //        at (esm) (0/node_modules.server.e1b5ffcd183e9551.jsb:1480:30)
-
-    // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
-    // Then, when we're JUST about to print it, we print the body of prepend_part_value first
-    prepend_part_key: ?*anyopaque = null,
-    prepend_part_value: ?*js_ast.Part = null,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1836,9 +1821,7 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (module_type == .esm and is_bun_platform) {
-                    p.print("import.meta.require");
-                } else if (p.options.require_ref) |ref| {
+                if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
                 } else {
                     p.print("require");
@@ -2072,7 +2055,9 @@ fn NewPrinter(
                         //
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
-                        if (comptime Environment.allow_assert)
+                        //
+                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
+                        if (comptime Environment.isDebug)
                             bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
@@ -2277,9 +2262,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.main");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
                     } else {
@@ -2290,9 +2273,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                     } else {
                         p.print("require");
@@ -2302,9 +2283,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else {
@@ -2331,9 +2310,7 @@ fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else {
@@ -2550,15 +2527,6 @@ fn NewPrinter(
                     p.printWhitespacer(ws(" => "));
 
                     var wasPrinted = false;
-
-                    // This is more efficient than creating a new Part just for the JSX auto imports when bundling
-                    if (comptime rewrite_esm_to_cjs) {
-                        if (@intFromPtr(p.options.prepend_part_key) > 0 and @intFromPtr(e.body.stmts.ptr) == @intFromPtr(p.options.prepend_part_key)) {
-                            p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
-                            wasPrinted = true;
-                        }
-                    }
-
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
@@ -5803,14 +5771,24 @@ pub fn printAst(
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
+
+    if (!opts.bundling and
+        tree.uses_require_ref and
+        tree.exports_kind == .esm and
+        opts.target == .bun)
+    {
+        // Hoist the `var {require}=import.meta;` declaration. Previously,
+        // `import.meta.require` was inlined into transpiled files, which
+        // meant calling `func.toString()` on a function with `require`
+        // would observe `import.meta.require` inside of the source code.
+        // Normally, Bun doesn't guarantee `Function.prototype.toString`
+        // will match the untranspiled source code, but in this case the new
+        // code is not valid outside of an ES module (eg, in `new Function`)
+        // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+        //
+        // This is never a symbol collision because `uses_require_ref` means
+        // `require` must be an unbound variable.
+        printer.print("var {require}=import.meta;");
     }
 
     for (tree.parts.slice()) |part| {
@@ -6089,15 +6067,6 @@ pub fn printCommonJS(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
-    }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);

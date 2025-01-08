@@ -1,0 +1,26 @@
+name: Lint
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUN_VERSION: "1.1.38"
+  OXLINT_VERSION: "0.15.0"
+
+jobs:
+  lint-js:
+    name: "Lint JavaScript"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Lint
+        run: bunx oxlint --config oxlint.json --quiet --format github
+
+
+
+

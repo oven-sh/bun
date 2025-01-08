@@ -452,7 +452,7 @@ _bun_run_completion() {
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
         '--silent[Don'"'"'t repeat the command for bun run]' \
         '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
-        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        '--dump-limits[Dump system limits. Useful for debugging]' &&
         ret=0
 
     case $state in
@@ -572,7 +572,7 @@ _bun_outdated_completion() {
         '--no-progress[Disable the progress bar]' \
         '--help[Print this help menu]' &&
         ret=0
-    
+
     case $state in
     config)
         _bun_list_bunfig_toml

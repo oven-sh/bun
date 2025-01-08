@@ -110,5 +110,6 @@ export default {
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kResistStopPropagation: Symbol("kResistStopPropagation"),
   kEmptyObject,
 };

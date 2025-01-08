@@ -1010,45 +1010,6 @@ var require_operators = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/streams/add-abort-signal.js
-var require_add_abort_signal = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/add-abort-signal.js"(exports, module) {
-    "use strict";
-    var { AbortError, codes } = require_errors();
-    var eos = require("internal/streams/end-of-stream");
-    var { ERR_INVALID_ARG_TYPE } = codes;
-    function isNodeStream(obj) {
-      return !!(obj && typeof obj.pipe === "function");
-    }
-    module.exports.addAbortSignal = function addAbortSignal(signal, stream) {
-      validateAbortSignal(signal, "signal");
-      if (!isNodeStream(stream)) {
-        throw new ERR_INVALID_ARG_TYPE("stream", "stream.Stream", stream);
-      }
-      return module.exports.addAbortSignalNoValidate(signal, stream);
-    };
-    module.exports.addAbortSignalNoValidate = function (signal, stream) {
-      if (typeof signal !== "object" || !("aborted" in signal)) {
-        return stream;
-      }
-      const onAbort = () => {
-        stream.destroy(
-          new AbortError(void 0, {
-            cause: signal.reason,
-          }),
-        );
-      };
-      if (signal.aborted) {
-        onAbort();
-      } else {
-        signal.addEventListener("abort", onAbort);
-        eos(stream, () => signal.removeEventListener("abort", onAbort));
-      }
-      return stream;
-    };
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/state.js
 var { MathFloor, NumberIsInteger } = require_primordials();
 function highWaterMarkFrom(options, isDuplex, duplexKey) {
@@ -1469,7 +1430,7 @@ var require_readable = __commonJS({
     module.exports = Readable;
     _ReadableFromWeb = newStreamReadableFromReadableStream;
 
-    var { addAbortSignal } = require_add_abort_signal();
+    var { addAbortSignal } = require("internal/streams/add-abort-signal");
     var eos = require("internal/streams/end-of-stream");
     // function maybeReadMore(stream, state) {
     //   ProcessNextTick(_maybeReadMore, stream, state);
@@ -2503,7 +2464,7 @@ var require_writable = __commonJS({
 
     var Stream = require("internal/streams/legacy").Stream;
     var destroyImpl = require("internal/streams/destroy");
-    var { addAbortSignal } = require_add_abort_signal();
+    var { addAbortSignal } = require("internal/streams/add-abort-signal");
     var {
       ERR_INVALID_ARG_TYPE,
       ERR_METHOD_NOT_IMPLEMENTED,
@@ -4283,7 +4244,7 @@ var require_stream = __commonJS({
     Stream.Transform = require_transform();
     Stream.PassThrough = require_passthrough();
     Stream.pipeline = pipeline;
-    var { addAbortSignal } = require_add_abort_signal();
+    var { addAbortSignal } = require("internal/streams/add-abort-signal");
     Stream.addAbortSignal = addAbortSignal;
     Stream.finished = eos;
     Stream.destroy = destroyer;

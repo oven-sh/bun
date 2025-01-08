@@ -832,7 +832,7 @@ pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
 export fn Bun__gc(vm: *JSC.VirtualMachine, sync: bool) callconv(.C) usize {
-    return @call(.always_inline, gc, .{vm, sync});
+    return @call(.always_inline, gc, .{ vm, sync });
 }
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {

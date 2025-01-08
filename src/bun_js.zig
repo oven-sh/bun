@@ -449,7 +449,6 @@ pub const Run = struct {
     /// add `gc()` to `globalThis`.
     extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
 
-    // fn addConditionalGlobals(vm: *VirtualMachine, ctx: *const Command.Context) void {
     fn addConditionalGlobals(this: *Run) void {
         const vm = this.vm;
         const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;

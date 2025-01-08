@@ -2826,11 +2826,6 @@ pub const VirtualMachine = struct {
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
-        if (comptime Environment.isDebug) {
-            if (this.eventLoop().debug.is_inside_tick_queue) {
-                @panic("Calling drainMicrotasks from inside the event loop tick queue is a bug in your code. Please fix your bug.");
-            }
-        }
         this.eventLoop().drainMicrotasks();
     }
 

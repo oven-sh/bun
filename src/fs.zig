@@ -1610,7 +1610,7 @@ pub const PathName = struct {
         if (strings.lastIndexOfChar(base, '.')) |dot| {
             if (strings.endsWith(base, "bun.lock")) {
                 ext = "bun.lock";
-                base = "";
+                base = base[0..(base.len - "bun.lock".len)];
             } else {
                 ext = base[dot..];
                 base = base[0..dot];

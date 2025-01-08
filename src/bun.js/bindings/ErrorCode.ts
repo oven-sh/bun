@@ -52,6 +52,17 @@ export default [
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
   ["ERR_UNHANDLED_ERROR", Error],
+  ["ERR_UNKNOWN_CREDENTIAL", Error],
+  ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
+  ["ERR_DLOPEN_FAILED", Error],
+  ["ERR_ASSERTION", Error],
+  ["ERR_IPC_ONE_PIPE", Error],
+  ["ERR_SOCKET_ALREADY_BOUND", Error],
+  ["ERR_SOCKET_BAD_BUFFER_SIZE", TypeError],
+  ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
+  ["ERR_INVALID_CURSOR_POS", TypeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -130,10 +141,11 @@ export default [
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
 
-  // AWS
-  ["ERR_AWS_MISSING_CREDENTIALS", Error],
-  ["ERR_AWS_INVALID_METHOD", Error],
-  ["ERR_AWS_INVALID_PATH", Error],
-  ["ERR_AWS_INVALID_ENDPOINT", Error],
-  ["ERR_AWS_INVALID_SIGNATURE", Error],
+  // S3
+  ["ERR_S3_MISSING_CREDENTIALS", Error],
+  ["ERR_S3_INVALID_METHOD", Error],
+  ["ERR_S3_INVALID_PATH", Error],
+  ["ERR_S3_INVALID_ENDPOINT", Error],
+  ["ERR_S3_INVALID_SIGNATURE", Error],
+  ["ERR_S3_INVALID_SESSION_TOKEN", Error],
 ] as ErrorCodeMapping;

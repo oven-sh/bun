@@ -17,7 +17,6 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
-    macro(S3) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \
@@ -32,6 +31,7 @@
     macro(unsafe) \
     macro(semver) \
     macro(embeddedFiles) \
+    macro(S3Client) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

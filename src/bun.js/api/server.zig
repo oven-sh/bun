@@ -90,7 +90,7 @@ const linux = std.os.linux;
 const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const AWS = @import("../../s3.zig").AWSCredentials;
+const S3 = bun.S3;
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -1222,13 +1222,13 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }
 
-                var iter = JSC.JSPropertyIterator(.{
+                var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(global, static);
                 defer iter.deinit();
 
-                while (iter.next()) |key| {
+                while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
 
                     const value = iter.value;
@@ -3182,7 +3182,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.endWithoutBody(this.shouldCloseConnection());
             this.deref();
         }
-        pub fn onS3SizeResolved(result: AWS.S3StatResult, this: *RequestContext) void {
+        pub fn onS3SizeResolved(result: S3.S3StatResult, this: *RequestContext) void {
             defer {
                 this.deref();
             }
@@ -3213,17 +3213,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             const globalThis = server.globalThis;
+            var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
-                if (headers.get("transfer-encoding", globalThis)) |transfer_encoding| {
-                    resp.writeHeader("transfer-encoding", transfer_encoding);
-                } else if (headers.get("content-length", globalThis)) |content_length| {
-                    const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
+                if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
+                    const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
+                    defer transfer_encoding_str.deinit();
+                    resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
+                    has_content_length_or_transfer_encoding = true;
+                } else if (headers.fastGet(.ContentLength)) |content_length| {
+                    const content_length_str = content_length.toSlice(server.allocator);
+                    defer content_length_str.deinit();
+                    const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
                     resp.writeHeaderInt("content-length", len);
-                } else {
-                    resp.writeHeaderInt("content-length", 0);
+                    has_content_length_or_transfer_encoding = true;
                 }
-            } else {
+            }
+            if (!has_content_length_or_transfer_encoding) {
                 // then respect the body
                 response.body.value.toBlobIfPossible();
                 switch (response.body.value) {
@@ -3248,7 +3254,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             const path = blob.store.?.data.s3.path();
                             const env = globalThis.bunVM().transpiler.env;
 
-                            credentials.s3Stat(path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+                            S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
 
                             return;
                         }
@@ -3267,6 +3273,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     },
                 }
             }
+
             this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
         }

@@ -686,24 +686,24 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
-CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-CPP_DECL void FetchTaskletChunkedRequestSink__detachPtr(JSC__JSValue JSValue0);
-CPP_DECL void* FetchTaskletChunkedRequestSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void FetchTaskletChunkedRequestSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
-CPP_DECL void FetchTaskletChunkedRequestSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+CPP_DECL JSC__JSValue NetworkSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue NetworkSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void NetworkSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* NetworkSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue FetchTaskletChunkedRequestSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__construct);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__end);
-ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI FetchTaskletChunkedRequestSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
-ZIG_DECL void FetchTaskletChunkedRequestSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__flush);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__start);
-ZIG_DECL void FetchTaskletChunkedRequestSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__write);
+ZIG_DECL JSC__JSValue NetworkSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__construct);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI NetworkSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void NetworkSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__flush);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__start);
+ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #endif
 
 #ifdef __cplusplus

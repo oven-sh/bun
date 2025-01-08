@@ -556,7 +556,9 @@ pub const Stringifier = struct {
 
                     try writer.writeByte('"');
                     // relative_path is empty string for root resolutions
-                    try writer.writeAll(relative_path);
+                    try writer.print("{}", .{
+                        bun.fmt.formatJSONStringUTF8(relative_path, .{ .quote = false }),
+                    });
 
                     if (depth != 0) {
                         try writer.writeByte('/');
@@ -565,8 +567,8 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
                     const dep_name = dep.name.slice(buf);
 
-                    try writer.print("{s}\": ", .{
-                        dep_name,
+                    try writer.print("{}\": ", .{
+                        bun.fmt.formatJSONStringUTF8(dep_name, .{ .quote = false }),
                     });
 
                     const pkg_name = pkg_names[pkg_id];
@@ -760,9 +762,9 @@ pub const Stringifier = struct {
                     try writer.writeAll(", ");
                 }
 
-                try writer.print("\"{s}\": \"{s}\"", .{
-                    dep.name.slice(buf),
-                    dep.version.literal.slice(buf),
+                try writer.print("{}: {}", .{
+                    bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
+                    bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
             }
 
@@ -779,10 +781,10 @@ pub const Stringifier = struct {
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\{s}"{s}"{s}
+                    \\{s}{}{s}
                 , .{
                     if (i != 0) " " else "",
-                    optional_peer.slice(buf),
+                    bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
                     if (i != optional_peers_buf.items.len - 1) "," else "",
                 });
             }
@@ -873,14 +875,25 @@ pub const Stringifier = struct {
         // need a way to detect new/deleted workspaces
         if (pkg_id == 0) {
             try writer.writeAll("\"\": {");
+            const root_name = pkg_names[0].slice(buf);
+            if (root_name.len > 0) {
+                try writer.writeByte('\n');
+                try incIndent(writer, indent);
+                try writer.print("\"name\": {}", .{
+                    bun.fmt.formatJSONStringUTF8(root_name, .{}),
+                });
+
+                // TODO(dylan-conway) should we save version?
+                any = true;
+            }
         } else {
             try writer.print("{}: {{", .{
                 bun.fmt.formatJSONStringUTF8(res.slice(buf), .{}),
             });
             try writer.writeByte('\n');
             try incIndent(writer, indent);
-            try writer.print("\"name\": \"{s}\"", .{
-                pkg_names[pkg_id].slice(buf),
+            try writer.print("\"name\": {}", .{
+                bun.fmt.formatJSONStringUTF8(pkg_names[pkg_id].slice(buf), .{}),
             });
 
             if (workspace_versions.get(pkg_name_hashes[pkg_id])) |version| {
@@ -929,7 +942,10 @@ pub const Stringifier = struct {
                 const name = dep.name.slice(buf);
                 const version = dep.version.literal.slice(buf);
 
-                try writer.print("\"{s}\": \"{s}\"", .{ name, version });
+                try writer.print("{}: {}", .{
+                    bun.fmt.formatJSONStringUTF8(name, .{}),
+                    bun.fmt.formatJSONStringUTF8(version, .{}),
+                });
             }
 
             if (!first) {
@@ -953,9 +969,11 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\"{s}",
+                    \\{},
                     \\
-                , .{optional_peer.slice(buf)});
+                , .{
+                    bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
+                });
             }
             try decIndent(writer, indent);
             try writer.writeByte(']');
@@ -1618,7 +1636,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log, .resolvable, {}) catch |err| {
+        lockfile.resolve(log) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {

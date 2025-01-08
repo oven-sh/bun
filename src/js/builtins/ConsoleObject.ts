@@ -142,7 +142,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
-  const { validateObject, validateInteger, validateArray } = require("internal/validators");
+  const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
 
   const StringPrototypeIncludes = String.prototype.includes;
@@ -298,11 +298,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       throw $ERR_CONSOLE_WRITABLE_STREAM("stderr is not a writable stream");
     }
 
-    if (typeof colorMode !== "boolean" && colorMode !== "auto") {
-      throw $ERR_INVALID_ARG_VALUE(
-        "The argument 'colorMode' must be one of: 'auto', true, false. Received " + inspect(colorMode),
-      );
-    }
+    validateOneOf(colorMode, "colorMode", ["auto", true, false]);
 
     if (groupIndentation !== undefined) {
       validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);

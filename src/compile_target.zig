@@ -28,6 +28,14 @@ const Libc = enum {
     /// musl libc
     musl,
 
+    /// npm package name, `@oven-sh/bun-{os}-{arch}`
+    pub fn npmName(this: Libc) []const u8 {
+        return switch (this) {
+            .default => "",
+            .musl => "-musl",
+        };
+    }
+
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self == .musl) {
             try writer.writeAll("-musl");
@@ -64,21 +72,25 @@ pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
 pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_url: []const u8) ![]const u8 {
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
-            inline else => |arch| switch (this.baseline) {
-                // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "/-/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "-" ++
-                    "{d}.{d}.{d}.tgz", .{
-                    registry_url,
-                    this.version.major,
-                    this.version.minor,
-                    this.version.patch,
-                }),
+            inline else => |arch| switch (this.libc) {
+              inline else => |libc| switch (this.baseline) {
+                  // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
+                  inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                      os.npmName() ++ "-" ++ arch.npmName() ++
+                      libc.npmName() ++
+                      (if (is_baseline) "-baseline" else "") ++
+                      "/-/bun-" ++
+                      os.npmName() ++ "-" ++ arch.npmName() ++
+                      libc.npmName() ++
+                      (if (is_baseline) "-baseline" else "") ++
+                      "-" ++
+                      "{d}.{d}.{d}.tgz", .{
+                      registry_url,
+                      this.version.major,
+                      this.version.minor,
+                      this.version.patch,
+                  }),
+                },
             },
         },
     };
@@ -120,7 +132,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         bun.fs.FileSystem.instance.top_level_dir,
         buf,
         &.{
-            bun.install.PackageManager.fetchCacheDirectoryPath(env).path,
+            bun.install.PackageManager.fetchCacheDirectoryPath(env, null).path,
             version_str,
         },
         .auto,

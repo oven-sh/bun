@@ -1949,24 +1949,21 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, globalObject->errorStructureWithErrorType<JSC::ErrorType::Error>(), message, options);
 
+    auto clientData = WebCore::clientData(vm);
+
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
-        result->putDirect(vm, names.codePublicName(), code,
-            JSC::PropertyAttribute::DontDelete | 0);
-
-        result->putDirect(vm, vm.propertyNames->name, code, JSC::PropertyAttribute::DontEnum | 0);
-    } else {
-        auto* domGlobalObject = defaultGlobalObject(globalObject);
-        result->putDirect(
-            vm, vm.propertyNames->name,
-            JSC::JSValue(domGlobalObject->commonStrings().SystemErrorString(domGlobalObject)),
-            JSC::PropertyAttribute::DontEnum | 0);
+        result->putDirect(vm, clientData->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.path.tag != BunStringTag::Empty) {
         JSC::JSValue path = Bun::toJS(globalObject, err.path);
-        result->putDirect(vm, names.pathPublicName(), path,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, clientData->builtinNames().pathPublicName(), path, JSC::PropertyAttribute::DontDelete | 0);
+    }
+
+    if (err.dest.tag != BunStringTag::Empty) {
+        JSC::JSValue dest = Bun::toJS(globalObject, err.dest);
+        result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.fd != -1) {
@@ -6235,33 +6232,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
 
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = visitor->sourceURL();
-
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = visitor->codeBlock()->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-                }
-            }
-
-            sourceURL = sourceURLForFrame;
+            sourceURL = Zig::sourceURL(visitor);
 
             return WTF::IterationStatus::Done;
         }

@@ -155,11 +155,9 @@ pub extern fn JSC__JSPromise__rejectAsHandled(arg0: ?*bindings.JSPromise, arg1: 
 pub extern fn JSC__JSPromise__rejectAsHandledException(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.Exception) void;
 pub extern fn JSC__JSPromise__rejectedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__rejectOnNextTickWithHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, arg3: bool) void;
 pub extern fn JSC__JSPromise__resolve(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__resolveOnNextTick(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__result(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) JSC__JSValue;
 pub extern fn JSC__JSPromise__setHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) void;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) u32;
@@ -377,13 +375,13 @@ pub extern fn FileSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usi
 pub extern fn FileSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn FileSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn FileSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
-pub extern fn FetchTaskletChunkedRequestSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
-pub extern fn FetchTaskletChunkedRequestSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
-pub extern fn FetchTaskletChunkedRequestSink__detachPtr(JSValue0: JSC__JSValue) void;
-pub extern fn FetchTaskletChunkedRequestSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usize) void;
-pub extern fn FetchTaskletChunkedRequestSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
-pub extern fn FetchTaskletChunkedRequestSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
-pub extern fn FetchTaskletChunkedRequestSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
+pub extern fn NetworkSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
+pub extern fn NetworkSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
+pub extern fn NetworkSink__detachPtr(JSValue0: JSC__JSValue) void;
+pub extern fn NetworkSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usize) void;
+pub extern fn NetworkSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
+pub extern fn NetworkSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
+pub extern fn NetworkSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;
 
 pub const JSC__GetterSetter = bindings.GetterSetter;

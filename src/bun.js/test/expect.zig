@@ -2882,7 +2882,7 @@ pub const Expect = struct {
                     }.anythingInIterator);
                     pass = !any_properties_in_iterator;
                 } else {
-                    var props_iter = JSC.JSPropertyIterator(.{
+                    var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
 
                         .include_value = true,
@@ -4525,13 +4525,13 @@ pub const Expect = struct {
 
         const matchers_to_register = args[0];
         {
-            var iter = JSC.JSPropertyIterator(.{
+            var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
             }).init(globalThis, matchers_to_register);
             defer iter.deinit();
 
-            while (iter.next()) |*matcher_name| {
+            while (try iter.next()) |*matcher_name| {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
@@ -4664,7 +4664,6 @@ pub const Expect = struct {
             if (result.isObject()) {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
-                    if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {

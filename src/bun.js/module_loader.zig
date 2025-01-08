@@ -2596,6 +2596,7 @@ pub const ModuleLoader = struct {
                 .@"node:stream/consumers" => return jsSyntheticModule(.@"node:stream/consumers", specifier),
                 .@"node:stream/promises" => return jsSyntheticModule(.@"node:stream/promises", specifier),
                 .@"node:stream/web" => return jsSyntheticModule(.@"node:stream/web", specifier),
+                .@"node:test" => return jsSyntheticModule(.@"node:test", specifier),
                 .@"node:timers" => return jsSyntheticModule(.@"node:timers", specifier),
                 .@"node:timers/promises" => return jsSyntheticModule(.@"node:timers/promises", specifier),
                 .@"node:tls" => return jsSyntheticModule(.@"node:tls", specifier),
@@ -2799,6 +2800,7 @@ pub const HardcodedModule = enum {
     @"node:stream/promises",
     @"node:stream/web",
     @"node:string_decoder",
+    @"node:test",
     @"node:timers",
     @"node:timers/promises",
     @"node:tls",
@@ -2848,6 +2850,8 @@ pub const HardcodedModule = enum {
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
+
+            .{ "node:test", HardcodedModule.@"node:test" },
 
             .{ "assert", HardcodedModule.@"node:assert" },
             .{ "assert/strict", HardcodedModule.@"node:assert/strict" },
@@ -2920,7 +2924,7 @@ pub const HardcodedModule = enum {
 
     pub const Aliases = struct {
         // Used by both Bun and Node.
-        const common_alias_kvs = .{
+        const common_alias_kvs = [_]struct { string, Alias }{
             .{ "node:assert", .{ .path = "assert" } },
             .{ "node:assert/strict", .{ .path = "assert/strict" } },
             .{ "node:async_hooks", .{ .path = "async_hooks" } },
@@ -2960,6 +2964,7 @@ pub const HardcodedModule = enum {
             .{ "node:stream/promises", .{ .path = "stream/promises" } },
             .{ "node:stream/web", .{ .path = "stream/web" } },
             .{ "node:string_decoder", .{ .path = "string_decoder" } },
+            .{ "node:test", .{ .path = "node:test" } },
             .{ "node:timers", .{ .path = "timers" } },
             .{ "node:timers/promises", .{ .path = "timers/promises" } },
             .{ "node:tls", .{ .path = "tls" } },
@@ -2973,6 +2978,22 @@ pub const HardcodedModule = enum {
             .{ "node:wasi", .{ .path = "wasi" } },
             .{ "node:worker_threads", .{ .path = "worker_threads" } },
             .{ "node:zlib", .{ .path = "zlib" } },
+
+            // These are returned in builtinModules, but probably not many packages use them so we will just alias them.
+            .{ "node:_http_agent", .{ .path = "http" } },
+            .{ "node:_http_client", .{ .path = "http" } },
+            .{ "node:_http_common", .{ .path = "http" } },
+            .{ "node:_http_incoming", .{ .path = "http" } },
+            .{ "node:_http_outgoing", .{ .path = "http" } },
+            .{ "node:_http_server", .{ .path = "http" } },
+            .{ "node:_stream_duplex", .{ .path = "stream" } },
+            .{ "node:_stream_passthrough", .{ .path = "stream" } },
+            .{ "node:_stream_readable", .{ .path = "stream" } },
+            .{ "node:_stream_transform", .{ .path = "stream" } },
+            .{ "node:_stream_writable", .{ .path = "stream" } },
+            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_tls_wrap", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "tls" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -3013,6 +3034,7 @@ pub const HardcodedModule = enum {
             .{ "stream/promises", .{ .path = "stream/promises" } },
             .{ "stream/web", .{ .path = "stream/web" } },
             .{ "string_decoder", .{ .path = "string_decoder" } },
+            // .{ "test", .{ .path = "test" } },
             .{ "timers", .{ .path = "timers" } },
             .{ "timers/promises", .{ .path = "timers/promises" } },
             .{ "tls", .{ .path = "tls" } },
@@ -3055,7 +3077,7 @@ pub const HardcodedModule = enum {
             .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
-        const bun_extra_alias_kvs = .{
+        const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
@@ -3085,10 +3107,9 @@ pub const HardcodedModule = enum {
             .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
         };
 
-        const node_alias_kvs = .{
+        const node_alias_kvs = [_]struct { string, Alias }{
             .{ "inspector/promises", .{ .path = "inspector/promises" } },
             .{ "node:inspector/promises", .{ .path = "inspector/promises" } },
-            .{ "node:test", .{ .path = "node:test" } },
         };
 
         const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);

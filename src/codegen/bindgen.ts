@@ -4,6 +4,7 @@
 // Generated bindings are available in `bun.generated.<basename>.*` in Zig,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import * as path from "node:path";
+import fs from "node:fs";
 import {
   CodeWriter,
   TypeImpl,
@@ -1076,7 +1077,15 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
+  const zigFilePath = path.join(src, zigFile);
   let file = files.get(zigFile);
+  if (!fs.existsSync(zigFilePath)) {
+    // It would be nice if this would generate the file with the correct boilerplate
+    const bindName = path.basename(fileName);
+    throw new Error(
+      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
+    );
+  }
   if (!file) {
     file = { functions: [], typedefs: [] };
     files.set(zigFile, file);

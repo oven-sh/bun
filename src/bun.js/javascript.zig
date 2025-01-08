@@ -885,6 +885,7 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionExceptionList: ?*ExceptionList = null,
     unhandled_error_counter: usize = 0,
     is_handling_uncaught_exception: bool = false,
+    exit_on_uncaught_exception: bool = false,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -1190,6 +1191,10 @@ pub const VirtualMachine = struct {
     extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
+    export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
+        this.exit_on_uncaught_exception = true;
+    }
+
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
         if (this.isShuttingDown()) {
             Output.debugWarn("unhandledRejection during shutdown.", .{});
@@ -1226,6 +1231,11 @@ pub const VirtualMachine = struct {
             this.runErrorHandler(err, null);
             Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
+        }
+        if (this.exit_on_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            Bun__Process__exit(globalObject, 1);
+            @panic("made it past Bun__Process__exit");
         }
         this.is_handling_uncaught_exception = true;
         defer this.is_handling_uncaught_exception = false;
@@ -2818,6 +2828,11 @@ pub const VirtualMachine = struct {
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
+        if (comptime Environment.isDebug) {
+            if (this.eventLoop().debug.is_inside_tick_queue) {
+                @panic("Calling drainMicrotasks from inside the event loop tick queue is a bug in your code. Please fix your bug.");
+            }
+        }
         this.eventLoop().drainMicrotasks();
     }
 
@@ -3954,11 +3969,11 @@ pub const VirtualMachine = struct {
                     .observable = false,
                     .only_non_index_properties = true,
                 });
-                var iterator = Iterator.init(this.global, error_instance);
+                var iterator = try Iterator.init(this.global, error_instance);
                 defer iterator.deinit();
                 const longest_name = @min(iterator.getLongestPropertyName(), 10);
                 var is_first_property = true;
-                while (iterator.next() orelse iterator.getCodeProperty()) |field| {
+                while ((try iterator.next()) orelse iterator.getCodeProperty()) |field| {
                     const value = iterator.value;
                     if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
                         continue;
@@ -4090,11 +4105,7 @@ pub const VirtualMachine = struct {
     fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
-
-            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
-                display_name,
-                message,
-            });
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{ display_name, message });
         } else if (!name.isEmpty()) {
             if (!name.hasPrefixComptime("error")) {
                 try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{name});

@@ -1358,7 +1358,7 @@ pub fn GlobWalker_(
                     return GlobAscii.match(
                         pattern_component.patternSlice(this.pattern),
                         filepath,
-                    );
+                    ).matches();
             }
             const codepoints = this.componentStringUnicode(pattern_component);
             return matchImpl(

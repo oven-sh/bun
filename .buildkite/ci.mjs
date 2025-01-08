@@ -114,7 +114,7 @@ const buildPlatforms = [
   /* Linux MUSL */
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
   /* Windows */
   { os: "windows", arch: "x64", release: "2025" },
   { os: "windows", arch: "x64", baseline: true, release: "2025" },

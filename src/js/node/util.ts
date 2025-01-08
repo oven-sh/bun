@@ -35,6 +35,7 @@ function deprecate(fn, msg, code) {
   if (process.noDeprecation === true) {
     return fn;
   }
+  validateString(code, "code");
 
   var warned = false;
   function deprecated() {

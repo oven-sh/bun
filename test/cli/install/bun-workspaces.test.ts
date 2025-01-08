@@ -1707,7 +1707,7 @@ describe("workspace exclusions", async () => {
         rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
         rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
     })
-    test("workspace entry order matters", async () => {
+    test("workspace entry order does not matter", async () => {
         await Promise.all([
           write(
             join(packageDir, "package.json"),
@@ -1715,6 +1715,7 @@ describe("workspace exclusions", async () => {
               name: "foo",
               workspaces: [
                   "packages/*",
+                  "packages/included-pkg",
                   "!packages/re-excluded-pkg",
                   "packages/re-excluded-pkg",
                   "!packages/re-excluded-pkg",
@@ -1736,6 +1737,13 @@ describe("workspace exclusions", async () => {
               name: "re-included-pkg",
               dependencies: { },
             }),
+          ),
+          write(
+            join(packageDir, "packages", "included-pkg", "package.json"),
+            JSON.stringify({
+              name: "included-pkg",
+              dependencies: { },
+            }),
           )
         ]);
 
@@ -1744,7 +1752,8 @@ describe("workspace exclusions", async () => {
         const filesInNodeModules = await readdir(join(packageDir, "node_modules"));
 
         expect(filesInNodeModules).not.toContain("re-excluded-pkg");
-        expect(filesInNodeModules).toContain("re-included-pkg");
+        expect(filesInNodeModules).not.toContain("re-included-pkg");
+        expect(filesInNodeModules).toContain("included-pkg");
 
         rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
         rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });

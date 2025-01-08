@@ -4921,11 +4921,14 @@ pub const Package = extern struct {
         arena: std.heap.ArenaAllocator,
         exclusions: Exclusions,
 
-        const we_debug = Output.scoped(.WorkspaceExclusions, false);
+        const we_debug = Output.scoped(.WorkspaceExclusions, true);
 
         const Exclusions = bun.StringArrayHashMap(void);
 
         pub fn init(allocator: std.mem.Allocator, root_path: []const u8) WorkspaceExclusions {
+            if (comptime Environment.allow_assert) {
+                assert(std.fs.path.isAbsolute(root_path));
+            }
             const arena = std.heap.ArenaAllocator.init(allocator);
             return .{
                 .abs_root_path = root_path,
@@ -4966,7 +4969,6 @@ pub const Package = extern struct {
 
             defer _ = self.arena.reset(.retain_capacity);
 
-            // TODO: store arena_alloc in self
             const arena_alloc = self.arena.allocator();
 
             const filepath_bufOS = arena_alloc.create(bun.PathBuffer) catch unreachable;

@@ -5302,8 +5302,8 @@ pub const Package = extern struct {
             for (workspace_globs.items) |user_pattern| {
                 defer _ = arena.reset(.retain_capacity);
 
-                const glob_pattern = if (user_pattern.str.len == 0) "package.json" else brk: {
-                    const parts = [_][]const u8{ user_pattern.str, "package.json" };
+                const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_pattern, "package.json" };
                     break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
                 };
 

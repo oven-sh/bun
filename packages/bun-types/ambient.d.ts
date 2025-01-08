@@ -14,6 +14,6 @@ declare module "*.jsonc" {
 }
 
 declare module '*bun.lock' {
-	var contents: import("bun").BunLockFile;
+  var contents: import("bun").BunLockFile;
   export = contents;
 }

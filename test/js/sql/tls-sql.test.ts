@@ -3,9 +3,8 @@ import { getSecret } from "harness";
 import { sql as SQL } from "bun";
 
 const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
-const hasPsql = Bun.which("psql");
 
-if (hasPsql) {
+if (TLS_POSTGRES_DATABASE_URL) {
   test("tls (explicit)", async () => {
     const sql = new SQL({
       url: TLS_POSTGRES_DATABASE_URL!,

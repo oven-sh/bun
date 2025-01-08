@@ -403,7 +403,6 @@ CPP_DECL void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, 
 #pragma mark - JSC::Exception
 
 CPP_DECL JSC__Exception* JSC__Exception__create(JSC__JSGlobalObject* arg0, JSC__JSObject* arg1, unsigned char StackCaptureAction2);
-CPP_DECL void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* arg1);
 CPP_DECL JSC__JSValue JSC__Exception__value(JSC__Exception* arg0);
 
 #pragma mark - JSC::VM

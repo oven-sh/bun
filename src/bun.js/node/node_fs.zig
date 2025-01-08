@@ -3244,6 +3244,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .close,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Close).success;
@@ -3556,10 +3557,12 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo();
             }
 
-            var src_buf: bun.WPathBuffer = undefined;
-            var dest_buf: bun.WPathBuffer = undefined;
-            const src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceZ(&this.sync_error_buf));
-            const dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceZ(&this.sync_error_buf));
+            const src_buf = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(src_buf);
+            const dest_buf = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(dest_buf);
+            const src = strings.toWPathNormalizeAutoExtend(src_buf, args.src.sliceZ(&this.sync_error_buf));
+            const dest = strings.toWPathNormalizeAutoExtend(dest_buf, args.dest.sliceZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
                     return shouldIgnoreEbusy(args.src, args.dest, rest);
@@ -3748,7 +3751,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
             .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err },
+            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(path) },
         };
     }
 
@@ -3765,11 +3768,12 @@ pub const NodeFS = struct {
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
-        var buf: bun.OSPathBuffer = undefined;
+        const buf = bun.OSPathBufferPool.get();
+        defer bun.OSPathBufferPool.put(buf);
         const path: bun.OSPathSliceZ = if (Environment.isWindows)
-            strings.toNTPath(&buf, args.path.slice())
+            strings.toNTPath(buf, args.path.slice())
         else
-            args.path.osPath(&buf);
+            args.path.osPath(buf);
 
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
@@ -4003,6 +4007,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .open,
                 .path = args.path.slice(),
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
@@ -4073,6 +4078,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .read,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4085,6 +4091,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .readv,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4109,6 +4116,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .write,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
@@ -4121,6 +4129,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .writev,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) });
@@ -4771,8 +4780,8 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    bun.O.RDONLY | bun.O.NOCTTY,
-                    0,
+                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    default_permission,
                 )) {
                     .err => |err| return .{
                         .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
@@ -5197,12 +5206,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_realpath(
-                bun.Async.Loop.get(),
-                &req,
-                args.path.sliceZ(&this.sync_error_buf).ptr,
-                null,
-            );
+            const rc = uv.uv_fs_realpath(bun.Async.Loop.get(), &req, args.path.sliceZ(&this.sync_error_buf).ptr, null);
 
             if (rc.errno()) |errno|
                 return .{ .err = Syscall.Error{
@@ -5457,7 +5461,8 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        return switch (Syscall.stat(path)) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
@@ -5465,7 +5470,7 @@ pub const NodeFS = struct {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
-                break :brk .{ .err = err };
+                break :brk .{ .err = err.withPath(path) };
             },
         };
     }
@@ -5477,13 +5482,8 @@ pub const NodeFS = struct {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
             // UV does not normalize slashes in symlink targets, but Node does
             // See https://github.com/oven-sh/bun/issues/8273
-            //
-            // TODO: investigate if simd can be easily used here
-            for (target) |*c| {
-                if (c.* == '/') {
-                    c.* = '\\';
-                }
-            }
+            bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target);
+
             return Syscall.symlinkUV(
                 target,
                 args.new_path.sliceZ(&to_buf),
@@ -5676,7 +5676,8 @@ pub const NodeFS = struct {
 
     pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
-            var tmp: bun.WPathBuffer = undefined;
+            const tmp = bun.OSPathBufferPool.get();
+            defer bun.OSPathBufferPool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         } else {}
@@ -6036,7 +6037,7 @@ pub const NodeFS = struct {
 
             const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
                 .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
             };
 
             if (!posix.S.ISREG(stat_.mode)) {
@@ -6187,8 +6188,9 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
-                var wbuf: bun.WPathBuffer = undefined;
-                const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
+                const wbuf = bun.OSPathBufferPool.get();
+                defer bun.OSPathBufferPool.put(wbuf);
+                const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
                 if (len == 0) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }

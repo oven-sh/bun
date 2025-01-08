@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.22",
+  "version": "0.0.25",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -289,19 +289,29 @@
         "aliases": [
           "bun.lockb"
         ],
-        "extensions": [
-          ".lockb"
+        "filenames": [
+          "bun.lockb"
         ],
         "icon": {
           "dark": "assets/icon-small.png",
           "light": "assets/icon-small.png"
         }
+      },
+      {
+        "id": "jsonc",
+        "filenames": [
+          "bun.lock"
+        ]
       }
     ],
     "jsonValidation": [
       {
         "fileMatch": "package.json",
         "url": "./assets/package.json"
+      },
+      {
+        "fileMatch": "bun.lock",
+        "url": "./assets/bun.lock.json"
       }
     ],
     "customEditors": [
@@ -310,7 +320,7 @@
         "displayName": "bun.lockb",
         "selector": [
           {
-            "filenamePattern": "*.lockb"
+            "filenamePattern": "*bun.lockb"
           }
         ],
         "priority": "default"
@@ -332,7 +342,7 @@
     ]
   },
   "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun",
+  "displayName": "Bun for Visual Studio Code",
   "engines": {
     "vscode": "^1.60.0"
   },

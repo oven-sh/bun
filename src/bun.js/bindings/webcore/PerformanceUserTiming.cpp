@@ -44,27 +44,27 @@ namespace WebCore {
 using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
 
 static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> restrictedMarkMappings[] = {
-    { "connectEnd", &PerformanceTiming::connectEnd },
-    { "connectStart", &PerformanceTiming::connectStart },
-    { "domComplete", &PerformanceTiming::domComplete },
-    { "domContentLoadedEventEnd", &PerformanceTiming::domContentLoadedEventEnd },
-    { "domContentLoadedEventStart", &PerformanceTiming::domContentLoadedEventStart },
-    { "domInteractive", &PerformanceTiming::domInteractive },
-    { "domLoading", &PerformanceTiming::domLoading },
-    { "domainLookupEnd", &PerformanceTiming::domainLookupEnd },
-    { "domainLookupStart", &PerformanceTiming::domainLookupStart },
-    { "fetchStart", &PerformanceTiming::fetchStart },
-    { "loadEventEnd", &PerformanceTiming::loadEventEnd },
-    { "loadEventStart", &PerformanceTiming::loadEventStart },
-    { "navigationStart", &PerformanceTiming::navigationStart },
-    { "redirectEnd", &PerformanceTiming::redirectEnd },
-    { "redirectStart", &PerformanceTiming::redirectStart },
-    { "requestStart", &PerformanceTiming::requestStart },
-    { "responseEnd", &PerformanceTiming::responseEnd },
-    { "responseStart", &PerformanceTiming::responseStart },
-    { "secureConnectionStart", &PerformanceTiming::secureConnectionStart },
-    { "unloadEventEnd", &PerformanceTiming::unloadEventEnd },
-    { "unloadEventStart", &PerformanceTiming::unloadEventStart },
+    { "connectEnd"_s, &PerformanceTiming::connectEnd },
+    { "connectStart"_s, &PerformanceTiming::connectStart },
+    { "domComplete"_s, &PerformanceTiming::domComplete },
+    { "domContentLoadedEventEnd"_s, &PerformanceTiming::domContentLoadedEventEnd },
+    { "domContentLoadedEventStart"_s, &PerformanceTiming::domContentLoadedEventStart },
+    { "domInteractive"_s, &PerformanceTiming::domInteractive },
+    { "domLoading"_s, &PerformanceTiming::domLoading },
+    { "domainLookupEnd"_s, &PerformanceTiming::domainLookupEnd },
+    { "domainLookupStart"_s, &PerformanceTiming::domainLookupStart },
+    { "fetchStart"_s, &PerformanceTiming::fetchStart },
+    { "loadEventEnd"_s, &PerformanceTiming::loadEventEnd },
+    { "loadEventStart"_s, &PerformanceTiming::loadEventStart },
+    { "navigationStart"_s, &PerformanceTiming::navigationStart },
+    { "redirectEnd"_s, &PerformanceTiming::redirectEnd },
+    { "redirectStart"_s, &PerformanceTiming::redirectStart },
+    { "requestStart"_s, &PerformanceTiming::requestStart },
+    { "responseEnd"_s, &PerformanceTiming::responseEnd },
+    { "responseStart"_s, &PerformanceTiming::responseStart },
+    { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
+    { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
+    { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
 };
 static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
 
@@ -76,6 +76,29 @@ bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
     : m_performance(performance)
 {
+}
+
+size_t PerformanceUserTiming::memoryCost() const
+{
+    size_t size = sizeof(PerformanceUserTiming);
+    size += m_marksMap.byteSize();
+    size += m_measuresMap.byteSize();
+
+    for (const auto& entry : m_marksMap) {
+        size += entry.value.sizeInBytes();
+        for (const auto& entry : entry.value) {
+            size += entry->memoryCost();
+        }
+    }
+
+    for (const auto& entry : m_measuresMap) {
+        size += entry.value.sizeInBytes();
+        for (const auto& entry : entry.value) {
+            size += entry->memoryCost();
+        }
+    }
+
+    return size;
 }
 
 static void clearPerformanceEntries(PerformanceEntryMap& map, const String& name)

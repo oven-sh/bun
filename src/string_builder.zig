@@ -89,6 +89,12 @@ pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
     return result;
 }
 
+pub fn appendStr(this: *StringBuilder, str: bun.String) string {
+    const slice = str.toUTF8(bun.default_allocator);
+    defer slice.deinit();
+    return this.append(slice.slice());
+}
+
 pub fn append(this: *StringBuilder, slice: string) string {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything

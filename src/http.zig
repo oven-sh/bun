@@ -1148,7 +1148,8 @@ pub const HTTPThread = struct {
 
         if (Environment.isWindows) {
             _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
-                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                bun.Output.errGeneric("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                Global.crash();
             };
         }
 
@@ -1215,11 +1216,13 @@ pub const HTTPThread = struct {
             }
         }
         if (client.http_proxy) |url| {
-            // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            if (url.href.len > 0) {
+                // https://github.com/oven-sh/bun/issues/11343
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                }
+                return error.UnsupportedProxyProtocol;
             }
-            return error.UnsupportedProxyProtocol;
         }
         return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
     }
@@ -1603,7 +1606,12 @@ pub fn onClose(
         tunnel.detachAndDeref();
     }
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
-
+    if (client.state.flags.is_redirect_pending) {
+        // if the connection is closed and we are pending redirect just do the redirect
+        // in this case we will re-connect or go to a different socket if needed
+        client.doRedirect(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+        return;
+    }
     if (in_progress) {
         // if the peer closed after a full chunk, treat this
         // as if the transfer had complete, browsers appear to ignore
@@ -2888,6 +2896,7 @@ pub fn doRedirect(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    log("doRedirect", .{});
     if (this.state.original_request_body == .stream) {
         // we cannot follow redirect from a stream right now
         // NOTE: we can use .tee(), reset the readable stream and cancel/wait pending write requests before redirecting. node.js just errors here so we just closeAndFail too.
@@ -2932,6 +2941,7 @@ pub fn doRedirect(
         return;
     }
     this.state.reset(this.allocator);
+    log("doRedirect state reset", .{});
     // also reset proxy to redirect
     this.flags.proxy_tunneling = false;
     if (this.proxy_tunnel) |tunnel| {

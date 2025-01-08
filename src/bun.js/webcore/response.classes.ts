@@ -10,6 +10,7 @@ export default [
     estimatedSize: true,
     configurable: false,
     overridesToJS: true,
+    memoryCost: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -124,6 +125,7 @@ export default [
   }),
   define({
     name: "Blob",
+    final: false,
     construct: true,
     finalize: true,
     JSType: "0b11101110",
@@ -164,9 +166,14 @@ export default [
         getter: "getLastModified",
       },
 
+      // Non-standard, s3 + BunFile support
+      unlink: { fn: "doUnlink", length: 0 },
+      delete: { fn: "doUnlink", length: 0 },
+      write: { fn: "doWrite", length: 2 },
       size: {
         getter: "getSize",
       },
+      stat: { fn: "getStat", length: 0 },
 
       writer: {
         fn: "getWriter",

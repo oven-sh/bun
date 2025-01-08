@@ -1,4 +1,5 @@
 const conv = std.builtin.CallingConvention.Unspecified;
+const S3File = @import("../webcore/S3File.zig");
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -10,7 +11,6 @@ const conv = std.builtin.CallingConvention.Unspecified;
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
-    pub const braces = toJSCallback(Bun.braces);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
     pub const color = toJSCallback(bun.css.CssColor.jsFunctionColor);
     pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
@@ -18,8 +18,6 @@ pub const BunObject = struct {
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
-    pub const gc = toJSCallback(Bun.runGC);
-    pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
@@ -32,6 +30,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const s3 = S3File.createJSS3File;
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -39,7 +38,6 @@ pub const BunObject = struct {
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
-    pub const stringWidth = toJSCallback(Bun.stringWidth);
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
@@ -73,6 +71,7 @@ pub const BunObject = struct {
     pub const stdin = toJSGetter(Bun.getStdin);
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
+    pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -116,6 +115,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
@@ -132,11 +132,11 @@ pub const BunObject = struct {
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
         @export(BunObject.semver, .{ .name = getterName("semver") });
         @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
+        @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
         // --- Getters --
 
         // -- Callbacks --
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
-        @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.color, .{ .name = callbackName("color") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
@@ -144,8 +144,6 @@ pub const BunObject = struct {
         @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.gc, .{ .name = callbackName("gc") });
-        @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -159,13 +157,13 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
+        @export(BunObject.s3, .{ .name = callbackName("s3") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
         @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
-        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
@@ -191,12 +189,11 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -208,7 +205,7 @@ const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -237,7 +234,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -285,68 +281,42 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return jsval;
 }
 
-pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments_old(2);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    defer arguments.deinit();
+const gen = bun.gen.BunObject;
 
-    const brace_str_js = arguments.nextEat() orelse {
-        return globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-    };
-    const brace_str = brace_str_js.toBunString(globalThis);
-    defer brace_str.deref();
-    if (globalThis.hasException()) return .zero;
-
+pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.BracesOptions) bun.JSError!JSC.JSValue {
     const brace_slice = brace_str.toUTF8(bun.default_allocator);
     defer brace_slice.deinit();
-
-    var tokenize: bool = false;
-    var parse: bool = false;
-    if (arguments.nextEat()) |opts_val| {
-        if (opts_val.isObject()) {
-            if (comptime bun.Environment.allow_assert) {
-                if (try opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
-                    tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
-                }
-
-                if (try opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
-                    parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
-                }
-            }
-        }
-    }
-    if (globalThis.hasException()) return .zero;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
     var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        return globalThis.throwError(err, "failed to tokenize braces");
+        return global.throwError(err, "failed to tokenize braces");
     };
 
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        return globalThis.throwError(err, "failed to calculate brace expansion amount");
+        return global.throwError(err, "failed to calculate brace expansion amount");
     };
 
-    if (tokenize) {
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{});
-        defer globalThis.bunVM().allocator.free(str);
+    if (opts.tokenize) {
+        const str = try std.json.stringifyAlloc(global.bunVM().allocator, lexer_output.tokens.items[0..], .{});
+        defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun_str.toJS(global);
     }
-    if (parse) {
+    if (opts.parse) {
         var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
         const ast_node = parser.parse() catch |err| {
-            return globalThis.throwError(err, "failed to parse braces");
+            return global.throwError(err, "failed to parse braces");
         };
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{});
-        defer globalThis.bunVM().allocator.free(str);
+        const str = try std.json.stringifyAlloc(global.bunVM().allocator, ast_node, .{});
+        defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun_str.toJS(global);
     }
 
     if (expansion_count == 0) {
-        return bun.String.toJSArray(globalThis, &.{brace_str});
+        return bun.String.toJSArray(global, &.{brace_str});
     }
 
     var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
@@ -360,8 +330,10 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         lexer_output.tokens.items[0..],
         expanded_strings,
         lexer_output.contains_nested,
-    ) catch {
-        return globalThis.throwOutOfMemory();
+    ) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        error.UnexpectedToken => return global.throwPretty("Unexpected token while expanding braces", .{}),
+        error.StackFull => return global.throwPretty("Too much nesting while expanding braces", .{}),
     };
 
     var out_strings = try arena.allocator().alloc(bun.String, expansion_count);
@@ -369,12 +341,13 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
     }
 
-    return bun.String.toJSArray(globalThis, out_strings[0..]);
+    return bun.String.toJSArray(global, out_strings[0..]);
 }
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    var path_buf: bun.PathBuffer = undefined;
+    const path_buf = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(path_buf);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -408,10 +381,10 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.env.get("PATH") orelse "",
+        globalThis.bunVM().transpiler.env.get("PATH") orelse "",
     );
     cwd_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.fs.top_level_dir,
+        globalThis.bunVM().transpiler.fs.top_level_dir,
     );
 
     if (arguments.nextEat()) |arg| {
@@ -427,7 +400,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     if (Which.which(
-        &path_buf,
+        path_buf,
         path_str.slice(),
         cwd_str.slice(),
         bin_str.slice(),
@@ -536,6 +509,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
@@ -543,7 +517,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format2(
+    try ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -553,16 +527,28 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         writer,
         formatOptions,
     );
-    buffered_writer.flush() catch {
-        return .undefined;
-    };
+    if (globalThis.hasException()) return error.JSError;
+    buffered_writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.slice()).withEncoding();
     const ret = out.toJS(globalThis);
-    array.deinit();
+
     return ret;
+}
+
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -601,7 +587,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn getCWD(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
+    return ZigString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -725,7 +711,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
                     const prev = edit.*;
                     edit.name = sliced.slice();
-                    edit.detectEditor(VirtualMachine.get().bundler.env);
+                    edit.detectEditor(VirtualMachine.get().transpiler.env);
                     editor_choice = edit.editor;
                     if (editor_choice == null) {
                         edit.* = prev;
@@ -748,7 +734,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
     }
 
     const editor = editor_choice orelse edit.editor orelse brk: {
-        edit.autoDetectEditor(VirtualMachine.get().bundler.env);
+        edit.autoDetectEditor(VirtualMachine.get().transpiler.env);
         if (edit.editor == null) {
             return globalThis.throw("Failed to auto-detect editor", .{});
         }
@@ -770,7 +756,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
     return getPublicPathWithAssetPrefix(
         to,
-        VirtualMachine.get().bundler.fs.top_level_dir,
+        VirtualMachine.get().transpiler.fs.top_level_dir,
         origin,
         "",
         comptime Writer,
@@ -791,7 +777,7 @@ pub fn getPublicPathWithAssetPrefix(
     const relative_path = if (strings.hasPrefix(to, dir))
         strings.withoutTrailingSlash(to[dir.len..])
     else
-        VirtualMachine.get().bundler.fs.relativePlatform(dir, to, platform);
+        VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -799,7 +785,7 @@ pub fn getPublicPathWithAssetPrefix(
             if (std.fs.path.isAbsolute(to)) {
                 writer.writeAll(to) catch return;
             } else {
-                writer.writeAll(VirtualMachine.get().bundler.fs.abs(&[_]string{to})) catch return;
+                writer.writeAll(VirtualMachine.get().transpiler.fs.abs(&[_]string{to})) catch return;
             }
         } else {
             origin.joinWrite(
@@ -841,14 +827,11 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return .undefined;
 }
 
-pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return globalObject.generateHeapSnapshot();
+pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
+    return vm.garbageCollect(sync);
 }
-
-pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments_old(1);
-    const arguments = arguments_.slice();
-    return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
+export fn Bun__gc(vm: *JSC.VirtualMachine, sync: bool) callconv(.C) usize {
+    return @call(.always_inline, gc, .{ vm, sync });
 }
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1167,11 +1150,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2342,8 +2325,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
@@ -3418,7 +3400,9 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
-
+pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.WebCore.S3Client.getConstructor(globalThis);
+}
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
@@ -4147,8 +4131,8 @@ pub const FFIObject = struct {
         finalizationCallback: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
-            .err => |erro| {
-                return erro;
+            .err => |err| {
+                return err;
             },
             .slice => |slice| {
                 var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
@@ -4191,8 +4175,8 @@ pub const FFIObject = struct {
         valueLength: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
-            .err => |erro| {
-                return erro;
+            .err => |err| {
+                return err;
             },
             .slice => |slice| {
                 return JSC.JSValue.createBuffer(globalThis, slice, null);
@@ -4208,37 +4192,14 @@ pub const FFIObject = struct {
     }
 };
 
-fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
-    const value = if (arguments.len > 0) arguments[0] else .undefined;
-    const options_object = if (arguments.len > 1) arguments[1] else .undefined;
+pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
+    if (str.length() == 0)
+        return 0;
 
-    if (!value.isString()) {
-        return JSC.jsNumber(0);
-    }
+    if (opts.count_ansi_escape_codes)
+        return str.visibleWidth(!opts.ambiguous_is_narrow);
 
-    const str = value.toBunString(globalObject);
-    defer str.deref();
-
-    var count_ansi_escapes = false;
-    var ambiguous_as_wide = false;
-
-    if (options_object.isObject()) {
-        if (try options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
-            if (count_ansi_escapes_value.isBoolean())
-                count_ansi_escapes = count_ansi_escapes_value.toBoolean();
-        }
-        if (try options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
-            if (ambiguous_is_narrow.isBoolean())
-                ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
-        }
-    }
-
-    if (count_ansi_escapes) {
-        return JSC.jsNumber(str.visibleWidth(ambiguous_as_wide));
-    }
-
-    return JSC.jsNumber(str.visibleWidthExcludeANSIColors(ambiguous_as_wide));
+    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
 }
 
 /// EnvironmentVariables is runtime defined.
@@ -4247,8 +4208,8 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
         const bunVM = globalObject.bunVM();
-        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
-        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+        ptr.* = bunVM.transpiler.env.map.map.keys().ptr;
+        return bunVM.transpiler.env.map.map.unmanaged.entries.len;
     }
 
     pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
@@ -4268,7 +4229,7 @@ pub const EnvironmentVariables = struct {
 
     pub fn getEnvNames(globalObject: *JSC.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
-        const keys = vm.bundler.env.map.map.keys();
+        const keys = vm.transpiler.env.map.map.keys();
         const len = @min(names.len, keys.len);
         for (keys[0..len], names[0..len]) |key, *name| {
             name.* = ZigString.initUTF8(key);
@@ -4280,7 +4241,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.get(sliced.slice()) orelse return null;
+        const value = vm.transpiler.env.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };

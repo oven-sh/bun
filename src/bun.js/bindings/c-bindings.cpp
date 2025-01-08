@@ -37,23 +37,29 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf, str);
     strcpy(buf + len, url);
     strcpy(buf + len + strlen(url), "\n\0");
-    write(STDERR_FILENO, buf, strlen(buf));
+    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
 }
 #endif
 
-extern "C" int32_t get_process_priority(uint32_t pid)
+// Error condition is encoded as max int32_t.
+// The only error in this function is ESRCH (no process found)
+extern "C" int32_t get_process_priority(int32_t pid)
 {
 #if OS(WINDOWS)
     int priority = 0;
     if (uv_os_getpriority(pid, &priority))
-        return 0;
+        return std::numeric_limits<int32_t>::max();
     return priority;
 #else
-    return getpriority(PRIO_PROCESS, pid);
+    errno = 0;
+    int priority = getpriority(PRIO_PROCESS, pid);
+    if (priority == -1 && errno != 0)
+        return std::numeric_limits<int32_t>::max();
+    return priority;
 #endif // OS(WINDOWS)
 }
 
-extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
+extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
 #if OS(WINDOWS)
     return uv_os_setpriority(pid, priority);
@@ -688,7 +694,11 @@ extern "C" int ffi_fscanf(FILE* stream, const char* fmt, ...)
 
 extern "C" int ffi_vsscanf(const char* str, const char* fmt, va_list ap)
 {
-    return vsscanf(str, fmt, ap);
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    int result = vsscanf(str, fmt, ap_copy);
+    va_end(ap_copy);
+    return result;
 }
 
 extern "C" int ffi_sscanf(const char* str, const char* fmt, ...)
@@ -859,4 +869,14 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #undef UNREGISTER_SIGNAL
 }
 
+#endif
+
+#if OS(LINUX) || OS(DARWIN)
+#include <paths.h>
+
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#elif OS(WINDOWS)
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
+#else
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
 #endif

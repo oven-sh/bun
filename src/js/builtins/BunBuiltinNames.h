@@ -71,6 +71,7 @@ using namespace JSC;
     macro(dataView) \
     macro(decode) \
     macro(delimiter) \
+    macro(dest) \
     macro(destroy) \
     macro(dir) \
     macro(direct) \
@@ -244,6 +245,7 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
+    macro(warning) \
     macro(writable) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
@@ -255,6 +257,7 @@ using namespace JSC;
     macro(writing) \
     macro(written) \
     macro(napiDlopenHandle) \
+    macro(napiWrappedContents) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

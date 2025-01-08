@@ -549,6 +549,22 @@ declare interface Error {
  */
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
+declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+
+declare function $ERR_IPC_DISCONNECTED(): Error;
+declare function $ERR_SERVER_NOT_RUNNING(): Error;
+declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
+declare function $ERR_SOCKET_BAD_TYPE(): Error;
+declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
+declare function $ERR_BUFFER_OUT_OF_BOUNDS(): Error;
+declare function $ERR_IPC_ONE_PIPE(): Error;
+declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
+declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;
+declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;
+declare function $ERR_SOCKET_DGRAM_NOT_CONNECTED(): Error;
+declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
+declare function $ERR_INVALID_CURSOR_POS(): Error;
+
 /**
  * Convert a function to a class-like object.
  *

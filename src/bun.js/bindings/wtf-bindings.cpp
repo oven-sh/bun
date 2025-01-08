@@ -1,6 +1,7 @@
 #include "root.h"
 #include "wtf-bindings.h"
-
+#include <wtf/StackBounds.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <atomic>
@@ -195,13 +196,10 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
-    if (UNLIKELY(!ptr)) {
-        RELEASE_ASSERT_NOT_REACHED();
-        return String();
-    }
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr), encodedLength);
+
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -238,6 +236,18 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
         return 0;
 
     return charactersWritten;
+}
+
+static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+
+extern "C" void Bun__StackCheck__initialize()
+{
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+}
+
+extern "C" void* Bun__StackCheck__getMaxStack()
+{
+    return stackBoundsForCurrentThread.end();
 }
 
 }

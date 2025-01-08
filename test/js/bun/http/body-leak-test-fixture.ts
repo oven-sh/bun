@@ -1,5 +1,6 @@
 const server = Bun.serve({
   port: 0,
+  idleTimeout: 0,
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {

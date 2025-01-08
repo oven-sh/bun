@@ -2,12 +2,14 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
+const { validateString, validateOneOf } = require("internal/validators");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectKeys = Object.keys;
 
 var cjs_exports;
 
@@ -137,15 +139,15 @@ var log = function log() {
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
-    throw ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
+    throw $ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
   }
 
   if (superCtor === undefined || superCtor === null) {
-    throw ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
+    throw $ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
   }
 
   if (superCtor.prototype === undefined) {
-    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
   }
   ctor.super_ = superCtor;
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
@@ -201,24 +203,33 @@ var toUSVString = input => {
 };
 
 function styleText(format, text) {
-  if (typeof text !== "string") {
-    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
-    e.code = "ERR_INVALID_ARG_TYPE";
-    throw e;
+  validateString(text, "text");
+
+  if ($isJSArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+      }
+      left += `\u001b[${formatCodes[0]}m`;
+      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+
+    return `${left}${text}${right}`;
   }
-  const formatCodes = inspect.colors[format];
+
+  let formatCodes = inspect.colors[format];
+
   if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+    validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
 function getSystemErrorName(err: any) {
-  if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
   if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
@@ -235,11 +246,11 @@ function onAbortedCallback(resolveFn: Function) {
 
 function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
-    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }
 
   if (!$isObject(resource)) {
-    throw ERR_INVALID_ARG_TYPE("resource", "object", resource);
+    throw $ERR_INVALID_ARG_TYPE("resource", "object", resource);
   }
 
   if (signal.aborted) {

@@ -263,7 +263,7 @@ pub const FDImpl = packed struct {
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
-                            .{ .errno = errno, .syscall = .close, .fd = this.encode() }
+                            .{ .errno = errno, .syscall = .close, .fd = this.encode(), .from_libuv = true }
                         else
                             null;
                     },

@@ -3705,12 +3705,14 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 // for where these are called.
 
 /// `globalThis.gc()` is an alias for `Bun.gc(true)`
+/// Note that `vm` is a `VirtualMachine*`
+extern "C" size_t Bun__gc(void* vm, bool sync);
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
-    // set `force` to true. Note that `Bun.gc` reads from the 0th argument, which is normally reserved for `this`.
-    callFrame->setArgument(0, JSC::jsBoolean(true));
-    return Generated::BunObject::jsGc(globalObject, callFrame);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(global);
+    Bun__gc(globalObject->bunVM(), true);
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)

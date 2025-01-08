@@ -1359,7 +1359,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toInclude(`Hello World`);
     },
   });
-  itBundled.only("edgecase/PackageExternalRespectTSPathAliases", {
+  itBundled("edgecase/PackageExternalRespectTSPathAliases", {
     files: {
       "/src/entry.ts": /* ts */ `
         import { value } from "alias/foo";

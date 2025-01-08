@@ -35,7 +35,7 @@ const msgErrBuf = Buffer.from(`${msgErr}\n`);
 
 const args = [
   '-e',
-  `console.log("${msgOut}"); console.error("${msgErr}");`,
+  `console.log(process.env); console.log("${msgOut}"); console.error("${msgErr}");`,
 ];
 
 let ret;
@@ -48,6 +48,10 @@ function checkSpawnSyncRet(ret) {
 
 function verifyBufOutput(ret) {
   checkSpawnSyncRet(ret);
+  // FIXME: here for debugging. will be removed before PR is merged
+  console.log("====== parent env")
+  console.log(process.env)
+  assert.deepStrictEqual(ret.stdout.toString('utf8'), msgOutBuf.toString('utf8'));
   assert.deepStrictEqual(ret.stdout, msgOutBuf);
   assert.deepStrictEqual(ret.stderr.toString('utf8'), msgErrBuf.toString('utf8'));
   assert.deepStrictEqual(ret.stderr, msgErrBuf);

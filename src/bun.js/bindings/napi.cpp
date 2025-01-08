@@ -1,3 +1,4 @@
+#include "headers.h"
 #include "node_api.h"
 #include "root.h"
 
@@ -195,10 +196,11 @@ void NapiRef::clear()
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
-static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
+static uint32_t getPropertyAttributes(napi_property_descriptor prop)
 {
-    const uint32_t attributes = static_cast<uint32_t>(attributes_);
     uint32_t result = 0;
+    const uint32_t attributes = static_cast<uint32_t>(prop.attributes);
+
     if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
@@ -207,20 +209,9 @@ static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    // if (!(attributes & napi_key_writable)) {
-    //     // result |= JSC::PropertyAttribute::ReadOnly;
-    // }
-
-    return result;
-}
-
-static uint32_t getPropertyAttributes(napi_property_descriptor prop)
-{
-    uint32_t result = getPropertyAttributes(prop.attributes);
-
-    // if (!(prop.getter && !prop.setter)) {
-    //     result |= JSC::PropertyAttribute::ReadOnly;
-    // }
+    if (!(attributes & napi_key_writable || prop.setter != nullptr)) {
+        result |= JSC::PropertyAttribute::ReadOnly;
+    }
 
     return result;
 }
@@ -562,16 +553,10 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         if (setterProperty) {
             setter = NAPIFunction::create(vm, globalObject, 1, makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string()), setterProperty, dataPtr);
-        } else {
-            JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
-                globalObject->vm(), globalObject, 1, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
-                });
-            setter = setterFunction;
         }
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
-        to->putDirectAccessor(globalObject, propertyName, getterSetter, JSC::PropertyAttribute::Accessor | 0);
+        to->putDirectAccessor(globalObject, propertyName, getterSetter, PropertyAttribute::Accessor | getPropertyAttributes(property));
     } else {
         JSC::JSValue value = toJS(property.value);
 
@@ -1878,7 +1863,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });
-    NAPICallFrame frame(JSC::ArgList(args), nullptr);
+    NAPICallFrame frame(JSC::ArgList(args), napi->dataPtr);
     frame.newTarget = newTarget;
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
@@ -2019,7 +2004,7 @@ extern "C" napi_status napi_define_class(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env || (property_count > 0 && !properties)) || !constructor) {
         return napi_invalid_arg;
     }
 
@@ -2061,6 +2046,8 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     // .toString() can throw
     JSC::JSValue resultValue = JSC::JSValue(jsValue.toString(globalObject));
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue, globalObject);
 
@@ -2069,6 +2056,66 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
         return napi_generic_failure;
     }
     scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_bool(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    bool nativeBool = jsValue.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(JSC::jsBoolean(nativeBool), globalObject);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_number(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    double nativeNumber = jsValue.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(JSC::jsNumber(nativeNumber), globalObject);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_object(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    JSObject* obj = jsValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(obj, globalObject);
     return napi_ok;
 }
 
@@ -2225,7 +2272,6 @@ extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int3
 extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uint32_t* result)
 {
     NAPI_PREMABLE
-
     auto* globalObject = toJS(env);
     JSC::JSValue jsValue = toJS(value);
 
@@ -2237,12 +2283,7 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
         return napi_number_expected;
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-
-    // should never throw as we know it is a number
-    *result = jsValue.toUInt32(globalObject);
-    scope.assertNoException();
-
+    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asNumber());
     return napi_ok;
 }
 
@@ -2341,6 +2382,21 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         buf[written] = '\0';
     }
 
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+    JSValue jsValue = toJS(value);
+    if (!jsValue.isBoolean()) {
+        return napi_boolean_expected;
+    }
+
+    *result = jsValue.asBoolean();
     return napi_ok;
 }
 

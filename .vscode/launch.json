@@ -505,6 +505,18 @@
       // Don't pause when the GC runs while the debugger is open.
       "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "JS: bun test [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["test"],
+      "program": "${file}",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+    },
     // Windows: bun test [file]
     {
       "type": "cppvsdbg",

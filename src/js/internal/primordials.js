@@ -41,27 +41,37 @@ const copyProps = (src, dest) => {
   });
 };
 
+/**
+ * @type {<T extends Function, U extends T>(unsafe: T, safe: U) => U}
+ */
 const makeSafe = (unsafe, safe) => {
   if (Symbol.iterator in unsafe.prototype) {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
-    ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
-      if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
-        const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
-        if (typeof desc.value === "function" && desc.value.length === 0) {
-          const called = desc.value.$call(dummy) || {};
-          if (Symbol.iterator in (typeof called === "object" ? called : {})) {
-            const createIterator = uncurryThis(desc.value);
-            next ??= uncurryThis(createIterator(dummy).next);
-            const SafeIterator = createSafeIterator(createIterator, next);
-            desc.value = function () {
-              return new SafeIterator(this);
-            };
-          }
+    ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), function makeIterableMethodsSafe(key) {
+      // if (Reflect.hasOwnProperty(safe.prototype, key)) return;
+      if (Reflect.getOwnPropertyDescriptor(safe.prototype, key)) return;
+
+      const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
+      if (typeof desc.value === "function" && desc.value.length === 0) {
+        try {
+          var called = desc.value.$call(dummy) || {};
+        } catch (e) {
+          const err = new Error(`${unsafe.name}.prototype.${key} thew an error while creating a safe version. This is likely due to prototype pollution.`);
+          Object.assign(err, { unsafe: unsafe.name, safe: safe.name, key, cause: e });
+          throw err;
         }
-        Reflect.defineProperty(safe.prototype, key, desc);
+        if (Symbol.iterator in (typeof called === "object" ? called : {})) {
+          const createIterator = uncurryThis(desc.value);
+          next ??= uncurryThis(createIterator(dummy).next);
+          const SafeIterator = createSafeIterator(createIterator, next);
+          desc.value = function () {
+            return new SafeIterator(this);
+          };
+        }
       }
+      Reflect.defineProperty(safe.prototype, key, desc);
     });
   } else copyProps(unsafe.prototype, safe.prototype);
   copyProps(unsafe, safe);

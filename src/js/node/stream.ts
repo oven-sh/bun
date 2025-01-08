@@ -1069,7 +1069,7 @@ var require_duplexify = __commonJS({
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE },
     } = require_errors();
     var { destroyer } = require("internal/streams/destroy");
-    var Duplex = require_duplex();
+    var Duplex = require("internal/streams/duplex");
     var { createDeferredPromise } = require_util();
     var from = require("internal/streams/from");
     var isBlob =
@@ -1398,105 +1398,7 @@ var require_duplexify = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/internal/streams/duplex.js
-var require_duplex = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/duplex.js"(exports, module) {
-    "use strict";
-    var { ObjectDefineProperties, ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } =
-      require_primordials();
-
-    function Duplex(options) {
-      if (!(this instanceof Duplex)) return new Duplex(options);
-
-      // this._events ??= {
-      //   close: undefined,
-      //   error: undefined,
-      //   prefinish: undefined,
-      //   finish: undefined,
-      //   drain: undefined,
-      //   data: undefined,
-      //   end: undefined,
-      //   readable: undefined,
-      // };
-
-      Readable.$call(this, options);
-      Writable.$call(this, options);
-
-      if (options) {
-        this.allowHalfOpen = options.allowHalfOpen !== false;
-        if (options.readable === false) {
-          this._readableState.readable = false;
-          this._readableState.ended = true;
-          this._readableState.endEmitted = true;
-        }
-        if (options.writable === false) {
-          this._writableState.writable = false;
-          this._writableState.ending = true;
-          this._writableState.ended = true;
-          this._writableState.finished = true;
-        }
-      } else {
-        this.allowHalfOpen = true;
-      }
-    }
-    Duplex.prototype = {};
-    module.exports = Duplex;
-    ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
-    Duplex.prototype.constructor = Duplex; // Re-add constructor which got lost when setting prototype
-    ObjectSetPrototypeOf(Duplex, Readable);
-
-    {
-      for (var method in Writable.prototype) {
-        if (!Duplex.prototype[method]) Duplex.prototype[method] = Writable.prototype[method];
-      }
-    }
-
-    ObjectDefineProperties(Duplex.prototype, {
-      writable: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable"),
-      writableHighWaterMark: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableHighWaterMark"),
-      writableObjectMode: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableObjectMode"),
-      writableBuffer: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableBuffer"),
-      writableLength: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableLength"),
-      writableFinished: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableFinished"),
-      writableCorked: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableCorked"),
-      writableEnded: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableEnded"),
-      writableNeedDrain: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableNeedDrain"),
-      destroyed: {
-        get() {
-          if (this._readableState === void 0 || this._writableState === void 0) {
-            return false;
-          }
-          return this._readableState.destroyed && this._writableState.destroyed;
-        },
-        set(value) {
-          if (this._readableState && this._writableState) {
-            this._readableState.destroyed = value;
-            this._writableState.destroyed = value;
-          }
-        },
-      },
-    });
-    var webStreamsAdapters;
-    function lazyWebStreams() {
-      if (webStreamsAdapters === void 0) webStreamsAdapters = {};
-      return webStreamsAdapters;
-    }
-    Duplex.fromWeb = function (pair, options) {
-      return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
-    };
-    Duplex.toWeb = function (duplex) {
-      return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
-    };
-    var duplexify;
-    Duplex.from = function (body) {
-      if (!duplexify) {
-        duplexify = require_duplexify();
-      }
-      return duplexify(body, "body");
-    };
-  },
-});
-const Duplex = require_duplex();
+const Duplex = require("internal/streams/duplex");
 
 // node_modules/readable-stream/lib/internal/streams/transform.js
 var require_transform = __commonJS({
@@ -2190,7 +2092,7 @@ var require_stream = __commonJS({
       });
     }
     Stream.Writable = require("internal/streams/writable");
-    Stream.Duplex = require_duplex();
+    Stream.Duplex = require("internal/streams/duplex");
     Stream.Transform = require_transform();
     Stream.PassThrough = require_passthrough();
     Stream.pipeline = pipeline;

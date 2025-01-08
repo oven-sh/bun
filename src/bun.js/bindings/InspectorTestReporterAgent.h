@@ -18,9 +18,9 @@ enum class DisconnectReason;
 
 class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler {
     WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
+    WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
 
 public:
-    WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
     InspectorTestReporterAgent(JSC::JSGlobalObject&);
     virtual ~InspectorTestReporterAgent();
 

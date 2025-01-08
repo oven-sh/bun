@@ -47,20 +47,24 @@ const makeSafe = (unsafe, safe) => {
     let next; // We can reuse the same `next` method.
 
     ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
-      if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
-        const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
-        if (typeof desc.value === "function" && desc.value.length === 0) {
-          const called = desc.value.$call(dummy) || {};
-          if (Symbol.iterator in (typeof called === "object" ? called : {})) {
-            const createIterator = uncurryThis(desc.value);
-            next ??= uncurryThis(createIterator(dummy).next);
-            const SafeIterator = createSafeIterator(createIterator, next);
-            desc.value = function () {
-              return new SafeIterator(this);
-            };
+      try {
+        if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
+          const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
+          if (typeof desc.value === "function" && desc.value.length === 0) {
+            const called = desc.value.$call(dummy) || {};
+            if (Symbol.iterator in (typeof called === "object" ? called : {})) {
+              const createIterator = uncurryThis(desc.value);
+              next ??= uncurryThis(createIterator(dummy).next);
+              const SafeIterator = createSafeIterator(createIterator, next);
+              desc.value = function () {
+                return new SafeIterator(this);
+              };
+            }
           }
+          Reflect.defineProperty(safe.prototype, key, desc);
         }
-        Reflect.defineProperty(safe.prototype, key, desc);
+      } catch {
+        // Speculative desc.value.$call(dummy) above failed, maybe a modified prototype.
       }
     });
   } else copyProps(unsafe.prototype, safe.prototype);

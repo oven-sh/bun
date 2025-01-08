@@ -892,7 +892,7 @@ var require_assert = __commonJS({
     }
     assert.ok = ok;
     assert.equal = function equal(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       actual != expected &&
         innerFail({
           actual,
@@ -903,7 +903,7 @@ var require_assert = __commonJS({
         });
     };
     assert.notEqual = function notEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       actual == expected &&
         innerFail({
           actual,
@@ -914,7 +914,7 @@ var require_assert = __commonJS({
         });
     };
     assert.deepEqual = function deepEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       isDeepEqual(actual, expected, false) ||
         innerFail({
           actual,
@@ -925,7 +925,7 @@ var require_assert = __commonJS({
         });
     };
     assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       isDeepEqual(actual, expected, false) &&
         innerFail({
           actual,
@@ -936,7 +936,7 @@ var require_assert = __commonJS({
         });
     };
     assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
 
       isDeepEqual(actual, expected, true) ||
         innerFail({
@@ -949,7 +949,7 @@ var require_assert = __commonJS({
     };
     assert.notDeepStrictEqual = notDeepStrictEqual;
     function notDeepStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
 
       isDeepEqual(actual, expected, true) &&
         innerFail({
@@ -961,7 +961,7 @@ var require_assert = __commonJS({
         });
     }
     assert.strictEqual = function strictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       objectIs(actual, expected) ||
         innerFail({
           actual,
@@ -972,7 +972,7 @@ var require_assert = __commonJS({
         });
     };
     assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       objectIs(actual, expected) &&
         innerFail({
           actual,
@@ -983,7 +983,7 @@ var require_assert = __commonJS({
         });
     };
     var internalMatch = function (actual, expected, message, fn) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (arguments.length < 2) throw $ERR_MISSING_ARGS("actual", "expected");
       if (typeof actual !== "string") throw new ERR_INVALID_ARG_TYPE("actual", "string", actual);
       if (!isRegExp(expected)) throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
       var match = fn === assert.match;

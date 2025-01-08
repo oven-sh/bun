@@ -554,6 +554,8 @@ declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
+declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
+declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -575,6 +577,7 @@ declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
+declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 
 /**
  * Convert a function to a class-like object.

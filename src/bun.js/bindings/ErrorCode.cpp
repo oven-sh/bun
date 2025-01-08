@@ -861,6 +861,49 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, error, message));
     }
 
+    case Bun::ErrorCode::ERR_MISSING_ARGS: {
+        switch (callFrame->argumentCount()) {
+        case 0: {
+            UNREACHABLE();
+        }
+        case 1: {
+            ASSERT("At least one arg needs to be specified");
+        }
+        case 2: {
+            JSValue arg0 = callFrame->argument(1);
+            auto str0 = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" argument must be specified"_s)));
+        }
+        case 3: {
+            JSValue arg0 = callFrame->argument(1);
+            auto str0 = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue arg1 = callFrame->argument(1);
+            auto str1 = arg1.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" or \""_s, str1, "\" argument must be specified"_s)));
+        }
+        default: {
+            ASSERT("TODO");
+        }
+        }
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_RETURN_VALUE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg2 = callFrame->argument(3);
+        auto str2 = determineSpecificType(globalObject, arg2);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Expected "_s, str0, " to be returned from the \""_s, str1, "\" function but got "_s, str2, "."_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -901,6 +944,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT, "stream.unshift() after end event"_s));
     case ErrorCode::ERR_STREAM_PUSH_AFTER_EOF:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
+    case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
 
     default: {
         break;

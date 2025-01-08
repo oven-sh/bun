@@ -68,6 +68,8 @@ export default [
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
+  ["ERR_STREAM_UNABLE_TO_PIPE", Error],
+  ["ERR_INVALID_RETURN_VALUE", TypeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

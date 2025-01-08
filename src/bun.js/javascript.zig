@@ -3573,6 +3573,11 @@ pub const VirtualMachine = struct {
         }
     }
 
+    // As `lines` is populated with referenced data from a source provider, that
+    // source provider is returned. Call `.deref()` on the returned provider to
+    // release memory. The `lines` should not have `deref` called on.
+    extern fn Bun__getSourceCodeViewFromErrorInstance(val: JSValue, lines: [*]bun.String, numbers: [*]i32, len: u8) ?*JSC.SourceProvider;
+
     pub fn remapZigException(
         this: *VirtualMachine,
         exception: *ZigException,
@@ -3599,6 +3604,7 @@ pub const VirtualMachine = struct {
         });
 
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
             for (frames, 0..) |frame, i| {
@@ -3747,6 +3753,15 @@ pub const VirtualMachine = struct {
                 }
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
+            }
+        } else {
+            if (Bun__getSourceCodeViewFromErrorInstance(
+                error_instance,
+                exception.stack.source_lines_ptr,
+                exception.stack.source_lines_numbers,
+                exception.stack.source_lines_len,
+            )) |source| {
+                exception.stack.referenced_source_provider = source;
             }
         }
 

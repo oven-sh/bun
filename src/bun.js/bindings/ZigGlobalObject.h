@@ -478,7 +478,6 @@ public:
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
-    LazyProperty<JSGlobalObject, Structure> m_JSS3BucketStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
 

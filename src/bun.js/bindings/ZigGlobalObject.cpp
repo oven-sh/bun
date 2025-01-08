@@ -60,6 +60,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunWorkerGlobalScope.h"
@@ -159,7 +160,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 
-#include "JSS3Bucket.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #if ENABLE(REMOTE_INSPECTOR)
@@ -560,30 +560,7 @@ WTF::String Bun::formatStackTrace(
             remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
             remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
 
-            String sourceURLForFrame = frame.sourceURL(vm);
-
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = frame.codeBlock()->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-                }
-            }
+            String sourceURLForFrame = Zig::sourceURL(vm, frame);
 
             bool isDefinitelyNotRunninginNodeVMGlobalObject = (globalObject == lexicalGlobalObject && globalObject);
 
@@ -688,29 +665,46 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     // We need to sourcemap it if it's a GlobalObject.
     if (globalObject == lexicalGlobalObject) {
-        size_t framesCount = stackTrace.size();
-        ZigStackFrame remappedFrames[64];
-        framesCount = framesCount > 64 ? 64 : framesCount;
-        for (int i = 0; i < framesCount; i++) {
-            remappedFrames[i] = {};
-            remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+        for (int i = 0; i < stackTrace.size(); i++) {
+            ZigStackFrame frame = {};
+
+            String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
-                remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
+                frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
+                frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
             } else {
-                remappedFrames[i].position.line_zero_based = -1;
-                remappedFrames[i].position.column_zero_based = -1;
+                frame.position.line_zero_based = -1;
+                frame.position.column_zero_based = -1;
+            }
+
+            if (!sourceURLForFrame.isEmpty()) {
+                frame.source_url = Bun::toStringRef(sourceURLForFrame);
+
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, &frame, 1);
+
+                sourceURLForFrame = frame.source_url.toWTFString();
+            }
+
+            auto* callsite = jsCast<CallSite*>(callSites.at(i));
+
+            if (!sourceURLForFrame.isEmpty())
+                callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
+
+            if (frame.remapped) {
+                callsite->setLineNumber(frame.position.line());
+                callsite->setColumnNumber(frame.position.column());
             }
         }
+    } else {
+        // if it's a different JSGlobalObject, let's still give you the sourceURL directive just to be nice.
+        for (int i = 0; i < stackTrace.size(); i++) {
 
-        Bun__remapStackFramePositions(globalObject, remappedFrames, framesCount);
-
-        for (size_t i = 0; i < framesCount; i++) {
-            JSC::JSValue callSiteValue = callSites.at(i);
-            if (remappedFrames[i].remapped) {
-                CallSite* callSite = JSC::jsCast<CallSite*>(callSiteValue);
-                callSite->setColumnNumber(remappedFrames[i].position.column());
-                callSite->setLineNumber(remappedFrames[i].position.line());
+            String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+            if (!sourceURLForFrame.isEmpty()) {
+                auto* callsite = jsCast<CallSite*>(callSites.at(i));
+                callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
             }
         }
     }
@@ -2867,10 +2861,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(init.owner));
         });
 
-    m_JSS3BucketStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createJSS3BucketStructure(init.vm, init.owner));
-        });
     m_JSS3FileStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
@@ -3709,6 +3699,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }
 
+// ===================== start conditional builtin globals =====================
+// These functions register globals based on runtime conditions (e.g. CLI flags,
+// environment variables, etc.). See `Run.addConditionalGlobals()` in bun_js.zig
+// for where these are called.
+
+/// `globalThis.gc()` is an alias for `Bun.gc(true)`
+/// Note that `vm` is a `VirtualMachine*`
+extern "C" size_t Bun__gc(void* vm, bool sync);
+JSC_DEFINE_HOST_FUNCTION(functionJsGc,
+    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(global);
+    Bun__gc(globalObject->bunVM(), true);
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+}
+
+// ====================== end conditional builtin globals ======================
+
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
 {
 #if !ENABLE(REMOTE_INSPECTOR)
@@ -3808,7 +3822,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
-    thisObject->m_JSS3BucketStructure.visit(visitor);
     thisObject->m_JSS3FileStructure.visit(visitor);
     thisObject->m_S3ErrorStructure.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);

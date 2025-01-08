@@ -5642,6 +5642,7 @@ pub const JSValue = enum(i64) {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "string", prop);
             },
             i32 => return prop.coerce(i32, global),
+            i64 => return prop.coerce(i64, global),
             else => @compileError("TODO:" ++ @typeName(T)),
         }
     }

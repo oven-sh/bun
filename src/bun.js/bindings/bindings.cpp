@@ -6232,33 +6232,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
 
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = visitor->sourceURL();
-
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = visitor->codeBlock()->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-                }
-            }
-
-            sourceURL = sourceURLForFrame;
+            sourceURL = Zig::sourceURL(visitor);
 
             return WTF::IterationStatus::Done;
         }

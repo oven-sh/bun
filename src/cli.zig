@@ -47,6 +47,11 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ProcessNoDeprecation = false;
+export var Bun__Node__ProcessThrowDeprecation = false;
+
+pub var Bun__Node__ProcessTitle: ?string = null;
+
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
@@ -232,10 +237,13 @@ pub const Arguments = struct {
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
         clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
+        clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
+        clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
+        clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
-        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };
@@ -412,7 +420,7 @@ pub const Arguments = struct {
                 var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+                ctx.args.absolute_working_dir = try allocator.dupeZ(u8, cwd);
             }
 
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
@@ -487,16 +495,16 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
+        var cwd: [:0]u8 = undefined;
         if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
-                bun.sys.chdir(out).unwrap() catch |err| {
+                bun.sys.chdir("", out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
-                break :brk try allocator.dupe(u8, out);
+                break :brk try allocator.dupeZ(u8, out);
             };
         } else {
             cwd = try bun.getcwdAlloc(allocator);
@@ -794,6 +802,15 @@ pub const Arguments = struct {
 
             if (args.flag("--expose-internals")) {
                 bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
+            if (args.flag("--no-deprecation")) {
+                Bun__Node__ProcessNoDeprecation = true;
+            }
+            if (args.flag("--throw-deprecation")) {
+                Bun__Node__ProcessThrowDeprecation = true;
+            }
+            if (args.option("--title")) |title| {
+                Bun__Node__ProcessTitle = title;
             }
         }
 

@@ -1,5 +1,5 @@
 const conv = std.builtin.CallingConvention.Unspecified;
-
+const S3File = @import("../webcore/S3File.zig");
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -18,7 +18,6 @@ pub const BunObject = struct {
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
-    pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
@@ -31,6 +30,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const s3 = S3File.createJSS3File;
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -71,6 +71,7 @@ pub const BunObject = struct {
     pub const stdin = toJSGetter(Bun.getStdin);
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
+    pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -114,6 +115,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
@@ -130,6 +132,7 @@ pub const BunObject = struct {
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
         @export(BunObject.semver, .{ .name = getterName("semver") });
         @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
+        @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
         // --- Getters --
 
         // -- Callbacks --
@@ -141,7 +144,6 @@ pub const BunObject = struct {
         @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -155,6 +157,7 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
+        @export(BunObject.s3, .{ .name = callbackName("s3") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
@@ -825,10 +828,6 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return .undefined;
 }
 
-pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return globalObject.generateHeapSnapshot();
-}
-
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
@@ -1149,11 +1148,11 @@ pub const Crypto = struct {
                 };
             }
 
-            pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
-                var all = std.EnumArray(Algorithm, ZigString).initUndefined();
+            pub const names: std.EnumArray(Algorithm, bun.String) = brk: {
+                var all = std.EnumArray(Algorithm, bun.String).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(@tagName(entry.key));
+                    entry.value.* = bun.String.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -2324,8 +2323,7 @@ pub const Crypto = struct {
             _: JSValue,
             _: JSValue,
         ) JSC.JSValue {
-            var values = EVP.Algorithm.names.values;
-            return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
+            return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
         }
 
         fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
@@ -3400,7 +3398,9 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
-
+pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.WebCore.S3Client.getConstructor(globalThis);
+}
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);

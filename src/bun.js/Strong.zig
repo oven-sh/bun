@@ -84,7 +84,7 @@ pub const Strong = struct {
         return result;
     }
 
-    pub fn has(this: *Strong) bool {
+    pub fn has(this: *const Strong) bool {
         var ref = this.ref orelse return false;
         return ref.get() != .zero;
     }

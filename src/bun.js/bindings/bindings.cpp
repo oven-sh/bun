@@ -1,6 +1,8 @@
 
+
 #include "root.h"
 
+#include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
@@ -1941,45 +1943,42 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
         message = Bun::toJS(globalObject, err.message);
     }
 
+    auto& names = WebCore::builtinNames(vm);
+
     JSC::JSValue options = JSC::jsUndefined();
 
-    JSC::JSObject* result
-        = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
+    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, globalObject->errorStructureWithErrorType<JSC::ErrorType::Error>(), message, options);
 
     auto clientData = WebCore::clientData(vm);
 
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
-        result->putDirect(vm, clientData->builtinNames().codePublicName(), code,
-            JSC::PropertyAttribute::DontDelete | 0);
-
-        result->putDirect(vm, vm.propertyNames->name, code, JSC::PropertyAttribute::DontEnum | 0);
-    } else {
-        result->putDirect(
-            vm, vm.propertyNames->name,
-            JSC::JSValue(jsString(vm, String("SystemError"_s))),
-            JSC::PropertyAttribute::DontEnum | 0);
+        result->putDirect(vm, clientData->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.path.tag != BunStringTag::Empty) {
         JSC::JSValue path = Bun::toJS(globalObject, err.path);
-        result->putDirect(vm, clientData->builtinNames().pathPublicName(), path,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, clientData->builtinNames().pathPublicName(), path, JSC::PropertyAttribute::DontDelete | 0);
+    }
+
+    if (err.dest.tag != BunStringTag::Empty) {
+        JSC::JSValue dest = Bun::toJS(globalObject, err.dest);
+        result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.fd != -1) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "fd"_s), fd,
+        result->putDirect(vm, names.fdPublicName(), fd,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
         JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
-        result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscall,
+        result->putDirect(vm, names.syscallPublicName(), syscall,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
+    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_),
         JSC::PropertyAttribute::DontDelete | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -2929,44 +2928,6 @@ CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
     array->push(arg1, value2);
-}
-
-JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
-    size_t arg2, bool clone)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (arg2 == 0) {
-        return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-    }
-
-    JSC::JSArray* array = nullptr;
-    {
-        JSC::GCDeferralContext deferralContext(vm);
-        JSC::ObjectInitializationScope initializationScope(vm);
-        if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, &deferralContext,
-                 globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                 arg2))) {
-
-            if (!clone) {
-                for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
-                }
-            } else {
-                for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
-                }
-            }
-        }
-
-        if (!array) {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
-    }
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
@@ -5054,7 +5015,6 @@ size_t JSC__VM__runGC(JSC__VM* vm, bool sync)
 #endif
 
     vm->finalizeSynchronousJSExecution();
-    WTF::releaseFastMallocFreeMemory();
 
     if (sync) {
         vm->clearSourceProviderCaches();
@@ -6007,6 +5967,40 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
     return charactersWritten;
 }
 
+extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
+{
+    char buffer[29];
+    JSC::DateInstance* thisDateObj = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), globalObject->jsDateNow());
+
+    if (!std::isfinite(thisDateObj->internalNumber()))
+        return -1;
+
+    auto& vm = globalObject->vm();
+
+    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    if (!gregorianDateTime)
+        return -1;
+
+    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
+    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
+    if (ms < 0)
+        ms += msPerSecond;
+
+    int charactersWritten;
+    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+    else
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+
+    memcpy(buf, buffer, charactersWritten);
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
+    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
+        return -1;
+
+    return charactersWritten;
+}
+
 #pragma mark - WebCore::DOMFormData
 
 CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString* arg1, ZigString* arg2)
@@ -6238,33 +6232,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
 
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = visitor->sourceURL();
-
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = visitor->codeBlock()->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-                }
-            }
-
-            sourceURL = sourceURLForFrame;
+            sourceURL = Zig::sourceURL(visitor);
 
             return WTF::IterationStatus::Done;
         }

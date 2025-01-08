@@ -132,11 +132,9 @@ if (process.argv.length === 2 &&
       const options = { encoding: 'utf8', stdio: 'inherit' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
-        process.kill(0, result.signal);
+        process.kill(process.pid, result.signal);
       } else {
-        // Ensure we don't call the "exit" callbacks, as that will cause the
-        // test to fail when it may have passed in the child process.
-        process.kill(process.pid, result.status);
+        process.exit(result.status);
       }
     }
   }
@@ -900,6 +898,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 
@@ -1218,5 +1217,3 @@ module.exports = new Proxy(common, {
     return obj[prop];
   },
 });
-
-

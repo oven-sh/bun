@@ -245,7 +245,7 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      const title = relative(cwd, join(testsPath, testPath)).replace(sep, "/");
       if (title.startsWith("test/js/node/test/parallel/")) {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
@@ -1035,7 +1035,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+    tests = tests.filter(testPath => testPath.replace(sep, "/").includes("js/node/test/parallel/"));
   }
 
   const isMatch = (testPath, filter) => {

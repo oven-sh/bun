@@ -250,7 +250,7 @@ async function runTests() {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [title, "--config=./test/js/node/bunfig.toml"],
+            args: ["--config=./test/js/node/bunfig.toml", title],
             timeout: 10_000,
             env: {
               FORCE_COLOR: "0",

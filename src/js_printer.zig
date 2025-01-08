@@ -5772,7 +5772,11 @@ pub fn printAst(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (!opts.bundling and tree.uses_require_ref and tree.exports_kind == .esm) {
+    if (!opts.bundling and
+        tree.uses_require_ref and
+        tree.exports_kind == .esm and
+        opts.target == .bun)
+    {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which
         // meant calling `func.toString()` on a function with `require`

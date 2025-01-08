@@ -1,5 +1,5 @@
 const bun = @import("../../bun.zig");
-const JSC = @import("../../JSC.zig");
+const JSC = @import("../../jsc.zig");
 
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);

@@ -82,7 +82,7 @@ const strict = new Database(
 // throws error because of the typo:
 const query = strict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 
 const notStrict = new Database(
   ":memory:"
@@ -90,7 +90,7 @@ const notStrict = new Database(
 // does not throw error:
 notStrict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 ```
 
 ### Load via ES module import

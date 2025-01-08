@@ -81,6 +81,20 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 }
 ```
 
+## Installing dependencies for specific packages
+
+In a monorepo, you can install the dependencies for a subset of packages using the `--filter` flag.
+
+```bash
+# Install dependencies for all workspaces except `pkg-c`
+$ bun install --filter '!pkg-c'
+
+# Install dependencies for only `pkg-a` in `./packages/pkg-a`
+$ bun install --filter './packages/pkg-a'
+```
+
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/install#bun-install-and-bun-outdated)
+
 ## Overrides and resolutions
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.sh/docs/install/overrides) for complete documentation.

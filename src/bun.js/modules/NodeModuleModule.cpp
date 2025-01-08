@@ -284,9 +284,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // We haven't implemented this yet, but erroring breaks other things.
     return JSValue::encode(jsUndefined());
 }
 

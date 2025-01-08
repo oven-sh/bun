@@ -1400,31 +1400,6 @@ var require_duplexify = __commonJS({
 
 const Duplex = require("internal/streams/duplex");
 
-// node_modules/readable-stream/lib/internal/streams/passthrough.js
-var require_passthrough = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/passthrough.js"(exports, module) {
-    "use strict";
-    var { ObjectSetPrototypeOf } = require_primordials();
-    var Transform = require("internal/streams/transform");
-
-    function PassThrough(options) {
-      if (!(this instanceof PassThrough)) return new PassThrough(options);
-      Transform.$call(this, options);
-    }
-    PassThrough.prototype = {};
-
-    ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
-    PassThrough.prototype.constructor = PassThrough; // Re-add constructor which got lost when setting prototype
-    ObjectSetPrototypeOf(PassThrough, Transform);
-
-    PassThrough.prototype._transform = function (chunk, encoding, cb) {
-      cb(null, chunk);
-    };
-
-    module.exports = PassThrough;
-  },
-});
-
 // node_modules/readable-stream/lib/internal/streams/pipeline.js
 var require_pipeline = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/pipeline.js"(exports, module) {
@@ -1632,7 +1607,7 @@ var require_pipeline = __commonJS({
           } else {
             var _ret;
             if (!PassThrough) {
-              PassThrough = require_passthrough();
+              PassThrough = require("internal/streams/passthrough");
             }
             const pt = new PassThrough({
               objectMode: true,
@@ -1994,7 +1969,7 @@ var require_stream = __commonJS({
     Stream.Writable = require("internal/streams/writable");
     Stream.Duplex = require("internal/streams/duplex");
     Stream.Transform = require("internal/streams/transform");
-    Stream.PassThrough = require_passthrough();
+    Stream.PassThrough = require("internal/streams/passthrough");
     Stream.pipeline = pipeline;
     var { addAbortSignal } = require("internal/streams/add-abort-signal");
     Stream.addAbortSignal = addAbortSignal;

@@ -3710,7 +3710,7 @@ extern "C" size_t Bun__gc(void* vm, bool sync);
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(global);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(global);
     Bun__gc(globalObject->bunVM(), true);
     return JSValue::encode(jsUndefined());
 }

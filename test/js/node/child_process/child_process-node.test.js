@@ -659,7 +659,7 @@ describe("fork", () => {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
             message: expect.stringContaining(
-              `The "modulePath" argument must be of type string, Buffer, or URL. Received `,
+              `The "modulePath" argument must be of type string, Buffer or URL. Received `,
             ),
           }),
         );

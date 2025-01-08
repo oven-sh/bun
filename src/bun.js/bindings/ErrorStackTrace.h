@@ -213,4 +213,13 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+
+String sourceURL(const JSC::SourceOrigin& origin);
+String sourceURL(JSC::SourceProvider* sourceProvider);
+String sourceURL(const JSC::SourceCode& sourceCode);
+String sourceURL(JSC::CodeBlock* codeBlock);
+String sourceURL(JSC::VM& vm, JSC::StackFrame& frame);
+String sourceURL(JSC::StackVisitor& visitor);
+String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
+
 }

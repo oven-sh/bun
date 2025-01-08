@@ -434,6 +434,7 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
+    bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,
     to_esm_ref: Ref = Ref.None,
@@ -5771,7 +5772,7 @@ pub fn printAst(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.transform_only and tree.uses_require_ref and tree.exports_kind == .esm) {
+    if (!opts.bundling and tree.uses_require_ref and tree.exports_kind == .esm) {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which
         // meant calling `func.toString()` on a function with `require`

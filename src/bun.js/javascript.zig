@@ -1945,8 +1945,6 @@ pub const VirtualMachine = struct {
         // Avoid reading from tsconfig.json & package.json when we're in standalone mode
         vm.transpiler.configureLinkerWithAutoJSX(false);
 
-        vm.transpiler.options.transform_only = true;
-
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
         if (opts.is_main_thread) {
             VMHolder.main_thread_vm = vm;
@@ -2058,7 +2056,6 @@ pub const VirtualMachine = struct {
         };
 
         vm.transpiler.configureLinker();
-        vm.transpiler.options.transform_only = true;
 
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
@@ -2212,7 +2209,6 @@ pub const VirtualMachine = struct {
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
         vm.transpiler.resolver.standalone_module_graph = opts.graph;
-        vm.transpiler.options.transform_only = true;
 
         if (opts.graph == null) {
             vm.transpiler.configureLinker();
@@ -2305,7 +2301,6 @@ pub const VirtualMachine = struct {
         };
 
         vm.transpiler.configureLinker();
-        vm.transpiler.options.transform_only = true;
 
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 

@@ -1083,6 +1083,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = transpiler.options.cssImportBehavior(),
@@ -1105,6 +1106,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
@@ -1128,6 +1130,7 @@ pub const Transpiler = struct {
                     source,
                     is_bun,
                     .{
+                        .bundling = false,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = transpiler.options.cssImportBehavior(),

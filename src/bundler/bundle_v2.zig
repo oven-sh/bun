@@ -9862,6 +9862,7 @@ pub const LinkerContext = struct {
 
         {
             const print_options = js_printer.Options{
+                .bundling = true,
                 .indent = .{},
                 .has_run_symbol_renamer = true,
 
@@ -12516,6 +12517,7 @@ pub const LinkerContext = struct {
         };
 
         const print_options = js_printer.Options{
+            .bundling = true,
             // TODO: IIFE
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,

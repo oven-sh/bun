@@ -63,7 +63,7 @@ pub fn detectAndLoadOtherLockfile(
                 , .{});
                 Global.exit(1);
             }
-            if (Environment.allow_assert) {
+            if (Environment.isDebug) {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});

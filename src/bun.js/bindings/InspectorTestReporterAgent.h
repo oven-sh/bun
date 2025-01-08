@@ -20,6 +20,7 @@ class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspe
     WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
 
 public:
+    WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
     InspectorTestReporterAgent(JSC::JSGlobalObject&);
     virtual ~InspectorTestReporterAgent();
 

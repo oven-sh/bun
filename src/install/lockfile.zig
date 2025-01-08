@@ -5162,12 +5162,7 @@ pub const Package = extern struct {
 
         const orig_msgs_len = log.msgs.items.len;
 
-        const StrWithIndex = struct {
-            str: string,
-            index: u32,
-        };
-
-        var workspace_globs = std.ArrayList(StrWithIndex).init(allocator);
+        var workspace_globs = std.ArrayList(string).init(allocator);
         defer workspace_globs.deinit();
         var workspace_exclusions = WorkspaceExclusions.init(allocator, source.path.name.dir);
         defer workspace_exclusions.deinit();
@@ -5179,11 +5174,10 @@ pub const Package = extern struct {
         // ?PERF: use ArrayList instead with initial capacity and remove
         //  ?hard to predict branch? while iterating input_paths and
         //  checking if .len == 0
-        const input_paths = allocator.alloc(StrWithIndex, arr_slice.len) catch bun.outOfMemory();
+        const input_paths = allocator.alloc(string, arr_slice.len) catch bun.outOfMemory();
         defer allocator.free(input_paths);
 
         for (arr_slice, 0..) |item, i| {
-            const index: u32 = @intCast(i); // WARN: max number of workspace paths is max(u32)
             // TODO: when does this get deallocated if it's not an exclusion?
             const input_path = try item.asStringZ(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
@@ -5196,33 +5190,33 @@ pub const Package = extern struct {
             };
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') {
-                input_paths[i].str.len = 0; // signal no path
+                input_paths[i].len = 0; // signal no path
                 allocator.free(input_path);
             }
 
             if (WorkspaceExclusions.isExclusion(input_path)) {
                 workspace_exclusions.insert(log, source, loc, input_path) catch bun.outOfMemory();
-                input_paths[i].str.len = 0; // signal no path
+                input_paths[i].len = 0; // signal no path
                 allocator.free(input_path);
                 continue;
             }
 
             if (Glob.Ascii.detectGlobSyntax(input_path)) {
-                workspace_globs.append(.{ .str = input_path, .index = index }) catch bun.outOfMemory();
-                input_paths[i].str.len = 0; // signal no path
+                workspace_globs.append(input_path) catch bun.outOfMemory();
+                input_paths[i].len = 0; // signal no path
                 continue;
             }
 
-            input_paths[i] = .{ .str = input_path, .index = index };
+            input_paths[i] = input_path;
         }
 
         for (input_paths, arr_slice) |input_path, item| {
-            if (input_path.str.len == 0) continue;
+            if (input_path.len == 0) continue;
 
             const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
                 source.path.name.dir,
                 filepath_buf,
-                &.{ input_path.str, "package.json" },
+                &.{ input_path, "package.json" },
                 .auto,
             );
 
@@ -5247,7 +5241,7 @@ pub const Package = extern struct {
                             item.loc,
                             allocator,
                             "Workspace not found \"{s}\"",
-                            .{input_path.str},
+                            .{input_path},
                         ) catch {};
                     },
                     error.MissingPackageName => {
@@ -5256,7 +5250,7 @@ pub const Package = extern struct {
                             loc,
                             allocator,
                             "Missing \"name\" from package.json in {s}",
-                            .{input_path.str},
+                            .{input_path},
                         ) catch {};
                     },
                     else => {
@@ -5265,7 +5259,7 @@ pub const Package = extern struct {
                             item.loc,
                             allocator,
                             "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                            .{ @errorName(err), input_path.str, bun.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                            .{ @errorName(err), input_path, bun.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
                         ) catch {};
                     },
                 }
@@ -5320,7 +5314,7 @@ pub const Package = extern struct {
                         loc,
                         allocator,
                         "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                        .{ user_pattern.str, @tagName(e.getErrno()) },
+                        .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;
                 }
@@ -5336,7 +5330,7 @@ pub const Package = extern struct {
                         loc,
                         allocator,
                         "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                        .{ user_pattern.str, @tagName(e.getErrno()) },
+                        .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;
                 }
@@ -5349,7 +5343,7 @@ pub const Package = extern struct {
                             loc,
                             allocator,
                             "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                            .{ user_pattern.str, @tagName(e.getErrno()) },
+                            .{ user_pattern, @tagName(e.getErrno()) },
                         ) catch {};
                         return error.GlobError;
                     },
@@ -5407,8 +5401,6 @@ pub const Package = extern struct {
 
                     if (workspace_entry.name.len == 0) continue;
 
-                    // TODO: move above processWorkspacaeName and use posix
-                    // path for workspace exclusions
                     const workspace_path: string = Path.relativePlatform(
                         source.path.name.dir,
                         abs_workspace_dir_path,

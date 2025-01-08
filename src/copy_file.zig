@@ -42,7 +42,7 @@ const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
 /// This means that it cannot work with TTYs and some special devices
 /// But it can work with two ordinary files
 ///
-/// on macoS and other platforms, sendfile() only works when one of the ends is a socket
+/// on macOS and other platforms, sendfile() only works when one of the ends is a socket
 /// and in general on macOS, it doesn't seem to have much performance impact.
 const LinuxCopyFileState = packed struct {
     /// This is the most important flag for reducing the system call count

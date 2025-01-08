@@ -21,9 +21,6 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.params[1].type.?;
-    const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
-    const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
-    _ = Result;
 
     const NodeBindingClosure = struct {
         pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -150,7 +147,8 @@ pub const NodeJSFS = struct {
     pub const readlink = call(.readlink);
     pub const rm = call(.rm);
     pub const rmdir = call(.rmdir);
-    pub const realpath = call(.realpath);
+    pub const realpath = call(.realpathNonNative);
+    pub const realpathNative = call(.realpath);
     pub const rename = call(.rename);
     pub const stat = call(.stat);
     pub const symlink = call(.symlink);
@@ -185,7 +183,8 @@ pub const NodeJSFS = struct {
     pub const readFileSync = callSync(.readFile);
     pub const writeFileSync = callSync(.writeFile);
     pub const readlinkSync = callSync(.readlink);
-    pub const realpathSync = callSync(.realpath);
+    pub const realpathSync = callSync(.realpathNonNative);
+    pub const realpathNativeSync = callSync(.realpath);
     pub const renameSync = callSync(.rename);
     pub const statSync = callSync(.stat);
     pub const symlinkSync = callSync(.symlink);
@@ -214,11 +213,6 @@ pub const NodeJSFS = struct {
     pub const watch = callSync(.watch);
     pub const watchFile = callSync(.watchFile);
     pub const unwatchFile = callSync(.unwatchFile);
-
-    // Not implemented yet:
-    const notimpl = fdatasync;
-    pub const opendir = notimpl;
-    pub const opendirSync = notimpl;
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {

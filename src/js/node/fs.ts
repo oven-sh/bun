@@ -158,8 +158,7 @@ var access = function access(path, mode, callback) {
     }
 
     ensureCallback(callback);
-
-    fs.access(path, mode).then(nullcallback(callback), callback);
+    fs.access(path, mode).then(callback, callback);
   },
   appendFile = function appendFile(path, data, options, callback) {
     if (!$isCallable(callback)) {
@@ -173,8 +172,8 @@ var access = function access(path, mode, callback) {
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
-      fs.close(fd).then(() => callback(), callback);
-    } else if (callback == undefined) {
+      fs.close(fd).then(() => callback(null), callback);
+    } else if (callback === undefined) {
       fs.close(fd).then(() => {});
     } else {
       callback = ensureCallback(callback);
@@ -430,7 +429,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
-    fs.realpath(p, options).then(function (resolvedPath) {
+    fs.realpath(p, options, false).then(function (resolvedPath) {
       callback(null, resolvedPath);
     }, callback);
   },
@@ -781,6 +780,11 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
     fd = defaultReadStreamOptions.fd,
   }: Partial<typeof defaultReadStreamOptions> = options;
 
+  if (encoding && !Buffer.isEncoding(encoding)) {
+    const reason = "is invalid encoding";
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, reason);
+  }
+
   if (pathOrFd?.constructor?.name === "URL") {
     pathOrFd = Bun.fileURLToPath(pathOrFd);
   }
@@ -1061,9 +1065,13 @@ var defaultWriteStreamOptions = {
   },
 };
 
-var WriteStreamClass = (WriteStream = function WriteStream(path, options = defaultWriteStreamOptions) {
+var WriteStreamClass = (WriteStream = function WriteStream(path, options: any = defaultWriteStreamOptions) {
   if (!(this instanceof WriteStream)) {
-    return new WriteStream(path, options);
+    return new (WriteStream as any)(path, options);
+  }
+
+  if (typeof options === "string") {
+    options = { encoding: options };
   }
 
   if (!options) {
@@ -1086,6 +1094,11 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
   if (start !== undefined) {
     validateInteger(start, "start", 0);
     options.pos = start;
+  }
+
+  if (encoding && !Buffer.isEncoding(encoding)) {
+    const reason = "is invalid encoding";
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, reason);
   }
 
   var tempThis = {};
@@ -1386,9 +1399,20 @@ Object.defineProperties(fs, {
   },
 });
 
-// lol
-realpath.native = realpath;
-realpathSync.native = realpathSync;
+// @ts-ignore
+realpath.native = function realpath(p, options, callback) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = undefined;
+  }
+
+  ensureCallback(callback);
+
+  fs.realpathNative(p, options).then(function (resolvedPath) {
+    callback(null, resolvedPath);
+  }, callback);
+};
+realpathSync.native = fs.realpathNativeSync.bind(fs);
 
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`

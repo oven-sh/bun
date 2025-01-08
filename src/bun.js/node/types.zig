@@ -635,18 +635,22 @@ pub const StringOrBuffer = union(enum) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
 
-        var str = try bun.String.fromJS2(value, global);
-        defer str.deref();
-        if (str.isEmpty()) {
-            return fromJSMaybeAsync(global, allocator, value, is_async);
+        if (value.isString()) {
+            var str = try bun.String.fromJS2(value, global);
+            defer str.deref();
+            if (str.isEmpty()) {
+                return fromJSMaybeAsync(global, allocator, value, is_async);
+            }
+
+            const out = str.encode(encoding);
+            defer global.vm().reportExtraMemory(out.len);
+
+            return .{
+                .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
+            };
         }
 
-        const out = str.encode(encoding);
-        defer global.vm().reportExtraMemory(out.len);
-
-        return .{
-            .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
-        };
+        return null;
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?StringOrBuffer {
@@ -1534,6 +1538,34 @@ pub const FileSystemFlags = enum(Mode) {
         }
 
         return null;
+    }
+
+    /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
+    pub fn fromJSNumberOnly(global: *JSC.JSGlobalObject, value: JSC.JSValue, comptime kind: enum { access, copy_file }) bun.JSError!FileSystemFlags {
+        // Allow only int32 or null/undefined values.
+        if (!value.isNumber()) {
+            if (value.isUndefinedOrNull()) {
+                return @enumFromInt(switch (kind) {
+                    .access => 0, // F_OK
+                    .copy_file => 0, // constexpr int kDefaultCopyMode = 0;
+                });
+            }
+            return global.ERR_INVALID_ARG_TYPE("mode must be int32 or null/undefined", .{}).throw();
+        }
+        const min, const max = .{ 0, 7 };
+        if (value.isInt32()) {
+            const int: i32 = value.asInt32();
+            if (int < min or int > max) {
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+            }
+            return @enumFromInt(int);
+        } else {
+            const float = value.asNumber();
+            if (std.math.isNan(float) or std.math.isInf(float) or float < min or float > max) {
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+            }
+            return @enumFromInt(@as(i32, @intFromFloat(float)));
+        }
     }
 };
 

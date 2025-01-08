@@ -89,6 +89,7 @@ pub const Async = struct {
     pub const readlink = NewAsyncFSTask(Return.Readlink, Arguments.Readlink, NodeFS.readlink);
     pub const readv = NewUVFSRequest(Return.Readv, Arguments.Readv, .readv);
     pub const realpath = NewAsyncFSTask(Return.Realpath, Arguments.Realpath, NodeFS.realpath);
+    pub const realpathNonNative = NewAsyncFSTask(Return.Realpath, Arguments.Realpath, NodeFS.realpathNonNative);
     pub const rename = NewAsyncFSTask(Return.Rename, Arguments.Rename, NodeFS.rename);
     pub const rm = NewAsyncFSTask(Return.Rm, Arguments.Rm, NodeFS.rm);
     pub const rmdir = NewAsyncFSTask(Return.Rmdir, Arguments.RmDir, NodeFS.rmdir);
@@ -2694,7 +2695,7 @@ pub const Arguments = struct {
             }
 
             const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
-                return ctx.throwInvalidArguments("data must be a string or TypedArray", .{});
+                return ctx.ERR_INVALID_ARG_TYPE("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
             // Note: Signal is not implemented
@@ -2811,11 +2812,7 @@ pub const Arguments = struct {
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                if (arg.isString()) {
-                    mode = try FileSystemFlags.fromJS(ctx, arg) orelse {
-                        return ctx.throwInvalidArguments("Invalid mode", .{});
-                    };
-                }
+                mode = try FileSystemFlags.fromJSNumberOnly(ctx, arg, .access);
             }
 
             return Access{
@@ -2876,12 +2873,10 @@ pub const Arguments = struct {
             };
             errdefer dest.deinit();
 
-            var mode: i32 = 0;
+            var mode: Mode = 0;
             if (arguments.next()) |arg| {
                 arguments.eat();
-                if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
-                }
+                mode = @intFromEnum(try FileSystemFlags.fromJSNumberOnly(ctx, arg, .copy_file));
             }
 
             return CopyFile{
@@ -3031,8 +3026,15 @@ pub const StringOrUndefined = union(enum) {
     }
 };
 
+/// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
+const Null = struct {
+    pub fn toJS(_: @This(), _: *JSC.JSGlobalObject) JSC.JSValue {
+        return .null;
+    }
+};
+
 const Return = struct {
-    pub const Access = void;
+    pub const Access = Null;
     pub const AppendFile = void;
     pub const Close = void;
     pub const CopyFile = void;
@@ -3181,15 +3183,19 @@ pub const NodeFS = struct {
     ///
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
-    /// the heap allocated buffer on the NodefS struct
+    /// the heap allocated buffer on the NodeFS struct
     sync_error_buf: bun.PathBuffer = undefined,
+    sync_error_buf_destination: bun.PathBuffer = undefined,
     vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         const path = args.path.sliceZ(&this.sync_error_buf);
-        return Syscall.access(path, @intFromEnum(args.mode));
+        return switch (Syscall.access(path, @intFromEnum(args.mode))) {
+            .err => |err| .{ .err = err },
+            .result => .{ .result = .{} },
+        };
     }
 
     pub fn appendFile(this: *NodeFS, args: Arguments.AppendFile, comptime flavor: Flavor) Maybe(Return.AppendFile) {
@@ -3343,12 +3349,23 @@ pub const NodeFS = struct {
         return Maybe(Return.CopyFile).success;
     }
 
+    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime _: Flavor) Maybe(Return.CopyFile) {
+        return switch (this.copyFileInner(args)) {
+            .result => .{ .result = {} },
+            .err => |err| .{ .err = .{
+                .errno = err.errno,
+                .syscall = .copyfile,
+                .path = args.src.slice(),
+                .dest = args.dest.slice(),
+            } },
+        };
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
-        _ = flavor;
+    fn copyFileInner(this: *NodeFS, args: Arguments.CopyFile) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
         // TODO: do we need to fchown?
@@ -3361,7 +3378,7 @@ pub const NodeFS = struct {
 
             if (args.mode.isForceClone()) {
                 // https://www.manpagez.com/man/2/clonefile/
-                return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
+                return ret.errnoSysP(C.clonefile(src, dest, 0), .copyfile, src) orelse ret.success;
             } else {
                 const stat_ = switch (Syscall.stat(src)) {
                     .result => |result| result,
@@ -3383,7 +3400,7 @@ pub const NodeFS = struct {
                         _ = Syscall.unlink(dest);
                     }
 
-                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
+                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .copyfile, src) == null) {
                         _ = C.chmod(dest, stat_.mode);
                         return ret.success;
                     }
@@ -3712,24 +3729,19 @@ pub const NodeFS = struct {
     }
 
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime _: Flavor) Maybe(Return.Link) {
-        var new_path_buf: bun.PathBuffer = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
-        const to = args.new_path.sliceZ(&new_path_buf);
+        const to = args.new_path.sliceZ(&this.sync_error_buf_destination);
 
         if (Environment.isWindows) {
             return Syscall.link(from, to);
         }
 
-        return Maybe(Return.Link).errnoSysP(system.link(from, to, 0), .link, from) orelse
+        return Maybe(Return.Link).errnoSysPD(system.link(from, to, 0), .link, args.old_path.slice(), args.new_path.slice()) orelse
             Maybe(Return.Link).success;
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime _: Flavor) Maybe(Return.Lstat) {
-        return switch (Syscall.lstat(
-            args.path.sliceZ(
-                &this.sync_error_buf,
-            ),
-        )) {
+        return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
             .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
@@ -5202,7 +5214,35 @@ pub const NodeFS = struct {
         };
     }
 
+    pub fn realpathNonNative(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
+        // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
+        // `fs.realpath.native`. In Bun, the system call is the default, but the error
+        // code must be changed to make it seem like it is using lstat (tests expect this)
+        return switch (this.realpathInner(args)) {
+            .result => |res| .{ .result = res },
+            .err => |err| .{ .err = .{
+                .errno = err.errno,
+                .syscall = .lstat,
+                .path = args.path.slice(),
+            } },
+        };
+    }
+
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
+        // Native realpath needs to force `realpath` as the name
+        return switch (this.realpathInner(args)) {
+            .result => |res| .{ .result = res },
+            .err => |err| .{
+                .err = .{
+                    .errno = err.errno,
+                    .syscall = .realpath,
+                    .path = args.path.slice(),
+                },
+            },
+        };
+    }
+
+    pub fn realpathInner(this: *NodeFS, args: Arguments.Realpath) Maybe(Return.Realpath) {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();

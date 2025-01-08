@@ -50,7 +50,6 @@ const makeSafe = (unsafe, safe) => {
     let next; // We can reuse the same `next` method.
 
     ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), function makeIterableMethodsSafe(key) {
-      // if (Reflect.hasOwnProperty(safe.prototype, key)) return;
       if (Reflect.getOwnPropertyDescriptor(safe.prototype, key)) return;
 
       const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
@@ -58,7 +57,9 @@ const makeSafe = (unsafe, safe) => {
         try {
           var called = desc.value.$call(dummy) || {};
         } catch (e) {
-          const err = new Error(`${unsafe.name}.prototype.${key} thew an error while creating a safe version. This is likely due to prototype pollution.`);
+          const err = new Error(
+            `${unsafe.name}.prototype.${key} thew an error while creating a safe version. This is likely due to prototype pollution.`,
+          );
           Object.assign(err, { unsafe: unsafe.name, safe: safe.name, key, cause: e });
           throw err;
         }

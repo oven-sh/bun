@@ -22,7 +22,12 @@ let exports = {
     // if (process.env.FORCE_COLOR !== undefined) {
     //   return lazyInternalTTY().getColorDepth() > 2;
     // }
-    return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
+    return (
+      stream?.isTTY &&
+      process.env.FORCE_COLOR !== "0" &&
+      process.env.NO_COLOR != "!" &&
+      (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true)
+    );
   },
   refresh(): void {
     if (exports.shouldColorize(process.stderr)) {

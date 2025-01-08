@@ -87,12 +87,6 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numbe
   return _handler;
 }
 
-export async function readdirSorted(path: PathLike): Promise<string[]> {
-  const results = await readdir(path);
-  results.sort();
-  return results;
-}
-
 export function setHandler(newHandler: Handler) {
   handler = newHandler;
 }

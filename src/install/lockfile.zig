@@ -15,6 +15,7 @@ const C = bun.C;
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -496,11 +497,14 @@ pub const Tree = struct {
     pub const HoistDependencyResult = union(enum) {
         dependency_loop,
         hoisted,
-        dest_id: Id,
-        replace: struct {
-            dest_id: Id,
-            dep_id: DependencyID,
+        placement: struct {
+            id: Id,
+            bundled: bool = false,
         },
+        // replace: struct {
+        //     dest_id: Id,
+        //     dep_id: DependencyID,
+        // },
     };
 
     pub const SubtreeError = OOM || error{DependencyLoop};
@@ -685,6 +689,9 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            install_root_dependencies: if (method == .filter) bool else void,
+            path_buf: []u8,
 
             pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
                 this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -707,11 +714,19 @@ pub const Tree = struct {
                 dependencies: Lockfile.DependencyIDList,
             };
 
+            pub const CleanResult = struct {
+                trees: std.ArrayListUnmanaged(Tree),
+                dep_ids: std.ArrayListUnmanaged(DependencyID),
+            };
+
             /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
-            pub fn clean(this: *@This()) OOM!DependencyIDList {
+            pub fn clean(this: *@This()) OOM!CleanResult {
                 var total: u32 = 0;
-                const trees = this.list.items(.tree);
-                const dependencies = this.list.items(.dependencies);
+
+                const list_ptr = this.list.bytes;
+                const slice = this.list.toOwnedSlice();
+                var trees = slice.items(.tree);
+                const dependencies = slice.items(.dependencies);
 
                 for (trees) |*tree| {
                     total += tree.dependencies.len;
@@ -733,7 +748,17 @@ pub const Tree = struct {
                 this.queue.deinit();
                 this.sort_buf.deinit(this.allocator);
 
-                return dependency_ids;
+                // take over the `builder.list` pointer for only trees
+                if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
+                    var new: [*]Tree = @ptrCast(list_ptr);
+                    bun.copy(Tree, new[0..trees.len], trees);
+                    trees = new[0..trees.len];
+                }
+
+                return .{
+                    .trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(trees),
+                    .dep_ids = dependency_ids,
+                };
             }
         };
     }
@@ -741,6 +766,7 @@ pub const Tree = struct {
     pub fn processSubtree(
         this: *const Tree,
         dependency_id: DependencyID,
+        hoist_root_id: Tree.Id,
         comptime method: BuilderMethod,
         builder: *Builder(method),
         log_level: if (method == .filter) PackageManager.Options.LogLevel else void,
@@ -815,7 +841,7 @@ pub const Tree = struct {
 
             // filter out disabled dependencies
             if (comptime method == .filter) {
-                if (builder.lockfile.isPackageDisabled(
+                if (builder.lockfile.isResolvedDependencyDisabled(
                     dep_id,
                     switch (pkg_resolutions[parent_pkg_id].tag) {
                         .root, .workspace, .folder => builder.manager.options.local_package_features,
@@ -837,15 +863,96 @@ pub const Tree = struct {
 
                     continue;
                 }
+
+                if (builder.manager.subcommand == .install) dont_skip: {
+                    // only do this when parent is root. workspaces are always dependencies of the root
+                    // package, and the root package is always called with `processSubtree`
+                    if (parent_pkg_id == 0 and builder.workspace_filters.len > 0) {
+                        if (!builder.dependencies[dep_id].behavior.isWorkspaceOnly()) {
+                            if (builder.install_root_dependencies) {
+                                break :dont_skip;
+                            }
+
+                            continue;
+                        }
+
+                        var match = false;
+
+                        for (builder.workspace_filters) |workspace_filter| {
+                            const res_id = builder.resolutions[dep_id];
+
+                            const pattern, const path_or_name = switch (workspace_filter) {
+                                .name => |pattern| .{ pattern, pkg_names[res_id].slice(builder.buf()) },
+
+                                .path => |pattern| path: {
+                                    const res = &pkg_resolutions[res_id];
+                                    if (res.tag != .workspace) {
+                                        break :dont_skip;
+                                    }
+                                    const res_path = res.value.workspace.slice(builder.buf());
+
+                                    // occupy `builder.path_buf`
+                                    var abs_res_path = strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
+                                        FileSystem.instance.top_level_dir,
+                                        builder.path_buf,
+                                        &.{res_path},
+                                        .auto,
+                                    ));
+
+                                    if (comptime Environment.isWindows) {
+                                        abs_res_path = abs_res_path[Path.windowsVolumeNameLen(abs_res_path)[0]..];
+                                        Path.dangerouslyConvertPathToPosixInPlace(u8, builder.path_buf[0..abs_res_path.len]);
+                                    }
+
+                                    break :path .{
+                                        pattern,
+                                        abs_res_path,
+                                    };
+                                },
+
+                                .all => {
+                                    match = true;
+                                    continue;
+                                },
+                            };
+
+                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                                .match, .negate_match => match = true,
+
+                                .negate_no_match => {
+                                    // always skip if a pattern specifically says "!<name>"
+                                    match = false;
+                                    break;
+                                },
+
+                                .no_match => {
+                                    // keep current
+                                },
+                            }
+                        }
+
+                        if (!match) {
+                            continue;
+                        }
+                    }
+                }
             }
 
-            const dependency = builder.dependencies[dep_id];
-            // Do not hoist folder dependencies
-            const res: HoistDependencyResult = if (pkg_resolutions[pkg_id].tag == .folder)
-                .{ .dest_id = next.id }
-            else
-                try next.hoistDependency(
+            const hoisted: HoistDependencyResult = hoisted: {
+                const dependency = builder.dependencies[dep_id];
+
+                // don't hoist if it's a folder dependency or a bundled dependency.
+                if (dependency.behavior.isBundled()) {
+                    break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+                }
+
+                if (pkg_resolutions[pkg_id].tag == .folder) {
+                    break :hoisted .{ .placement = .{ .id = next.id } };
+                }
+
+                break :hoisted try next.hoistDependency(
                     true,
+                    hoist_root_id,
                     pkg_id,
                     &dependency,
                     dependency_lists,
@@ -853,25 +960,20 @@ pub const Tree = struct {
                     method,
                     builder,
                 );
+            };
 
-            switch (res) {
+            switch (hoisted) {
                 .dependency_loop, .hoisted => continue,
-                .replace => |replacement| {
-                    var dep_ids = dependency_lists[replacement.dest_id].items;
-                    for (0..dep_ids.len) |i| {
-                        if (dep_ids[i] == replacement.dep_id) {
-                            dep_ids[i] = dep_id;
-                            break;
-                        }
-                    }
-                },
-                .dest_id => |dest_id| {
-                    dependency_lists[dest_id].append(builder.allocator, dep_id) catch bun.outOfMemory();
-                    trees[dest_id].dependencies.len += 1;
+                .placement => |dest| {
+                    dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                    trees[dest.id].dependencies.len += 1;
                     if (builder.resolution_lists[pkg_id].len > 0) {
                         try builder.queue.writeItem(.{
-                            .tree_id = dest_id,
+                            .tree_id = dest.id,
                             .dependency_id = dep_id,
+
+                            // if it's bundled, start a new hoist root
+                            .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
                         });
                     }
                 },
@@ -888,10 +990,10 @@ pub const Tree = struct {
     // 1 (return hoisted) - de-duplicate (skip) the package
     // 2 (return id) - move the package to the top directory
     // 3 (return dependency_loop) - leave the package at the same (relative) directory
-    // 4 (replace) - replace the existing (same name) parent dependency
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
+        hoist_root_id: Id,
         package_id: PackageID,
         dependency: *const Dependency,
         dependency_lists: []Lockfile.DependencyIDList,
@@ -955,9 +1057,10 @@ pub const Tree = struct {
         }
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
-        if (this.parent != invalid_id) {
+        if (this.parent != invalid_id and this.id != hoist_root_id) {
             const id = trees[this.parent].hoistDependency(
                 false,
+                hoist_root_id,
                 package_id,
                 dependency,
                 dependency_lists,
@@ -969,11 +1072,11 @@ pub const Tree = struct {
         }
 
         // place the dependency in the current tree
-        return .{ .dest_id = this.id }; // 2
+        return .{ .placement = .{ .id = this.id } }; // 2
     }
 };
 
-pub fn isPackageDisabled(
+pub fn isResolvedDependencyDisabled(
     lockfile: *const Lockfile,
     dep_id: DependencyID,
     features: Features,
@@ -983,7 +1086,7 @@ pub fn isPackageDisabled(
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
-    return !dep.behavior.isEnabled(features);
+    return dep.behavior.isBundled() or !dep.behavior.isEnabled(features);
 }
 
 /// This conditionally clones the lockfile with root packages marked as non-resolved
@@ -1409,6 +1512,10 @@ pub fn fmtMetaHash(this: *const Lockfile) MetaHashFormatter {
 pub const FillItem = struct {
     tree_id: Tree.Id,
     dependency_id: DependencyID,
+
+    /// If valid, dependencies will not hoist
+    /// beyond this tree if they're in a subtree
+    hoist_root_id: Tree.Id,
 };
 pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 
@@ -1448,7 +1555,7 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            try this.lockfile.hoist(this.log, .resolvable, {});
+            try this.lockfile.resolve(this.log);
         }
 
         // capacity is used for calculating byte size
@@ -1458,14 +1565,37 @@ const Cloner = struct {
     }
 };
 
+pub fn resolve(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .resolvable, {}, {}, {});
+}
+
+pub fn filter(
+    lockfile: *Lockfile,
+    log: *logger.Log,
+    manager: *PackageManager,
+    install_root_dependencies: bool,
+    workspace_filters: []const WorkspaceFilter,
+) Tree.SubtreeError!void {
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
+}
+
+/// Sets `buffers.trees` and `buffers.hoisted_dependencies`
 pub fn hoist(
     lockfile: *Lockfile,
     log: *logger.Log,
     comptime method: Tree.BuilderMethod,
     manager: if (method == .filter) *PackageManager else void,
+    install_root_dependencies: if (method == .filter) bool else void,
+    workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
+
+    var path_buf: bun.PathBuffer = undefined;
+
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = TreeFiller.init(allocator),
@@ -1476,16 +1606,33 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
+        .path_buf = &path_buf,
+        .install_root_dependencies = install_root_dependencies,
+        .workspace_filters = workspace_filters,
     };
 
-    try (Tree{}).processSubtree(Tree.root_dep_id, method, &builder, if (method == .filter) manager.options.log_level else {});
+    try (Tree{}).processSubtree(
+        Tree.root_dep_id,
+        Tree.invalid_id,
+        method,
+        &builder,
+        if (method == .filter) manager.options.log_level else {},
+    );
+
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
-        try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, method, &builder, if (method == .filter) manager.options.log_level else {});
+        try builder.list.items(.tree)[item.tree_id].processSubtree(
+            item.dependency_id,
+            item.hoist_root_id,
+            method,
+            &builder,
+            if (method == .filter) manager.options.log_level else {},
+        );
     }
 
-    lockfile.buffers.trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(builder.list.items(.tree));
-    lockfile.buffers.hoisted_dependencies = try builder.clean();
+    const cleaned = try builder.clean();
+    lockfile.buffers.trees = cleaned.trees;
+    lockfile.buffers.hoisted_dependencies = cleaned.dep_ids;
 }
 
 const PendingResolution = struct {
@@ -1534,7 +1681,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
+            _ = bun.sys.chdir("", std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 
@@ -1751,7 +1898,7 @@ pub const Printer = struct {
             // It's possible this package was installed but the dependency is disabled.
             // Have "zod@1.0.0" in dependencies and `zod2@npm:zod@1.0.0` in devDependencies
             // and install with --omit=dev.
-            if (this.lockfile.isPackageDisabled(
+            if (this.lockfile.isResolvedDependencyDisabled(
                 dep_id,
                 this.options.local_package_features,
                 &pkg_metas[package_id],
@@ -2247,14 +2394,14 @@ pub const Printer = struct {
                     }
 
                     if (dependencies.len > 0) {
-                        var behavior = Behavior.uninitialized;
+                        var behavior: Behavior = .{};
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
                             if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                                } else if (dep.behavior.isNormal()) {
+                                } else if (dep.behavior.isProd()) {
                                     try writer.writeAll("  dependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                                 } else if (dep.behavior.isDev()) {
@@ -2378,8 +2525,12 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
     }
 
     if (comptime Environment.isPosix) {
-        // chmod 777 on posix
-        switch (bun.sys.fchmod(file.handle, 0o777)) {
+        // chmod 755 for binary, 644 for plaintext
+        var filemode: bun.Mode = 0o755;
+        if (save_format == .text) {
+            filemode = 0o644;
+        }
+        switch (bun.sys.fchmod(file.handle, filemode)) {
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
@@ -3577,7 +3728,7 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.prod };
         pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
         pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
         pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
@@ -3967,13 +4118,23 @@ pub const Package = extern struct {
                     const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
+                    var behavior = group.behavior;
+                    if (comptime is_peer) {
+                        behavior.optional = i < package_version.non_optional_peer_dependencies_start;
+                    }
+                    if (package_version_ptr.allDependenciesBundled()) {
+                        behavior.bundled = true;
+                    } else for (package_version.bundled_dependencies.get(manifest.bundled_deps_buf)) |bundled_dep_name_hash| {
+                        if (bundled_dep_name_hash == name.hash) {
+                            behavior.bundled = true;
+                            break;
+                        }
+                    }
+
                     const dependency = Dependency{
                         .name = name.value,
                         .name_hash = name.hash,
-                        .behavior = if (comptime is_peer)
-                            group.behavior.setOptional(i < package_version.non_optional_peer_dependencies_start)
-                        else
-                            group.behavior,
+                        .behavior = behavior,
                         .version = Dependency.parse(
                             allocator,
                             name.value,
@@ -4286,6 +4447,7 @@ pub const Package = extern struct {
 
                                 const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
+                                var resolver: void = {};
                                 try workspace.parseWithJSON(
                                     to_lockfile,
                                     pm,
@@ -4294,7 +4456,7 @@ pub const Package = extern struct {
                                     source,
                                     json.root,
                                     void,
-                                    {},
+                                    &resolver,
                                     Features.workspace,
                                 );
 
@@ -4375,7 +4537,7 @@ pub const Package = extern struct {
         log: *logger.Log,
         source: logger.Source,
         comptime ResolverContext: type,
-        resolver: ResolverContext,
+        resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
         initializeStore();
@@ -4531,7 +4693,7 @@ pub const Package = extern struct {
                         for (package_dependencies[0..dependencies_count]) |*dep| {
                             if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
                                 dep.* = .{
-                                    .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
                                     .name = external_alias.value,
                                     .name_hash = external_alias.hash,
                                     .version = dependency_version,
@@ -4643,7 +4805,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+            .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
@@ -5065,7 +5227,7 @@ pub const Package = extern struct {
         source: logger.Source,
         json: Expr,
         comptime ResolverContext: type,
-        resolver: ResolverContext,
+        resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
         var string_builder = lockfile.stringBuilder();
@@ -5087,7 +5249,7 @@ pub const Package = extern struct {
             }
 
             // name is not validated by npm, so fallback to creating a new from the version literal
-            if (ResolverContext == *PackageManager.GitResolver) {
+            if (ResolverContext == PackageManager.GitResolver) {
                 const resolution: *const Resolution = resolver.resolution;
                 const repo = switch (resolution.tag) {
                     .git => resolution.value.git,
@@ -5377,7 +5539,7 @@ pub const Package = extern struct {
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
         name: {
-            if (ResolverContext == *PackageManager.GitResolver) {
+            if (ResolverContext == PackageManager.GitResolver) {
                 if (resolver.new_name.len != 0) {
                     defer lockfile.allocator.free(resolver.new_name);
                     const external_string = string_builder.append(ExternalString, resolver.new_name);
@@ -5525,6 +5687,25 @@ pub const Package = extern struct {
             try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
         }
 
+        var bundled_deps = bun.StringSet.init(allocator);
+        defer bundled_deps.deinit();
+        var bundle_all_deps = false;
+        if (comptime ResolverContext != void and ResolverContext.checkBundledDependencies()) {
+            if (json.get("bundleDependencies") orelse json.get("bundledDependencies")) |bundled_deps_expr| {
+                switch (bundled_deps_expr.data) {
+                    .e_boolean => |boolean| {
+                        bundle_all_deps = boolean.value;
+                    },
+                    .e_array => |arr| {
+                        for (arr.slice()) |item| {
+                            try bundled_deps.insert(item.asString(allocator) orelse continue);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
         total_dependencies_count = 0;
         const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
@@ -5625,7 +5806,7 @@ pub const Package = extern struct {
                     )) |_dep| {
                         var dep = _dep;
                         if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                            dep.behavior = dep.behavior.setOptional(true);
+                            dep.behavior = dep.behavior.add(.optional);
                         }
 
                         package_dependencies[total_dependencies_count] = dep;
@@ -5668,7 +5849,11 @@ pub const Package = extern struct {
                                 )) |_dep| {
                                     var dep = _dep;
                                     if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
-                                        dep.behavior = dep.behavior.setOptional(true);
+                                        dep.behavior.optional = true;
+                                    }
+
+                                    if (bundle_all_deps or bundled_deps.contains(dep.name.slice(lockfile.buffers.string_bytes.items))) {
+                                        dep.behavior.bundled = true;
                                     }
 
                                     package_dependencies[total_dependencies_count] = dep;
@@ -7042,7 +7227,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     return digest;
 }
 
-pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
+pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
     const buf = this.buffers.string_bytes.items;

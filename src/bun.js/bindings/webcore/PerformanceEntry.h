@@ -59,6 +59,8 @@ public:
     virtual Type performanceEntryType() const = 0;
     virtual ASCIILiteral entryType() const = 0;
 
+    size_t memoryCost() const;
+
     static std::optional<Type> parseEntryTypeString(const String& entryType);
 
     static bool startTimeCompareLessThan(const RefPtr<PerformanceEntry>& a, const RefPtr<PerformanceEntry>& b)

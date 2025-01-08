@@ -231,7 +231,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -501,7 +501,7 @@ pub const UpgradeCommand = struct {
         };
 
         const zip_url = URL.parse(version.zip_url);
-        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(zip_url);
 
         {
             var refresher = Progress{};
@@ -581,7 +581,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            _ = bun.sys.chdir(tmpdir_z);
+            _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =

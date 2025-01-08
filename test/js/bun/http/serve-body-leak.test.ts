@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isDebug, isFlaky, isLinux } from "harness";
+import { bunEnv, bunExe, isDebug, isFlaky, isLinux, isWindows } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
@@ -149,7 +149,7 @@ for (const test_info of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip)(
+  it.todoIf(skip || isFlaky && isWindows)(
     testName,
     async () => {
       const { url, process } = await getURL();

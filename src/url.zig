@@ -93,6 +93,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "https");
     }
 
+    pub inline fn isS3(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "s3");
+    }
+
     pub inline fn isHTTP(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "http");
     }
@@ -103,6 +107,12 @@ pub const URL = struct {
         }
 
         return "localhost";
+    }
+
+    pub fn s3Path(this: *const URL) string {
+        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
+        const href = if (this.protocol.len > 0 and this.href.len > this.protocol.len + 2) this.href[this.protocol.len + 2 ..] else this.href;
+        return href[0 .. href.len - (this.search.len + this.hash.len)];
     }
 
     pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {

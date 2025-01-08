@@ -453,13 +453,13 @@ pub const JSBundler = struct {
                     return globalThis.throwInvalidArguments("define must be an object", .{});
                 }
 
-                var define_iter = JSC.JSPropertyIterator(.{
+                var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, define);
                 defer define_iter.deinit();
 
-                while (define_iter.next()) |prop| {
+                while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
                     const value_type = property_value.jsType();
 
@@ -485,7 +485,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "loader")) |loaders| {
-                var loader_iter = JSC.JSPropertyIterator(.{
+                var loader_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, loaders);
@@ -496,7 +496,7 @@ pub const JSBundler = struct {
                 var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
                 errdefer allocator.free(loader_values);
 
-                while (loader_iter.next()) |prop| {
+                while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }

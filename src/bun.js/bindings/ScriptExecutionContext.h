@@ -3,7 +3,6 @@
 #include "root.h"
 #include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
-#include "BunBroadcastChannelRegistry.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -13,6 +12,7 @@
 #include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
 #include <wtf/URL.h>
+#include <wtf/LazyRef.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -26,6 +26,7 @@ struct us_loop_t;
 namespace WebCore {
 
 class WebSocket;
+class BunBroadcastChannelRegistry;
 class MessagePort;
 
 class ScriptExecutionContext;
@@ -37,23 +38,8 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
     WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
 
 public:
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(0)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        regenerateIdentifier();
-    }
-
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(identifier)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        addToContextsMap();
-    }
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
 
     ~ScriptExecutionContext();
 
@@ -156,7 +142,7 @@ public:
         m_vm = &globalObject->vm();
     }
 
-    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
+    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(*this); }
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
@@ -166,10 +152,10 @@ private:
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
 
-    HashSet<MessagePort*> m_messagePorts;
-    HashSet<ContextDestructionObserver*> m_destructionObservers;
+    UncheckedKeyHashSet<MessagePort*> m_messagePorts;
+    UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
     Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
-    Ref<BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
+    LazyRef<ScriptExecutionContext, BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
 
     bool m_willProcessMessageWithMessagePortsSoon { false };
 

@@ -1951,7 +1951,7 @@ pub const VirtualMachine = struct {
         }
         vm.global = ZigGlobalObject.create(
             vm.console,
-            -1,
+            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             false,
             false,
             null,
@@ -2061,7 +2061,7 @@ pub const VirtualMachine = struct {
 
         vm.global = ZigGlobalObject.create(
             vm.console,
-            -1,
+            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             opts.smol,
             opts.eval,
             null,

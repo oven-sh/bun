@@ -28,6 +28,7 @@
 
 #include "BunClientData.h"
 #include "BroadcastChannelRegistry.h"
+#include "BunBroadcastChannelRegistry.h"
 #include "EventNames.h"
 #include "EventTarget.h"
 #include "MessageEvent.h"

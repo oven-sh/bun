@@ -1,6 +1,5 @@
 #include "root.h"
 
-#include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -862,6 +861,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+// executionContextId: -1 for main thread
+// executionContextId: maxInt32 for macros
+// executionContextId: >-1 for workers
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -878,7 +880,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (UNLIKELY(executionContextId > -1)) {
+        if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (UNLIKELY(!structure)) {
                 return nullptr;

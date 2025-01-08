@@ -7,12 +7,51 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
-
+#include "BunBroadcastChannelRegistry.h"
+#include <wtf/LazyRef.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
+static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;
 
-static std::atomic<unsigned> lastUniqueIdentifier = 0;
+static std::atomic<unsigned> lastUniqueIdentifier = INITIAL_IDENTIFIER_INTERNAL;
+
+#if ASSERT_ENABLED
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    static bool hasCalledInitialIdentifier = false;
+    ASSERT_WITH_MESSAGE(!hasCalledInitialIdentifier, "ScriptExecutionContext::initialIdentifier() cannot be called more than once. Use generateIdentifier() instead.");
+    hasCalledInitialIdentifier = true;
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#else
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#endif
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(initialIdentifier())
+    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
+        lazyRef.set(BunBroadcastChannelRegistry::create());
+    })
+{
+    addToContextsMap();
+}
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
+        lazyRef.set(BunBroadcastChannelRegistry::create());
+    })
+{
+    addToContextsMap();
+}
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
 WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);

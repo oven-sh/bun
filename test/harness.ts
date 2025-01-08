@@ -551,12 +551,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
-                    if (dep.literal === "*") {
-                      // allow any version, just needs to be resolvable
-                      continue;
-                    }
-                    if (dep.behavior.peer && dep.npm) {
-                      // allow peer dependencies to not match exactly, but still satisfy
+                    if (dep.npm) {
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
                     }
                     return {
@@ -1441,6 +1436,7 @@ export class VerdaccioRegistry {
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
+  users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1493,7 +1489,50 @@ export class VerdaccioRegistry {
     this.process?.kill();
   }
 
+  /**
+   * returns auth token
+   */
+  async generateUser(username: string, password: string): Promise<string> {
+    if (this.users[username]) {
+      throw new Error(`User ${username} already exists`);
+    } else this.users[username] = password;
+
+    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
+    const user = {
+      name: username,
+      password: password,
+      email: `${username}@example.com`,
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(user),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.token;
+    }
+
+    throw new Error("Failed to create user:", response.statusText);
+  }
+
+  async authBunfig(user: string) {
+    const authToken = await this.generateUser(user, user);
+    return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        `;
+  }
+
   async createTestDir() {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
+
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
     await write(
@@ -1504,7 +1543,7 @@ export class VerdaccioRegistry {
       registry = "${this.registryUrl()}"
       `,
     );
-
+    this.users = {};
     return { packageDir, packageJson };
   }
 }

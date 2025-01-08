@@ -2326,6 +2326,8 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (attribute.eqlComptime("bun.lock")) {
+                loader = .json;
             }
         }
 

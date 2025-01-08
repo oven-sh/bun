@@ -6417,6 +6417,77 @@ declare module "bun" {
      */
     timestamp?: number | Date,
   ): Buffer;
+
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0;
+    workspaces: {
+      [workspace: string]: {
+        name?: string;
+        version?: string;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
+        peerDependencies?: Record<string, string>;
+      };
+    };
+    trustedDependencies?: string[];
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path", INFO ]
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [package: string]:
+        | {
+            /** npm */
+            1: string;
+            2: string;
+            3: BunLockFilePackageInfo;
+            4: string;
+          }
+        | {
+            /** symlink, folder, tarball, workspace */
+            1: string;
+            2: BunLockFilePackageInfo;
+          }
+        | {
+            /** git, github */
+            1: string;
+            2: BunLockFilePackageInfo;
+            3: string;
+          }
+        | {
+            /** root */
+            1: string;
+            2: Pick<BunLockFilePackageInfo, 'bin' | 'binDir'>
+          }
+        | ({} & []);
+    };
+  };
+
+  type BunLockFilePackageInfo = {
+    dependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    os?: string | string[];
+    cpu?: string | string[];
+    bin?: Record<string, string>;
+    binDir?: string;
+  };
 }
 
 // extends lib.dom.d.ts

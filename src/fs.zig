@@ -1608,8 +1608,13 @@ pub const PathName = struct {
 
         // Strip off the extension
         if (strings.lastIndexOfChar(base, '.')) |dot| {
-            ext = base[dot..];
-            base = base[0..dot];
+            if (strings.endsWith(base, "bun.lock")) {
+                ext = "bun.lock";
+                base = "";
+            } else {
+                ext = base[dot..];
+                base = base[0..dot];
+            }
         } else {
             ext = "";
         }
@@ -1713,7 +1718,11 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
-        if (strings.eqlComptime(str, "package.json")) {
+        if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
+            return true;
+        }
+
+        if (strings.hasSuffixComptime(str, ".jsonc")) {
             return true;
         }
 

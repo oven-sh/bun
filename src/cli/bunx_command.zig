@@ -315,6 +315,10 @@ pub const BunxCommand = struct {
             true,
         );
 
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfig(ctx.allocator, null, ctx, comptime .BunxCommand);
+        }
+
         try Run.configurePathForRun(
             ctx,
             root_dir_info,

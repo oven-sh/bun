@@ -1576,8 +1576,6 @@ pub const Command = struct {
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
-            } else if (comptime Command.Tag.loads_config.get(command) and comptime command != .InstallCommand) {
-                try bun.CLI.Arguments.loadConfig(allocator, null, global_cli_ctx, comptime command);
             }
 
             if (comptime Environment.isWindows) {

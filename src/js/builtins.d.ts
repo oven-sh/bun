@@ -573,6 +573,8 @@ declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
 declare function $ERR_STREAM_NULL_VALUES(): TypeError;
 declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
+declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
+declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 
 /**
  * Convert a function to a class-like object.

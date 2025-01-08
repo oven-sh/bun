@@ -66,6 +66,8 @@ export default [
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],
+  ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
+  ["ERR_STREAM_PUSH_AFTER_EOF", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

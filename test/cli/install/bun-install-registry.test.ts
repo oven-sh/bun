@@ -5959,6 +5959,40 @@ describe("update", () => {
 
     expect(files).toMatchObject([{ version: "2.0.0" }, { dependencies: { "no-deps": "2.0.0" } }]);
   });
+
+  test("updating a dependency will deduplicate it if possible", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "zzz-1": "1.0.89",
+          "zzz-2": "1.0.89",
+        },
+      }),
+    );
+
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "node_modules", "zzz-1", "package.json")).json()).toEqual({
+      name: "zzz-1",
+      version: "1.0.89",
+    });
+
+    await runBunUpdate(env, packageDir, ["--latest"]);
+
+    expect(
+      await Promise.all([
+        file(join(packageDir, "node_modules", "zzz-1", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "zzz-2", "node_modules")),
+      ]),
+    ).toEqual([{ name: "zzz-1", version: "1.0.90" }, false]);
+  });
 });
 
 test("packages dependening on each other with aliases does not infinitely loop", async () => {

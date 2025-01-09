@@ -234,7 +234,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -830,6 +829,9 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
+}
+export fn Bun__gc(vm: *JSC.VirtualMachine, sync: bool) callconv(.C) usize {
+    return @call(.always_inline, gc, .{ vm, sync });
 }
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {

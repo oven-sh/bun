@@ -52,6 +52,56 @@ public:
         return m_instanceData;
     }
 
+    napi_status setLastError(napi_status status)
+    {
+        m_extendedErrorInfo.error_code = status;
+        return status;
+    }
+
+    // This function is not const because it modifies the extended error info by setting the error
+    // message
+    const napi_extended_error_info& getLastErrorInfo()
+    {
+        constexpr napi_status last_status = napi_would_deadlock;
+
+        constexpr const char* error_messages[] = {
+            nullptr, // napi_ok
+            "Invalid argument",
+            "An object was expected",
+            "A string was expected",
+            "A string or symbol was expected",
+            "A function was expected",
+            "A number was expected",
+            "A boolean was expected",
+            "An array was expected",
+            "Unknown failure",
+            "An exception is pending",
+            "The async work item was cancelled",
+            "napi_escape_handle already called on scope",
+            "Invalid handle scope usage",
+            "Invalid callback scope usage",
+            "Thread-safe function queue is full",
+            "Thread-safe function handle is closing",
+            "A bigint was expected",
+            "A date was expected",
+            "An arraybuffer was expected",
+            "A detachable arraybuffer was expected",
+            "Main thread would deadlock",
+        };
+
+        static_assert(std::size(error_messages) == last_status + 1,
+            "error_messages array does not cover all status codes");
+
+        napi_status status = m_extendedErrorInfo.error_code;
+        if (status >= 0 && status <= last_status) {
+            m_extendedErrorInfo.error_message = error_messages[status];
+        } else {
+            m_extendedErrorInfo.error_message = nullptr;
+        }
+
+        return m_extendedErrorInfo;
+    }
+
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
@@ -59,6 +109,14 @@ private:
     void* m_instanceData = nullptr;
     napi_finalize m_instanceDataFinalizer = nullptr;
     void* m_instanceDataFinalizerHint = nullptr;
+    napi_extended_error_info m_extendedErrorInfo = {
+        .error_message = "",
+        // Not currently used by Bun -- always nullptr
+        .engine_reserved = nullptr,
+        // Not currently used by Bun -- always zero
+        .engine_error_code = 0,
+        .error_code = napi_ok,
+    };
 };
 
 namespace Zig {

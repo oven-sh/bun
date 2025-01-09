@@ -6917,8 +6917,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    prepend_part: ?Part = null,
-
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.

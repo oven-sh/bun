@@ -53,6 +53,7 @@ class GlobalInternals;
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
+#include <js_native_api.h>
 
 typedef struct napi_env__* napi_env;
 struct napi_module;

@@ -384,6 +384,12 @@ describe("napi", () => {
       checkSameOutput("test_create_bigint_words", []);
     });
   });
+
+  describe("napi_get_last_error_info", () => {
+    it("returns information from the most recent call", () => {
+      checkSameOutput("test_extended_error_messages", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

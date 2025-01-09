@@ -462,10 +462,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     transpiler.runtime.allow_runtime = false;
-    transpiler.runtime.use_import_meta_require = switch (transpiler.transform.target orelse .browser) {
-        .bun, .bun_macro => true,
-        else => false,
-    };
 
     if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {

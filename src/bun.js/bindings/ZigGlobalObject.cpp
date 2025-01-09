@@ -1,3 +1,4 @@
+
 #include "root.h"
 
 #include "JavaScriptCore/PropertySlot.h"
@@ -60,6 +61,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunWorkerGlobalScope.h"
@@ -492,76 +494,40 @@ WTF::String Bun::formatStackTrace(
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        WTF::String functionName;
-        bool isBuiltinFunction = false;
+        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
-        sb.append("    at "_s);
-
-        if (auto codeblock = frame.codeBlock()) {
-
-            if (codeblock->isConstructor()) {
-                sb.append("new "_s);
-            }
-
-            // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
-            // We check the errorInstance to see if we are allowed to access this memory.
-            if (errorInstance) {
-                switch (codeblock->codeType()) {
-                case JSC::CodeType::FunctionCode:
-                case JSC::CodeType::EvalCode: {
-                    if (auto* callee = frame.callee()) {
-                        if (auto* object = callee->getObject()) {
-                            JSValue functionNameValue = object->getDirect(vm, vm.propertyNames->name);
-                            if (functionNameValue && functionNameValue.isString()) {
-                                functionName = functionNameValue.toWTFString(lexicalGlobalObject);
-                            }
-
-                            if (functionName.isEmpty()) {
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
-                                functionName = JSC::getCalculatedDisplayName(vm, object);
-                                if (catchScope.exception()) {
-                                    catchScope.clearException();
-                                }
-                            }
-
-                            if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
-                                if (unlinkedCodeBlock->isBuiltinFunction()) {
-                                    isBuiltinFunction = true;
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-                default: {
-                    break;
-                }
+        // -- get the data we need to render the text --
+        JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
+        if (frame.hasLineAndColumnInfo()) {
+            auto* callee = frame.callee();
+            if (callee) {
+                if (auto* object = callee->getObject()) {
+                    globalObjectForFrame = object->globalObject();
                 }
             }
         }
 
-        if (functionName.isEmpty()) {
-            functionName = frame.functionName(vm);
-        }
-
-        if (functionName.isEmpty()) {
-            sb.append("<anonymous>"_s);
-        } else {
-            sb.append(functionName);
-        }
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
+        OrdinalNumber originalLine = {};
+        OrdinalNumber originalColumn = {};
+        OrdinalNumber displayLine = {};
+        OrdinalNumber displayColumn = {};
+        WTF::String sourceURLForFrame;
 
         if (frame.hasLineAndColumnInfo()) {
             ZigStackFrame remappedFrame = {};
             LineColumn lineColumn = frame.computeLineAndColumn();
-            OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-            OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+            originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+            originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+            displayLine = originalLine;
+            displayColumn = originalColumn;
 
             remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
             remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
 
-            String sourceURLForFrame = Zig::sourceURL(vm, frame);
+            sourceURLForFrame = Zig::sourceURL(vm, frame);
 
-            bool isDefinitelyNotRunninginNodeVMGlobalObject = (globalObject == lexicalGlobalObject && globalObject);
+            bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
 
             bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
             if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
@@ -576,11 +542,14 @@ WTF::String Bun::formatStackTrace(
                 }
             }
 
+            displayLine = remappedFrame.position.line();
+            displayColumn = remappedFrame.position.column();
+
             if (!hasSet) {
                 hasSet = true;
                 line = remappedFrame.position.line();
                 column = remappedFrame.position.column();
-                sourceURL = frame.sourceURL(vm);
+                sourceURL = sourceURLForFrame;
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
@@ -589,24 +558,46 @@ WTF::String Bun::formatStackTrace(
                     }
                 }
             }
+        }
 
-            sb.append(" ("_s);
-            if (sourceURLForFrame.isEmpty()) {
-                if (isBuiltinFunction) {
-                    sb.append("native"_s);
-                } else {
-                    sb.append("unknown"_s);
-                }
-            } else {
-                sb.append(sourceURLForFrame);
+        if (functionName.isEmpty()) {
+            if (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function))) {
+                functionName = "<anonymous>"_s;
             }
-            sb.append(":"_s);
-            sb.append(remappedFrame.position.line().oneBasedInt());
-            sb.append(":"_s);
-            sb.append(remappedFrame.position.column().oneBasedInt());
+        }
+
+        if (sourceURLForFrame.isEmpty()) {
+            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
+                sourceURLForFrame = "native"_s;
+            } else {
+                sourceURLForFrame = "unknown"_s;
+            }
+        }
+
+        // --- actually render the text ---
+
+        sb.append("    at "_s);
+
+        if (!functionName.isEmpty()) {
+            sb.append(functionName);
+            sb.append(" ("_s);
+        }
+
+        if (!sourceURLForFrame.isEmpty()) {
+            sb.append(sourceURLForFrame);
+            if (displayLine.zeroBasedInt() > 0) {
+                sb.append(":"_s);
+                sb.append(displayLine.oneBasedInt());
+
+                if (displayColumn.zeroBasedInt() > 0) {
+                    sb.append(":"_s);
+                    sb.append(displayColumn.oneBasedInt());
+                }
+            }
+        }
+
+        if (!functionName.isEmpty()) {
             sb.append(")"_s);
-        } else {
-            sb.append(" (native)"_s);
         }
 
         if (i != framesCount - 1) {
@@ -663,12 +654,25 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     GlobalObject::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
 
     // We need to sourcemap it if it's a GlobalObject.
-    if (globalObject == lexicalGlobalObject) {
-        for (int i = 0; i < stackTrace.size(); i++) {
-            ZigStackFrame frame = {};
 
-            String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+    for (int i = 0; i < stackTrace.size(); i++) {
+        ZigStackFrame frame = {};
 
+        String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+
+        // When you use node:vm, the global object can be different on a
+        // per-frame basis. We should sourcemap the frames which are in Bun's
+        // global object, and not sourcemap the frames which are in a different
+        // global object.
+        JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
+        if (stackFrames.at(i).hasLineAndColumnInfo()) {
+            auto* callee = stackFrames.at(i).callee();
+            if (auto* object = callee->getObject()) {
+                globalObjectForFrame = object->globalObject();
+            }
+        }
+
+        if (globalObjectForFrame == globalObject) {
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -685,26 +689,16 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
                 sourceURLForFrame = frame.source_url.toWTFString();
             }
-
-            auto* callsite = jsCast<CallSite*>(callSites.at(i));
-
-            if (!sourceURLForFrame.isEmpty())
-                callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
-
-            if (frame.remapped) {
-                callsite->setLineNumber(frame.position.line());
-                callsite->setColumnNumber(frame.position.column());
-            }
         }
-    } else {
-        // if it's a different JSGlobalObject, let's still give you the sourceURL directive just to be nice.
-        for (int i = 0; i < stackTrace.size(); i++) {
 
-            String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
-            if (!sourceURLForFrame.isEmpty()) {
-                auto* callsite = jsCast<CallSite*>(callSites.at(i));
-                callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
-            }
+        auto* callsite = jsCast<CallSite*>(callSites.at(i));
+
+        if (!sourceURLForFrame.isEmpty())
+            callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
+
+        if (frame.remapped) {
+            callsite->setLineNumber(frame.position.line());
+            callsite->setColumnNumber(frame.position.column());
         }
     }
 
@@ -3697,6 +3691,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }
+
+// ===================== start conditional builtin globals =====================
+// These functions register globals based on runtime conditions (e.g. CLI flags,
+// environment variables, etc.). See `Run.addConditionalGlobals()` in bun_js.zig
+// for where these are called.
+
+/// `globalThis.gc()` is an alias for `Bun.gc(true)`
+/// Note that `vm` is a `VirtualMachine*`
+extern "C" size_t Bun__gc(void* vm, bool sync);
+JSC_DEFINE_HOST_FUNCTION(functionJsGc,
+    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(global);
+    Bun__gc(globalObject->bunVM(), true);
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+}
+
+// ====================== end conditional builtin globals ======================
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
 {

@@ -71,7 +71,7 @@ const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
-const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
 const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
@@ -93,7 +93,7 @@ const OOM = bun.OOM;
 const HTMLScanner = @import("../HTMLScanner.zig");
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -141,7 +141,7 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
-    workers_assignments_lock: bun.Lock = .{},
+    workers_assignments_lock: bun.Mutex = .{},
 
     v2: *BundleV2 = undefined,
 
@@ -327,10 +327,15 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
 
+    const is_node = bun.strings.eqlComptime(path.namespace, "node");
+    if (is_node and bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path)) {
+        return path;
+    }
+
     // "file" namespace should use the relative file path for its display name.
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
-    if (path.isFile() or bun.strings.eqlComptime(path.namespace, "node")) {
+    if (path.isFile() or is_node) {
         const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -3464,10 +3469,12 @@ pub const ParseTask = struct {
         // and then that is either replaced with the module itself, or an import to the
         // runtime here.
         const runtime_require = switch (target) {
-            // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.require.resolve'
-            // Omitting it here acts as an extra assertion.
-            .bun, .bun_macro => "",
+            // Previously, Bun inlined `import.meta.require` at all usages. This broke
+            // code that called `fn.toString()` and parsed the code outside a module
+            // context.
+            .bun, .bun_macro =>
+            \\export var __require = import.meta.require;
+            ,
 
             .node =>
             \\import { createRequire } from "node:module";
@@ -4406,10 +4413,9 @@ pub const ParseTask = struct {
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
-        opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
+        opts.features.auto_polyfill_require = output_format == .esm;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
-        opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
         opts.features.auto_import_jsx = task.jsx.parse and transpiler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (transpiler.options.trim_unused_imports orelse false);
@@ -7000,18 +7006,17 @@ pub const LinkerContext = struct {
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-                if (expr.data == .e_call and expr.data.e_call.target.data == .e_require_call_target and
+                if (expr.data == .e_call and
+                    expr.data.e_call.target.data == .e_require_call_target and
                     // if it's commonjs, use require()
-                    this.options.output_format != .cjs and
-                    // if it's esm and bun, use import.meta.require(). the code for __require is not injected into the bundle.
-                    !this.options.target.isBun())
+                    this.options.output_format != .cjs)
                 {
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(1),
                         "__require",
                         1,
-                    ) catch {};
+                    );
                 }
             },
             else => {
@@ -7752,11 +7757,9 @@ pub const LinkerContext = struct {
 
                                     continue;
                                 } else {
-
                                     // We should use "__require" instead of "require" if we're not
                                     // generating a CommonJS output file, since it won't exist otherwise.
-                                    // Disabled for target bun because `import.meta.require` will be inlined.
-                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
+                                    if (shouldCallRuntimeRequire(output_format)) {
                                         runtime_require_uses += 1;
                                     }
 
@@ -9386,7 +9389,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         const result = c.generateCodeForFileInChunkJS(
             &buffer_writer,
@@ -9855,10 +9858,11 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun() or c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const print_options = js_printer.Options{
+                .bundling = true,
                 .indent = .{},
                 .has_run_symbol_renamer = true,
 
@@ -10015,7 +10019,7 @@ pub const LinkerContext = struct {
 
         switch (c.options.output_format) {
             .internal_bake_dev => {
-                const start = bun.bake.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+                const start = bun.bake.getHmrRuntime(if (c.options.target.isServerSide()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },
@@ -12513,6 +12517,7 @@ pub const LinkerContext = struct {
         };
 
         const print_options = js_printer.Options{
+            .bundling = true,
             // TODO: IIFE
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
@@ -14099,7 +14104,7 @@ pub const LinkerContext = struct {
                                 },
                             ) catch unreachable;
                         }
-                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                    } else if (c.resolver.opts.target == .browser and bun.strings.hasPrefixComptime(next_source.path.text, NodeFallbackModules.import_path)) {
                         c.log.addRangeErrorFmtWithNote(
                             source,
                             r,

@@ -74,6 +74,11 @@ values;`,
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
   });
 
+  beforeEach(() => {
+    const tempdir2 = tempDirWithFiles("native-plugins", {});
+    process.chdir(tempdir2);
+  });
+
   afterEach(async () => {
     await Bun.$`rm -rf ${outdir}`;
     process.chdir(cwd);
@@ -672,6 +677,7 @@ console.log(JSON.stringify(json))
             },
           },
         ],
+        throw: true,
       });
 
       expect(result.success).toBeTrue();

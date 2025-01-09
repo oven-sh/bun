@@ -49,6 +49,7 @@ export default [
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError, "TypeError"],
   ["ERR_INVALID_URI", URIError, "URIError"],
+  ["ERR_INVALID_IP_ADDRESS", TypeError, "TypeError"],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
   ["ERR_UNHANDLED_ERROR", Error],
@@ -72,6 +73,9 @@ export default [
 
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+
+  // DNS
+  ["ERR_DNS_SET_SERVERS_FAILED", Error],
 
   // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],

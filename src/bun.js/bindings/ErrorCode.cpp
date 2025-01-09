@@ -823,6 +823,15 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_IP_ADDRESS: {
+        JSValue arg0 = callFrame->argument(1);
+
+        auto param = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
+    }
+
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
         JSValue arg0 = callFrame->argument(1);
         JSValue arg1 = callFrame->argument(2);

@@ -63,7 +63,7 @@ $ brew install llvm@18
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 18 all
 ```
 
 ```bash#Arch
@@ -71,23 +71,21 @@ $ sudo pacman -S llvm clang lld
 ```
 
 ```bash#Fedora
-$ sudo dnf install 'dnf-command(copr)'
-$ sudo dnf copr enable -y @fedora-llvm-team/llvm17
-$ sudo dnf install llvm16 clang16 lld16-devel
+$ sudo dnf install llvm18 clang18 lld18-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang16 lld16 llvm16
+$ sudo zypper install clang18 lld18 llvm18
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8).
 
 Make sure Clang/LLVM 18 is in your path:
 
 ```bash
-$ which clang-16
+$ which clang-18
 ```
 
 If not, run this to manually add it:
@@ -96,13 +94,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@16)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
+# use path+="$(brew --prefix llvm@18)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@18)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm16/bin"
+$ export PATH="$PATH:/usr/lib/llvm18/bin"
 ```
 
 {% /codetabs %}
@@ -163,7 +161,7 @@ The binary will be located at `./build/release/bun` and `./build/release/bun-pro
 
 ### Download release build from pull requests
 
-To save you time spent building a release build locally, we provide a way to run release builds from pull requests. This is useful for manully testing changes in a release build before they are merged.
+To save you time spent building a release build locally, we provide a way to run release builds from pull requests. This is useful for manually testing changes in a release build before they are merged.
 
 To run a release build from a pull request, you can use the `bun-pr` npm package:
 
@@ -240,7 +238,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-16"
+  "/usr/bin/clang++-18"
 
 is not able to compile a simple test program.
 ```

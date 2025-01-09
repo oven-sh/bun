@@ -20,7 +20,6 @@
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
-#include "node_api.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"

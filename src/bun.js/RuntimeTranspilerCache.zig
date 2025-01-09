@@ -9,8 +9,9 @@
 /// Version 10: Constant folding for ''.charCodeAt(n)
 /// Version 11: Fix \uFFFF printing regression
 /// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
-/// Version 13: Make JSC only have to parse modules once
-const expected_version = 13;
+/// Version 13: Hoist `import.meta.require` definition, see #15738
+/// Version 14: Include module info with an ES Module, see #15758
+const expected_version = 14;
 
 const bun = @import("root").bun;
 const std = @import("std");

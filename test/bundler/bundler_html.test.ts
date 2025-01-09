@@ -813,7 +813,6 @@ body {
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {
     outdir: "out/",
-    sourceMap: "linked",
     files: {
       "/index.html": `
 <!DOCTYPE html>

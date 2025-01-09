@@ -2754,8 +2754,8 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     return JSC.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
-    const dir_fd = bun.toFD(dir_);
+pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
+    const dir_fd = bun.toFD(dir);
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
@@ -2791,12 +2791,31 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
         syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
 
-        return .{
-            .result = is_dir,
-        };
+        return .{ .result = is_dir };
     }
 
-    return faccessat(dir_fd, subpath);
+    const have_statx = Environment.isLinux;
+    if (have_statx) brk: {
+        var statx: std.os.linux.Statx = undefined;
+        if (Maybe(void).errnoSys(bun.C.linux.statx(
+            dir_fd.cast(),
+            subpath,
+            std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.STATX_SYNC_AS_STAT,
+            std.os.linux.STATX_TYPE,
+            &statx,
+        ), .statx)) |err| {
+            if (err.err.getErrno() == .NOSYS) break :brk; // Linux < 4.11
+            return err;
+        }
+        return .{ .result = S.ISDIR(statx.mode) };
+    }
+
+    // TODO: on macOS, try getattrlist
+
+    return switch (fstatat(dir_fd, subpath)) {
+        .err => |err| .{ .err = err },
+        .result => |result| .{ .result = S.ISDIR(result.mode) },
+    };
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {

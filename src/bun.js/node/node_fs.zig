@@ -3786,8 +3786,21 @@ pub const NodeFS = struct {
                     else => {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
-                    .EXIST => {
-                        return .{ .result = .{ .none = {} } };
+                    .EXIST => return switch (bun.sys.directoryExistsAt(std.fs.cwd().fd, path)) {
+                        .err => .{ .err = .{
+                            .errno = err.errno,
+                            .syscall = .mkdir,
+                            .path = this.osPathIntoSyncErrorBuf(path[0..len]),
+                        } },
+                        // if is a directory, OK. otherwise failure
+                        .result => |result| if (result)
+                            .{ .result = .{ .none = {} } }
+                        else
+                            .{ .err = .{
+                                .errno = err.errno,
+                                .syscall = .mkdir,
+                                .path = this.osPathIntoSyncErrorBuf(path[0..len]),
+                            } },
                     },
                     // continue
                     .NOENT => {

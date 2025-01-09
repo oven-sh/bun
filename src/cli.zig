@@ -1400,7 +1400,10 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv[1];
+        const command_name = for (bun.argv[1..]) |arg| {
+            if (arg.len > 1 and arg[0] == '-') continue;
+            break arg;
+        } else bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\

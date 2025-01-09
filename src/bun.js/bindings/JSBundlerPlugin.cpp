@@ -2,6 +2,7 @@
 
 #include "BunProcess.h"
 #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
+#include "JavaScriptCore/CallData.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -618,7 +619,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedIsBake));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    return JSC::JSValue::encode(JSC::call(lexicalGlobalObject, setupFunction, callData, plugin, arguments));
+    return JSC::JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments));
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)

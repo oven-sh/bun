@@ -26,6 +26,8 @@ declare namespace HTMLRewriterTypes {
     readonly name: string | null;
     readonly publicId: string | null;
     readonly systemId: string | null;
+    readonly removed: boolean;
+    remove(): Doctype;
   }
 
   interface DocumentEnd {

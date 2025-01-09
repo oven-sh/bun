@@ -227,7 +227,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
-        return this.globalThis.bunVM().bundler.env.map.createNullDelimitedEnvMap(alloc);
+        return this.globalThis.bunVM().transpiler.env.map.createNullDelimitedEnvMap(alloc);
     }
 
     pub inline fn getAllocator(this: @This()) Allocator {
@@ -239,11 +239,11 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn topLevelDir(this: @This()) []const u8 {
-        return this.globalThis.bunVM().bundler.fs.top_level_dir;
+        return this.globalThis.bunVM().transpiler.fs.top_level_dir;
     }
 
     pub inline fn env(this: @This()) *bun.DotEnv.Loader {
-        return this.globalThis.bunVM().bundler.env;
+        return this.globalThis.bunVM().transpiler.env;
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
@@ -3566,7 +3566,7 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
     return true;
 }
 
-var stderr_mutex = std.Thread.Mutex{};
+var stderr_mutex = bun.Mutex{};
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {
@@ -3987,8 +3987,8 @@ pub const ShellSrcBuilder = struct {
 
 /// Characters that need to escaped
 const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\' };
-const SPECIAL_CHARS_TABLE: std.bit_set.IntegerBitSet(256) = brk: {
-    var table = std.bit_set.IntegerBitSet(256).initEmpty();
+const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
+    var table = bun.bit_set.IntegerBitSet(256).initEmpty();
     for (SPECIAL_CHARS) |c| {
         table.set(c);
     }

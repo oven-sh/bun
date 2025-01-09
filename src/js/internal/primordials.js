@@ -112,7 +112,6 @@ export default {
   DatePrototypeToString: uncurryThis(Date.prototype.toString),
   ErrorCaptureStackTrace,
   ErrorPrototypeToString: uncurryThis(Error.prototype.toString),
-  FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
   JSONStringify: JSON.stringify,
   MapPrototypeGetSize: getGetter(Map, "size"),
   MapPrototypeEntries: uncurryThis(Map.prototype.entries),

@@ -1,11 +1,10 @@
 import { spawn } from "bun";
 import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync, readdirSorted } from "harness";
 import { readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let x_dir: string;
 let current_tmpdir: string;

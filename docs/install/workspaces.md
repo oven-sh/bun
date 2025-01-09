@@ -53,6 +53,16 @@ Each workspace has it's own `package.json`. When referencing other packages in t
 }
 ```
 
+`bun install` will install dependencies for all workspaces in the monorepo, de-duplicating packages if possible. If you only want to install dependencies for specific workspaces, you can use the `--filter` flag.
+
+```bash
+# Install dependencies for all workspaces starting with `pkg-` except for `pkg-c`
+$ bun install --filter "pkg-*" --filter "!pkg-c"
+
+# Paths can also be used. This is equivalent to the command above.
+$ bun install --filter "./packages/pkg-*" --filter "!pkg-c" # or --filter "!./packages/pkg-c"
+```
+
 Workspaces have a couple major benefits.
 
 - **Code can be split into logical parts.** If one package relies on another, you can simply add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` will install your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.

@@ -11,7 +11,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
     return struct {
         const Self = @This();
         buffer: [capacity]T = undefined,
-        available: std.bit_set.IntegerBitSet(capacity) = std.bit_set.IntegerBitSet(capacity).initFull(),
+        available: bun.bit_set.IntegerBitSet(capacity) = bun.bit_set.IntegerBitSet(capacity).initFull(),
         pub const size = capacity;
 
         pub fn init() Self {

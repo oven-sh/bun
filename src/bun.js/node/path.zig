@@ -1237,7 +1237,7 @@ pub inline fn joinWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObjec
 pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) JSC.JSValue {
     // Adding 8 bytes when Windows for the possible UNC root.
     var bufLen: usize = if (isWindows) 8 else 0;
-    for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
+    for (paths) |path| bufLen += if (path.len > 0) path.len + 1 else path.len;
     bufLen = @max(bufLen, PATH_SIZE(T));
     const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
     defer allocator.free(buf);

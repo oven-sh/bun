@@ -1,4 +1,7 @@
 #include "root.h"
+
+#include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
@@ -33,23 +36,34 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
+#ifdef WIN32
+#include <ws2def.h>
+#else
+#include <netdb.h>
+#endif
+
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSrv);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveTxt);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSoa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNaptr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveMx);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCaa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNs);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolvePtr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCname);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveAny);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getServers);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__setServers);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__reverse);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__prefetch);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getCacheStats);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__new);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
@@ -241,7 +255,6 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto arg2 = callFrame->argument(2);
     if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
@@ -336,37 +349,47 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNS__lookup, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun__DNS__resolve, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNS__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNSResolver__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNS__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNSResolver__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNS__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNSResolver__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNS__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNSResolver__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNS__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNSResolver__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNS__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNSResolver__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNS__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNSResolver__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNS__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNS__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNSResolver__getServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, Bun__DNS__resolveAny, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNS__getServers, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNSResolver__lookupService, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, Bun__DNS__setServers, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 2, Bun__DNSResolver__prefetch, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNS__reverse, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun__DNSResolver__getCacheStats, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNS__lookupService, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 2, Bun__DNS__prefetch, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun__DNS__getCacheStats, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "ADDRCONFIG"_s), jsNumber(AI_ADDRCONFIG),
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "ALL"_s), jsNumber(AI_ALL),
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "V4MAPPED"_s), jsNumber(AI_V4MAPPED),
         JSC::PropertyAttribute::DontDelete | 0);
     return dnsObject;
 }
@@ -428,7 +451,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
@@ -528,6 +551,45 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSValue arg0 = callFrame->argument(0);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    bool useV8 = false;
+    if (!arg0.isUndefined()) {
+        if (arg0.isString()) {
+            auto str = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (str == "v8"_s) {
+                useV8 = true;
+            } else if (str == "jsc"_s) {
+                // do nothing
+            } else {
+                throwTypeError(globalObject, throwScope, "Expected 'v8' or 'jsc' or undefined"_s);
+                return {};
+            }
+        }
+    }
+
+    if (useV8) {
+        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        return JSC::JSValue::encode(jsString(vm, builder.json()));
+    }
+
+    JSC::HeapSnapshotBuilder builder(heapProfiler);
+    builder.buildSnapshot();
+    auto json = builder.json();
+    // Returning an object was a bad idea but it's a breaking change
+    // so we'll just keep it for now.
+    JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -585,6 +647,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
+    S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -603,7 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
-    generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -637,6 +700,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
     sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1

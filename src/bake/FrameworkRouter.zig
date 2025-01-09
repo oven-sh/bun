@@ -1129,7 +1129,7 @@ pub const JSFrameworkRouter = struct {
         try jsfr.router.scan(
             bun.default_allocator,
             Type.Index.init(0),
-            &global.bunVM().bundler.resolver,
+            &global.bunVM().transpiler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
         );
         if (jsfr.stored_parse_errors.items.len > 0) {

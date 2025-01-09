@@ -528,9 +528,9 @@ pub const IniTestingAPIs = struct {
         defer arena.deinit();
 
         const envjs = callframe.argument(1);
-        const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().bundler.env else brk: {
+        const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
-            var object_iter = JSC.JSPropertyIterator(.{
+            var object_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
             }).init(globalThis, envjs);
@@ -538,7 +538,7 @@ pub const IniTestingAPIs = struct {
 
             try envmap.ensureTotalCapacity(object_iter.len);
 
-            while (object_iter.next()) |key| {
+            while (try object_iter.next()) |key| {
                 const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
                 if (value == .undefined) continue;
@@ -611,7 +611,7 @@ pub const IniTestingAPIs = struct {
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();
 
-        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().bundler.env);
+        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().transpiler.env);
         defer parser.deinit();
 
         try parser.parse(parser.arena.allocator());
@@ -968,6 +968,68 @@ pub fn loadNpmrc(
     if (out.asProperty("cafile")) |query| {
         if (try query.expr.asStringCloned(allocator)) |cafile| {
             install.cafile = cafile;
+        }
+    }
+
+    if (out.asProperty("omit")) |omit| {
+        switch (omit.expr.data) {
+            .e_string => |str| {
+                if (str.eqlComptime("dev")) {
+                    install.save_dev = false;
+                } else if (str.eqlComptime("peer")) {
+                    install.save_peer = false;
+                } else if (str.eqlComptime("optional")) {
+                    install.save_optional = false;
+                }
+            },
+            .e_array => |arr| {
+                for (arr.items.slice()) |item| {
+                    switch (item.data) {
+                        .e_string => |str| {
+                            if (str.eqlComptime("dev")) {
+                                install.save_dev = false;
+                            } else if (str.eqlComptime("peer")) {
+                                install.save_peer = false;
+                            } else if (str.eqlComptime("optional")) {
+                                install.save_optional = false;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    if (out.asProperty("include")) |omit| {
+        switch (omit.expr.data) {
+            .e_string => |str| {
+                if (str.eqlComptime("dev")) {
+                    install.save_dev = true;
+                } else if (str.eqlComptime("peer")) {
+                    install.save_peer = true;
+                } else if (str.eqlComptime("optional")) {
+                    install.save_optional = true;
+                }
+            },
+            .e_array => |arr| {
+                for (arr.items.slice()) |item| {
+                    switch (item.data) {
+                        .e_string => |str| {
+                            if (str.eqlComptime("dev")) {
+                                install.save_dev = true;
+                            } else if (str.eqlComptime("peer")) {
+                                install.save_peer = true;
+                            } else if (str.eqlComptime("optional")) {
+                                install.save_optional = true;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
         }
     }
 

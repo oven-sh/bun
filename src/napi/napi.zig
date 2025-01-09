@@ -2,7 +2,7 @@ const std = @import("std");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const bun = @import("root").bun;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
@@ -11,59 +11,54 @@ const Channel = @import("../sync.zig").Channel;
 
 const log = bun.Output.scoped(.napi, false);
 
-// These wrappers exist so we can set a breakpoint in lldb
-fn invalidArg() napi_status {
-    if (comptime bun.Environment.allow_assert) {
-        log("invalid arg", .{});
-    }
-    return .invalid_arg;
-}
-
-fn genericFailure() napi_status {
-    if (comptime bun.Environment.allow_assert) {
-        log("generic failure", .{});
-    }
-    return .generic_failure;
-}
 const Async = bun.Async;
 
-pub const napi_env = *JSC.JSGlobalObject;
-pub const Ref = opaque {
-    pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
-        JSC.markBinding(@src());
-        var ref: *Ref = undefined;
-        bun.assert(
-            napi_create_reference(
-                globalThis,
-                value,
-                1,
-                &ref,
-            ) == .ok,
-        );
-        if (comptime bun.Environment.isDebug) {
-            bun.assert(ref.get() == value);
+/// Actually a JSGlobalObject
+pub const NapiEnv = opaque {
+    pub fn fromJS(global: *JSC.JSGlobalObject) *NapiEnv {
+        return @ptrCast(global);
+    }
+
+    pub fn toJS(self: *NapiEnv) *JSC.JSGlobalObject {
+        return @ptrCast(self);
+    }
+
+    extern fn napi_set_last_error(env: napi_env, status: NapiStatus) napi_status;
+
+    /// Convert err to an extern napi_status, and store the error code in env so that it can be
+    /// accessed by napi_get_last_error_info
+    pub fn setLastError(self: *NapiEnv, err: NapiStatus) napi_status {
+        return napi_set_last_error(self, err);
+    }
+
+    /// Convenience wrapper for setLastError(.ok)
+    pub fn ok(self: *NapiEnv) napi_status {
+        return self.setLastError(.ok);
+    }
+
+    /// These wrappers exist for convenience and so we can set a breakpoint in lldb
+    pub fn invalidArg(self: *NapiEnv) napi_status {
+        if (comptime bun.Environment.allow_assert) {
+            log("invalid arg", .{});
         }
-        return ref;
+        return self.setLastError(.invalid_arg);
     }
 
-    pub fn get(ref: *Ref) JSValue {
-        JSC.markBinding(@src());
-        return napi_get_reference_value_internal(ref);
+    pub fn genericFailure(self: *NapiEnv) napi_status {
+        if (comptime bun.Environment.allow_assert) {
+            log("generic failure", .{});
+        }
+        return self.setLastError(.generic_failure);
     }
-
-    pub fn destroy(ref: *Ref) void {
-        JSC.markBinding(@src());
-        napi_delete_reference_internal(ref);
-    }
-
-    pub fn set(this: *Ref, value: JSC.JSValue) void {
-        JSC.markBinding(@src());
-        napi_set_ref(this, value);
-    }
-
-    extern fn napi_delete_reference_internal(ref: *Ref) void;
-    extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
+
+pub const napi_env = *NapiEnv;
+
+/// Contents are not used by any Zig code
+pub const Ref = opaque {};
+
+pub const napi_ref = *Ref;
+
 pub const NapiHandleScope = opaque {
     pub extern fn NapiHandleScope__open(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
     pub extern fn NapiHandleScope__close(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
@@ -73,20 +68,20 @@ pub const NapiHandleScope = opaque {
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
     pub fn open(env: napi_env, escapable: bool) ?*NapiHandleScope {
-        return NapiHandleScope__open(env, escapable);
+        return NapiHandleScope__open(env.toJS(), escapable);
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     pub fn close(self: ?*NapiHandleScope, env: napi_env) void {
-        NapiHandleScope__close(env, self);
+        NapiHandleScope__close(env.toJS(), self);
     }
 
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: napi_env, value: JSC.JSValue) void {
-        NapiHandleScope__append(env, value);
+        NapiHandleScope__append(env.toJS(), value);
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
@@ -192,7 +187,8 @@ pub const napi_typedarray_type = enum(c_uint) {
         return this.toJSType().toC();
     }
 };
-pub const napi_status = enum(c_uint) {
+
+pub const NapiStatus = enum(c_uint) {
     ok = 0,
     invalid_arg = 1,
     object_expected = 2,
@@ -216,6 +212,12 @@ pub const napi_status = enum(c_uint) {
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
 };
+
+/// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
+/// as that would skip storing the last error code. You should wrap return values in a call to
+/// napi_env.setLastError.
+pub const napi_status = c_uint;
+
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
 
 /// expects `napi_env`, `callback_data`, `context`
@@ -248,99 +250,99 @@ pub extern fn napi_get_last_error_info(env: napi_env, result: [*c][*c]const napi
 pub export fn napi_get_undefined(env: napi_env, result_: ?*napi_value) napi_status {
     log("napi_get_undefined", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsUndefined());
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_get_null(env: napi_env, result_: ?*napi_value) napi_status {
     log("napi_get_null", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsNull());
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_get_global(env: napi_env, result: *napi_value) napi_status;
 pub export fn napi_get_boolean(env: napi_env, value: bool, result_: ?*napi_value) napi_status {
     log("napi_get_boolean", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsBoolean(value));
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_create_array(env: napi_env, result_: ?*napi_value) napi_status {
     log("napi_create_array", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    result.set(env, JSValue.createEmptyArray(env, 0));
-    return .ok;
+    result.set(env, JSValue.createEmptyArray(env.toJS(), 0));
+    return env.ok();
 }
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result_: ?*napi_value) napi_status {
     log("napi_create_array_with_length", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
 
     // JSC createEmptyArray takes u32
     // Node and V8 convert out-of-bounds array sizes to 0
     const len = std.math.cast(u32, length) orelse 0;
 
-    const array = JSC.JSValue.createEmptyArray(env, len);
+    const array = JSC.JSValue.createEmptyArray(env.toJS(), len);
     array.ensureStillAlive();
     result.set(env, array);
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status;
 pub export fn napi_create_int32(env: napi_env, value: i32, result_: ?*napi_value) napi_status {
     log("napi_create_int32", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsNumber(value));
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_create_uint32(env: napi_env, value: u32, result_: ?*napi_value) napi_status {
     log("napi_create_uint32", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsNumber(value));
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_create_int64(env: napi_env, value: i64, result_: ?*napi_value) napi_status {
     log("napi_create_int64", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.jsNumber(value));
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
     const result: *napi_value = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
 
     const slice: []const u8 = brk: {
         if (NAPI_AUTO_LENGTH == length) {
             break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
         } else if (length > std.math.maxInt(u32)) {
-            return invalidArg();
+            return env.invalidArg();
         }
 
         if (str) |ptr|
             break :brk ptr[0..length];
 
-        return invalidArg();
+        return env.invalidArg();
     };
 
     log("napi_create_string_latin1: {s}", .{slice});
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env));
-        return .ok;
+        result.set(env, bun.String.empty.toJS(env.toJS()));
+        return env.ok();
     }
 
     var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
@@ -348,60 +350,60 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
 
     @memcpy(bytes, slice);
 
-    result.set(env, string.toJS(env));
-    return .ok;
+    result.set(env, string.toJS(env.toJS()));
+    return env.ok();
 }
 pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
     const result: *napi_value = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const slice: []const u8 = brk: {
         if (NAPI_AUTO_LENGTH == length) {
             break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
         } else if (length > std.math.maxInt(u32)) {
-            return invalidArg();
+            return env.invalidArg();
         }
 
         if (str) |ptr|
             break :brk ptr[0..length];
 
-        return invalidArg();
+        return env.invalidArg();
     };
 
     log("napi_create_string_utf8: {s}", .{slice});
 
     var string = bun.String.createUTF8(slice);
     if (string.tag == .Dead) {
-        return .generic_failure;
+        return env.genericFailure();
     }
 
     defer string.deref();
-    result.set(env, string.toJS(env));
-    return .ok;
+    result.set(env, string.toJS(env.toJS()));
+    return env.ok();
 }
 pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, length: usize, result_: ?*napi_value) napi_status {
     const result: *napi_value = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
 
     const slice: []const u16 = brk: {
         if (NAPI_AUTO_LENGTH == length) {
             break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
         } else if (length > std.math.maxInt(u32)) {
-            return invalidArg();
+            return env.invalidArg();
         }
 
         if (str) |ptr|
             break :brk ptr[0..length];
 
-        return invalidArg();
+        return env.invalidArg();
     };
 
     if (comptime bun.Environment.allow_assert)
         log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env));
+        result.set(env, bun.String.empty.toJS(env.toJS()));
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
@@ -409,8 +411,8 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
 
     @memcpy(chars, slice);
 
-    result.set(env, string.toJS(env));
-    return .ok;
+    result.set(env, string.toJS(env.toJS()));
+    return env.ok();
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
@@ -421,15 +423,15 @@ pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f
 pub extern fn napi_get_value_int32(_: napi_env, value_: napi_value, result: ?*i32) napi_status;
 pub extern fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status;
 pub extern fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status;
-pub export fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
+pub export fn napi_get_value_bool(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_get_value_bool", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
 
     result.* = value.to(bool);
-    return .ok;
+    return env.ok();
 }
 inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
     if (doit) {
@@ -442,7 +444,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
     defer value.ensureStillAlive();
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
-    const str = value.toBunString(env);
+    const str = value.toBunString(env.toJS());
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -450,7 +452,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
             result.* = str.latin1ByteLength();
         }
 
-        return .ok;
+        return env.ok();
     };
 
     if (str.isEmpty()) {
@@ -459,7 +461,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
         }
         buf[0] = 0;
 
-        return .ok;
+        return env.ok();
     }
 
     var buf_ = buf[0..bufsize];
@@ -470,7 +472,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
             if (result_ptr) |result| {
                 result.* = 0;
             }
-            return .ok;
+            return env.ok();
         }
     }
     const written = str.encodeInto(buf_, .latin1) catch unreachable;
@@ -482,7 +484,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
         buf[written] = 0;
     }
 
-    return .ok;
+    return env.ok();
 }
 
 /// Copies a JavaScript string into a UTF-8 string buffer. The result is the
@@ -498,7 +500,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
     log("napi_get_value_string_utf16", .{});
     const value = value_.get();
     defer value.ensureStillAlive();
-    const str = value.toBunString(env);
+    const str = value.toBunString(env.toJS());
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -506,7 +508,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
             result.* = str.utf16ByteLength();
         }
 
-        return .ok;
+        return env.ok();
     };
 
     if (str.isEmpty()) {
@@ -515,7 +517,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
         }
         buf[0] = 0;
 
-        return .ok;
+        return env.ok();
     }
 
     var buf_ = buf[0..bufsize];
@@ -526,7 +528,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
             if (result_ptr) |result| {
                 result.* = 0;
             }
-            return .ok;
+            return env.ok();
         }
     }
 
@@ -541,47 +543,47 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
         buf[written] = 0;
     }
 
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_coerce_to_bool(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_bool", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSValue.jsBoolean(value.coerce(bool, env)));
-    return .ok;
+    result.set(env, JSValue.jsBoolean(value.coerce(bool, env.toJS())));
+    return env.ok();
 }
 pub export fn napi_coerce_to_number(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_number", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
-    return .ok;
+    result.set(env, JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.toJS().ref(), value.asObjectRef(), TODO_EXCEPTION)));
+    return env.ok();
 }
 pub export fn napi_coerce_to_object(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_coerce_to_object", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.set(env, JSValue.c(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
-    return .ok;
+    result.set(env, JSValue.c(JSC.C.JSValueToObject(env.toJS().ref(), value.asObjectRef(), TODO_EXCEPTION)));
+    return env.ok();
 }
 pub export fn napi_get_prototype(env: napi_env, object_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_get_prototype", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const object = object_.get();
     if (!object.isObject()) {
-        return .object_expected;
+        return env.setLastError(.object_expected);
     }
 
-    result.set(env, JSValue.c(JSC.C.JSObjectGetPrototype(env.ref(), object.asObjectRef())));
-    return .ok;
+    result.set(env, JSValue.c(JSC.C.JSObjectGetPrototype(env.toJS().ref(), object.asObjectRef())));
+    return env.ok();
 }
 // TODO: bind JSC::ownKeys
 // pub export fn napi_get_property_names(env: napi_env, object: napi_value, result: *napi_value) napi_status {
@@ -597,74 +599,74 @@ pub export fn napi_set_element(env: napi_env, object_: napi_value, index: c_uint
     const object = object_.get();
     const value = value_.get();
     if (!object.jsType().isIndexable()) {
-        return .array_expected;
+        return env.setLastError(.array_expected);
     }
     if (value == .zero)
-        return invalidArg();
-    JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
-    return .ok;
+        return env.invalidArg();
+    JSC.C.JSObjectSetPropertyAtIndex(env.toJS().ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
+    return env.ok();
 }
 pub export fn napi_has_element(env: napi_env, object_: napi_value, index: c_uint, result_: ?*bool) napi_status {
     log("napi_has_element", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const object = object_.get();
 
     if (!object.jsType().isIndexable()) {
-        return .array_expected;
+        return env.setLastError(.array_expected);
     }
 
-    result.* = object.getLength(env) > index;
-    return .ok;
+    result.* = object.getLength(env.toJS()) > index;
+    return env.ok();
 }
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
-pub export fn napi_is_array(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
+pub export fn napi_is_array(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_array", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
     result.* = value.jsType().isArray();
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_get_array_length(env: napi_env, value_: napi_value, result_: [*c]u32) napi_status {
     log("napi_get_array_length", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
 
     if (!value.jsType().isArray()) {
-        return .array_expected;
+        return env.setLastError(.array_expected);
     }
 
-    result.* = @as(u32, @truncate(value.getLength(env)));
-    return .ok;
+    result.* = @as(u32, @truncate(value.getLength(env.toJS())));
+    return env.ok();
 }
 pub export fn napi_strict_equals(env: napi_env, lhs_: napi_value, rhs_: napi_value, result_: ?*bool) napi_status {
     log("napi_strict_equals", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const lhs, const rhs = .{ lhs_.get(), rhs_.get() };
     // there is some nuance with NaN here i'm not sure about
-    result.* = lhs.isSameValue(rhs, env);
-    return .ok;
+    result.* = lhs.isSameValue(rhs, env.toJS());
+    return env.ok();
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result_: ?*napi_value) napi_status;
 pub export fn napi_instanceof(env: napi_env, object_: napi_value, constructor_: napi_value, result_: ?*bool) napi_status {
     log("napi_instanceof", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const object, const constructor = .{ object_.get(), constructor_.get() };
     // TODO: does this throw object_expected in node?
-    result.* = object.isObject() and object.isInstanceOf(env, constructor);
-    return .ok;
+    result.* = object.isObject() and object.isInstanceOf(env.toJS(), constructor);
+    return env.ok();
 }
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
 pub extern fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *napi_value) napi_status;
@@ -678,26 +680,26 @@ pub extern fn napi_define_class(
     properties: [*c]const napi_property_descriptor,
     result: *napi_value,
 ) napi_status;
-pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*]*Ref) napi_status;
+pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_ref) napi_status;
 pub extern fn napi_unwrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_remove_wrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_create_object(env: napi_env, result: *napi_value) napi_status;
 pub extern fn napi_create_external(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_get_value_external(env: napi_env, value: napi_value, result: [*]*anyopaque) napi_status;
-pub extern fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: **Ref) napi_status;
-pub extern fn napi_delete_reference(env: napi_env, ref: *Ref) napi_status;
-pub extern fn napi_reference_ref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
-pub extern fn napi_reference_unref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
-pub extern fn napi_get_reference_value(env: napi_env, ref: *Ref, result: *napi_value) napi_status;
-pub extern fn napi_get_reference_value_internal(ref: *Ref) JSC.JSValue;
+pub extern fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: *napi_ref) napi_status;
+pub extern fn napi_delete_reference(env: napi_env, ref: napi_ref) napi_status;
+pub extern fn napi_reference_ref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
+pub extern fn napi_reference_unref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
+pub extern fn napi_get_reference_value(env: napi_env, ref: napi_ref, result: *napi_value) napi_status;
+pub extern fn napi_get_reference_value_internal(ref: napi_ref) JSC.JSValue;
 
 pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope) napi_status {
     log("napi_open_handle_scope", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.* = NapiHandleScope.open(env, false);
-    return .ok;
+    return env.ok();
 }
 
 pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
@@ -706,32 +708,32 @@ pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_s
         scope.close(env);
     }
 
-    return .ok;
+    return env.ok();
 }
 
 // we don't support async contexts
 pub export fn napi_async_init(env: napi_env, _: napi_value, _: napi_value, async_ctx: **anyopaque) napi_status {
     log("napi_async_init", .{});
     async_ctx.* = env;
-    return .ok;
+    return env.ok();
 }
 
 // we don't support async contexts
-pub export fn napi_async_destroy(_: napi_env, _: *anyopaque) napi_status {
+pub export fn napi_async_destroy(env: napi_env, _: *anyopaque) napi_status {
     log("napi_async_destroy", .{});
-    return .ok;
+    return env.ok();
 }
 
 // this is just a regular function call
 pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value, func_: napi_value, arg_count: usize, args: ?[*]const napi_value, maybe_result: ?*napi_value) napi_status {
     log("napi_make_callback", .{});
     const recv, const func = .{ recv_.get(), func_.get() };
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
-        return .function_expected;
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.toJS().vm())) {
+        return env.setLastError(.function_expected);
     }
 
     const res = func.call(
-        env,
+        env.toJS(),
         if (recv != .zero)
             recv
         else
@@ -741,7 +743,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
         else
             &.{},
     ) catch |err| // TODO: handle errors correctly
-        env.takeException(err);
+        env.toJS().takeException(err);
 
     if (maybe_result) |result| {
         result.set(env, res);
@@ -749,10 +751,10 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
 
     // TODO: this is likely incorrect
     if (res.isAnyError()) {
-        return .pending_exception;
+        return env.setLastError(.pending_exception);
     }
 
-    return .ok;
+    return env.ok();
 }
 
 // Sometimes shared libraries reference symbols which are not used
@@ -775,62 +777,62 @@ fn notImplementedYet(comptime name: []const u8) void {
 pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_escapable_handle_scope) napi_status {
     log("napi_open_escapable_handle_scope", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.* = NapiHandleScope.open(env, true);
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
     if (scope) |s| {
         s.close(env);
     }
-    return .ok;
+    return env.ok();
 }
-pub export fn napi_escape_handle(_: napi_env, scope_: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
+pub export fn napi_escape_handle(env: napi_env, scope_: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
     log("napi_escape_handle", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const scope = scope_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    scope.escape(escapee.get()) catch return .escape_called_twice;
+    scope.escape(escapee.get()) catch return env.setLastError(.escape_called_twice);
     result.* = escapee;
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status;
 pub extern fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status;
 
 // do nothing for both of these
-pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+pub export fn napi_open_callback_scope(env: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
     log("napi_open_callback_scope", .{});
-    return .ok;
+    return env.ok();
 }
-pub export fn napi_close_callback_scope(_: napi_env, _: *anyopaque) napi_status {
+pub export fn napi_close_callback_scope(env: napi_env, _: *anyopaque) napi_status {
     log("napi_close_callback_scope", .{});
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_range_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
-pub export fn napi_is_error(_: napi_env, value_: napi_value, result: *bool) napi_status {
+pub export fn napi_is_error(env: napi_env, value_: napi_value, result: *bool) napi_status {
     log("napi_is_error", .{});
     const value = value_.get();
     result.* = value.isAnyError();
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_is_exception_pending(env: napi_env, result: *bool) napi_status;
 pub extern fn napi_get_and_clear_last_exception(env: napi_env, result: *napi_value) napi_status;
-pub export fn napi_is_arraybuffer(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
+pub export fn napi_is_arraybuffer(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_arraybuffer", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
     result.* = !value.isNumber() and value.jsTypeLoose() == .ArrayBuffer;
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status;
 
@@ -839,30 +841,30 @@ pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
 pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer_: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     log("napi_get_arraybuffer_info", .{});
     const arraybuffer = arraybuffer_.get();
-    const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
+    const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.arraybuffer_expected);
     const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;
     if (byte_length) |len|
         len.* = slice.len;
-    return .ok;
+    return env.ok();
 }
-pub export fn napi_is_typedarray(_: napi_env, value_: napi_value, result: ?*bool) napi_status {
+pub export fn napi_is_typedarray(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_typedarray", .{});
     const value = value_.get();
-    if (result != null)
-        result.?.* = value.jsTypeLoose().isTypedArray();
-    return if (result != null) .ok else invalidArg();
+    const result = result_ orelse return env.invalidArg();
+    result.* = value.jsTypeLoose().isTypedArray();
+    return env.ok();
 }
 pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer_: napi_value, byte_offset: usize, result_: ?*napi_value) napi_status {
     log("napi_create_typedarray", .{});
     const arraybuffer = arraybuffer_.get();
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.set(env, JSValue.c(
         JSC.C.JSObjectMakeTypedArrayWithArrayBufferAndOffset(
-            env.ref(),
+            env.toJS().ref(),
             @"type".toC(),
             arraybuffer.asObjectRef(),
             byte_offset,
@@ -870,7 +872,7 @@ pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_typ
             TODO_EXCEPTION,
         ),
     ));
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_get_typedarray_info(
     env: napi_env,
@@ -884,12 +886,12 @@ pub export fn napi_get_typedarray_info(
     log("napi_get_typedarray_info", .{});
     const typedarray = typedarray_.get();
     if (typedarray.isEmptyOrUndefinedOrNull())
-        return invalidArg();
+        return env.invalidArg();
     defer typedarray.ensureStillAlive();
 
-    const array_buffer = typedarray.asArrayBuffer(env) orelse return invalidArg();
+    const array_buffer = typedarray.asArrayBuffer(env.toJS()) orelse return env.invalidArg();
     if (maybe_type) |@"type"|
-        @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return invalidArg();
+        @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return env.invalidArg();
 
     // TODO: handle detached
     if (maybe_data) |data|
@@ -899,21 +901,21 @@ pub export fn napi_get_typedarray_info(
         length.* = array_buffer.len;
 
     if (maybe_arraybuffer) |arraybuffer|
-        arraybuffer.set(env, JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), typedarray.asObjectRef(), null)));
+        arraybuffer.set(env, JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), typedarray.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
         byte_offset.* = array_buffer.offset;
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
-pub export fn napi_is_dataview(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
+pub export fn napi_is_dataview(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_dataview", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
     result.* = !value.isEmptyOrUndefinedOrNull() and value.jsTypeLoose() == .DataView;
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_get_dataview_info(
     env: napi_env,
@@ -925,7 +927,7 @@ pub export fn napi_get_dataview_info(
 ) napi_status {
     log("napi_get_dataview_info", .{});
     const dataview = dataview_.get();
-    const array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
+    const array_buffer = dataview.asArrayBuffer(env.toJS()) orelse return env.setLastError(.object_expected);
     if (maybe_bytelength) |bytelength|
         bytelength.* = array_buffer.byte_len;
 
@@ -933,103 +935,103 @@ pub export fn napi_get_dataview_info(
         data.* = array_buffer.ptr;
 
     if (maybe_arraybuffer) |arraybuffer|
-        arraybuffer.set(env, JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), dataview.asObjectRef(), null)));
+        arraybuffer.set(env, JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), dataview.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
         byte_offset.* = array_buffer.offset;
 
-    return .ok;
+    return env.ok();
 }
-pub export fn napi_get_version(_: napi_env, result_: ?*u32) napi_status {
+pub export fn napi_get_version(env: napi_env, result_: ?*u32) napi_status {
     log("napi_get_version", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     result.* = NAPI_VERSION;
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_create_promise(env: napi_env, deferred_: ?*napi_deferred, promise_: ?*napi_value) napi_status {
     log("napi_create_promise", .{});
     const deferred = deferred_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const promise = promise_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     deferred.* = bun.default_allocator.create(JSC.JSPromise.Strong) catch @panic("failed to allocate napi_deferred");
-    deferred.*.* = JSC.JSPromise.Strong.init(env);
-    promise.set(env, deferred.*.get().asValue(env));
-    return .ok;
+    deferred.*.* = JSC.JSPromise.Strong.init(env.toJS());
+    promise.set(env, deferred.*.get().asValue(env.toJS()));
+    return env.ok();
 }
 pub export fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution_: napi_value) napi_status {
     log("napi_resolve_deferred", .{});
     const resolution = resolution_.get();
     var prom = deferred.get();
-    prom.resolve(env, resolution);
+    prom.resolve(env.toJS(), resolution);
     deferred.deinit();
     bun.default_allocator.destroy(deferred);
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection_: napi_value) napi_status {
     log("napi_reject_deferred", .{});
     const rejection = rejection_.get();
     var prom = deferred.get();
-    prom.reject(env, rejection);
+    prom.reject(env.toJS(), rejection);
     deferred.deinit();
     bun.default_allocator.destroy(deferred);
-    return .ok;
+    return env.ok();
 }
-pub export fn napi_is_promise(_: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
+pub export fn napi_is_promise(env: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
     log("napi_is_promise", .{});
     const value = value_.get();
     const is_promise = is_promise_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
 
     if (value == .zero) {
-        return invalidArg();
+        return env.invalidArg();
     }
 
     is_promise.* = value.asAnyPromise() != null;
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result_: ?*napi_value) napi_status {
     log("napi_create_date", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time).asObjectRef()};
-    result.set(env, JSValue.c(JSC.C.JSObjectMakeDate(env.ref(), 1, &args, TODO_EXCEPTION)));
-    return .ok;
+    result.set(env, JSValue.c(JSC.C.JSObjectMakeDate(env.toJS().ref(), 1, &args, TODO_EXCEPTION)));
+    return env.ok();
 }
-pub export fn napi_is_date(_: napi_env, value_: napi_value, is_date_: ?*bool) napi_status {
+pub export fn napi_is_date(env: napi_env, value_: napi_value, is_date_: ?*bool) napi_status {
     log("napi_is_date", .{});
     const is_date = is_date_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
     is_date.* = value.jsTypeLoose() == .JSDate;
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status;
-pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *Ref) napi_status;
+pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: napi_ref) napi_status;
 pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result_: ?*napi_value) napi_status {
     log("napi_create_bigint_int64", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    result.set(env, JSC.JSValue.fromInt64NoTruncate(env, value));
-    return .ok;
+    result.set(env, JSC.JSValue.fromInt64NoTruncate(env.toJS(), value));
+    return env.ok();
 }
 pub export fn napi_create_bigint_uint64(env: napi_env, value: u64, result_: ?*napi_value) napi_status {
     log("napi_create_bigint_uint64", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    result.set(env, JSC.JSValue.fromUInt64NoTruncate(env, value));
-    return .ok;
+    result.set(env, JSC.JSValue.fromUInt64NoTruncate(env.toJS(), value));
+    return env.ok();
 }
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
 pub extern fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: ?*i64, lossless: ?*bool) napi_status;
@@ -1052,7 +1054,7 @@ pub const napi_async_work = struct {
     concurrent_task: JSC.ConcurrentTask = .{},
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,
-    global: napi_env,
+    global: *JSC.JSGlobalObject,
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
     ctx: ?*anyopaque = null,
@@ -1068,7 +1070,7 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn create(global: napi_env, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
+    pub fn create(global: *JSC.JSGlobalObject, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
         const work = try bun.default_allocator.create(napi_async_work);
         work.* = .{
             .global = global,
@@ -1095,7 +1097,7 @@ pub const napi_async_work = struct {
             }
             return;
         }
-        this.execute.?(this.global, this.ctx);
+        this.execute.?(NapiEnv.fromJS(this.global), this.ctx);
         this.status.store(@intFromEnum(Status.completed), .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
@@ -1124,14 +1126,14 @@ pub const napi_async_work = struct {
     }
 
     fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
-        const handle_scope = NapiHandleScope.open(this.global, false);
-        defer if (handle_scope) |scope| scope.close(this.global);
+        const handle_scope = NapiHandleScope.open(NapiEnv.fromJS(this.global), false);
+        defer if (handle_scope) |scope| scope.close(NapiEnv.fromJS(this.global));
         this.complete.?(
-            this.global,
-            if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
-                napi_status.cancelled
+            NapiEnv.fromJS(this.global),
+            @intFromEnum(if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
+                NapiStatus.cancelled
             else
-                napi_status.ok,
+                NapiStatus.ok),
             this.ctx.?,
         );
         if (this.global.hasException()) {
@@ -1212,23 +1214,23 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 }
 pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
     log("napi_create_buffer: {d}", .{length});
-    var buffer = JSC.JSValue.createBufferFromLength(env, length);
+    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
     if (length > 0) {
         if (data) |ptr| {
-            ptr.* = buffer.asArrayBuffer(env).?.ptr;
+            ptr.* = buffer.asArrayBuffer(env.toJS()).?.ptr;
         }
     }
     result.set(env, buffer);
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result_: ?*napi_value) napi_status {
     log("napi_create_buffer_copy: {d}", .{length});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    var buffer = JSC.JSValue.createBufferFromLength(env, length);
-    if (buffer.asArrayBuffer(env)) |array_buf| {
+    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
+    if (buffer.asArrayBuffer(env.toJS())) |array_buf| {
         if (length > 0) {
             @memcpy(array_buf.slice()[0..length], data[0..length]);
         }
@@ -1239,23 +1241,23 @@ pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8,
 
     result.set(env, buffer);
 
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_is_buffer(env: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_buffer", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const value = value_.get();
-    result.* = value.isBuffer(env);
-    return .ok;
+    result.* = value.isBuffer(env.toJS());
+    return env.ok();
 }
 pub export fn napi_get_buffer_info(env: napi_env, value_: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const value = value_.get();
-    const array_buf = value.asArrayBuffer(env) orelse {
+    const array_buf = value.asArrayBuffer(env.toJS()) orelse {
         // TODO: is invalid_arg what to return here?
-        return .arraybuffer_expected;
+        return env.setLastError(.arraybuffer_expected);
     };
 
     if (data) |dat|
@@ -1264,7 +1266,7 @@ pub export fn napi_get_buffer_info(env: napi_env, value_: napi_value, data: ?*[*
     if (length) |len|
         len.* = array_buf.byte_len;
 
-    return .ok;
+    return env.ok();
 }
 
 extern fn node_api_create_syntax_error(napi_env, napi_value, napi_value, *napi_value) napi_status;
@@ -1284,56 +1286,56 @@ pub export fn napi_create_async_work(
 ) napi_status {
     log("napi_create_async_work", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    result.* = napi_async_work.create(env, execute, complete, data) catch {
-        return genericFailure();
+    result.* = napi_async_work.create(env.toJS(), execute, complete, data) catch {
+        return env.genericFailure();
     };
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_delete_async_work(env: napi_env, work_: ?*napi_async_work) napi_status {
     log("napi_delete_async_work", .{});
     const work = work_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    bun.assert(env == work.global);
+    bun.assert(env.toJS() == work.global);
     work.deinit();
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_queue_async_work(env: napi_env, work_: ?*napi_async_work) napi_status {
     log("napi_queue_async_work", .{});
     const work = work_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    bun.assert(env == work.global);
+    bun.assert(env.toJS() == work.global);
     work.schedule();
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_cancel_async_work(env: napi_env, work_: ?*napi_async_work) napi_status {
     log("napi_cancel_async_work", .{});
     const work = work_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
-    bun.assert(env == work.global);
+    bun.assert(env.toJS() == work.global);
     if (work.cancel()) {
-        return .ok;
+        return env.ok();
     }
 
-    return napi_status.generic_failure;
+    return env.genericFailure();
 }
-pub export fn napi_get_node_version(_: napi_env, version_: ?**const napi_node_version) napi_status {
+pub export fn napi_get_node_version(env: napi_env, version_: ?**const napi_node_version) napi_status {
     log("napi_get_node_version", .{});
     const version = version_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     version.* = &napi_node_version.global;
-    return .ok;
+    return env.ok();
 }
 const napi_event_loop = if (bun.Environment.isWindows) *bun.windows.libuv.Loop else *JSC.EventLoop;
 pub export fn napi_get_uv_event_loop(env: napi_env, loop_: ?*napi_event_loop) napi_status {
     log("napi_get_uv_event_loop", .{});
     const loop = loop_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     if (bun.Environment.isWindows) {
         // alignment error is incorrect.
@@ -1341,9 +1343,9 @@ pub export fn napi_get_uv_event_loop(env: napi_env, loop_: ?*napi_event_loop) na
         loop.* = JSC.VirtualMachine.get().uvLoop();
     } else {
         // there is no uv event loop on posix, we use our event loop handle.
-        loop.* = env.bunVM().eventLoop();
+        loop.* = env.toJS().bunVM().eventLoop();
     }
-    return .ok;
+    return env.ok();
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
 
@@ -1352,26 +1354,26 @@ pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
 pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     log("napi_add_env_cleanup_hook", .{});
     if (fun == null)
-        return .ok;
+        return env.ok();
 
-    env.bunVM().rareData().pushCleanupHook(env, arg, fun.?);
-    return .ok;
+    env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), arg, fun.?);
+    return env.ok();
 }
 pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     log("napi_remove_env_cleanup_hook", .{});
 
     // Avoid looking up env.bunVM().
     if (bun.Global.isExiting()) {
-        return .ok;
+        return env.ok();
     }
 
     const vm = JSC.VirtualMachine.get();
 
     if (vm.rare_data == null or fun == null or vm.isShuttingDown())
-        return .ok;
+        return env.ok();
 
     var rare_data = vm.rare_data.?;
-    const cmp = JSC.RareData.CleanupHook.init(env, arg, fun.?);
+    const cmp = JSC.RareData.CleanupHook.init(env.toJS(), arg, fun.?);
     for (rare_data.cleanup_hooks.items, 0..) |*hook, i| {
         if (hook.eql(cmp)) {
             _ = rare_data.cleanup_hooks.orderedRemove(i);
@@ -1379,7 +1381,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
         }
     }
 
-    return .ok;
+    return env.ok();
 }
 
 pub const Finalizer = struct {
@@ -1418,7 +1420,9 @@ pub const ThreadSafeFunction = struct {
 
     // User implementation error can cause this number to go negative.
     thread_count: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    // for std.condvar
     lock: std.Thread.Mutex = .{},
+
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 
@@ -1573,7 +1577,7 @@ pub const ThreadSafeFunction = struct {
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
     fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
-        const globalObject = this.env;
+        const globalObject = this.env.toJS();
         if (!is_first) {
             this.event_loop.drainMicrotasks();
         }
@@ -1594,9 +1598,9 @@ pub const ThreadSafeFunction = struct {
             .c => |cb| {
                 const js = cb.js.get() orelse .undefined;
 
-                const handle_scope = NapiHandleScope.open(globalObject, false);
-                defer if (handle_scope) |scope| scope.close(globalObject);
-                cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, js), this.ctx, task);
+                const handle_scope = NapiHandleScope.open(this.env, false);
+                defer if (handle_scope) |scope| scope.close(this.env);
+                cb.napi_threadsafe_function_call_js(this.env, napi_value.create(this.env, js), this.ctx, task);
             },
         }
     }
@@ -1610,22 +1614,23 @@ pub const ThreadSafeFunction = struct {
             }
         } else {
             if (this.queue.isBlocked()) {
-                return .queue_full;
+                // don't set the error on the env as this is run from another thread
+                return @intFromEnum(NapiStatus.queue_full);
             }
         }
 
         if (this.isClosing()) {
             if (this.thread_count.load(.seq_cst) <= 0) {
-                return .invalid_arg;
+                return @intFromEnum(NapiStatus.invalid_arg);
             }
             _ = this.release(.release, true);
-            return .closing;
+            return @intFromEnum(NapiStatus.closing);
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
         this.queue.data.writeItem(ctx) catch bun.outOfMemory();
         this.scheduleDispatch();
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 
     fn scheduleDispatch(this: *ThreadSafeFunction) void {
@@ -1648,7 +1653,7 @@ pub const ThreadSafeFunction = struct {
         if (this.finalizer.fun) |fun| {
             const handle_scope = NapiHandleScope.open(this.env, false);
             defer if (handle_scope) |scope| scope.close(this.env);
-            fun(this.event_loop.global, this.finalizer.data, this.ctx);
+            fun(this.env, this.finalizer.data, this.ctx);
         }
 
         this.callback.deinit();
@@ -1668,10 +1673,10 @@ pub const ThreadSafeFunction = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (this.isClosing()) {
-            return .closing;
+            return @intFromEnum(NapiStatus.closing);
         }
         _ = this.thread_count.fetchAdd(1, .seq_cst);
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 
     pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
@@ -1679,7 +1684,7 @@ pub const ThreadSafeFunction = struct {
         defer if (!already_locked) this.lock.unlock();
 
         if (this.thread_count.load(.seq_cst) < 0) {
-            return .invalid_arg;
+            return @intFromEnum(NapiStatus.invalid_arg);
         }
 
         const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
@@ -1697,7 +1702,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        return .ok;
+        return @intFromEnum(NapiStatus.ok);
     }
 };
 
@@ -1716,25 +1721,26 @@ pub export fn napi_create_threadsafe_function(
 ) napi_status {
     log("napi_create_threadsafe_function", .{});
     const result = result_ orelse {
-        return invalidArg();
+        return env.invalidArg();
     };
     const func = func_.get();
+    const global = env.toJS();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm()))) {
-        return napi_status.function_expected;
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(global.vm()))) {
+        return env.setLastError(.function_expected);
     }
 
-    const vm = env.bunVM();
+    const vm = global.bunVM();
     var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
         .env = env,
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(global), vm.global),
             },
         } else .{
-            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(global), vm.global),
         },
         .ctx = context,
         .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
@@ -1749,12 +1755,12 @@ pub export fn napi_create_threadsafe_function(
     function.tracker.didSchedule(vm.global);
 
     result.* = function;
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_get_threadsafe_function_context(func: napi_threadsafe_function, result: *?*anyopaque) napi_status {
     log("napi_get_threadsafe_function_context", .{});
     result.* = func.ctx;
-    return .ok;
+    return @intFromEnum(NapiStatus.ok);
 }
 pub export fn napi_call_threadsafe_function(func: napi_threadsafe_function, data: ?*anyopaque, is_blocking: napi_threadsafe_function_call_mode) napi_status {
     log("napi_call_threadsafe_function", .{});
@@ -1770,26 +1776,26 @@ pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, m
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});
-    bun.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env.toJS());
     func.unref();
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_ref_threadsafe_function", .{});
-    bun.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env.toJS());
     func.ref();
-    return .ok;
+    return env.ok();
 }
 
-pub export fn napi_add_async_cleanup_hook(_: napi_env, _: napi_async_cleanup_hook, _: ?*anyopaque, _: [*c]napi_async_cleanup_hook_handle) napi_status {
+pub export fn napi_add_async_cleanup_hook(env: napi_env, _: napi_async_cleanup_hook, _: ?*anyopaque, _: [*c]napi_async_cleanup_hook_handle) napi_status {
     log("napi_add_async_cleanup_hook", .{});
     // TODO:
-    return .ok;
+    return env.ok();
 }
 pub export fn napi_remove_async_cleanup_hook(_: napi_async_cleanup_hook_handle) napi_status {
     log("napi_remove_async_cleanup_hook", .{});
     // TODO:
-    return .ok;
+    return @intFromEnum(NapiStatus.ok);
 }
 
 const NAPI_VERSION = @as(c_int, 8);

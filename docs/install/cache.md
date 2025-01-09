@@ -1,4 +1,4 @@
-All packages downloaded from the registry are stored in a global cache at `~/.bun/install/cache`. They are stored in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
+All packages downloaded from the registry are stored in a global cache at `~/.bun/install/cache`, or the path defined by the environment variable `BUN_INSTALL_CACHE_DIR`. They are stored in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
 
 {% details summary="Configuring cache behavior (bunfig.toml)" %}
 

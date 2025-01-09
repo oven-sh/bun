@@ -2,7 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
+const { ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
@@ -126,7 +126,7 @@ function isValidTLSArray(obj) {
 
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
@@ -1520,6 +1520,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#agent;
   }
 
+  set agent(value) {
+    this.#agent = value;
+  }
+
   #createStream() {
     if (!this.#stream) {
       var self = this;
@@ -1806,7 +1810,7 @@ class ClientRequest extends OutgoingMessage {
     } else if (agent == null) {
       agent = defaultAgent;
     } else if (typeof agent.addRequest !== "function") {
-      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+      throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
     }
     this.#agent = agent;
 
@@ -1852,8 +1856,7 @@ class ClientRequest extends OutgoingMessage {
     let method = options.method;
     const methodIsString = typeof method === "string";
     if (method !== null && method !== undefined && !methodIsString) {
-      // throw ERR_INVALID_ARG_TYPE("options.method", "string", method);
-      throw new Error("ERR_INVALID_ARG_TYPE: options.method");
+      throw $ERR_INVALID_ARG_TYPE("options.method", "string", method);
     }
 
     if (methodIsString && method) {
@@ -2088,12 +2091,7 @@ class ClientRequest extends OutgoingMessage {
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    // throw ERR_INVALID_ARG_TYPE(
-    //   `options.${name}`,
-    //   ["string", "undefined", "null"],
-    //   host,
-    // );
-    throw new Error("Invalid arg type in options");
+    throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["string", "undefined", "null"], host);
   }
   return host;
 }

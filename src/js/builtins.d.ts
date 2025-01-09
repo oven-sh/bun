@@ -161,8 +161,26 @@ declare function $toPropertyKey(x: any): PropertyKey;
  * `$toObject(this, "Class.prototype.method requires that |this| not be null or undefined");`
  */
 declare function $toObject(object: any, errorMessage?: string): object;
+/**
+ * ## References
+ * - [WebKit - `emit_intrinsic_newArrayWithSize`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2317)
+ */
 declare function $newArrayWithSize<T>(size: number): T[];
-declare function $newArrayWithSpecies(): TODO;
+/**
+ * Optimized path for creating a new array storing objects with the same homogenous Structure
+ * as {@link array}.
+ *
+ * @param size the initial size of the new array
+ * @param array the array whose shape we want to copy
+ *
+ * @returns a new array
+ *
+ * ## References
+ * - [WebKit - `emit_intrinsic_newArrayWithSpecies`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2328)
+ * - [WebKit - #4909](https://github.com/WebKit/WebKit/pull/4909)
+ * - [WebKit Bugzilla - Related Issue/Ticket](https://bugs.webkit.org/show_bug.cgi?id=245797)
+ */
+declare function $newArrayWithSpecies<T>(size: number, array: T[]): T[];
 declare function $newPromise(): TODO;
 declare function $createPromise(): TODO;
 declare const $iterationKindKey: TODO;
@@ -549,6 +567,22 @@ declare interface Error {
  */
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
+declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+
+declare function $ERR_IPC_DISCONNECTED(): Error;
+declare function $ERR_SERVER_NOT_RUNNING(): Error;
+declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
+declare function $ERR_SOCKET_BAD_TYPE(): Error;
+declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
+declare function $ERR_BUFFER_OUT_OF_BOUNDS(): Error;
+declare function $ERR_IPC_ONE_PIPE(): Error;
+declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
+declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;
+declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;
+declare function $ERR_SOCKET_DGRAM_NOT_CONNECTED(): Error;
+declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
+declare function $ERR_INVALID_CURSOR_POS(): Error;
+
 /**
  * Convert a function to a class-like object.
  *

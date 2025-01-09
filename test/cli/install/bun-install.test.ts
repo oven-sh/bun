@@ -22,6 +22,8 @@ import {
   toHaveBins,
   runBunInstall,
   isWindows,
+  textLockfile,
+  readdirSorted,
 } from "harness";
 import { join, sep, resolve } from "path";
 import {
@@ -31,7 +33,6 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  readdirSorted,
   requested,
   root_url,
   setHandler,
@@ -1118,59 +1119,6 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "Baz"]);
   expect(package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
-  expect(package_dir).toHaveWorkspaceLink(["Baz", "packages/baz"]);
-  await access(join(package_dir, "bun.lockb"));
-});
-
-it("should ignore peerDependencies within workspaces", async () => {
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "Foo",
-      version: "0.0.1",
-      workspaces: ["packages/baz"],
-      peerDependencies: {
-        Bar: ">=0.0.2",
-      },
-    }),
-  );
-  await mkdir(join(package_dir, "packages", "baz"), { recursive: true });
-  await writeFile(
-    join(package_dir, "packages", "baz", "package.json"),
-    JSON.stringify({
-      name: "Baz",
-      version: "0.0.3",
-      peerDependencies: {
-        Moo: ">=0.0.4",
-      },
-    }),
-  );
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `
-    [install]
-    peer = false
-    `,
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Baz"]);
   expect(package_dir).toHaveWorkspaceLink(["Baz", "packages/baz"]);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -8457,4 +8405,134 @@ saveTextLockfile = true
   });
   expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
   expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
+});
+
+test("providing invalid url in lockfile does not crash", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "jquery": "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@3.7.1",
+            "invalid-url",
+            {},
+            "sha512-+LGRog6RAsCJrrrg/IO6LGmpphNe5DiK30dGjCoxxeGv49B10/3XYGxPsAwrDlMFcFEvdAUavDT8r9k/hSyQqQ==",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).toContain(
+    'error: Expected tarball URL to start with https:// or http://, got "invalid-url" while fetching package "jquery"',
+  );
+  expect(await exited).toBe(1);
+});
+
+test("optional dependencies do not need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        optionalDependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "optionalDependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(0);
+});
+
+test("non-optional dependencies need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        workspaces: {
+          "": {
+            dependencies: {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        packages: {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    // --production to fail early
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).toContain("error: Failed to resolve root prod dependency 'jquery'");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(1);
 });

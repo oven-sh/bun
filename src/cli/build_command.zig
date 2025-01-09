@@ -25,7 +25,7 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
 
@@ -74,13 +74,13 @@ pub const BuildCommand = struct {
             }
         }
 
-        var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
+        var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
 
-        this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
+        this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
-        this_bundler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.compile = ctx.bundler_options.compile;
 
-        if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (this_transpiler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
@@ -89,37 +89,37 @@ pub const BuildCommand = struct {
         var outfile = ctx.bundler_options.outfile;
         const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
 
-        this_bundler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
+        this_transpiler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
-        this_bundler.options.public_path = ctx.bundler_options.public_path;
-        this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
-        this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
-        this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.options.server_components = ctx.bundler_options.server_components;
-        this_bundler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
-        this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-        this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_transpiler.options.public_path = ctx.bundler_options.public_path;
+        this_transpiler.options.entry_naming = ctx.bundler_options.entry_naming;
+        this_transpiler.options.chunk_naming = ctx.bundler_options.chunk_naming;
+        this_transpiler.options.asset_naming = ctx.bundler_options.asset_naming;
+        this_transpiler.options.server_components = ctx.bundler_options.server_components;
+        this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
+        this_transpiler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+        this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
+        this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
-        this_bundler.options.banner = ctx.bundler_options.banner;
-        this_bundler.options.footer = ctx.bundler_options.footer;
-        this_bundler.options.drop = ctx.args.drop;
+        this_transpiler.options.banner = ctx.bundler_options.banner;
+        this_transpiler.options.footer = ctx.bundler_options.footer;
+        this_transpiler.options.drop = ctx.args.drop;
 
-        this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
-        this_bundler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.experimental = ctx.bundler_options.experimental;
+        this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.options.output_format = ctx.bundler_options.output_format;
+        this_transpiler.options.output_dir = ctx.bundler_options.outdir;
+        this_transpiler.options.output_format = ctx.bundler_options.output_format;
 
         if (ctx.bundler_options.output_format == .internal_bake_dev) {
-            this_bundler.options.tree_shaking = false;
+            this_transpiler.options.tree_shaking = false;
         }
 
-        this_bundler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -136,21 +136,21 @@ pub const BuildCommand = struct {
 
             const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
 
-            this_bundler.options.public_path = base_public_path;
+            this_transpiler.options.public_path = base_public_path;
 
             if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
+                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
                 const ext = std.fs.path.extension(outfile);
                 if (ext.len > 0) {
                     outfile = outfile[0 .. outfile.len - ext.len];
                 }
 
                 if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "index");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
                 }
 
                 if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "bun");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
                 }
             }
 
@@ -169,12 +169,12 @@ pub const BuildCommand = struct {
         }
 
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
-            if (this_bundler.options.entry_points.len > 1) {
+            if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
                 return;
             }
-            if (this_bundler.options.code_splitting) {
+            if (this_transpiler.options.code_splitting) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled", .{});
                 Global.exit(1);
                 return;
@@ -188,11 +188,11 @@ pub const BuildCommand = struct {
                     break :brk2 ctx.bundler_options.root_dir;
                 }
 
-                if (this_bundler.options.entry_points.len == 1) {
-                    break :brk2 std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse ".";
+                if (this_transpiler.options.entry_points.len == 1) {
+                    break :brk2 std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse ".";
                 }
 
-                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
+                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_transpiler.options.entry_points) orelse ".";
             };
 
             var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
@@ -207,47 +207,47 @@ pub const BuildCommand = struct {
             };
         };
 
-        this_bundler.options.root_dir = src_root_dir;
-        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.options.transform_only = ctx.bundler_options.transform_only;
+        this_transpiler.options.root_dir = src_root_dir;
+        this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
-        this_bundler.options.env.behavior = ctx.bundler_options.env_behavior;
-        this_bundler.options.env.prefix = ctx.bundler_options.env_prefix;
+        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
-        try this_bundler.configureDefines();
-        this_bundler.configureLinker();
+        try this_transpiler.configureDefines();
+        this_transpiler.configureLinker();
 
         if (bun.FeatureFlags.breaking_changes_1_2) {
             // This is currently done in DevServer by default, but not in Bun.build
-            if (!this_bundler.options.production) {
-                try this_bundler.options.conditions.appendSlice(&.{"development"});
+            if (!this_transpiler.options.production) {
+                try this_transpiler.options.conditions.appendSlice(&.{"development"});
             }
         }
 
-        this_bundler.resolver.opts = this_bundler.options;
-        this_bundler.options.jsx.development = !this_bundler.options.production;
-        this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
+        this_transpiler.resolver.opts = this_transpiler.options;
+        this_transpiler.options.jsx.development = !this_transpiler.options.production;
+        this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
 
         switch (ctx.debug.macros) {
             .disable => {
-                this_bundler.options.no_macros = true;
+                this_transpiler.options.no_macros = true;
             },
             .map => |macros| {
-                this_bundler.options.macro_remap = macros;
+                this_transpiler.options.macro_remap = macros;
             },
             .unspecified => {},
         }
 
-        var client_bundler: bundler.Bundler = undefined;
-        if (this_bundler.options.server_components) {
-            client_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
-            client_bundler.options = this_bundler.options;
+        var client_bundler: transpiler.Transpiler = undefined;
+        if (this_transpiler.options.server_components) {
+            client_bundler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+            client_bundler.options = this_transpiler.options;
             client_bundler.options.target = .browser;
             client_bundler.options.server_components = true;
-            client_bundler.options.conditions = try this_bundler.options.conditions.clone();
-            try this_bundler.options.conditions.appendSlice(&.{"react-server"});
-            this_bundler.options.react_fast_refresh = false;
-            this_bundler.options.minify_syntax = true;
+            client_bundler.options.conditions = try this_transpiler.options.conditions.clone();
+            try this_transpiler.options.conditions.appendSlice(&.{"react-server"});
+            this_transpiler.options.react_fast_refresh = false;
+            this_transpiler.options.minify_syntax = true;
             client_bundler.options.minify_syntax = true;
             client_bundler.options.define = try options.Define.init(
                 allocator,
@@ -261,20 +261,20 @@ pub const BuildCommand = struct {
                 else
                     null,
                 null,
-                this_bundler.options.define.drop_debugger,
+                this_transpiler.options.define.drop_debugger,
             );
 
-            try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
+            try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
             try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
 
-            this_bundler.resolver.opts = this_bundler.options;
+            this_transpiler.resolver.opts = this_transpiler.options;
             client_bundler.resolver.opts = client_bundler.options;
         }
 
-        // var env_loader = this_bundler.env;
+        // var env_loader = this_transpiler.env;
 
         if (ctx.debug.dump_environment_variables) {
-            this_bundler.dumpEnvironmentVariables();
+            this_transpiler.dumpEnvironmentVariables();
             return;
         }
 
@@ -284,12 +284,12 @@ pub const BuildCommand = struct {
 
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {
-                this_bundler.options.import_path_format = .relative;
-                this_bundler.options.allow_runtime = false;
-                this_bundler.resolver.opts.allow_runtime = false;
+                this_transpiler.options.import_path_format = .relative;
+                this_transpiler.options.allow_runtime = false;
+                this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                const result = try this_bundler.transform(
+                const result = try this_transpiler.transform(
                     ctx.allocator,
                     ctx.log,
                     ctx.args,
@@ -309,7 +309,7 @@ pub const BuildCommand = struct {
             }
 
             break :brk (BundleV2.generateFromCLI(
-                &this_bundler,
+                &this_transpiler,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 ctx.debug.hot_reload == .watch,
@@ -335,7 +335,7 @@ pub const BuildCommand = struct {
                 dump: {
                     defer Output.flush();
                     var writer = Output.writer();
-                    var output_dir = this_bundler.options.output_dir;
+                    var output_dir = this_transpiler.options.output_dir;
 
                     const will_be_one_file =
                         // --outdir is not supported with --compile
@@ -391,7 +391,7 @@ pub const BuildCommand = struct {
                         printSummary(
                             bundled_end,
                             minify_duration,
-                            this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax,
+                            this_transpiler.options.minify_identifiers or this_transpiler.options.minify_whitespace or this_transpiler.options.minify_syntax,
                             input_code_length,
                             reachable_file_count,
                             output_files,
@@ -414,10 +414,12 @@ pub const BuildCommand = struct {
                             allocator,
                             output_files,
                             root_dir,
-                            this_bundler.options.public_path,
+                            this_transpiler.options.public_path,
                             outfile,
-                            this_bundler.env,
-                            this_bundler.options.output_format,
+                            this_transpiler.env,
+                            this_transpiler.options.output_format,
+                            ctx.bundler_options.windows_hide_console,
+                            ctx.bundler_options.windows_icon,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
@@ -476,7 +478,7 @@ pub const BuildCommand = struct {
                     Output.printElapsedStdoutTrim(
                         @as(f64, @floatFromInt((@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))))),
                     );
-                    if (this_bundler.options.transform_only) {
+                    if (this_transpiler.options.transform_only) {
                         Output.prettyln(" <green>transpile<r>", .{});
                     } else {
                         Output.prettyln(" <green>bundle<r> {d} modules", .{

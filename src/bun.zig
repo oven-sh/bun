@@ -16,23 +16,23 @@ pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").c_allocator;
+    @import("./allocators/memory_allocator.zig").c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").z_allocator;
+    @import("./allocators/memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").huge_allocator;
+    @import("./allocators/memory_allocator.zig").huge_allocator;
 
 pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").auto_allocator;
+    @import("./allocators/memory_allocator.zig").auto_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
@@ -556,7 +556,7 @@ pub const StringBuilder = @import("./string_builder.zig");
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
-    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
 };
 
 /// hash a string
@@ -887,7 +887,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
@@ -1331,8 +1331,8 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = bundler.Bundler;
-pub const bundler = @import("./bundler.zig");
+pub const Transpiler = transpiler.Transpiler;
+pub const transpiler = @import("./transpiler.zig");
 pub const which = @import("./which.zig").which;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
@@ -1399,10 +1399,10 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 pub const getcwd = std.posix.getcwd;
 
-pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
-    return allocator.dupe(u8, temp_slice);
+    return allocator.dupeZ(u8, temp_slice);
 }
 
 /// Get the absolute path to a file descriptor.
@@ -1607,7 +1607,7 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
@@ -1871,6 +1871,14 @@ pub const StringSet = struct {
         }
     }
 
+    pub fn contains(self: *StringSet, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    pub fn swapRemove(self: *StringSet, key: []const u8) bool {
+        return self.map.swapRemove(key);
+    }
+
     pub fn deinit(self: *StringSet) void {
         for (self.map.keys()) |key| {
             self.map.allocator.free(key);
@@ -1955,7 +1963,8 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @import("./lock.zig").Lock;
+pub const Lock = @compileError("Use bun.Mutex instead");
+pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2036,7 +2045,7 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     };
 }
 
-pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;
+pub const MaxHeapAllocator = @import("./allocators/max_heap_allocator.zig").MaxHeapAllocator;
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
@@ -3229,6 +3238,19 @@ pub fn exitThread() noreturn {
     }
 }
 
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
+    }
+}
+
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
 
 pub const io = @import("./io/io.zig");
@@ -3418,7 +3440,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock: Lock = .{};
+        var lock: Mutex = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -4054,7 +4076,7 @@ pub fn Once(comptime f: anytype) type {
 
         done: bool = false,
         payload: Return = undefined,
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
@@ -4122,3 +4144,83 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+/// To handle stack overflows:
+/// 1. StackCheck.init()
+/// 2. .isSafeToRecurse()
+pub const StackCheck = struct {
+    cached_stack_end: usize = 0,
+
+    extern fn Bun__StackCheck__initialize() void;
+    pub fn configureThread() void {
+        Bun__StackCheck__initialize();
+    }
+
+    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    fn getStackEnd() usize {
+        return Bun__StackCheck__getMaxStack();
+    }
+
+    pub fn init() StackCheck {
+        return StackCheck{ .cached_stack_end = getStackEnd() };
+    }
+
+    pub fn update(this: *StackCheck) void {
+        this.cached_stack_end = getStackEnd();
+    }
+
+    /// Is there at least 128 KB of stack space available?
+    pub fn isSafeToRecurse(this: StackCheck) bool {
+        const stack_ptr: usize = @frameAddress();
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
+    }
+};
+
+// Workaround for lack of branch hints.
+pub noinline fn throwStackOverflow() StackOverflow!void {
+    @setCold(true);
+    return error.StackOverflow;
+}
+const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
+
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
+        }
+    };
+}
+
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
+};
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3/client.zig");

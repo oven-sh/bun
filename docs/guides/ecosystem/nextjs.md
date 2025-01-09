@@ -15,6 +15,14 @@ $ bun create next-app
 Creating a new Next.js app in /path/to/my-app.
 ```
 
+You can specify a starter template using the `--example` flag.
+
+```sh
+$ bun create next-app --example with-supabase
+✔ What is your project named? … my-app
+...
+```
+
 ---
 
 To start the dev server with Bun, run `bun --bun run dev` from the project root.

@@ -18,7 +18,7 @@ const URL = @import("./url.zig").URL;
 const PercentEncoding = @import("./url.zig").PercentEncoding;
 pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
-const Lock = @import("./lock.zig").Lock;
+const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
@@ -27,7 +27,7 @@ const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
 const Progress = bun.Progress;
@@ -1041,8 +1041,8 @@ pub const HTTPThread = struct {
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
     queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
 
-    queued_shutdowns_lock: bun.Lock = .{},
-    queued_writes_lock: bun.Lock = .{},
+    queued_shutdowns_lock: bun.Mutex = .{},
+    queued_writes_lock: bun.Mutex = .{},
 
     queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
 
@@ -1148,7 +1148,8 @@ pub const HTTPThread = struct {
 
         if (Environment.isWindows) {
             _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
-                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                bun.Output.errGeneric("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+                Global.crash();
             };
         }
 
@@ -1215,11 +1216,13 @@ pub const HTTPThread = struct {
             }
         }
         if (client.http_proxy) |url| {
-            // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            if (url.href.len > 0) {
+                // https://github.com/oven-sh/bun/issues/11343
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                }
+                return error.UnsupportedProxyProtocol;
             }
-            return error.UnsupportedProxyProtocol;
         }
         return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
     }

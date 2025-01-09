@@ -1083,6 +1083,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = transpiler.options.cssImportBehavior(),
@@ -1105,6 +1106,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
@@ -1128,6 +1130,7 @@ pub const Transpiler = struct {
                     source,
                     is_bun,
                     .{
+                        .bundling = false,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = transpiler.options.cssImportBehavior(),
@@ -1362,7 +1365,6 @@ pub const Transpiler = struct {
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = transpiler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = transpiler.options.transform_only;

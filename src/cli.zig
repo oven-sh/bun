@@ -237,6 +237,7 @@ pub const Arguments = struct {
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
         clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
+        clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
@@ -762,6 +763,7 @@ pub const Arguments = struct {
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+            ctx.runtime_options.expose_gc = args.flag("--expose-gc");
 
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -1496,6 +1498,9 @@ pub const Command = struct {
             eval_and_print: bool = false,
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
+        /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
+        /// compatibility.
+        expose_gc: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;

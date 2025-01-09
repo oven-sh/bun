@@ -36,7 +36,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../mimalloc_arena.zig");
+const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -462,10 +462,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     transpiler.runtime.allow_runtime = false;
-    transpiler.runtime.use_import_meta_require = switch (transpiler.transform.target orelse .browser) {
-        .bun, .bun_macro => true,
-        else => false,
-    };
 
     if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {

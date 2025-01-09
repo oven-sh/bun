@@ -173,6 +173,7 @@ export default [
       size: {
         getter: "getSize",
       },
+      stat: { fn: "getStat", length: 0 },
 
       writer: {
         fn: "getWriter",

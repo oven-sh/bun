@@ -10,7 +10,6 @@ bench("new URLSearchParams(obj)", () => {
     "Content-Length": "123",
     "User-Agent": "node-fetch/1.0",
     "Accept-Encoding": "gzip,deflate",
-    "Content-Length": "0",
     "Content-Range": "bytes 0-9/10",
   });
 });

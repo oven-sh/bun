@@ -122,8 +122,6 @@ export default {
   FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
   JSONStringify: JSON.stringify,
   MapPrototypeDelete: uncurryThis(Map.prototype.delete),
-  MapPrototypeGet: uncurryThis(Map.prototype.get),
-  MapPrototypeHas: uncurryThis(Map.prototype.has),
   MapPrototypeSet: uncurryThis(Map.prototype.set),
   MapPrototypeGetSize: getGetter(Map, "size"),
   MapPrototypeEntries: uncurryThis(Map.prototype.entries),

@@ -1,3 +1,4 @@
+/// <reference path="../builtins.d.ts" />
 // Copied from Node.js (src/lib/assert.js)
 // Originally from narwhal.js (http://narwhaljs.org)
 // Copyright (c) 2009 Thomas Robinson <280north.com>
@@ -23,17 +24,12 @@
 
 const {
   ArrayFrom,
-  ArrayIsArray,
   ArrayPrototypeIndexOf,
   ArrayPrototypeJoin,
   ArrayPrototypePush,
   ArrayPrototypeSlice,
   Error,
   FunctionPrototypeCall,
-  MapPrototypeDelete,
-  MapPrototypeGet,
-  MapPrototypeHas,
-  MapPrototypeSet,
   NumberIsNaN,
   ObjectAssign,
   ObjectIs,
@@ -402,10 +398,10 @@ function compareBranch(actual, expected, comparedObjects) {
     comparedObjects ??= new SafeWeakSet();
 
     for (const { 0: key, 1: val } of safeIterator) {
-      if (!MapPrototypeHas(expected, key)) {
+      if (!expected.$has(key)) {
         return false;
       }
-      if (!compareBranch(val, MapPrototypeGet(expected, key), comparedObjects)) {
+      if (!compareBranch(val, expected.$get(key), comparedObjects)) {
         return false;
       }
     }
@@ -442,7 +438,7 @@ function compareBranch(actual, expected, comparedObjects) {
   }
 
   // Check if expected array is a subset of actual array
-  if (ArrayIsArray(actual) && ArrayIsArray(expected)) {
+  if ($isArray(actual) && $isArray(expected)) {
     if (expected.length > actual.length) {
       return false;
     }
@@ -453,13 +449,13 @@ function compareBranch(actual, expected, comparedObjects) {
       let found = false;
       for (const { 0: key, 1: count } of expectedCounts) {
         if (isDeepStrictEqual(key, expectedItem)) {
-          MapPrototypeSet(expectedCounts, key, count + 1);
+          expectedCounts.$set(key, count + 1);
           found = true;
           break;
         }
       }
       if (!found) {
-        MapPrototypeSet(expectedCounts, expectedItem, 1);
+        expectedCounts.$set(expectedItem, 1);
       }
     }
 
@@ -468,9 +464,9 @@ function compareBranch(actual, expected, comparedObjects) {
       for (const { 0: key, 1: count } of expectedCounts) {
         if (isDeepStrictEqual(key, actualItem)) {
           if (count === 1) {
-            MapPrototypeDelete(expectedCounts, key);
+            expectedCounts.$delete(key);
           } else {
-            MapPrototypeSet(expectedCounts, key, count - 1);
+            expectedCounts.$set(key, count - 1);
           }
           break;
         }

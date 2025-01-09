@@ -899,6 +899,9 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
+/** Files with these extensions are not treated as test cases */
+const IGNORED_EXTENSIONS = new Set([".md"]);
+
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -908,8 +911,9 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
+      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename)) {
+      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
         continue;
       }
       if (entry.isFile() && isTest(filename)) {

@@ -1632,8 +1632,9 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const mode: Mode = try JSC.Node.modeFromJS(ctx, arguments.next() orelse .undefined) orelse {
-                return ctx.throwInvalidArguments("mode is required", .{});
+            const mode_arg = arguments.next() orelse .undefined;
+            const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
+                return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
 
             arguments.eat();
@@ -1656,8 +1657,9 @@ pub const Arguments = struct {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const mode: Mode = try JSC.Node.modeFromJS(ctx, arguments.next() orelse .undefined) orelse {
-                return ctx.throwInvalidArguments("mode is required", .{});
+            const mode_arg = arguments.next() orelse .undefined;
+            const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
+                return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
 
             arguments.eat();
@@ -2079,6 +2081,9 @@ pub const Arguments = struct {
                     if (try val.get(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
+                }
+                if (val.isNumber() or val.isString()) {
+                    mode = try JSC.Node.modeFromJS(ctx, val) orelse mode;
                 }
             }
 

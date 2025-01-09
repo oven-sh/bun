@@ -131,7 +131,6 @@ pub const Async = struct {
                     .path = PathLike{ .string = PathString.init(this.path) },
                     .recursive = true,
                 },
-                .sync,
             );
             switch (result) {
                 .err => |err| {
@@ -1510,7 +1509,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapToU32(try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
             };
 
             const gid: gid_t = brk: {
@@ -1518,7 +1517,7 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapToU32(try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
             };
 
             return Chown{ .path = path, .uid = uid, .gid = gid };
@@ -1546,7 +1545,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapToU32(try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
             };
 
             const gid: gid_t = brk: {
@@ -1554,15 +1553,16 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapToU32(try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
             };
 
             return Fchown{ .fd = fd, .uid = uid, .gid = gid };
         }
     };
 
-    fn wrapToU32(in: i64) u32 {
-        return @intCast(@mod(in, std.math.maxInt(u32)));
+    fn wrapTo(T: type, in: i64) T {
+        comptime bun.assert(@typeInfo(T).Int.signedness == .unsigned);
+        return @intCast(@mod(in, std.math.maxInt(T)));
     }
 
     pub const LChown = Chown;
@@ -3217,6 +3217,18 @@ pub const NodeFS = struct {
         return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
     }
 
+    pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
+        if (rc < 0) {
+            return Maybe(Return.Close){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .close,
+                .fd = args.fd,
+                .from_libuv = true,
+            } };
+        }
+        return Maybe(Return.Close).success;
+    }
+
     // since we use a 64 KB stack buffer, we should not let this function get inlined
     pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         var stack_buf: [64 * 1024]u8 = undefined;
@@ -3716,14 +3728,8 @@ pub const NodeFS = struct {
         };
     }
 
-    pub const MkdirDummyVTable = struct {
-        pub fn onCreateDir(_: @This(), _: bun.OSPathSliceZ) void {
-            return;
-        }
-    };
-
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
-        return mkdirRecursiveImpl(this, args, MkdirDummyVTable, .{});
+        return mkdirRecursiveImpl(this, args, void, {});
     }
 
     // TODO: verify this works correctly with unicode codepoints
@@ -3749,7 +3755,7 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSliceZ, mode: Mode, comptime return_path: bool) Maybe(Return.Mkdir) {
-        return mkdirRecursiveOSPathImpl(this, MkdirDummyVTable, .{}, path, mode, return_path);
+        return mkdirRecursiveOSPathImpl(this, void, {}, path, mode, return_path);
     }
 
     pub fn mkdirRecursiveOSPathImpl(
@@ -3760,7 +3766,7 @@ pub const NodeFS = struct {
         mode: Mode,
         comptime return_path: bool,
     ) Maybe(Return.Mkdir) {
-        const VTable = struct {
+        const callbacks = struct {
             pub fn onCreateDir(c: Ctx, dirpath: bun.OSPathSliceZ) void {
                 if (Ctx != void) {
                     c.onCreateDir(dirpath);
@@ -3793,7 +3799,7 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
-                VTable.onCreateDir(ctx, path);
+                callbacks.onCreateDir(ctx, path);
                 if (!return_path) {
                     return .{ .result = .{ .none = {} } };
                 }
@@ -3835,7 +3841,7 @@ pub const NodeFS = struct {
                         }
                     },
                     .result => {
-                        VTable.onCreateDir(ctx, parent);
+                        callbacks.onCreateDir(ctx, parent);
                         // We found a parent that worked
                         working_mem[i] = std.fs.path.sep;
                         break;
@@ -3866,7 +3872,7 @@ pub const NodeFS = struct {
                     },
 
                     .result => {
-                        VTable.onCreateDir(ctx, parent);
+                        callbacks.onCreateDir(ctx, parent);
                         working_mem[i] = std.fs.path.sep;
                     },
                 }
@@ -3892,7 +3898,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        VTable.onCreateDir(ctx, working_mem[0..len :0]);
+        callbacks.onCreateDir(ctx, working_mem[0..len :0]);
         if (!return_path) {
             return .{ .result = .{ .none = {} } };
         }
@@ -6046,7 +6052,7 @@ pub const NodeFS = struct {
                             const mkdirResult = this.mkdirRecursive(.{
                                 .path = PathLike{ .string = PathString.init(dest[0..len]) },
                                 .recursive = true,
-                            }, .sync);
+                            });
                             if (mkdirResult == .err) {
                                 return Maybe(Return.CopyFile){ .err = mkdirResult.err };
                             }

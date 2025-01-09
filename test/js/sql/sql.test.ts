@@ -4,7 +4,8 @@ import { $ } from "bun";
 import { bunExe, isCI, withoutAggressiveGC } from "harness";
 import path from "path";
 
-if (!isCI) {
+const hasPsql = Bun.which("psql");
+if (!isCI && hasPsql) {
   require("./bootstrap.js");
 
   // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf

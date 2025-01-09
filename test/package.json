@@ -30,6 +30,7 @@
     "express": "4.18.2",
     "fast-glob": "3.3.1",
     "filenamify": "6.0.0",
+    "happy-dom": "16.5.3",
     "http2-wrapper": "2.2.1",
     "https-proxy-agent": "7.0.5",
     "iconv-lite": "0.6.3",

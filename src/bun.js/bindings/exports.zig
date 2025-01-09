@@ -373,7 +373,7 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
-    var title_mutex = std.Thread.Mutex{};
+    var title_mutex = bun.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
         title_mutex.lock();

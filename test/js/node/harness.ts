@@ -2,6 +2,7 @@
  * @note this file patches `node:test` via the require cache.
  */
 import { AnyFunction } from "bun";
+import os from "node:os";
 import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
@@ -266,7 +267,8 @@ declare namespace Bun {
   function jest(path: string): typeof import("bun:test");
 }
 
-if (Bun.main.includes("node/test/parallel")) {
+const normalized = os.platform() === "win32" ? Bun.main.replaceAll("\\", "/") : Bun.main;
+if (normalized.includes("node/test/parallel")) {
   function createMockNodeTestModule() {
     interface TestError extends Error {
       testStack: string[];

@@ -194,11 +194,14 @@ pub const Options = extern struct {
 };
 
 pub const struct_hostent = extern struct {
-    h_name: [*c]u8,
-    h_aliases: [*c][*c]u8,
-    h_addrtype: c_int,
-    h_length: c_int,
-    h_addr_list: [*c][*c]u8,
+    h_name: ?[*:0]u8,
+    h_aliases: ?[*:null]?[*:0]u8,
+    h_addrtype: hostent_int,
+    h_length: hostent_int,
+    h_addr_list: ?[*:null]?[*:0]u8,
+
+    // hostent in glibc uses int for h_addrtype and h_length, whereas hostent in winsock2.h uses short.
+    const hostent_int = if (bun.Environment.isWindows) c_short else c_int;
 
     pub fn toJSResponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
@@ -206,7 +209,7 @@ pub const struct_hostent = extern struct {
             if (this.h_name == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.fromUTF8(this.h_name[0..bun.len(this.h_name)])});
+            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.fromUTF8(this.h_name.?[0..bun.len(this.h_name.?)])});
         }
 
         if (this.h_aliases == null) {
@@ -214,14 +217,14 @@ pub const struct_hostent = extern struct {
         }
 
         var count: u32 = 0;
-        while (this.h_aliases[count] != null) {
+        while (this.h_aliases.?[count] != null) {
             count += 1;
         }
 
         const array = JSC.JSValue.createEmptyArray(globalThis, count);
         count = 0;
 
-        while (this.h_aliases[count]) |alias| {
+        while (this.h_aliases.?[count]) |alias| {
             const alias_len = bun.len(alias);
             const alias_slice = alias[0..alias_len];
             array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
@@ -312,7 +315,7 @@ pub const hostent_with_ttls = struct {
             }
 
             var count: u32 = 0;
-            while (this.hostent.h_addr_list[count] != null) {
+            while (this.hostent.h_addr_list.?[count] != null) {
                 count += 1;
             }
 
@@ -322,7 +325,7 @@ pub const hostent_with_ttls = struct {
             const addressKey = JSC.ZigString.static("address").withEncoding();
             const ttlKey = JSC.ZigString.static("ttl").withEncoding();
 
-            while (this.hostent.h_addr_list[count]) |addr| : (count += 1) {
+            while (this.hostent.h_addr_list.?[count]) |addr| : (count += 1) {
                 const addrString = (if (this.hostent.h_addrtype == AF.INET6)
                     bun.dns.addressToJS(&std.net.Address.initIp6(addr[0..16].*, 0, 0, 0), globalThis)
                 else

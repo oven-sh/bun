@@ -31,9 +31,18 @@ pub const LinuxMemFdAllocator = struct {
     }
 
     pub fn deref(this: *LinuxMemFdAllocator) void {
-        if (this.ref_count.fetchSub(1, .monotonic) == 1) {
-            _ = bun.sys.close(this.fd);
-            this.destroy();
+        switch (this.ref_count.fetchSub(1, .monotonic)) {
+            1 => {
+                _ = bun.sys.close(this.fd);
+                this.destroy();
+            },
+            0 => {
+                // TODO: @branchHint(.cold) after Zig 0.14 upgrade
+                if (comptime bun.Environment.isDebug) {
+                    std.debug.panic("LinuxMemFdAllocator ref_count underflow", .{});
+                }
+            },
+            else => {},
         }
     }
 

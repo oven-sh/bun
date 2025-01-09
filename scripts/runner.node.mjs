@@ -571,7 +571,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     }
     bunEnv["TEMP"] = tmpdirPath;
   }
-  console.log(`Bun args: ${args.map(a => /\s/.test(a) ? `'${a}'` : a).join(" ")}`);
   try {
     return await spawnSafe({
       command: execPath,

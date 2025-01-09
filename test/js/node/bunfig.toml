@@ -1,2 +1,1 @@
-[test]
 preload = ["../../preload.ts", "./harness.ts"]

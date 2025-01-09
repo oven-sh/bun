@@ -6450,31 +6450,15 @@ declare module "bun" {
      * ```
      * */
     packages: {
-      [package: string]:
-        | {
-            /** npm */
-            1: string;
-            2: string;
-            3: BunLockFilePackageInfo;
-            4: string;
-          }
-        | {
-            /** symlink, folder, tarball, workspace */
-            1: string;
-            2: BunLockFilePackageInfo;
-          }
-        | {
-            /** git, github */
-            1: string;
-            2: BunLockFilePackageInfo;
-            3: string;
-          }
-        | {
-            /** root */
-            1: string;
-            2: Pick<BunLockFilePackageInfo, 'bin' | 'binDir'>
-          }
-        | ({} & []);
+      [pkg: string]: /**/
+      /** npm */
+      | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+        /** symlink, folder, tarball, workspace */
+        | [pkg: string, info: BunLockFilePackageInfo]
+        /** git, github */
+        | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+        /** root */
+        | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
     };
   };
 

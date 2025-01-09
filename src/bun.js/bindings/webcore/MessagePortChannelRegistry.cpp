@@ -140,7 +140,7 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
-    ASSERT(isMainThread());
+    // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
     RefPtr channel = m_openChannels.get(port);

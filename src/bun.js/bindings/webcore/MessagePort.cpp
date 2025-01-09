@@ -70,7 +70,15 @@ static UncheckedKeyHashMap<MessagePortIdentifier, ScriptExecutionContextIdentifi
 
 bool MessagePort::hasPendingActivity() const
 {
-    return m_refCount > 0;
+    // If the ScriptExecutionContext has been shut down on this object close()'ed, we can GC.
+    if (!scriptExecutionContext() || m_isDetached)
+        return false;
+
+    // If this MessagePort has no message event handler then there is no point in keeping it alive.
+    if (!m_hasMessageEventListener)
+        return false;
+
+    return m_entangled;
 }
 
 bool MessagePort::isMessagePortAliveForTesting(const MessagePortIdentifier& identifier)
@@ -269,7 +277,6 @@ void MessagePort::dispatchMessages()
                 return;
 
             auto ports = MessagePort::entanglePorts(*context, WTFMove(message.transferredPorts));
-            auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
             if (UNLIKELY(scope.exception())) {
                 // Currently, we assume that the only way we can get here is if we have a termination.
                 RELEASE_ASSERT(vm->hasPendingTerminationException());

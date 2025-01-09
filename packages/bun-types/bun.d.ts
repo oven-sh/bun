@@ -17,6 +17,7 @@ declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  import type { Stats } from "node:fs";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -1245,110 +1246,14 @@ declare module "bun" {
      * Finish the upload. This also flushes the internal buffer.
      */
     end(error?: Error): number | Promise<number>;
+
+    /**
+     * Get the stat of the file.
+     */
+    stat(): Promise<Stats>;
   }
 
-  type S3 = {
-    /**
-     * Create a new instance of an S3 bucket so that credentials can be managed
-     * from a single instance instead of being passed to every method.
-     *
-     * @param options The default options to use for the S3 client. Can be
-     * overriden by passing options to the methods.
-     *
-     * ## Keep S3 credentials in a single instance
-     *
-     * @example
-     *     const bucket = new Bun.S3({
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *       bucket: "my-bucket",
-     *       endpoint: "https://s3.us-east-1.amazonaws.com",
-     *       sessionToken: "your-session-token",
-     *     });
-     *
-     *     // S3Bucket is callable, so you can do this:
-     *     const file = bucket("my-file.txt");
-     *
-     *     // or this:
-     *     await file.write("Hello Bun!");
-     *     await file.text();
-     *
-     *     // To delete the file:
-     *     await bucket.delete("my-file.txt");
-     *
-     *     // To write a file without returning the instance:
-     *     await bucket.write("my-file.txt", "Hello Bun!");
-     *
-     */
-    new (options?: S3Options): S3Bucket;
-
-    /**
-     * Delete a file from an S3-compatible object storage service.
-     *
-     * @param path The path to the file.
-     * @param options The options to use for the S3 client.
-     *
-     * For an instance method version, {@link S3File.unlink}. You can also use {@link S3Bucket.unlink}.
-     *
-     * @example
-     *     import { S3 } from "bun";
-     *     await S3.unlink("s3://my-bucket/my-file.txt", {
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *     });
-     *
-     * @example
-     *     await S3.unlink("key", {
-     *       bucket: "my-bucket",
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *     });
-     */
-    delete(path: string, options?: S3Options): Promise<void>;
-    /**
-     * unlink is an alias for {@link S3.delete}
-     */
-    unlink: S3["delete"];
-
-    /**
-     * Writes data to an S3-compatible storage service.
-     * Supports various input types and handles large files with multipart uploads.
-     *
-     * @param path The path or key where the file will be written
-     * @param data The data to write
-     * @param options S3 configuration and upload options
-     * @returns promise that resolves with the number of bytes written
-     *
-     * @example
-     *   // Writing a string
-     *   await S3.write("hello.txt", "Hello World!", {
-     *     bucket: "my-bucket",
-     *     type: "text/plain"
-     *   });
-     *
-     * @example
-     *   // Writing JSON
-     *   await S3.write(
-     *     "data.json",
-     *     JSON.stringify({ hello: "world" }),
-     *     { type: "application/json" }
-     *   );
-     *
-     * @example
-     *   // Writing a large file with multipart upload
-     *   await S3.write("large-file.dat", largeBuffer, {
-     *     partSize: 10 * 1024 * 1024, // 10MB parts
-     *     queueSize: 4, // Upload 4 parts in parallel
-     *     retry: 3 // Retry failed parts up to 3 times
-     *   });
-     */
-    write(
-      path: string,
-      data: string | ArrayBufferView | ArrayBufferLike | Response | Request | ReadableStream | Blob | File,
-      options?: S3Options,
-    ): Promise<number>;
-  };
-  var S3: S3;
+  var S3Client: S3Client;
 
   /**
    * Creates a new S3File instance for working with a single file.
@@ -1491,7 +1396,7 @@ declare module "bun" {
     endpoint?: string;
 
     /**
-     * The size of each part in multipart uploads (in MiB).
+     * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB
      * - Default: 5 MiB
@@ -1499,7 +1404,7 @@ declare module "bun" {
      * @example
      *     // Configuring multipart uploads
      *     const file = s3("large-file.dat", {
-     *       partSize: 10, // 10 MiB parts
+     *       partSize: 10 * 1024 * 1024, // 10 MiB parts
      *       queueSize: 4  // Upload 4 parts in parallel
      *     });
      *
@@ -1591,6 +1496,13 @@ declare module "bun" {
      *     });
      */
     method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+  }
+
+  interface S3Stats {
+    size: number;
+    lastModified: Date;
+    etag: string;
+    type: string;
   }
 
   /**
@@ -1862,6 +1774,13 @@ declare module "bun" {
      * await file.unlink();
      */
     unlink: S3File["delete"];
+
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @returns Promise resolving to S3Stat
+     */
+    stat(): Promise<S3Stats>;
   }
 
   /**
@@ -1871,7 +1790,7 @@ declare module "bun" {
    *
    * @example
    *     // Basic bucket setup
-   *     const bucket = new S3({
+   *     const bucket = new S3Client({
    *       bucket: "my-bucket",
    *       accessKeyId: "key",
    *       secretAccessKey: "secret"
@@ -1885,19 +1804,53 @@ declare module "bun" {
    *     const url = bucket.presign("file.pdf");
    *     await bucket.unlink("old.txt");
    */
-  type S3Bucket = {
+  type S3Client = {
+    /**
+     * Create a new instance of an S3 bucket so that credentials can be managed
+     * from a single instance instead of being passed to every method.
+     *
+     * @param options The default options to use for the S3 client. Can be
+     * overriden by passing options to the methods.
+     *
+     * ## Keep S3 credentials in a single instance
+     *
+     * @example
+     *     const bucket = new Bun.S3Client({
+     *       accessKeyId: "your-access-key",
+     *       secretAccessKey: "your-secret-key",
+     *       bucket: "my-bucket",
+     *       endpoint: "https://s3.us-east-1.amazonaws.com",
+     *       sessionToken: "your-session-token",
+     *     });
+     *
+     *     // S3Client is callable, so you can do this:
+     *     const file = bucket.file("my-file.txt");
+     *
+     *     // or this:
+     *     await file.write("Hello Bun!");
+     *     await file.text();
+     *
+     *     // To delete the file:
+     *     await bucket.delete("my-file.txt");
+     *
+     *     // To write a file without returning the instance:
+     *     await bucket.write("my-file.txt", "Hello Bun!");
+     *
+     */
+    new (options?: S3Options): S3Client;
+
     /**
      * Creates an S3File instance for the given path.
      *
      * @example
-     * const file = bucket("image.jpg");
+     * const file = bucket.file("image.jpg");
      * await file.write(imageData);
      * const configFile = bucket("config.json", {
      *   type: "application/json",
      *   acl: "private"
      * });
      */
-    (path: string, options?: S3Options): S3File;
+    file(path: string, options?: S3Options): S3File;
 
     /**
      * Writes data directly to a path in the bucket.
@@ -1982,6 +1935,7 @@ declare module "bun" {
      *     }
      */
     unlink(path: string, options?: S3Options): Promise<void>;
+    delete: S3Client["unlink"];
 
     /**
      * Get the size of a file in bytes.
@@ -2020,6 +1974,13 @@ declare module "bun" {
      *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @param path The path to the file.
+     * @param options The options to use for the S3 client.
+     */
+    stat(path: string, options?: S3Options): Promise<S3Stats>;
   };
 
   /**

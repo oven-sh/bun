@@ -102,7 +102,7 @@ The default handling of non-zero exit codes can be configured by calling `.nothr
 import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
-$.nothrow(); // equivilent to $.throws(false)
+$.nothrow(); // equivalent to $.throws(false)
 
 // default behavior, non-zero exit codes will throw an error
 $.throws(true);

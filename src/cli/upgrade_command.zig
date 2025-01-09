@@ -25,12 +25,11 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
+const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
@@ -87,7 +86,9 @@ pub const Version = struct {
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix = if (Environment.baseline) "-baseline" else "";
+    const suffix_abi = if (Environment.isMusl) "-musl" else "";
+    const suffix_cpu = if (Environment.baseline) "-baseline" else "";
+    const suffix = suffix_abi ++ suffix_cpu;
     pub const folder_name = "bun-" ++ triplet ++ suffix;
     pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";
@@ -133,7 +134,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -230,7 +231,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -251,7 +252,7 @@ pub const UpgradeCommand = struct {
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (!silent) async_http.client.progress_node = progress.?;
-        const response = try async_http.sendSync(true);
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.HTTP404,
@@ -266,17 +267,13 @@ pub const UpgradeCommand = struct {
         defer if (comptime silent) log.deinit();
         var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = ParseJSON(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
 
                 if (log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try log.print(Output.errorWriter());
 
                     Global.exit(1);
                 } else {
@@ -293,11 +290,7 @@ pub const UpgradeCommand = struct {
                 progress.?.end();
                 refresher.?.refresh();
 
-                if (Output.enable_ansi_colors) {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try log.print(Output.errorWriter());
                 Global.exit(1);
             }
 
@@ -440,7 +433,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
@@ -508,7 +501,7 @@ pub const UpgradeCommand = struct {
         };
 
         const zip_url = URL.parse(version.zip_url);
-        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(zip_url);
 
         {
             var refresher = Progress{};
@@ -533,7 +526,7 @@ pub const UpgradeCommand = struct {
             async_http.client.progress_node = progress;
             async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-            const response = try async_http.sendSync(true);
+            const response = try async_http.sendSync();
 
             switch (response.status_code) {
                 404 => {
@@ -559,7 +552,7 @@ pub const UpgradeCommand = struct {
                 else => return error.HTTPError,
             }
 
-            const bytes = zip_file_buffer.toOwnedSliceLeaky();
+            const bytes = zip_file_buffer.slice();
 
             progress.end();
             refresher.refresh();
@@ -588,7 +581,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            _ = bun.sys.chdir(tmpdir_z);
+            _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =
@@ -996,7 +989,7 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
@@ -1050,7 +1043,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

@@ -1,7 +1,7 @@
 # IWYU = "Include What You Use"
 # https://include-what-you-use.org/
 
-setx(IWYU_SOURCE_PATH ${CACHE_PATH}/iwyu-${LLVM_VERSION_MAJOR})
+setx(IWYU_SOURCE_PATH ${CACHE_PATH}/iwyu-${LLVM_VERSION})
 setx(IWYU_BUILD_PATH ${IWYU_SOURCE_PATH}/build)
 setx(IWYU_PROGRAM ${IWYU_BUILD_PATH}/bin/include-what-you-use)
 
@@ -11,7 +11,7 @@ register_repository(
   REPOSITORY
     include-what-you-use/include-what-you-use
   BRANCH
-    clang_${LLVM_VERSION_MAJOR}
+    clang_${LLVM_VERSION}
   PATH
     ${IWYU_SOURCE_PATH}
 )

@@ -18,6 +18,7 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const OOM = bun.OOM;
 
 const ExtractTarball = @This();
 
@@ -52,48 +53,17 @@ pub fn buildURL(
     full_name_: strings.StringOrTinyString,
     version: Semver.Version,
     string_buf: []const u8,
-) !string {
-    return try buildURLWithPrinter(
+) OOM!string {
+    return buildURLWithPrinter(
         registry_,
         full_name_,
         version,
         string_buf,
         @TypeOf(FileSystem.instance.dirname_store),
         string,
-        anyerror,
+        OOM,
         FileSystem.instance.dirname_store,
         FileSystem.DirnameStore.print,
-    );
-}
-
-pub fn buildURLWithWriter(
-    comptime Writer: type,
-    writer: Writer,
-    registry_: string,
-    full_name_: strings.StringOrTinyString,
-    version: Semver.Version,
-    string_buf: []const u8,
-) !void {
-    const Printer = struct {
-        writer: Writer,
-
-        pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
-            return try std.fmt.format(this.writer, fmt, args);
-        }
-    };
-
-    return try buildURLWithPrinter(
-        registry_,
-        full_name_,
-        version,
-        string_buf,
-        Printer,
-        void,
-        Writer.Error,
-        Printer{
-            .writer = writer,
-        },
-        Printer.print,
     );
 }
 
@@ -200,7 +170,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         defer extract_destination.close();
 
-        const Archive = @import("../libarchive/libarchive.zig").Archive;
+        const Archiver = bun.libarchive.Archiver;
         const Zlib = @import("../zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
@@ -278,7 +248,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
                 switch (PackageManager.verbose_install) {
-                    inline else => |log| _ = try Archive.extractToDir(
+                    inline else => |log| _ = try Archiver.extractToDir(
                         zlib_pool.data.list.items,
                         extract_destination,
                         null,
@@ -304,7 +274,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 }
             },
             else => switch (PackageManager.verbose_install) {
-                inline else => |log| _ = try Archive.extractToDir(
+                inline else => |log| _ = try Archiver.extractToDir(
                     zlib_pool.data.list.items,
                     extract_destination,
                     null,
@@ -475,7 +445,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
     defer final_dir.close();
     // and get the fd path
-    const final_path = bun.getFdPath(
+    const final_path = bun.getFdPathZ(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
@@ -538,18 +508,36 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
-        defer index_dir.close();
-        index_dir.symLink(
-            final_path,
-            switch (this.resolution.tag) {
-                .github => folder_name["@GH@".len..],
-                // trim "name@" from the prefix
-                .npm => folder_name[name.len + 1 ..],
-                else => folder_name,
-            },
-            .{ .is_directory = true },
-        ) catch break :create_index;
+        const dest_name = switch (this.resolution.tag) {
+            .github => folder_name["@GH@".len..],
+            // trim "name@" from the prefix
+            .npm => folder_name[name.len + 1 ..],
+            else => folder_name,
+        };
+
+        if (comptime Environment.isWindows) {
+            bun.MakePath.makePath(u8, cache_dir, name) catch {
+                break :create_index;
+            };
+
+            var dest_buf: bun.PathBuffer = undefined;
+            const dest_path = bun.path.joinAbsStringBufZ(
+                // only set once, should be fine to read not on main thread
+                this.package_manager.cache_directory_path,
+                &dest_buf,
+                &[_]string{ name, dest_name },
+                .windows,
+            );
+
+            bun.sys.sys_uv.symlinkUV(final_path, dest_path, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION).unwrap() catch {
+                break :create_index;
+            };
+        } else {
+            var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
+            defer index_dir.close();
+
+            bun.sys.symlinkat(final_path, bun.toFD(index_dir), dest_name).unwrap() catch break :create_index;
+        }
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);

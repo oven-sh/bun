@@ -72,8 +72,8 @@ There are also image variants for different operating systems.
 ```bash
 $ docker pull oven/bun:debian
 $ docker pull oven/bun:slim
-$ docker pull oven/bun:alpine
 $ docker pull oven/bun:distroless
+$ docker pull oven/bun:alpine
 ```
 
 ## Checking installation
@@ -189,14 +189,19 @@ For convenience, here are download links for the latest version:
 
 - [`bun-linux-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip)
 - [`bun-linux-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-baseline.zip)
+- [`bun-linux-x64-musl.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-musl.zip)
+- [`bun-linux-x64-musl-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-musl-baseline.zip)
 - [`bun-windows-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip)
 - [`bun-windows-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip)
 - [`bun-darwin-aarch64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip)
 - [`bun-linux-aarch64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64.zip)
+- [`bun-linux-aarch64-musl.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip)
 - [`bun-darwin-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip)
 - [`bun-darwin-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64-baseline.zip)
 
-The `baseline` binaries are built for older CPUs which may not support AVX2 instructions. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically choose the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+The `musl` binaries are built for distributions that do not ship with the glibc libraries by default, instead relying on musl. The two most popular distros are Void Linux and Alpine Linux, with the latter is used heavily in Docker containers. If you encounter an error like the following: `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29' not found (required by bun)`, try using the musl binary. Bun's install script automatically chooses the correct binary for your system.
+
+The `baseline` binaries are built for older CPUs which may not support AVX2 instructions. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
 
 <!--
 ## Native

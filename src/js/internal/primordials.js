@@ -83,11 +83,14 @@ function ErrorCaptureStackTrace(targetObject) {
 }
 
 const arrayProtoPush = Array.prototype.push;
-
+const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
+const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
 export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
+  ArrayIsArray: Array.isArray,
+  SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,
@@ -109,7 +112,6 @@ export default {
   DatePrototypeToString: uncurryThis(Date.prototype.toString),
   ErrorCaptureStackTrace,
   ErrorPrototypeToString: uncurryThis(Error.prototype.toString),
-  FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
   JSONStringify: JSON.stringify,
   MapPrototypeGetSize: getGetter(Map, "size"),
   MapPrototypeEntries: uncurryThis(Map.prototype.entries),
@@ -121,6 +123,7 @@ export default {
   MathRound: Math.round,
   MathSqrt: Math.sqrt,
   MathTrunc: Math.trunc,
+  MathAbs: Math.abs,
   Number,
   NumberIsFinite: Number.isFinite,
   NumberIsNaN: Number.isNaN,
@@ -169,6 +172,8 @@ export default {
       }
     },
   ),
+  DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
+  DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
   SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),
@@ -190,6 +195,7 @@ export default {
   StringPrototypeSplit: uncurryThis(String.prototype.split),
   StringPrototypeStartsWith: uncurryThis(String.prototype.startsWith),
   StringPrototypeToLowerCase: uncurryThis(String.prototype.toLowerCase),
+  StringPrototypeToUpperCase: uncurryThis(String.prototype.toUpperCase),
   StringPrototypeTrim: uncurryThis(String.prototype.trim),
   StringPrototypeValueOf: uncurryThis(String.prototype.valueOf),
   SymbolPrototypeToString: uncurryThis(Symbol.prototype.toString),

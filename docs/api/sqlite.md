@@ -75,14 +75,14 @@ To instead throw an error when a parameter is missing and allow binding without 
 import { Database } from "bun:sqlite";
 
 const strict = new Database(
-  ":memory:", 
+  ":memory:",
   { strict: true }
 );
 
 // throws error because of the typo:
 const query = strict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 
 const notStrict = new Database(
   ":memory:"
@@ -90,7 +90,7 @@ const notStrict = new Database(
 // does not throw error:
 notStrict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 ```
 
 ### Load via ES module import
@@ -177,7 +177,7 @@ const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
 ## WAL mode
 
-SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent writes. It's broadly recommended to enable WAL mode for most typical applications.
+SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent readers and a single writer. It's broadly recommended to enable WAL mode for most typical applications.
 
 To enable WAL mode, run this pragma query at the beginning of your application:
 
@@ -324,6 +324,28 @@ console.log(first.isMarvel); // => true
 As a performance optimization, the class constructor is not called, default initializers are not run, and private fields are not accessible. This is more like using `Object.create` than `new`. The class's prototype is assigned to the object, methods are attached, and getters/setters are set up, but the constructor is not called.
 
 The database columns are set as properties on the class instance.
+
+### `.iterate()` (`@@iterator`)
+
+Use `.iterate()` to run a query and incrementally return results. This is useful for large result sets that you want to process one row at a time without loading all the results into memory.
+
+```ts
+const query = db.query("SELECT * FROM foo");
+for (const row of query.iterate()) {
+  console.log(row);
+}
+```
+
+You can also use the `@@iterator` protocol:
+
+```ts
+const query = db.query("SELECT * FROM foo");
+for (const row of query) {
+  console.log(row);
+}
+```
+
+This feature was added in Bun v1.1.31.
 
 ### `.values()`
 

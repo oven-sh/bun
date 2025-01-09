@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -8,8 +9,6 @@ import * as util from "node:util";
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
-
-const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {
@@ -366,7 +365,7 @@ describe("dns.reverse", () => {
     ["2606:4700:4700::1001", "one.one.one.one"],
     ["1.1.1.1", "one.one.one.one"],
   ];
-  it.each(inputs)("%s", (ip, expected) => {
+  it.each(inputs)("%s <- %s", (ip, expected) => {
     const { promise, resolve, reject } = Promise.withResolvers();
     dns.reverse(ip, (err, hostnames) => {
       try {

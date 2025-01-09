@@ -55,10 +55,23 @@ To install dependencies without allowing changes to lockfile (useful on CI):
 $ bun install --frozen-lockfile
 ```
 
-To perform a dry run (i.e. don't actually install anything):
+To exclude dependency types from installing, use `--omit` with `dev`, `optional`, or `peer`:
+
+```bash
+# Disable devDependencies and optionalDependencies
+$ bun install --omit=dev --omit=optional
+```
+
+To perform a dry run (i.e. don't actually install anything or update the lockfile):
 
 ```bash
 $ bun install --dry-run
+```
+
+To generate a lockfile without install packages:
+
+```bash
+$ bun install --lockfile-only
 ```
 
 To modify logging verbosity:
@@ -85,6 +98,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
@@ -125,6 +141,12 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 
 ```bash
 $ bun add --optional lodash
+```
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
 ```
 
 To install a package globally:

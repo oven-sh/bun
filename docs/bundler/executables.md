@@ -100,11 +100,29 @@ When deploying to production, we recommend the following:
 bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
 ```
 
-**What do these flags do?**
+### Bytecode compilation
+
+To improve startup time, enable bytecode compilation:
+
+```sh
+bun build --compile --minify --sourcemap --bytecode ./path/to/my/app.ts --outfile myapp
+```
+
+Using bytecode compilation, `tsc` starts 2x faster:
+
+{% image src="https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763" width="689" /%}
+
+Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
+
+**Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is supported (which means no top-level-await). Let us know if you run into any issues!
+
+### What do these flags do?
 
 The `--minify` argument optimizes the size of the transpiled output code. If you have a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.
 
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
+
+The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
 
 ## Worker
 
@@ -260,6 +278,19 @@ $ bun build --compile --asset-naming="[name].[ext]" ./index.ts
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
+
+## Windows-specific flags
+
+When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+
+- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
+- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+
+{% callout %}
+
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+
+{% /callout %}
 
 ## Unsupported CLI arguments
 

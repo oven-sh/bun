@@ -2574,7 +2574,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             indexStack.last()++;
             goto objectStartVisitMember;
         }
-        mapStartState : {
+        mapStartState: {
             ASSERT(inValue.isObject());
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
@@ -2622,7 +2622,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             goto mapDataStartVisitEntry;
         }
 
-        setStartState : {
+        setStartState: {
             ASSERT(inValue.isObject());
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
@@ -3223,7 +3223,7 @@ private:
         str = String({ reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
-        UChar* characters;
+        std::span<UChar> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -3269,7 +3269,7 @@ private:
         str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
-        UChar* characters;
+        std::span<UChar> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -5084,7 +5084,7 @@ DeserializationResult CloneDeserializer::deserialize()
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }
-        mapObjectStartState : {
+        mapObjectStartState: {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
@@ -5113,7 +5113,7 @@ DeserializationResult CloneDeserializer::deserialize()
             goto mapDataStartVisitEntry;
         }
 
-        setObjectStartState : {
+        setObjectStartState: {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());

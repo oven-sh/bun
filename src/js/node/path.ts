@@ -1,4 +1,6 @@
 // Hardcoded module "node:path"
+const { validateString } = require("internal/validators");
+
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
@@ -40,4 +42,48 @@ const win32 = {
 };
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
+
+type Glob = import("bun").Glob;
+
+let LazyGlob: Glob | undefined;
+function loadGlob(): LazyGlob {
+  LazyGlob = require("bun").Glob;
+}
+
+// the most-recently used glob is memoized in case `matchesGlob` is called in a
+// loop with the same pattern
+let prevGlob: Glob | undefined;
+let prevPattern: string | undefined;
+function matchesGlob(isWindows, path, pattern) {
+  let glob: Glob;
+
+  validateString(path, "path");
+  if (isWindows) path = path.replaceAll("\\", "/");
+
+  if (prevGlob) {
+    $assert(prevPattern !== undefined);
+    if (prevPattern === pattern) {
+      glob = prevGlob;
+    } else {
+      if (LazyGlob === undefined) loadGlob();
+      validateString(pattern, "pattern");
+      if (isWindows) pattern = pattern.replaceAll("\\", "/");
+      glob = prevGlob = new LazyGlob(pattern);
+      prevPattern = pattern;
+    }
+  } else {
+    loadGlob(); // no prevGlob implies LazyGlob isn't loaded
+    validateString(pattern, "pattern");
+    if (isWindows) pattern = pattern.replaceAll("\\", "/");
+    glob = prevGlob = new LazyGlob(pattern);
+    prevPattern = pattern;
+  }
+
+  return glob.match(path);
+}
+
+// posix.matchesGlob = win32.matchesGlob = matchesGlob;
+posix.matchesGlob = matchesGlob.bind(null, false);
+win32.matchesGlob = matchesGlob.bind(null, true);
+
 export default process.platform === "win32" ? win32 : posix;

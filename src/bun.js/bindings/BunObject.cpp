@@ -1,4 +1,7 @@
 #include "root.h"
+
+#include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
@@ -31,6 +34,10 @@
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
+#include "ErrorCode.h"
+#include "GeneratedBunObject.h"
+
+#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
@@ -50,7 +57,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 namespace Bun {
 
 using namespace JSC;
@@ -81,7 +88,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
     if (UNLIKELY(!array)) {
         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t arrayLength = array->length();
@@ -111,7 +118,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     args.ensureCapacity(arrayLength);
     if (UNLIKELY(args.hasOverflowed())) {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode({});
+        return {};
     }
 
     for (size_t i = 0; i < arrayLength; i++) {
@@ -120,8 +127,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
             if (UNLIKELY(typedArray->isDetached())) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
-                return JSValue::encode(jsUndefined());
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
             size_t current = typedArray->byteLength();
             any_typed = true;
@@ -133,8 +139,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBuffer is detached"_s);
-                return JSValue::encode(jsUndefined());
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
 
             size_t current = impl->byteLength();
@@ -147,7 +152,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             byteLength += current;
         } else {
             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
     }
     byteLength = std::min(byteLength, maxLength);
@@ -159,7 +164,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
     if (UNLIKELY(!buffer)) {
         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t remain = byteLength;
@@ -219,7 +224,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 
     if (UNLIKELY(callFrame->argumentCount() < 1)) {
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto arrayValue = callFrame->uncheckedArgument(0);
@@ -241,7 +246,6 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto arg2 = callFrame->argument(2);
     if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
@@ -259,6 +263,11 @@ static JSValue constructBunRevision(VM& vm, JSObject*)
     return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
+static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
+{
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_with_sha)));
+}
+
 static JSValue constructIsMainThread(VM&, JSObject* object)
 {
     return jsBoolean(jsCast<Zig::GlobalObject*>(object->globalObject())->scriptExecutionContext()->isMainThread());
@@ -272,6 +281,15 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
 
     return pluginFunction;
+}
+
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    RETURN_IF_EXCEPTION(scope, {});
+    return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
@@ -312,16 +330,10 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     }
     auto* bunShell = shell.getObject();
 
-    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
-}
-
-// This value currently depends on a zig feature flag
-extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
-static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
-    return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -394,7 +406,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     if (!millisecondsValue.isNumber()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "sleep expects a number (milliseconds)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
@@ -420,7 +432,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
@@ -443,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     if (callFrame->argumentCount() < 2) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
@@ -475,7 +487,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     if (callFrame->argumentCount() < 2) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSC::JSValue subset = callFrame->uncheckedArgument(0);
@@ -484,10 +496,14 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     if (!subset.isObject() || !object.isObject()) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 objects to match"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
-    bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false, false);
+    std::set<EncodedJSValue> objVisited;
+    std::set<EncodedJSValue> subsetVisited;
+    MarkedArgumentBuffer gcBuffer;
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, false, false);
+
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }
@@ -516,6 +532,45 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSValue arg0 = callFrame->argument(0);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    bool useV8 = false;
+    if (!arg0.isUndefined()) {
+        if (arg0.isString()) {
+            auto str = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (str == "v8"_s) {
+                useV8 = true;
+            } else if (str == "jsc"_s) {
+                // do nothing
+            } else {
+                throwTypeError(globalObject, throwScope, "Expected 'v8' or 'jsc' or undefined"_s);
+                return {};
+            }
+        }
+    }
+
+    if (useV8) {
+        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        return JSC::JSValue::encode(jsString(vm, builder.json()));
+    }
+
+    JSC::HeapSnapshotBuilder builder(heapProfiler);
+    builder.buildSnapshot();
+    auto json = builder.json();
+    // Returning an object was a bad idea but it's a breaking change
+    // so we'll just keep it for now.
+    JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -528,10 +583,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     if (!domURL) {
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
             throwTypeError(globalObject, scope, "Argument must be a URL"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
     } else {
         url = domURL->href();
@@ -539,7 +594,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
     if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto fileSystemPath = url.fileSystemPath();
@@ -547,7 +602,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 #if OS(WINDOWS)
     if (!isAbsolutePath(fileSystemPath)) {
         throwTypeError(globalObject, scope, "File URL path must be absolute"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 #endif
 
@@ -573,12 +628,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
+    S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
+    color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
@@ -589,8 +646,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
-    gc                                             BunObject_callback_gc                                               DontDelete|Function 1
-    generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
+    gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -606,10 +663,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
+    version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
@@ -622,6 +681,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
+    sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
@@ -632,12 +693,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
-    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
+    stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    wipDevServerDoNotUseYet                        constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

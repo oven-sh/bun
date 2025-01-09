@@ -1,6 +1,6 @@
 import http from "node:http";
 
-if (http.maxHeaderSize !== parseInt(process.env.BUN_HTTP_MAX_HEADER_SIZE, 10)) {
+if (http.maxHeaderSize !== parseInt(process.env.BUN_HTTP_MAX_HEADER_SIZE ?? "0", 10)) {
   throw new Error("BUN_HTTP_MAX_HEADER_SIZE is not set to the correct value");
 }
 
@@ -18,16 +18,20 @@ await fetch(`${server.url}/`, {
 });
 
 try {
-  await fetch(`${server.url}/`, {
+  const response = await fetch(`${server.url}/`, {
     headers: {
       "Huge": Buffer.alloc(http.maxHeaderSize + 1024, "abc").toString(),
     },
   });
-  throw new Error("bad");
-} catch (e) {
-  if (e.message.includes("bad")) {
-    process.exit(1);
+  if (response.status === 431) {
+    throw new Error("good!!");
   }
 
-  process.exit(0);
+  throw new Error("bad!");
+} catch (e) {
+  if (e instanceof Error && e.message.includes("good!!")) {
+    process.exit(0);
+  }
+
+  throw e;
 }

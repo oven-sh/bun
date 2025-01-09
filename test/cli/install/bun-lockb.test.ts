@@ -1,9 +1,8 @@
-import { file, listen, Socket, spawn } from "bun";
-import { tmpdirSync } from "harness";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile, copyFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, sep } from "path";
+import { spawn } from "bun";
+import { expect, it } from "bun:test";
+import { access, copyFile, open, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
+import { join } from "path";
 
 it("should not print anything to stderr when running bun.lockb", async () => {
   const package_dir = tmpdirSync();
@@ -33,6 +32,18 @@ it("should not print anything to stderr when running bun.lockb", async () => {
 
   // Ensure the lockfile was created
   await access(join(package_dir, "bun.lockb"));
+
+  // Assert that the lockfile has the correct permissions
+  const file = await open(join(package_dir, "bun.lockb"), "r");
+  const stat = await file.stat();
+
+  // in unix, 0o755 == 33261
+  let mode = 33261;
+  // ..but windows is different
+  if(isWindows) {
+    mode = 33206;
+  }
+  expect(stat.mode).toBe(mode);
 
   // create a .env
   await writeFile(join(package_dir, ".env"), "FOO=bar");

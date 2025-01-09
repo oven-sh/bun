@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { isCI, printEnvironment, startGroup } from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -35,6 +36,10 @@ async function build(args) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+  }
+
+  if (isCI) {
+    printEnvironment();
   }
 
   const env = {
@@ -102,7 +107,8 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-  await spawn("cmake", generateArgs, { env }, "configuration");
+
+  await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
   if (existsSync(envPath)) {
@@ -116,27 +122,8 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  await spawn("cmake", buildArgs, { env }, "compilation");
 
-  const buildFiles = ["ccache.log", "compile_commands.json"];
-  const buildPaths = [buildPath, ...readdirSync(buildPath).map(path => join(buildPath, path))];
-  const buildArtifacts = [];
-  for (const buildPath of buildPaths) {
-    for (const buildFile of buildFiles) {
-      const path = join(buildPath, buildFile);
-      if (existsSync(path)) {
-        buildArtifacts.push(path);
-      }
-    }
-  }
-
-  if (isBuildkite()) {
-    await Promise.all(
-      buildArtifacts.map(path =>
-        spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env }),
-      ),
-    );
-  }
+  await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   printDuration("total", Date.now() - startTime);
 }
@@ -150,7 +137,10 @@ function getCachePath(branch) {
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
   const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
-  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchName = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchKey = branchName.startsWith("gh-readonly-queue-")
+    ? branchName.slice(18, branchName.indexOf("-pr-"))
+    : branchName;
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
   return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }

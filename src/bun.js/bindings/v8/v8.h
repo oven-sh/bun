@@ -12,5 +12,11 @@
         Bun__panic(utf8.data(), utf8.length());                                                                     \
     } while (0)
 
+// Use only for types and functions that are exposed in the public V8 API
 namespace v8 {
+
+// Use for types added to Bun to support V8 APIs that aren't used in the actual V8 API
+namespace shim {
 }
+
+} // namespace v8

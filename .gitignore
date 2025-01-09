@@ -26,6 +26,7 @@
 *.db
 *.dmg
 *.dSYM
+*.generated.ts
 *.jsb
 *.lib
 *.log
@@ -53,8 +54,8 @@
 /test-report.md
 /test.js
 /test.ts
-/testdir
 /test.zig
+/testdir
 build
 build.ninja
 bun-binary
@@ -111,10 +112,14 @@ pnpm-lock.yaml
 profile.json
 README.md.template
 release/
+scripts/env.local
 sign.*.json
 sign.json
+src/bake/generated.ts
+src/generated_enum_extractor.zig
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
+src/bun.js/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
@@ -131,6 +136,7 @@ src/runtime.version
 src/tests.zig
 test.txt
 test/js/bun/glob/fixtures
+test/node.js/upstream
 tsconfig.tsbuildinfo
 txt.js
 x64
@@ -141,6 +147,10 @@ test/node.js/upstream
 .zig-cache
 scripts/env.local
 *.generated.ts
+src/bake/generated.ts
+test/cli/install/registry/packages/publish-pkg-*
+test/cli/install/registry/packages/@secret/publish-pkg-8
+test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 
 # Dependencies
 /vendor
@@ -148,18 +158,24 @@ scripts/env.local
 # Dependencies (before CMake)
 # These can be removed in the far future
 /src/bun.js/WebKit
-/src/deps/WebKit
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
-/src/deps/lol*html
 /src/deps/libarchive
 /src/deps/libdeflate
 /src/deps/libuv
+/src/deps/lol*html
 /src/deps/ls*hpack
 /src/deps/mimalloc
 /src/deps/picohttpparser
 /src/deps/tinycc
-/src/deps/zstd
-/src/deps/zlib
+/src/deps/WebKit
 /src/deps/zig
+/src/deps/zlib
+/src/deps/zstd
+
+# Generated files
+
+.buildkite/ci.yml
+*.sock
+scratch*.{js,ts,tsx,cjs,mjs}

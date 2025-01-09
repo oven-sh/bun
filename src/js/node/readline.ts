@@ -27,7 +27,19 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+
+const {
+  validateFunction,
+  validateAbortSignal,
+  validateArray,
+  validateString,
+  validateBoolean,
+  validateInteger,
+  validateUint32,
+} = require("internal/validators");
+
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;
@@ -258,30 +270,6 @@ var NodeError = getNodeErrorByName("Error");
 var NodeTypeError = getNodeErrorByName("TypeError");
 var NodeRangeError = getNodeErrorByName("RangeError");
 
-class ERR_INVALID_ARG_VALUE extends NodeTypeError {
-  constructor(name, value, reason = "not specified") {
-    super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-  }
-}
-
-class ERR_INVALID_CURSOR_POS extends NodeTypeError {
-  constructor() {
-    super("Cannot set cursor row without setting its column", {
-      code: "ERR_INVALID_CURSOR_POS",
-    });
-  }
-}
-
-class ERR_OUT_OF_RANGE extends NodeRangeError {
-  constructor(name, range, received) {
-    super(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`, {
-      code: "ERR_OUT_OF_RANGE",
-    });
-  }
-}
-
 class ERR_USE_AFTER_CLOSE extends NodeError {
   constructor() {
     super("This socket has been ended by the other party", {
@@ -295,129 +283,6 @@ class AbortError extends Error {
   constructor() {
     super("The operation was aborted");
     this.code = "ABORT_ERR";
-  }
-}
-
-// Validators
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-function validateAbortSignal(signal, name) {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw $ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-}
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-function validateArray(value, name, minLength = 0) {
-  // var validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!$isJSArray(value)) {
-    throw $ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    var reason = `must be longer than ${minLength}`;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-}
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-function validateString(value, name) {
-  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-
-/**
- * @callback validateBoolean
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is boolean}
- */
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-function validateObject(value, name, options = null) {
-  // var validateObject = hideStackFrames((value, name, options = null) => {
-  var allowArray = options?.allowArray ?? false;
-  var allowFunction = options?.allowFunction ?? false;
-  var nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && $isJSArray.$call(null, value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-}
-
-/**
- * @callback validateInteger
- * @param {*} value
- * @param {string} name
- * @param {number} [min]
- * @param {number} [max]
- * @returns {asserts value is number}
- */
-function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
-  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-}
-
-/**
- * @callback validateUint32
- * @param {*} value
- * @param {string} name
- * @param {number|boolean} [positive=false]
- * @returns {asserts value is number}
- */
-function validateUint32(value, name, positive = false) {
-  if (typeof value !== "number") {
-    throw $ERR_INVALID_ARG_TYPE(name, "number", value);
-  }
-
-  if (!NumberIsInteger(value)) {
-    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  }
-
-  var min = positive ? 1 : 0; // 2 ** 32 === 4294967296
-  var max = 4_294_967_295;
-
-  if (value < min || value > max) {
-    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
   }
 }
 
@@ -992,15 +857,15 @@ function cursorTo(stream, x, y, callback) {
     y = undefined;
   }
 
-  if (NumberIsNaN(x)) throw new ERR_INVALID_ARG_VALUE("x", x);
-  if (NumberIsNaN(y)) throw new ERR_INVALID_ARG_VALUE("y", y);
+  if (NumberIsNaN(x)) throw $ERR_INVALID_ARG_VALUE("x", x);
+  if (NumberIsNaN(y)) throw $ERR_INVALID_ARG_VALUE("y", y);
 
   if (stream == null || (typeof x !== "number" && typeof y !== "number")) {
     if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  if (typeof x !== "number") throw new ERR_INVALID_CURSOR_POS();
+  if (typeof x !== "number") throw $ERR_INVALID_CURSOR_POS();
 
   var data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
   return stream.write(data, callback);
@@ -1397,7 +1262,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
       if (NumberIsFinite(inputEscapeCodeTimeout)) {
         this.escapeCodeTimeout = inputEscapeCodeTimeout;
       } else {
-        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
+        throw $ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
       }
     }
 
@@ -1410,7 +1275,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   if (completer !== undefined && typeof completer !== "function") {
-    throw new ERR_INVALID_ARG_VALUE("completer", completer);
+    throw $ERR_INVALID_ARG_VALUE("completer", completer);
   }
 
   if (history === undefined) {
@@ -1424,7 +1289,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
+    throw $ERR_INVALID_ARG_VALUE("historySize", historySize);
   }
 
   // Backwards compat; check the isTTY prop of the output stream

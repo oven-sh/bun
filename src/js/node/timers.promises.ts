@@ -1,36 +1,14 @@
 // Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
-const symbolAsyncIterator = Symbol.asyncIterator;
 
-class ERR_INVALID_ARG_TYPE extends Error {
-  constructor(name, expected, actual) {
-    super(`${name} must be ${expected}, ${typeof actual} given`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
+const { validateBoolean, validateAbortSignal, validateObject } = require("internal/validators");
+
+const symbolAsyncIterator = Symbol.asyncIterator;
 
 class AbortError extends Error {
   constructor() {
     super("The operation was aborted");
     this.code = "ABORT_ERR";
-  }
-}
-
-function validateObject(object, name) {
-  if (object === null || typeof object !== "object") {
-    throw new ERR_INVALID_ARG_TYPE(name, "Object", object);
-  }
-}
-
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") {
-    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-  }
-}
-
-function validateAbortSignal(signal, name) {
-  if (typeof signal !== "undefined" && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
 

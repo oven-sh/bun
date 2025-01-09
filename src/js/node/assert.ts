@@ -140,19 +140,6 @@ var require_errors = __commonJS({
       TypeError,
     );
     createErrorType(
-      "ERR_INVALID_ARG_VALUE",
-      function (name, value) {
-        var reason = arguments.length > 2 && arguments[2] !== void 0 ? arguments[2] : "is invalid";
-        var inspected = util.inspect(value);
-        return (
-          inspected.length > 128 && (inspected = "".concat(inspected.slice(0, 128), "...")),
-          "The argument '".concat(name, "' ").concat(reason, ". Received ").concat(inspected)
-        );
-      },
-      TypeError,
-      RangeError,
-    );
-    createErrorType(
       "ERR_INVALID_RETURN_VALUE",
       function (input, name, value) {
         var type;
@@ -655,7 +642,7 @@ var require_assertion_error = __commonJS({
       function AssertionError2(options) {
         var _this;
         if ((_classCallCheck(this, AssertionError2), _typeof(options) !== "object" || options === null))
-          throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+          throw new ERR_INVALID_ARG_TYPE("options", "object", options);
         var message = options.message,
           operator = options.operator,
           stackStartFn = options.stackStartFn,
@@ -835,7 +822,6 @@ var require_assert = __commonJS({
       _require$codes = _require.codes,
       ERR_AMBIGUOUS_ARGUMENT = _require$codes.ERR_AMBIGUOUS_ARGUMENT,
       ERR_INVALID_ARG_TYPE = _require$codes.ERR_INVALID_ARG_TYPE,
-      ERR_INVALID_ARG_VALUE = _require$codes.ERR_INVALID_ARG_VALUE,
       ERR_INVALID_RETURN_VALUE = _require$codes.ERR_INVALID_RETURN_VALUE,
       ERR_MISSING_ARGS = _require$codes.ERR_MISSING_ARGS,
       AssertionError = require_assertion_error(),
@@ -1065,7 +1051,7 @@ var require_assert = __commonJS({
         }
         var keys = Object.keys(expected);
         if (expected instanceof Error) keys.push("name", "message");
-        else if (keys.length === 0) throw new ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
+        else if (keys.length === 0) throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
         return (
           keys.forEach(function (key) {
             return (
@@ -1083,7 +1069,7 @@ var require_assert = __commonJS({
           : expected.$call({}, actual) === !0;
     }
     function getActual(fn) {
-      if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "Function", fn);
+      if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "function", fn);
       try {
         fn();
       } catch (e) {

@@ -5,6 +5,16 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 describe("bun test", () => {
+  test("running a non-existent absolute file path is a 1 exit code", () => {
+    const spawn = Bun.spawnSync({
+      cmd: [bunExe(), "test", join(import.meta.dirname, "non-existent.test.ts")],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(spawn.exitCode).toBe(1);
+  });
   test("can provide no arguments", () => {
     const stderr = runTest({
       args: [],
@@ -567,7 +577,7 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error title=error: Oops!::/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
     test("should annotate a test timeout", () => {
       const stderr = runTest({

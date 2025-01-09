@@ -11,7 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../mimalloc_arena.zig").Arena;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
 
 const Allocator = std.mem.Allocator;
@@ -19,14 +19,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const ParseResult = bun.bundler.ParseResult;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = bun.Bundler;
-const PluginRunner = bun.bundler.PluginRunner;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const PluginRunner = bun.transpiler.PluginRunner;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -68,7 +68,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -87,6 +86,7 @@ const Async = bun.Async;
 const String = bun.String;
 
 const debug = Output.scoped(.ModuleLoader, true);
+const panic = std.debug.panic;
 
 inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
+                bun.fmt.formatJSONStringUTF8(specifier, .{}),
+                bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -261,7 +261,7 @@ pub const RuntimeTranspilerStore = struct {
             .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.bundler.options.loader(owned_path.name.ext),
+            .loader = vm.transpiler.options.loader(owned_path.name.ext),
             .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
@@ -346,7 +346,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (resolved_source.is_commonjs_module) {
                     const actual_package_json: *PackageJSON = brk2: {
                         // this should already be cached virtually always so it's fine to do this
-                        const dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
+                        const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
                             break :brk .javascript;
 
                         break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -412,13 +412,13 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             var vm = this.vm;
-            var bundler: bun.Bundler = undefined;
-            bundler = vm.bundler;
-            bundler.setAllocator(allocator);
-            bundler.setLog(&this.log);
-            bundler.resolver.opts = bundler.options;
-            bundler.macro_context = null;
-            bundler.linker.resolver = &bundler.resolver;
+            var transpiler: bun.Transpiler = undefined;
+            transpiler = vm.transpiler;
+            transpiler.setAllocator(allocator);
+            transpiler.setLog(&this.log);
+            transpiler.resolver.opts = transpiler.options;
+            transpiler.macro_context = null;
+            transpiler.linker.resolver = &transpiler.resolver;
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
@@ -436,12 +436,12 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
             else
-                bundler.options.macro_remap;
+                transpiler.options.macro_remap;
 
             var fallback_source: logger.Source = undefined;
 
@@ -458,7 +458,7 @@ pub const RuntimeTranspilerStore = struct {
                 vm.main_hash == hash and
                 strings.eqlLong(vm.main, path.text, false);
 
-            var parse_options = Bundler.ParseOptions{
+            var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
@@ -467,18 +467,19 @@ pub const RuntimeTranspilerStore = struct {
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
-                .jsx = bundler.options.jsx,
-                .emit_decorator_metadata = bundler.options.emit_decorator_metadata,
+                .jsx = transpiler.options.jsx,
+                .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and is_main,
+                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests and is_main,
                 .set_breakpoint_on_first_line = vm.debugger != null and
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -491,12 +492,12 @@ pub const RuntimeTranspilerStore = struct {
             if (is_node_override) {
                 if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                    fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                    fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
                 }
             }
 
-            var parse_result: bun.bundler.ParseResult = bundler.parseMaybeReturnFileOnlyAllowSharedBuffer(
+            var parse_result: bun.transpiler.ParseResult = transpiler.parseMaybeReturnFileOnlyAllowSharedBuffer(
                 parse_options,
                 null,
                 false,
@@ -573,8 +574,9 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -582,6 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = bytecode_slice.len,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -590,14 +595,14 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, transpiler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
-                if (bundler.options.rewrite_jest_for_tests) {
+                if (transpiler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
                         "@jest/globals",
@@ -637,7 +642,7 @@ pub const RuntimeTranspilerStore = struct {
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
-                _ = bundler.printWithSourceMap(
+                _ = transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -667,10 +672,10 @@ pub const RuntimeTranspilerStore = struct {
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
                 // After ensureHash:
-                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 // Before ensureHash:
-                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 result.ensureHash();
 
@@ -1375,20 +1380,20 @@ pub const ModuleLoader = struct {
             const specifier = this.specifier;
             const old_log = jsc_vm.log;
 
-            jsc_vm.bundler.linker.log = log;
-            jsc_vm.bundler.log = log;
-            jsc_vm.bundler.resolver.log = log;
+            jsc_vm.transpiler.linker.log = log;
+            jsc_vm.transpiler.log = log;
+            jsc_vm.transpiler.resolver.log = log;
             jsc_vm.packageManager().log = log;
             defer {
-                jsc_vm.bundler.linker.log = old_log;
-                jsc_vm.bundler.log = old_log;
-                jsc_vm.bundler.resolver.log = old_log;
+                jsc_vm.transpiler.linker.log = old_log;
+                jsc_vm.transpiler.log = old_log;
+                jsc_vm.transpiler.resolver.log = old_log;
                 jsc_vm.packageManager().log = old_log;
             }
 
             // We _must_ link because:
             // - node_modules bundle won't be properly
-            try jsc_vm.bundler.linker.link(
+            try jsc_vm.transpiler.linker.link(
                 path,
                 &parse_result,
                 jsc_vm.origin,
@@ -1404,7 +1409,7 @@ pub const ModuleLoader = struct {
             {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
-                _ = try jsc_vm.bundler.printWithSourceMap(
+                _ = try jsc_vm.transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -1474,7 +1479,7 @@ pub const ModuleLoader = struct {
         var jsc_vm = global.bunVM();
         const filename = str.toUTF8(jsc_vm.allocator);
         defer filename.deinit();
-        const loader = jsc_vm.bundler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
+        const loader = jsc_vm.transpiler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
         if (loader == .file) {
             return Api.Loader.js;
         }
@@ -1499,10 +1504,23 @@ pub const ModuleLoader = struct {
     ) !ResolvedSource {
         const disable_transpilying = comptime flags.disableTranspiling();
 
+        if (comptime disable_transpilying) {
+            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json)) {
+                // Don't print "export default <file path>"
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.empty,
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                };
+            }
+        }
+
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
-                jsc_vm.bundler.resetStore();
+                jsc_vm.transpiler.resetStore();
                 const hash = JSC.GenericWatcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
@@ -1564,30 +1582,30 @@ pub const ModuleLoader = struct {
                     .sourcemap_allocator = bun.default_allocator,
                 };
 
-                const old = jsc_vm.bundler.log;
-                jsc_vm.bundler.log = log;
-                jsc_vm.bundler.linker.log = log;
-                jsc_vm.bundler.resolver.log = log;
-                if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                const old = jsc_vm.transpiler.log;
+                jsc_vm.transpiler.log = log;
+                jsc_vm.transpiler.linker.log = log;
+                jsc_vm.transpiler.resolver.log = log;
+                if (jsc_vm.transpiler.resolver.package_manager) |pm| {
                     pm.log = log;
                 }
 
                 defer {
-                    jsc_vm.bundler.log = old;
-                    jsc_vm.bundler.linker.log = old;
-                    jsc_vm.bundler.resolver.log = old;
-                    if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                    jsc_vm.transpiler.log = old;
+                    jsc_vm.transpiler.linker.log = old;
+                    jsc_vm.transpiler.resolver.log = old;
+                    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
                         pm.log = old;
                     }
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
                 else
-                    jsc_vm.bundler.options.macro_remap;
+                    jsc_vm.transpiler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
 
@@ -1599,7 +1617,7 @@ pub const ModuleLoader = struct {
                 var should_close_input_file_fd = fd == null;
 
                 var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
-                var parse_options = Bundler.ParseOptions{
+                var parse_options = Transpiler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
@@ -1608,13 +1626,14 @@ pub const ModuleLoader = struct {
                     .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
-                    .jsx = jsc_vm.bundler.options.jsx,
-                    .emit_decorator_metadata = jsc_vm.bundler.options.emit_decorator_metadata,
+                    .jsx = jsc_vm.transpiler.options.jsx,
+                    .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1632,7 +1651,7 @@ pub const ModuleLoader = struct {
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                         parse_options.virtual_source = &fallback_source;
                     }
                 }
@@ -1640,7 +1659,13 @@ pub const ModuleLoader = struct {
                 var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
-                        break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
+                        const heap_access = if (!disable_transpilying)
+                            jsc_vm.jsc.releaseHeapAccess()
+                        else
+                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
+                        defer heap_access.acquire();
+
+                        break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,
                             return_file_only,
@@ -1707,7 +1732,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                if (jsc_vm.bundler.log.errors > 0) {
+                if (jsc_vm.transpiler.log.errors > 0) {
                     give_back_arena = false;
                     return error.ParseError;
                 }
@@ -1755,12 +1780,13 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global, .{}) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                         .tag = .exports_object,
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1768,6 +1794,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 
@@ -1800,7 +1829,7 @@ pub const ModuleLoader = struct {
                             if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
                                 const actual_package_json: *PackageJSON = package_json orelse brk2: {
                                     // this should already be cached virtually always so it's fine to do this
-                                    const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                    const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
                                         break :brk .javascript;
 
                                     break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1816,11 +1845,11 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                const start_count = jsc_vm.bundler.linker.import_counter;
+                const start_count = jsc_vm.transpiler.linker.import_counter;
 
                 // We _must_ link because:
                 // - node_modules bundle won't be properly
-                try jsc_vm.bundler.linker.link(
+                try jsc_vm.transpiler.linker.link(
                     path,
                     &parse_result,
                     jsc_vm.origin,
@@ -1836,8 +1865,8 @@ pub const ModuleLoader = struct {
 
                     if (parse_result.source.contents_is_recycled) {
                         // this shared buffer is about to become owned by the AsyncModule struct
-                        jsc_vm.bundler.resolver.caches.fs.resetSharedBuffer(
-                            jsc_vm.bundler.resolver.caches.fs.sharedBuffer(),
+                        jsc_vm.transpiler.resolver.caches.fs.resetSharedBuffer(
+                            jsc_vm.transpiler.resolver.caches.fs.sharedBuffer(),
                         );
                     }
 
@@ -1861,8 +1890,8 @@ pub const ModuleLoader = struct {
                 }
 
                 if (!jsc_vm.macro_mode)
-                    jsc_vm.resolved_count += jsc_vm.bundler.linker.import_counter - start_count;
-                jsc_vm.bundler.linker.import_counter = 0;
+                    jsc_vm.resolved_count += jsc_vm.transpiler.linker.import_counter - start_count;
+                jsc_vm.transpiler.linker.import_counter = 0;
 
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
@@ -1870,7 +1899,7 @@ pub const ModuleLoader = struct {
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
 
-                    break :brk try jsc_vm.bundler.printWithSourceMap(
+                    break :brk try jsc_vm.transpiler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
                         &printer,
@@ -1900,7 +1929,7 @@ pub const ModuleLoader = struct {
                     if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
                         const actual_package_json: *PackageJSON = package_json orelse brk2: {
                             // this should already be cached virtually always so it's fine to do this
-                            const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
+                            const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
                                 break :brk .javascript;
 
                             break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1949,7 +1978,7 @@ pub const ModuleLoader = struct {
             //         }
             //     }
 
-            //     var parse_options = Bundler.ParseOptions{
+            //     var parse_options = Transpiler.ParseOptions{
             //         .allocator = allocator,
             //         .path = path,
             //         .loader = loader,
@@ -1957,10 +1986,10 @@ pub const ModuleLoader = struct {
             //         .file_descriptor = fd,
             //         .file_hash = hash,
             //         .macro_remappings = MacroRemap{},
-            //         .jsx = jsc_vm.bundler.options.jsx,
+            //         .jsx = jsc_vm.transpiler.options.jsx,
             //     };
 
-            //     var parse_result = jsc_vm.bundler.parse(
+            //     var parse_result = jsc_vm.transpiler.parse(
             //         parse_options,
             //         null,
             //     ) orelse {
@@ -2133,7 +2162,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
-                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.slice());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -2148,34 +2177,14 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {
             if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
                 slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -2196,7 +2205,7 @@ pub const ModuleLoader = struct {
         ret: *ErrorableResolvedSource,
     ) bool {
         JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
         defer log.deinit();
 
         if (ModuleLoader.fetchBuiltinModule(
@@ -2227,7 +2236,7 @@ pub const ModuleLoader = struct {
         allow_promise: bool,
     ) ?*anyopaque {
         JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
         defer log.deinit();
 
         var _specifier = specifier_ptr.toUTF8(jsc_vm.allocator);
@@ -2253,7 +2262,7 @@ pub const ModuleLoader = struct {
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
-        var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+        var loader: ?options.Loader = jsc_vm.transpiler.options.loaders.get(path.name.ext);
 
         if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
@@ -2280,7 +2289,7 @@ pub const ModuleLoader = struct {
                         path = current_path;
                     }
 
-                    loader = jsc_vm.bundler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                    loader = jsc_vm.transpiler.options.loaders.get(current_path.name.ext) orelse .tsx;
                 } else {
                     loader = .tsx;
                 }
@@ -2289,7 +2298,6 @@ pub const ModuleLoader = struct {
                     virtual_source_to_use = logger.Source{
                         .path = path,
                         .contents = blob.sharedView(),
-                        .key_path = path,
                     };
                     virtual_source = &virtual_source_to_use.?;
                 }
@@ -2417,7 +2425,8 @@ pub const ModuleLoader = struct {
         else
             specifier[@min(namespace.len + 1, specifier.len)..];
 
-        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse return JSValue.zero;
+        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse
+            return JSValue.zero;
     }
 
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
@@ -2466,6 +2475,15 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.InternalForTesting, specifier);
                 },
 
+                .@"internal/test/binding" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"internal:test/binding", specifier);
+                },
+
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sql" => {
@@ -2477,7 +2495,7 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.@"bun:sql", specifier);
                 },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
-                .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
+                .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
                 .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
                 .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
@@ -2512,6 +2530,7 @@ pub const ModuleLoader = struct {
                 .@"node:stream/consumers" => return jsSyntheticModule(.@"node:stream/consumers", specifier),
                 .@"node:stream/promises" => return jsSyntheticModule(.@"node:stream/promises", specifier),
                 .@"node:stream/web" => return jsSyntheticModule(.@"node:stream/web", specifier),
+                .@"node:test" => return jsSyntheticModule(.@"node:test", specifier),
                 .@"node:timers" => return jsSyntheticModule(.@"node:timers", specifier),
                 .@"node:timers/promises" => return jsSyntheticModule(.@"node:timers/promises", specifier),
                 .@"node:tls" => return jsSyntheticModule(.@"node:tls", specifier),
@@ -2574,6 +2593,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }
@@ -2608,7 +2630,7 @@ pub const ModuleLoader = struct {
         const loader = if (loader_ != ._none)
             options.Loader.fromAPI(loader_)
         else
-            jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+            jsc_vm.transpiler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                     break :brk options.Loader.js;
                 }
@@ -2676,7 +2698,6 @@ pub const HardcodedModule = enum {
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sql",
     @"bun:sqlite",
-    @"bun:internal-for-testing",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2710,6 +2731,7 @@ pub const HardcodedModule = enum {
     @"node:stream/promises",
     @"node:stream/web",
     @"node:string_decoder",
+    @"node:test",
     @"node:timers",
     @"node:timers/promises",
     @"node:tls",
@@ -2737,6 +2759,9 @@ pub const HardcodedModule = enum {
     @"node:diagnostics_channel",
     @"node:dgram",
     @"node:cluster",
+    // these are gated behind '--expose-internals'
+    @"bun:internal-for-testing",
+    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2756,6 +2781,8 @@ pub const HardcodedModule = enum {
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
+
+            .{ "node:test", HardcodedModule.@"node:test" },
 
             .{ "assert", HardcodedModule.@"node:assert" },
             .{ "assert/strict", HardcodedModule.@"node:assert/strict" },
@@ -2816,17 +2843,19 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
+
+            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
     pub const Alias = struct {
-        path: string,
-        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+        path: [:0]const u8,
+        tag: ImportRecord.Tag = .builtin,
     };
 
     pub const Aliases = struct {
         // Used by both Bun and Node.
-        const common_alias_kvs = .{
+        const common_alias_kvs = [_]struct { string, Alias }{
             .{ "node:assert", .{ .path = "assert" } },
             .{ "node:assert/strict", .{ .path = "assert/strict" } },
             .{ "node:async_hooks", .{ .path = "async_hooks" } },
@@ -2866,6 +2895,7 @@ pub const HardcodedModule = enum {
             .{ "node:stream/promises", .{ .path = "stream/promises" } },
             .{ "node:stream/web", .{ .path = "stream/web" } },
             .{ "node:string_decoder", .{ .path = "string_decoder" } },
+            .{ "node:test", .{ .path = "node:test" } },
             .{ "node:timers", .{ .path = "timers" } },
             .{ "node:timers/promises", .{ .path = "timers/promises" } },
             .{ "node:tls", .{ .path = "tls" } },
@@ -2879,6 +2909,22 @@ pub const HardcodedModule = enum {
             .{ "node:wasi", .{ .path = "wasi" } },
             .{ "node:worker_threads", .{ .path = "worker_threads" } },
             .{ "node:zlib", .{ .path = "zlib" } },
+
+            // These are returned in builtinModules, but probably not many packages use them so we will just alias them.
+            .{ "node:_http_agent", .{ .path = "http" } },
+            .{ "node:_http_client", .{ .path = "http" } },
+            .{ "node:_http_common", .{ .path = "http" } },
+            .{ "node:_http_incoming", .{ .path = "http" } },
+            .{ "node:_http_outgoing", .{ .path = "http" } },
+            .{ "node:_http_server", .{ .path = "http" } },
+            .{ "node:_stream_duplex", .{ .path = "stream" } },
+            .{ "node:_stream_passthrough", .{ .path = "stream" } },
+            .{ "node:_stream_readable", .{ .path = "stream" } },
+            .{ "node:_stream_transform", .{ .path = "stream" } },
+            .{ "node:_stream_writable", .{ .path = "stream" } },
+            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_tls_wrap", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "tls" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -2919,6 +2965,7 @@ pub const HardcodedModule = enum {
             .{ "stream/promises", .{ .path = "stream/promises" } },
             .{ "stream/web", .{ .path = "stream/web" } },
             .{ "string_decoder", .{ .path = "string_decoder" } },
+            // .{ "test", .{ .path = "test" } },
             .{ "timers", .{ .path = "timers" } },
             .{ "timers/promises", .{ .path = "timers/promises" } },
             .{ "tls", .{ .path = "tls" } },
@@ -2957,9 +3004,11 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
+
+            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
-        const bun_extra_alias_kvs = .{
+        const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
@@ -2989,10 +3038,9 @@ pub const HardcodedModule = enum {
             .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
         };
 
-        const node_alias_kvs = .{
+        const node_alias_kvs = [_]struct { string, Alias }{
             .{ "inspector/promises", .{ .path = "inspector/promises" } },
             .{ "node:inspector/promises", .{ .path = "inspector/promises" } },
-            .{ "node:test", .{ .path = "node:test" } },
         };
 
         const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);

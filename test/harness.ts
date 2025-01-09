@@ -1,10 +1,12 @@
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
+import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile } from "fs/promises";
-import fs, { closeSync, openSync } from "node:fs";
+import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
+import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -17,7 +19,18 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
+export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isMusl = isLinux && libcFamily === "musl";
+export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
+export const isVerbose = process.env.DEBUG === "1";
+
+// Use these to mark a test as flaky or broken.
+// This will help us keep track of these tests.
+//
+// test.todoIf(isFlaky && isMacOS)("this test is flaky");
+export const isFlaky = isCI;
+export const isBroken = isCI;
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -30,7 +43,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
+
+const ciEnv = { ...bunEnv };
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -38,11 +54,18 @@ if (isWindows) {
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
+    delete ciEnv[key];
     delete bunEnv[key];
   }
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete ciEnv[key];
     delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUILDKITE")) {
+    delete bunEnv[key];
+    delete process.env[key];
   }
 }
 
@@ -133,7 +156,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-type DirectoryTree = {
+export type DirectoryTree = {
   [name: string]:
     | string
     | Buffer
@@ -141,25 +164,29 @@ type DirectoryTree = {
     | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  async function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, raw_contents] of Object.entries(tree)) {
-      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
-      const joined = join(base, name);
-      if (name.includes("/")) {
-        const dir = dirname(name);
-        if (dir !== name && dir !== ".") {
-          fs.mkdirSync(join(base, dir), { recursive: true });
-        }
+export async function makeTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
-        fs.mkdirSync(joined);
-        makeTree(joined, contents);
-        continue;
-      }
-      fs.writeFileSync(joined, contents);
     }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTree(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
   }
+}
+
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
   return base;
@@ -300,137 +327,174 @@ const binaryTypes = {
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
-
-expect.extend({
-  toHaveTestTimedOutAfter(actual: any, expected: number) {
-    if (typeof actual !== "string") {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a string`,
-      };
-    }
-
-    const preStartI = actual.indexOf("timed out after ");
-    if (preStartI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "timed out after "`,
-      };
-    }
-    const startI = preStartI + "timed out after ".length;
-    const endI = actual.indexOf("ms", startI);
-    if (endI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
-      };
-    }
-    const int = parseInt(actual.slice(startI, endI));
-    if (!Number.isSafeInteger(int)) {
-      return {
-        pass: false,
-        message: () => `Expected ${int} to be a safe integer`,
-      };
-    }
-
-    return {
-      pass: int >= expected,
-      message: () => `Expected ${int} to be >= ${expected}`,
-    };
-  },
-  toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
-    switch (expected) {
-      case "buffer":
+if (expect.extend)
+  expect.extend({
+    toHaveTestTimedOutAfter(actual: any, expected: number) {
+      if (typeof actual !== "string") {
         return {
-          pass: Buffer.isBuffer(actual),
-          message: () => `Expected ${actual} to be buffer`,
+          pass: false,
+          message: () => `Expected ${actual} to be a string`,
         };
-      case "arraybuffer":
+      }
+
+      const preStartI = actual.indexOf("timed out after ");
+      if (preStartI === -1) {
         return {
-          pass: actual instanceof ArrayBuffer,
-          message: () => `Expected ${actual} to be ArrayBuffer`,
+          pass: false,
+          message: () => `Expected ${actual} to contain "timed out after "`,
         };
-      default: {
-        const ctor = binaryTypes[expected];
-        if (!ctor) {
+      }
+      const startI = preStartI + "timed out after ".length;
+      const endI = actual.indexOf("ms", startI);
+      if (endI === -1) {
+        return {
+          pass: false,
+          message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+        };
+      }
+      const int = parseInt(actual.slice(startI, endI));
+      if (!Number.isSafeInteger(int)) {
+        return {
+          pass: false,
+          message: () => `Expected ${int} to be a safe integer`,
+        };
+      }
+
+      return {
+        pass: int >= expected,
+        message: () => `Expected ${int} to be >= ${expected}`,
+      };
+    },
+    toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
+      switch (expected) {
+        case "buffer":
           return {
-            pass: false,
-            message: () => `Expected ${expected} to be a binary type`,
+            pass: Buffer.isBuffer(actual),
+            message: () => `Expected ${actual} to be buffer`,
+          };
+        case "arraybuffer":
+          return {
+            pass: actual instanceof ArrayBuffer,
+            message: () => `Expected ${actual} to be ArrayBuffer`,
+          };
+        default: {
+          const ctor = binaryTypes[expected];
+          if (!ctor) {
+            return {
+              pass: false,
+              message: () => `Expected ${expected} to be a binary type`,
+            };
+          }
+
+          return {
+            pass: actual instanceof ctor,
+            message: () => `Expected ${actual} to be ${expected}`,
           };
         }
-
-        return {
-          pass: actual instanceof ctor,
-          message: () => `Expected ${actual} to be ${expected}`,
-        };
       }
-    }
-  },
-  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), ...cmds],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
+    },
+    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...cmds],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
 
-    if (result.exitCode !== expectedCode) {
-      return {
-        pass: false,
-        message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
-      };
-    }
-
-    if (optionalStdout != null) {
-      return {
-        pass: result.stdout.toString("utf-8") === optionalStdout,
-        message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
-      };
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected ${cmds.join(" ")} to fail`,
-    };
-  },
-  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
-    try {
-      fn();
-      return {
-        pass: false,
-        message: () => `Received function did not throw`,
-      };
-    } catch (e) {
-      // expect(e).toBeInstanceOf(cls);
-      if (!(e instanceof cls)) {
+      if (result.exitCode !== expectedCode) {
         return {
           pass: false,
-          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
         };
       }
 
-      // expect(e).toHaveProperty("code");
-      if (!("code" in e)) {
+      if (optionalStdout != null) {
         return {
-          pass: false,
-          message: () => `Expected error to have property 'code'; got ${e}`,
-        };
-      }
-
-      // expect(e.code).toEqual(code);
-      if (e.code !== code) {
-        return {
-          pass: false,
-          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          pass: result.stdout.toString("utf-8") === optionalStdout,
+          message: () =>
+            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
         };
       }
 
       return {
         pass: true,
+        message: () => `Expected ${cmds.join(" ")} to fail`,
       };
-    }
-  },
-});
+    },
+    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        await fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+  });
 
 export function ospath(path: string) {
   if (isWindows) {
@@ -487,6 +551,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -526,6 +594,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     // workspaces don't need a version
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
@@ -969,7 +1041,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
+  let err = stderrForInstall(await new Response(stderr).text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -983,6 +1055,11 @@ export async function runBunInstall(
   let out = await new Response(stdout).text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
+}
+
+// stderr with `slow filesystem` warning removed
+export function stderrForInstall(err: string) {
+  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1009,6 +1086,30 @@ export async function runBunUpdate(
   }
 
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
+}
+
+export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warning:");
+  expect(err).not.toContain("failed");
+  expect(err).not.toContain("panic:");
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  const exitCode = await exited;
+  expect(exitCode).toBe(0);
+
+  return { out, err };
 }
 
 // If you need to modify, clone it
@@ -1042,34 +1143,35 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
-expect.extend({
-  toBeLatin1String(actual: unknown) {
-    if ((actual as string).isLatin1()) {
+if (expect.extend)
+  expect.extend({
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a Latin1 string`,
       };
-    }
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
 
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a Latin1 string`,
-    };
-  },
-  toBeUTF16String(actual: unknown) {
-    if ((actual as string).isUTF16()) {
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a UTF16 string`,
       };
-    }
-
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a UTF16 string`,
-    };
-  },
-});
+    },
+  });
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
@@ -1078,6 +1180,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {
@@ -1239,6 +1342,7 @@ export function getSecret(name: string): string | undefined {
     const { exitCode, stdout } = spawnSync({
       cmd: ["buildkite-agent", "secret", "get", name],
       stdout: "pipe",
+      env: ciEnv,
       stderr: "inherit",
     });
     if (exitCode === 0) {
@@ -1285,8 +1389,128 @@ Object.defineProperty(globalThis, "gc", {
   configurable: true,
 });
 
-export function waitForFileToExist(path: string, interval: number) {
+export function waitForFileToExist(path: string, interval_ms: number) {
   while (!fs.existsSync(path)) {
-    sleepSync(interval);
+    sleepSync(interval_ms);
   }
+}
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux":
+      switch (libcFamily) {
+        case "glibc":
+          return "libc.so.6";
+        case "musl":
+          return "/usr/lib/libc.so";
+      }
+    case "darwin":
+      return "libc.dylib";
+    default:
+      throw new Error("TODO");
+  }
+}
+
+export function cwdScope(cwd: string) {
+  const original = process.cwd();
+  process.chdir(cwd);
+  return {
+    [Symbol.dispose]() {
+      process.chdir(original);
+    },
+  };
+}
+
+export function rmScope(path: string) {
+  return {
+    [Symbol.dispose]() {
+      fs.rmSync(path, { recursive: true, force: true });
+    },
+  };
+}
+
+export function textLockfile(version: number, pkgs: any): string {
+  return JSON.stringify({
+    lockfileVersion: version,
+    ...pkgs,
+  });
+}
+
+export class VerdaccioRegistry {
+  port: number;
+  process: ChildProcess | undefined;
+  configPath: string;
+  packagesPath: string;
+
+  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
+    this.port = randomPort();
+    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
+    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
+  }
+
+  async start(silent: boolean = true) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+      silent,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
+    });
+
+    this.process.stderr?.on("data", data => {
+      console.error(`[verdaccio] stderr: ${data}`);
+    });
+
+    const started = Promise.withResolvers();
+
+    this.process.on("error", error => {
+      console.error(`Failed to start verdaccio: ${error}`);
+      started.reject(error);
+    });
+
+    this.process.on("exit", (code, signal) => {
+      if (code !== 0) {
+        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+      } else {
+        console.log("Verdaccio exited successfully");
+      }
+    });
+
+    this.process.on("message", (message: { verdaccio_started: boolean }) => {
+      if (message.verdaccio_started) {
+        started.resolve();
+      }
+    });
+
+    await started.promise;
+  }
+
+  registryUrl() {
+    return `http://localhost:${this.port}/`;
+  }
+
+  stop() {
+    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process?.kill();
+  }
+
+  async createTestDir() {
+    const packageDir = tmpdirSync();
+    const packageJson = join(packageDir, "package.json");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `
+      [install]
+      cache = "${join(packageDir, ".bun-cache")}"
+      registry = "${this.registryUrl()}"
+      `,
+    );
+
+    return { packageDir, packageJson };
+  }
+}
+
+export async function readdirSorted(path: string): Promise<string[]> {
+  const results = await readdir(path);
+  results.sort();
+  return results;
 }

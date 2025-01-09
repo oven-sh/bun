@@ -430,6 +430,9 @@ test("no assertion failures", () => {
     }
   }
   const customError = new CustomError("bar");
+  customError.stack;
+  delete customError.originalLine;
+  delete customError.originalColumn;
   assert.strictEqual(util.format(customError), customError.stack.replace(/^Error/, "Custom$&")); //! temp bug workaround
   // Doesn't capture stack trace
   function BadCustomError(msg) {

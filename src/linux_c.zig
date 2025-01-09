@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -771,3 +772,77 @@ pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8
 pub const netdb = @cImport({
     @cInclude("netdb.h");
 });
+
+export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
+    return @bitCast(
+        std.os.linux.syscall6(
+            .epoll_pwait2,
+            @bitCast(@as(isize, @intCast(epfd))),
+            @intFromPtr(events),
+            @bitCast(@as(isize, @intCast(maxevents))),
+            @intFromPtr(timeout),
+            @intFromPtr(sigmask),
+            8,
+        ),
+    );
+}
+
+// *********************************************************************************
+// libc overrides
+// *********************************************************************************
+
+fn simulateLibcErrno(rc: usize) c_int {
+    const signed: isize = @bitCast(rc);
+    const int: c_int = @intCast(if (signed > -4096 and signed < 0) -signed else 0);
+    std.c._errno().* = int;
+    return if (signed > -4096 and signed < 0) -1 else int;
+}
+
+pub export fn stat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/stat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, 0);
+    return simulateLibcErrno(rc);
+}
+
+pub const stat64 = stat;
+pub const lstat64 = lstat;
+pub const fstat64 = fstat;
+pub const fstatat64 = fstatat;
+
+pub export fn lstat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/lstat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, std.os.linux.AT.SYMLINK_NOFOLLOW);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstat(fd: c_int, buf: *std.os.linux.Stat) c_int {
+    const rc = std.os.linux.fstat(fd, buf);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstatat(dirfd: i32, path: [*:0]const u8, buf: *std.os.linux.Stat, flags: u32) c_int {
+    const rc = std.os.linux.fstatat(dirfd, path, buf, flags);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn statx(dirfd: i32, path: [*:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx) c_int {
+    const rc = std.os.linux.statx(dirfd, path, flags, mask, buf);
+    return simulateLibcErrno(rc);
+}
+
+comptime {
+    _ = stat;
+    _ = stat64;
+    _ = lstat;
+    _ = lstat64;
+    _ = fstat;
+    _ = fstat64;
+    _ = fstatat;
+    _ = statx;
+    @export(stat, .{ .name = "stat64" });
+    @export(lstat, .{ .name = "lstat64" });
+    @export(fstat, .{ .name = "fstat64" });
+    @export(fstatat, .{ .name = "fstatat64" });
+}
+
+// *********************************************************************************

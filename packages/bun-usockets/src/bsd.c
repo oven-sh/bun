@@ -304,18 +304,94 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef _WIN32
-    /* Libuv will set windows sockets as non-blocking */
-#elif defined(__APPLE__)
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK  | O_CLOEXEC);
-#else
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+/* Libuv will set windows sockets as non-blocking */
+#ifndef _WIN32
+    if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
+        int flags = fcntl(fd, F_GETFL, 0);
+
+        // F_GETFL supports O_NONBLCOK
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        flags = fcntl(fd, F_GETFD, 0);
+
+        // F_GETFD supports FD_CLOEXEC
+        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+    }
 #endif
+
     return fd;
 }
 
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void *) &enabled, sizeof(enabled));
+}
+
+int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
+
+#ifndef _WIN32
+    if(setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on))) {
+        return errno;
+    }
+
+    if (!on)
+        return 0;
+
+    if (delay == 0)
+        return -1;
+
+
+#ifdef TCP_KEEPIDLE
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &delay, sizeof(delay)))
+    return errno;
+#elif defined(TCP_KEEPALIVE)
+  /* Darwin/macOS uses TCP_KEEPALIVE in place of TCP_KEEPIDLE. */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay)))
+    return errno;
+#endif
+
+#ifdef TCP_KEEPINTVL
+  int intvl = 1;  /*  1 second; same as default on Win32 */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl)))
+    return errno;
+#endif
+
+#ifdef TCP_KEEPCNT
+  int cnt = 10;  /* 10 retries; same as hardcoded on Win32 */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt)))
+    return errno;
+#endif
+
+    return 0;
+    #else
+    if (setsockopt(fd,
+                    SOL_SOCKET,
+                    SO_KEEPALIVE,
+                    (const char*)&on,
+                    sizeof on) == -1) {
+        return WSAGetLastError();
+    }
+
+    if (!on)
+        return 0;
+
+    if (delay < 1) {
+        #ifdef LIBUS_USE_LIBUV
+            return -4071; //UV_EINVAL;
+        #else
+            //TODO: revisit this when IOCP loop is implemented without libuv here
+            return 4071;
+        #endif
+    }
+    if (setsockopt(fd,
+                    IPPROTO_TCP,
+                    TCP_KEEPALIVE,
+                    (const char*)&delay,
+                    sizeof delay) == -1) {
+        return WSAGetLastError();
+    }
+
+    return 0;
+    #endif
 }
 
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -327,12 +403,27 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
+    LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
+    const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
+    do {
+        created_fd = socket(domain, type | flags, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return apple_no_sigpipe(created_fd);
 #else
-    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
+    do {
+        created_fd = socket(domain, type, protocol);
+    } while (IS_EINTR(created_fd));
+
+    if (UNLIKELY(created_fd == -1)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }
@@ -522,19 +613,21 @@ int bsd_would_block() {
 #endif
 }
 
-static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog) {
+static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do 
         result = bind(listenFd, listenAddr, listenAddrLength);
     while (IS_EINTR(result));
 
     if (result == -1) {
+        *error = LIBUS_ERR;
         return -1;
     }
 
     do 
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
+    *error = LIBUS_ERR;
 
     return result;
 }
@@ -543,7 +636,8 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
     int port,
-    int options
+    int options,
+    int* error
 ) {
 
      if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
@@ -552,23 +646,39 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
     } else {
-      #if defined(SO_REUSEPORT)
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
-        #endif
+#if defined(SO_REUSEPORT)
+        if((options & LIBUS_LISTEN_REUSE_PORT)) {
+            int optval2 = 1;
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        }
+#endif
     }
 
 #if defined(SO_REUSEADDR)
+    #ifndef _WIN32
+
+    //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
+    //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
+    //  effectively allows 'stealing' a port which is in use by another application.
+    //  See libuv issue #1360.
+    
+    
     int optval3 = 1;
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
+    #endif
 #endif
 
 #ifdef IPV6_V6ONLY
+    // TODO: revise support to match node.js
+    // if (listenAddr->ai_family == AF_INET6) {
+    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    // }
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
-    if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512)) {
+    if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -577,7 +687,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -602,7 +712,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -619,7 +729,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -724,7 +834,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     return 0;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen) {
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
@@ -733,20 +843,13 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         return LIBUS_SOCKET_ERROR;
     }
 
-#ifndef _WIN32
-    // 700 permission by default
-    fchmod(listenFd, S_IRWXU);
-#else
-    _chmod(path, S_IREAD | S_IWRITE | S_IEXEC);
-#endif
-
 #ifdef _WIN32
     _unlink(path);
 #else
     unlink(path);
 #endif
 
-    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512)) {
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
         #if defined(_WIN32)
           int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
         #endif
@@ -762,7 +865,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options, int* error) {
     int dirfd_linux_workaround_for_unix_path_len = -1;
     struct sockaddr_un server_address;
     size_t addrlen = 0;
@@ -770,7 +873,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
         return LIBUS_SOCKET_ERROR;
     }
 
-    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen);
+    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen, error);
 
 #if defined(__linux__)
     if (dirfd_linux_workaround_for_unix_path_len != -1) {
@@ -878,8 +981,10 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        return -1;
+    int gai_error = getaddrinfo(host, port_string, &hints, &result);
+
+    if (gai_error != 0) {
+        return gai_error;
     }
 
     if (result == NULL) {

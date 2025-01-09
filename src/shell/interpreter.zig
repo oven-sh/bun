@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
+const GlobWalker = Glob.BunGlobWalkerZ;
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -703,51 +703,42 @@ pub const ParsedShellScript = struct {
         bun.destroy(this);
     }
 
-    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
-            globalThis.throw("$`...`.cwd(): expected a string argument", .{});
-            return .undefined;
+            return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
         const str = bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
 
-    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.quiet = true;
         return .undefined;
     }
 
-    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        var env =
-            if (this.export_env) |*env|
-        brk: {
-            env.clearRetainingCapacity();
-            break :brk env.*;
-        } else EnvMap.init(bun.default_allocator);
-        defer this.export_env = env;
-
+    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
+        var env: EnvMap = EnvMap.init(bun.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while (object_iter.next()) |key| {
+        while (try object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
@@ -761,31 +752,27 @@ pub const ParsedShellScript = struct {
 
             env.insert(keyref, valueref);
         }
-
+        if (this.export_env) |*previous| {
+            previous.deinit();
+        }
+        this.export_env = env;
         return .undefined;
     }
 
-    pub fn createParsedShellScript(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) JSValue {
+    pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var shargs = ShellArgs.init();
 
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
         if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
-            return .zero;
+            return globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
         }
         const string_args = arguments[0];
         const template_args_js = arguments[1];
         var template_args = template_args_js.arrayIterator(globalThis);
 
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -794,12 +781,7 @@ pub const ParsedShellScript = struct {
         }
         var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
         var script = std.ArrayList(u8).init(shargs.arena_allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        })) {
-            return .undefined;
-        }
+        try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
 
         var parser: ?bun.shell.Parser = null;
         var lex_result: ?shell.LexResult = null;
@@ -814,8 +796,7 @@ pub const ParsedShellScript = struct {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
                 const str = lex_result.?.combineErrors(shargs.arena_allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (parser) |*p| {
@@ -823,12 +804,10 @@ pub const ParsedShellScript = struct {
                     assert(p.errors.items.len > 0);
                 }
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         shargs.script_ast = script_ast;
@@ -1185,33 +1164,18 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn createShellInterpreter(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) JSValue {
+    pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
-        const arguments_ = callframe.arguments(3);
+        const arguments_ = callframe.arguments_old(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const resolve = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const reject = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const reject = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const parsed_shell_script_js = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse {
-            globalThis.throw("shell: expected a ParsedShellScript", .{});
-            return .undefined;
-        };
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
         var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
@@ -1219,10 +1183,7 @@ pub const Interpreter = struct {
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
 
-        if (parsed_shell_script.args == null) {
-            globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
-            return .undefined;
-        }
+        if (parsed_shell_script.args == null) return globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
         parsed_shell_script.take(
             globalThis,
@@ -1253,8 +1214,7 @@ pub const Interpreter = struct {
                 if (export_env) |*ee| ee.deinit();
                 if (cwd) |*cc| cc.deref();
                 shargs.deinit();
-                throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return .zero;
+                return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
         };
 
@@ -1264,7 +1224,7 @@ pub const Interpreter = struct {
             if (cwd) |*cc| cc.deref();
             shargs.deinit();
             interpreter.finalize();
-            return .zero;
+            return error.JSError;
         }
 
         interpreter.flags.quiet = quiet;
@@ -1339,7 +1299,7 @@ pub const Interpreter = struct {
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
-                    break :env_loader event_loop.js.virtual_machine.bundler.env;
+                    break :env_loader event_loop.js.virtual_machine.transpiler.env;
                 }
 
                 break :env_loader event_loop.env();
@@ -1359,8 +1319,10 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+        // Avoid the large stack allocation on Windows.
+        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(pathbuf);
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
@@ -1477,8 +1439,7 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                e.throwMini();
             },
             .result => |i| i,
         };
@@ -1547,8 +1508,7 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                e.throwMini();
             },
             .result => |i| i,
         };
@@ -1642,20 +1602,20 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
             const shellerr = bun.shell.ShellErr.newSys(e);
-            throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
-            return .undefined;
+            return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
         incrPendingActivityFlag(&this.has_pending_activity);
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
         root.start();
+        if (globalThis.hasException()) return error.JSError;
 
         return .undefined;
     }
@@ -1786,13 +1746,13 @@ pub const Interpreter = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
         return .undefined;
     }
 
-    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
         const str = bun.String.fromJS(value, globalThis);
 
@@ -1800,19 +1760,17 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                globalThis.throwValue(e.toJSC(globalThis));
-                return .undefined;
+                return globalThis.throwValue(e.toJSC(globalThis));
             },
             .result => {},
         }
         return .undefined;
     }
 
-    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
         var object_iter = JSC.JSPropertyIterator(.{
@@ -1849,7 +1807,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
@@ -1860,7 +1818,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
@@ -2771,7 +2729,7 @@ pub const Interpreter = struct {
         }
 
         pub fn throw(this: *const State, err: *const bun.shell.ShellErr) void {
-            throwShellErr(err, this.eventLoop());
+            throwShellErr(err, this.eventLoop()) catch {}; //TODO:
         }
 
         pub fn rootIO(this: *const State) *const IO {
@@ -3614,31 +3572,16 @@ pub const Interpreter = struct {
                     pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
                     pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
                 } else {
-                    const fds: [2]bun.FileDescriptor = brk: {
-                        var fds_: [2]std.c.fd_t = undefined;
-                        const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                        if (rc != 0) {
-                            return bun.sys.Maybe(void).errno(bun.sys.getErrno(rc), .socketpair);
-                        }
-
-                        var before = std.c.fcntl(fds_[0], std.posix.F.GETFL);
-
-                        const result = std.c.fcntl(fds_[0], std.posix.F.SETFL, before | bun.O.CLOEXEC);
-                        if (result == -1) {
-                            _ = bun.sys.close(bun.toFD(fds_[0]));
-                            _ = bun.sys.close(bun.toFD(fds_[1]));
-                            return Maybe(void).errno(bun.sys.getErrno(result), .fcntl);
-                        }
-
-                        if (comptime bun.Environment.isMac) {
-                            // SO_NOSIGPIPE
-                            before = 1;
-                            _ = std.c.setsockopt(fds_[0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                        }
-
-                        break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
+                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    )) {
+                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .err => |err| return .{ .err = err },
                     };
-                    log("socketpair() = {{{}, {}}}", .{ fds[0], fds[1] });
+
                     pipe.* = fds;
                 }
                 set_count.* += 1;
@@ -4938,8 +4881,9 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
+                const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         break :blk bun.selfExePath() catch break :blk2;
                     }
@@ -4987,23 +4931,11 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                             const blob = blob__.dupe();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return;
                             } else if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return;
                             } else if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return;
                             }
                         } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                             _ = rstream;
@@ -5011,26 +4943,17 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                             req.getBodyValue().toBlobIfPossible();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return;
                             }
                             if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return;
                             }
                             if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return;
                             }
                         } else {
                             const jsval = this.base.interpreter.jsobjs[val.idx];
-                            global.throw(
-                                "Unknown JS value used in shell: {}",
-                                .{jsval.fmtString(global)},
-                            );
+                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
                             return;
                         }
                     },
@@ -5679,7 +5602,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5707,7 +5630,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5725,7 +5648,7 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)});
+                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)}) catch {};
                             return .yield;
                         }
                     },
@@ -5750,7 +5673,7 @@ pub const Interpreter = struct {
         }
 
         pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
-            this.parentCmd().base.throw(err);
+            this.parentCmd().base.throw(err) catch {};
         }
 
         pub inline fn parentCmd(this: *const Builtin) *const Cmd {
@@ -7234,12 +7157,13 @@ pub const Interpreter = struct {
                 }
 
                 if (this.bltn.stdout.needsIO() == null) {
-                    var path_buf: bun.PathBuffer = undefined;
+                    const path_buf = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(path_buf);
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -7274,10 +7198,11 @@ pub const Interpreter = struct {
                 const arg_raw = multiargs.args_slice[multiargs.arg_idx];
                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                var path_buf: bun.PathBuffer = undefined;
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (this.bltn.stdout.needsIO()) |safeguard| {
                         multiargs.state = .waiting_write;
@@ -12156,7 +12081,7 @@ pub fn ShellTask(
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
     comptime runFromMainThread_: fn (*Ctx) void,
-    comptime debug: fn (comptime fmt: []const u8, args: anytype) void,
+    comptime debug: bun.Output.LogFunction,
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -12221,11 +12146,13 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
-    switch (event_loop) {
+/// 'js' event loop will always return JSError
+/// 'mini' event loop will always return noreturn and exit 1
+fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) bun.JSError!noreturn {
+    return switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),
-    }
+    };
 }
 
 pub const ReadChunkAction = enum {

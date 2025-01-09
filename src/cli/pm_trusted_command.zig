@@ -37,12 +37,11 @@ pub const UntrustedCommand = struct {
         Output.prettyError("<r><b>bun pm untrusted <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
         Output.flush();
 
-        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
+        const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
         try pm.updateLockfileIfNeeded(load_lockfile);
 
         const packages = pm.lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
         const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
         const resolutions: []Install.Resolution = packages.items(.resolution);
         const buf = pm.lockfile.buffers.string_bytes.items;
@@ -59,10 +58,8 @@ pub const UntrustedCommand = struct {
             // called alias because a dependency name is not always the package name
             const alias = dep.name.slice(buf);
 
-            if (metas[package_id].hasInstallScript()) {
-                if (!pm.lockfile.hasTrustedDependency(alias)) {
-                    try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                }
+            if (!pm.lockfile.hasTrustedDependency(alias)) {
+                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
 
@@ -74,7 +71,7 @@ pub const UntrustedCommand = struct {
         var untrusted_deps: std.AutoArrayHashMapUnmanaged(DependencyID, Lockfile.Package.Scripts.List) = .{};
         defer untrusted_deps.deinit(ctx.allocator);
 
-        var tree_iterator = Lockfile.Tree.Iterator.init(pm.lockfile);
+        var tree_iterator = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -82,7 +79,7 @@ pub const UntrustedCommand = struct {
         try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
         try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
 
-        while (tree_iterator.nextNodeModulesFolder(null)) |node_modules| {
+        while (tree_iterator.next(null)) |node_modules| {
             // + 1 because we want to keep the path separator
             abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
             try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
@@ -100,11 +97,11 @@ pub const UntrustedCommand = struct {
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy: PackageManager.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
@@ -187,7 +184,7 @@ pub const TrustCommand = struct {
 
         if (args.len == 2) errorExpectedArgs();
 
-        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
+        const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
         try pm.updateLockfileIfNeeded(load_lockfile);
 
@@ -203,7 +200,6 @@ pub const TrustCommand = struct {
 
         const buf = pm.lockfile.buffers.string_bytes.items;
         const packages = pm.lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
         const resolutions: []Install.Resolution = packages.items(.resolution);
         const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
 
@@ -216,10 +212,8 @@ pub const TrustCommand = struct {
 
             const alias = dep.name.slice(buf);
 
-            if (metas[package_id].hasInstallScript()) {
-                if (!pm.lockfile.hasTrustedDependency(alias)) {
-                    try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                }
+            if (!pm.lockfile.hasTrustedDependency(alias)) {
+                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
 
@@ -231,7 +225,7 @@ pub const TrustCommand = struct {
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        var tree_iter = Lockfile.Tree.Iterator.init(pm.lockfile);
+        var tree_iter = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -248,7 +242,7 @@ pub const TrustCommand = struct {
 
         var scripts_count: usize = 0;
 
-        while (tree_iter.nextNodeModulesFolder(null)) |node_modules| {
+        while (tree_iter.next(null)) |node_modules| {
             abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
             try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
 
@@ -268,11 +262,11 @@ pub const TrustCommand = struct {
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy = PackageManager.LazyPackageDestinationDir{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
@@ -344,8 +338,15 @@ pub const TrustCommand = struct {
                     }
 
                     const output_in_foreground = false;
+                    const optional = false;
                     switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level, output_in_foreground),
+                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(
+                            ctx,
+                            info.scripts_list,
+                            optional,
+                            log_level,
+                            output_in_foreground,
+                        ),
                     }
 
                     if (pm.options.log_level.showProgress()) {
@@ -370,10 +371,8 @@ pub const TrustCommand = struct {
 
         const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
 
-        var package_json = bun.JSON.ParseJSONUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {},
-            }
+        var package_json = bun.JSON.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.errGeneric("failed to parse package.json: {s}", .{@errorName(err)});
             Global.crash();
@@ -418,7 +417,14 @@ pub const TrustCommand = struct {
             try pm.lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        pm.lockfile.saveToDisk(pm.options.lockfile_path);
+        const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile)
+            .text
+        else switch (load_lockfile) {
+            .not_found => .binary,
+            .err => |err| err.format,
+            .ok => |ok| ok.format,
+        };
+        pm.lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, package_json_contents.len + 1);

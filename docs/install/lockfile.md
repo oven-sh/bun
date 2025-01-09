@@ -16,7 +16,7 @@ Add the following to your local or global `.gitattributes` file:
 *.lockb binary diff=lockb
 ```
 
-Then add the following to you local git config with:
+Then add the following to your local git config with:
 
 ```sh
 $ git config diff.lockb.textconv bun
@@ -49,6 +49,18 @@ Packages, metadata for those packages, the hoisted install order, dependencies f
 
 It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
+#### Generate a lockfile without installing?
+
+To generate a lockfile without installing to `node_modules` you can use the `--lockfile-only` flag. The lockfile will always be saved to disk, even if it is up-to-date with the `package.json`(s) for your project.
+
+```bash
+$ bun install --lockfile-only
+```
+
+{% callout %}
+**Note** - using `--lockfile-only` will still populate the global install cache with registry metadata and git/tarball dependencies.
+{% endcallout %}
+
 #### Can I opt out?
 
 To install without creating a lockfile:
@@ -73,6 +85,24 @@ print = "yarn"
 ```
 
 {% /codetabs %}
+
+### Text-based lockfile
+
+Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at [no cost to performance](https://bun.sh/blog/bun-lock-text-lockfile#cached-bun-install-gets-30-faster).
+
+To generate the lockfile, use `--save-text-lockfile` with `bun install`. You can do this for new projects and existing projects already using `bun.lockb` (resolutions will be preserved).
+
+```bash
+$ bun install --save-text-lockfile
+$ head -n3 bun.lock
+{
+  "lockfileVersion": 0,
+  "workspaces": {
+```
+
+Once `bun.lock` is generated, Bun will use it for all subsequent installs and updates through commands that read and modify the lockfile. If both lockfiles exist, `bun.lock` will be chosen over `bun.lockb`.
+
+Bun v1.2.0 will switch the default lockfile format to `bun.lock`.
 
 {% details summary="Configuring lockfile" %}
 

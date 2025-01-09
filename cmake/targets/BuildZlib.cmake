@@ -13,6 +13,16 @@ if(APPLE)
   set(ZLIB_CMAKE_CXX_FLAGS "-fno-define-target-os-macros")
 endif()
 
+if(WIN32)
+  if(DEBUG)
+    set(ZLIB_LIBRARY "zlibd")
+  else()
+    set(ZLIB_LIBRARY "zlib")
+  endif()
+else()
+  set(ZLIB_LIBRARY "z")
+endif()
+
 register_cmake_command(
   TARGET
     zlib
@@ -24,8 +34,7 @@ register_cmake_command(
     "-DCMAKE_C_FLAGS=${ZLIB_CMAKE_C_FLAGS}"
     "-DCMAKE_CXX_FLAGS=${ZLIB_CMAKE_CXX_FLAGS}"
   LIBRARIES
-    zlib WIN32
-    z UNIX
+    ${ZLIB_LIBRARY}
   INCLUDES
     .
 )

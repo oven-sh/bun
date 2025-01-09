@@ -11,33 +11,64 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = !Environment.isTest;
+pub const use_mimalloc = true;
 
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").c_allocator;
+    @import("./allocators/memory_allocator.zig").c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").z_allocator;
+    @import("./allocators/memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").huge_allocator;
+    @import("./allocators/memory_allocator.zig").huge_allocator;
 
 pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").auto_allocator;
-
-pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
+    @import("./allocators/memory_allocator.zig").auto_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+
+pub extern "c" fn powf(x: f32, y: f32) f32;
+pub extern "c" fn pow(x: f64, y: f64) f64;
+
+/// Restrict a value to a certain interval unless it is a float and NaN.
+pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
+    bun.debugAssert(min <= max);
+    if (comptime (@TypeOf(self) == f32 or @TypeOf(self) == f64)) {
+        return clampFloat(self, min, max);
+    }
+    return std.math.clamp(self, min, max);
+}
+
+/// Restrict a value to a certain interval unless it is NaN.
+///
+/// Returns `max` if `self` is greater than `max`, and `min` if `self` is
+/// less than `min`. Otherwise this returns `self`.
+///
+/// Note that this function returns NaN if the initial value was NaN as
+/// well.
+pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self)) @TypeOf(_self) {
+    if (comptime !(@TypeOf(_self) == f32 or @TypeOf(_self) == f64)) {
+        @compileError("Only call this on floats.");
+    }
+    var self = _self;
+    if (self < min) {
+        self = min;
+    }
+    if (self > max) {
+        self = max;
+    }
+    return self;
+}
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -57,16 +88,19 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
-pub const OOM = error{OutOfMemory};
+pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
-    /// There is an active exception on the global object. Options:
-    ///
-    /// - Bubble it up to the caller
-    /// - Call `global.takeException(err)` to get the JSValue of the exception,
-    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    /// There is an active exception on the global object.
+    /// You should almost never have to construct this manually.
     JSError,
+    // XXX: This is temporary! meghan will remove this soon
+    OutOfMemory,
 };
+
+pub const JSOOM = OOM || JSError;
+
+pub const detectCI = @import("./ci_info.zig").detectCI;
 
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
@@ -79,6 +113,13 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+pub const bun_js = @import("./bun_js.zig");
+
+/// All functions and interfaces provided from Bun's `bindgen` utility.
+pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+comptime {
+    _ = &gen; // reference bindings
+}
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
@@ -93,6 +134,9 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
+pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const css = @import("./css/css_parser.zig");
+pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -269,6 +313,8 @@ pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
     return iovec.base[0..iovec.len];
 }
 
+pub const libarchive = @import("./libarchive/libarchive.zig");
+
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
@@ -279,7 +325,7 @@ pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
 pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
@@ -510,7 +556,7 @@ pub const StringBuilder = @import("./string_builder.zig");
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
-    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
 };
 
 /// hash a string
@@ -684,7 +730,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -841,10 +887,9 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
-        const flag_ = flag;
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
@@ -852,13 +897,28 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
+                    const enabled = if (getenvZ(flag)) |val|
+                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
+                    else
+                        false;
                     is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
                     return enabled;
                 },
             };
         }
     }.get();
+}
+
+pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
+    for (std.os.environ) |lineZ| {
+        const line = sliceTo(lineZ, 0);
+        const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
+        if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
+            return line[@min(key_end + 1, line.len)..];
+        }
+    }
+
+    return null;
 }
 
 /// This wrapper exists to avoid the call to sliceTo(0)
@@ -869,16 +929,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     }
 
     if (comptime Environment.isWindows) {
-        // Windows UCRT will fill this in for us
-        for (std.os.environ) |lineZ| {
-            const line = sliceTo(lineZ, 0);
-            const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
-                return line[@min(key_end + 1, line.len)..];
-            }
-        }
-
-        return null;
+        return getenvZAnyCase(key);
     }
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
@@ -968,13 +1019,14 @@ pub const StringArrayHashMapContext = struct {
     pub const Prehashed = struct {
         value: u32,
         input: []const u8,
+
         pub fn hash(this: @This(), s: []const u8) u32 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
             return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
         }
 
-        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
             return strings.eqlLong(a, b, true);
         }
     };
@@ -1229,7 +1281,7 @@ pub const SignalCode = enum(u8) {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    // This wrapper struct is lame, what if bun's color formatter was more versatile
     const Fmt = struct {
         signal: SignalCode,
         enable_ansi_colors: bool,
@@ -1279,8 +1331,8 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = bundler.Bundler;
-pub const bundler = @import("./bundler.zig");
+pub const Transpiler = transpiler.Transpiler;
+pub const transpiler = @import("./transpiler.zig");
 pub const which = @import("./which.zig").which;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
@@ -1347,10 +1399,10 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 pub const getcwd = std.posix.getcwd;
 
-pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
-    return allocator.dupe(u8, temp_slice);
+    return allocator.dupeZ(u8, temp_slice);
 }
 
 /// Get the absolute path to a file descriptor.
@@ -1555,7 +1607,7 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
@@ -1651,7 +1703,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 
     // This shouldn't be reachable, but it can technically be because
-    // pthread_exit is a request and not guranteed.
+    // pthread_exit is a request and not guaranteed.
     if (isProcessReloadInProgressOnAnotherThread()) {
         while (true) {
             std.atomic.spinLoopHint();
@@ -1819,6 +1871,14 @@ pub const StringSet = struct {
         }
     }
 
+    pub fn contains(self: *StringSet, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    pub fn swapRemove(self: *StringSet, key: []const u8) bool {
+        return self.map.swapRemove(key);
+    }
+
     pub fn deinit(self: *StringSet) void {
         for (self.map.keys()) |key| {
             self.map.allocator.free(key);
@@ -1984,7 +2044,7 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     };
 }
 
-pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;
+pub const MaxHeapAllocator = @import("./allocators/max_heap_allocator.zig").MaxHeapAllocator;
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
@@ -2028,8 +2088,6 @@ pub const WTF = struct {
     /// The String type from WebKit's WTF library.
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };
-
-pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
@@ -2200,9 +2258,12 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.pos
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    if (comptime !Environment.isWindows) {
-        argv = try std.process.argsAlloc(allocator);
-    } else {
+    if (comptime Environment.isPosix) {
+        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        for (0..argv.len) |i| {
+            argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
+        }
+    } else if (comptime Environment.isWindows) {
         // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
         // is not reliable, specifically the way it splits the command line string.
         //
@@ -2252,6 +2313,8 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         }
 
         argv = out_argv;
+    } else {
+        argv = try std.process.argsAlloc(allocator);
     }
 }
 
@@ -2303,7 +2366,7 @@ pub const win32 = struct {
         return original_mode;
     }
 
-    const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    const watcherChildEnv: [:0]const u16 = strings.toUTF16Literal("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
     const watcher_reload_exit: w.DWORD = 3224497970;
@@ -2709,8 +2772,6 @@ pub const MakePath = struct {
                 @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
-            const is_last = it.peekNext() == null;
-            _ = is_last; // autofix
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
                 .no_follow = no_follow,
                 .create_disposition = w.FILE_OPEN_IF,
@@ -2959,6 +3020,12 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
+    @setCold(true);
+    bun.Analytics.Features.todo_panic = 1;
+    Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
+}
+
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
@@ -3086,8 +3153,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             const ptr = bun.new(T, t);
 
             if (Environment.enable_logs) {
-                if (ptr.ref_count != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 
@@ -3167,6 +3234,19 @@ pub fn exitThread() noreturn {
         exiter.pthread_exit(null);
     } else {
         @compileError("Unsupported platform");
+    }
+}
+
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
     }
 }
 
@@ -3250,14 +3330,12 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-pub fn runtimeEmbedFile(
+pub inline fn resolveSourcePath(
     comptime root: enum { codegen, src },
-    comptime sub_path: []const u8,
-) []const u8 {
-    comptime assert(Environment.isDebug);
-    comptime assert(!Environment.embed_code);
-
-    const abs_path = comptime path: {
+    comptime sub_path: string,
+) string {
+    return comptime path: {
+        @setEvalBranchQuota(2000000);
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
@@ -3270,27 +3348,56 @@ pub fn runtimeEmbedFile(
             @compileError(unreachable))[0..].*;
         break :path &resolved;
     };
+}
+
+const RuntimeEmbedRoot = enum {
+    codegen,
+    src,
+    src_eager,
+    codegen_eager,
+};
+
+pub fn runtimeEmbedFile(
+    comptime root: RuntimeEmbedRoot,
+    comptime sub_path: []const u8,
+) [:0]const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen, .codegen_eager => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
+    };
 
     const static = struct {
-        var storage: []const u8 = undefined;
-        var once = std.once(load);
+        var once = bun.once(load);
 
-        fn load() void {
-            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+        fn load() [:0]const u8 {
+            return std.fs.cwd().readFileAllocOptions(
+                default_allocator,
+                abs_path,
+                std.math.maxInt(usize),
+                null,
+                @alignOf(u8),
+                '\x00',
+            ) catch |e| {
                 Output.panic(
                     \\Failed to load '{s}': {}
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
                 , .{ abs_path, e });
             };
         }
     };
 
-    static.once.call();
+    if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.once.payload);
+    }
 
-    return static.storage;
+    return static.once.call(.{});
 }
 
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
@@ -3376,6 +3483,9 @@ pub fn SliceIterator(comptime T: type) type {
 
 pub const Futex = @import("./futex.zig");
 
+// TODO: migrate
+pub const ArenaAllocator = std.heap.ArenaAllocator;
+
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
@@ -3434,7 +3544,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3442,7 +3552,10 @@ pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
             @compileError("A != B");
         }
     }
-    return assert(a == b);
+    if (!Environment.allow_assert) return;
+    if (a != b) {
+        Output.panic("Assertion failure: {} != {}", .{ a, b });
+    }
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
@@ -3451,9 +3564,7 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) {
-        unreachable;
-    }
+    if (!condition) unreachable;
 }
 
 pub const dns = @import("./dns.zig");
@@ -3715,7 +3826,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
-pub const kit = @import("kit/kit.zig");
+pub const bake = @import("bake/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3785,3 +3896,330 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
         }
     };
 }
+
+pub const DebugThreadLock = if (Environment.allow_assert)
+    struct {
+        owning_thread: ?std.Thread.Id = null,
+        locked_at: crash_handler.StoredTrace,
+
+        pub const unlocked: DebugThreadLock = .{
+            .owning_thread = null,
+            .locked_at = crash_handler.StoredTrace.empty,
+        };
+
+        pub fn lock(impl: *@This()) void {
+            if (impl.owning_thread) |thread| {
+                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
+                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
+            }
+            impl.owning_thread = std.Thread.getCurrentId();
+            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
+        }
+
+        pub fn unlock(impl: *@This()) void {
+            impl.assertLocked();
+            impl.* = unlocked;
+        }
+
+        pub fn assertLocked(impl: *const @This()) void {
+            assert(impl.owning_thread != null); // not locked
+            assert(impl.owning_thread == std.Thread.getCurrentId());
+        }
+
+        pub fn initLocked() @This() {
+            var impl = DebugThreadLock.unlocked;
+            impl.lock();
+            return impl;
+        }
+    }
+else
+    struct {
+        pub const unlocked: @This() = .{};
+        pub fn lock(_: *@This()) void {}
+        pub fn unlock(_: *@This()) void {}
+        pub fn assertLocked(_: *const @This()) void {}
+        pub fn initLocked() @This() {
+            return .{};
+        }
+    };
+
+pub const bytecode_extension = ".jsc";
+
+/// An typed index into an array or other structure.
+/// maxInt is reserved for an empty state.
+///
+/// const Thing = struct {};
+/// const Index = bun.GenericIndex(u32, Thing)
+///
+/// The second argument prevents Zig from memoizing the
+/// call, which would otherwise make all indexes
+/// equal to each other.
+pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    const null_value = std.math.maxInt(backing_int);
+    return enum(backing_int) {
+        _,
+        const Index = @This();
+        comptime {
+            _ = uid;
+        }
+
+        /// Prefer this over @enumFromInt to assert the int is in range
+        pub inline fn init(int: backing_int) Index {
+            bun.assert(int != null_value); // would be confused for null
+            return @enumFromInt(int);
+        }
+
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
+        pub inline fn get(i: @This()) backing_int {
+            bun.assert(@intFromEnum(i) != null_value); // memory corruption
+            return @intFromEnum(i);
+        }
+
+        pub inline fn toOptional(oi: @This()) Optional {
+            return @enumFromInt(oi.get());
+        }
+
+        pub fn sortFnAsc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(strings.eql(f, "d"));
+            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
+        }
+
+        pub const Optional = enum(backing_int) {
+            none = std.math.maxInt(backing_int),
+            _,
+
+            pub inline fn init(maybe: ?Index) Optional {
+                return if (maybe) |i| i.toOptional() else .none;
+            }
+
+            pub inline fn unwrap(oi: Optional) ?Index {
+                return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            }
+        };
+    };
+}
+
+comptime {
+    // Must be nominal
+    assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}
+
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBufferT(T, item[0..1], slice));
+    const offset = @intFromPtr(item) - @intFromPtr(slice.ptr);
+    const index = @divExact(offset, @sizeOf(T));
+    return index;
+}
+
+pub fn getThreadCount() u16 {
+    const max_threads = 1024;
+    const min_threads = 2;
+    const ThreadCount = struct {
+        pub var cached_thread_count: u16 = 0;
+        var cached_thread_count_once = std.once(getThreadCountOnce);
+        fn getThreadCountFromUser() ?u16 {
+            inline for (.{ "UV_THREADPOOL_SIZE", "GOMAXPROCS" }) |envname| {
+                if (getenvZ(envname)) |env| {
+                    if (std.fmt.parseInt(u16, env, 10) catch null) |parsed| {
+                        if (parsed >= min_threads) {
+                            if (bun.logger.Log.default_log_level.atLeast(.debug)) {
+                                Output.note("Using {d} threads from {s}={d}", .{ parsed, envname, parsed });
+                                Output.flush();
+                            }
+                            return @min(parsed, max_threads);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+        fn getThreadCountOnce() void {
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+        }
+    };
+    ThreadCount.cached_thread_count_once.call();
+    return ThreadCount.cached_thread_count;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
+
+        done: bool = false,
+        payload: Return = undefined,
+        mutex: std.Thread.Mutex = .{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return self.payload;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                self.payload = @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+
+            return self.payload;
+        }
+    };
+}
+
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function takes the value out of the optional, replacing it with null, and returns the value.
+pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
+    if (val.*) |v| {
+        val.* = null;
+        return v;
+    }
+    return null;
+}
+
+pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
+    return 0 -% val;
+}
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
+}
+
+pub inline fn isComptimeKnown(x: anytype) bool {
+    return comptime @typeInfo(@TypeOf(.{x})).Struct.fields[0].is_comptime;
+}
+
+pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
+    return if (index < slice.len) slice[index] else null;
+}
+
+/// To handle stack overflows:
+/// 1. StackCheck.init()
+/// 2. .isSafeToRecurse()
+pub const StackCheck = struct {
+    cached_stack_end: usize = 0,
+
+    extern fn Bun__StackCheck__initialize() void;
+    pub fn configureThread() void {
+        Bun__StackCheck__initialize();
+    }
+
+    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    fn getStackEnd() usize {
+        return Bun__StackCheck__getMaxStack();
+    }
+
+    pub fn init() StackCheck {
+        return StackCheck{ .cached_stack_end = getStackEnd() };
+    }
+
+    pub fn update(this: *StackCheck) void {
+        this.cached_stack_end = getStackEnd();
+    }
+
+    /// Is there at least 128 KB of stack space available?
+    pub fn isSafeToRecurse(this: StackCheck) bool {
+        const stack_ptr: usize = @frameAddress();
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
+    }
+};
+
+// Workaround for lack of branch hints.
+pub noinline fn throwStackOverflow() StackOverflow!void {
+    @setCold(true);
+    return error.StackOverflow;
+}
+const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
+
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
+        }
+    };
+}
+
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
+};
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3/client.zig");

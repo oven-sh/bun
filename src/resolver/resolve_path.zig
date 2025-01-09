@@ -2,7 +2,7 @@ const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
-const default_allocator = @import("../memory_allocator.zig").c_allocator;
+const default_allocator = @import("../allocators/memory_allocator.zig").c_allocator;
 const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
@@ -74,7 +74,13 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     while (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
         parent = parent[0 .. parent.len - 1];
     }
-    if (std.mem.indexOf(u8, child, parent) != 0) return .unrelated;
+
+    const contains = if (comptime !bun.Environment.isLinux)
+        strings.containsCaseInsensitiveASCII
+    else
+        strings.contains;
+    if (!contains(child, parent)) return .unrelated;
+
     if (child.len == parent.len) return .equal;
     if (isSepAny(child[parent.len])) return .parent;
     return .unrelated;
@@ -577,10 +583,10 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
 // This function is based on Go's volumeNameLen function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path_windows.go;l=57
 // volumeNameLen returns length of the leading volume name on Windows.
-fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
+pub fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
     return windowsVolumeNameLenT(u8, path);
 }
-fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usize } {
+pub fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usize } {
     if (path.len < 2) return .{ 0, 0 };
     // with drive letter
     const c = path[0];
@@ -607,6 +613,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+
+            return .{ path.len, 0 };
         } else {
             if (bun.strings.indexAnyComptimeT(T, path[3..], strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
@@ -618,6 +626,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+            return .{ path.len, 0 };
         }
     }
     return .{ 0, 0 };
@@ -672,6 +681,7 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
                 return path[0..2];
         }
     }
+
     // UNC
     if (path.len >= 5 and
         Platform.windows.isSeparatorT(T, path[0]) and
@@ -679,13 +689,14 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         !Platform.windows.isSeparatorT(T, path[2]) and
         path[2] != '.')
     {
-        if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
-            if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
-                return path[0 .. idx + idx_second + 4];
+        if (bun.strings.indexOfAnyT(T, path[3..], "/\\")) |idx| {
+            if (bun.strings.indexOfAnyT(T, path[4 + idx ..], "/\\")) |idx_second| {
+                return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
-            return path[0..];
         }
+        return path[0..];
     }
+
     if (isSepAnyT(T, path[0])) return path[0..1];
     return path[0..0];
 }
@@ -787,12 +798,18 @@ pub fn normalizeStringGenericTZ(
                 } else {
                     @memcpy(buf[buf_i .. buf_i + 2], strings.literal(T, sep_str ++ sep_str));
                 }
-                @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
-                buf[buf_i + indexOfThirdUNCSlash] = options.separator;
-                @memcpy(
-                    buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
-                    path_[indexOfThirdUNCSlash + 1 .. volLen],
-                );
+                if (indexOfThirdUNCSlash > 0) {
+                    // we have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
+                    buf[buf_i + indexOfThirdUNCSlash] = options.separator;
+                    @memcpy(
+                        buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
+                        path_[indexOfThirdUNCSlash + 1 .. volLen],
+                    );
+                } else {
+                    // we dont have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + volLen], path_[2..volLen]);
+                }
                 buf[buf_i + volLen] = options.separator;
                 buf_i += volLen + 1;
                 path_begin = volLen + 1;
@@ -898,7 +915,7 @@ pub fn normalizeStringGenericTZ(
 
         // real path element.
         // add slash if needed
-        if (buf_i != buf_start and !options.isSeparator(buf[buf_i - 1])) {
+        if (buf_i != buf_start and buf_i > 0 and !options.isSeparator(buf[buf_i - 1])) {
             buf[buf_i] = options.separator;
             buf_i += 1;
         }
@@ -1141,6 +1158,12 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
     return normalizeBufT(u8, str, buf, _platform);
 }
 
+pub fn normalizeBufZ(str: []const u8, buf: []u8, comptime _platform: Platform) [:0]u8 {
+    const norm = normalizeBufT(u8, str, buf, _platform);
+    buf[norm.len] = 0;
+    return buf[0..norm.len :0];
+}
+
 pub fn normalizeBufT(comptime T: type, str: []const T, buf: []T, comptime _platform: Platform) []T {
     if (str.len == 0) {
         buf[0] = '.';
@@ -1225,17 +1248,15 @@ pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, p
     return slice;
 }
 
-pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
-    const parts = [_][]const u8{
-        part,
-    };
-    const slice = joinAbsString(_cwd, &parts, _platform);
-    return slice;
+pub fn joinAbs(cwd: []const u8, comptime _platform: Platform, part: []const u8) []const u8 {
+    return joinAbsString(cwd, &.{part}, _platform);
 }
 
-// Convert parts of potentially invalid file paths into a single valid filpeath
-// without querying the filesystem
-// This is the equivalent of path.resolve
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
     return joinAbsStringBuf(
         _cwd,
@@ -1245,6 +1266,11 @@ pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platf
     );
 }
 
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Platform) [:0]const u8 {
     return joinAbsStringBufZ(
         _cwd,
@@ -1883,6 +1909,14 @@ pub const PosixToWinNormalizer = struct {
         return resolveWithExternalBuf(&this._raw_bytes, source_dir, maybe_posix_path);
     }
 
+    pub inline fn resolveZ(
+        this: *PosixToWinNormalizer,
+        source_dir: []const u8,
+        maybe_posix_path: [:0]const u8,
+    ) [:0]const u8 {
+        return resolveWithExternalBufZ(&this._raw_bytes, source_dir, maybe_posix_path);
+    }
+
     pub inline fn resolveCWD(
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
@@ -1915,9 +1949,37 @@ pub const PosixToWinNormalizer = struct {
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
+        }
+        return maybe_posix_path;
+    }
+
+    fn resolveWithExternalBufZ(
+        buf: *Buf,
+        source_dir: []const u8,
+        maybe_posix_path: [:0]const u8,
+    ) [:0]const u8 {
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        if (bun.Environment.isWindows) {
+            const root = windowsFilesystemRoot(maybe_posix_path);
+            if (root.len == 1) {
+                assert(isSepAny(root[0]));
+                if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
+                    const source_root = windowsFilesystemRoot(source_dir);
+                    @memcpy(buf[0..source_root.len], source_root);
+                    @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                    buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
+                    return res;
+                }
+            }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
         return maybe_posix_path;
     }
@@ -1940,9 +2002,11 @@ pub const PosixToWinNormalizer = struct {
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
 
         return maybe_posix_path;
@@ -1967,9 +2031,12 @@ pub const PosixToWinNormalizer = struct {
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
 
         @memcpy(buf.ptr, maybe_posix_path);
@@ -1988,7 +2055,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     defer str.deinit();
 
     const out_slice = joinAbsStringBuf(
-        globalObject.bunVM().bundler.fs.top_level_dir,
+        globalObject.bunVM().transpiler.fs.top_level_dir,
         &join_buf,
         &.{str.slice()},
         comptime Platform.auto.resolve(),
@@ -2007,8 +2074,26 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
 
 pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
+    if (comptime bun.Environment.isWindows) {
+        if (path.len > "C:".len and isDriveLetter(path[0]) and path[1] == ':' and isSepAny(path[2])) {
+            // Uppercase drive letter
+            switch (path[0]) {
+                'a'...'z' => path[0] = 'A' + (path[0] - 'a'),
+                'A'...'Z' => {},
+                else => unreachable,
+            }
+        }
+    }
+
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
         path[index] = '/';
+    }
+}
+
+pub fn dangerouslyConvertPathToWindowsInPlace(comptime T: type, path: []T) void {
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_posix)) |index| : (idx = index + 1) {
+        path[index] = '\\';
     }
 }
 

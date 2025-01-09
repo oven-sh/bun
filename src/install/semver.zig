@@ -12,6 +12,9 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const OOM = bun.OOM;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const Lockfile = bun.install.Lockfile;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
 pub const String = extern struct {
@@ -35,6 +38,103 @@ pub const String = extern struct {
         return String.init(inlinable_buffer, inlinable_buffer);
     }
 
+    pub const Buf = struct {
+        bytes: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+        pool: *Builder.StringPool,
+
+        pub fn init(lockfile: *const Lockfile) Buf {
+            return .{
+                .bytes = &lockfile.buffers.string_bytes,
+                .allocator = lockfile.allocator,
+                .pool = &lockfile.string_pool,
+            };
+        }
+
+        pub fn append(this: *Buf, str: string) OOM!String {
+            if (canInline(str)) {
+                return String.initInline(str);
+            }
+
+            const hash = Builder.stringHash(str);
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            // new entry
+            const new = try String.initAppend(this.allocator, this.bytes, str);
+            entry.value_ptr.* = new;
+            return new;
+        }
+
+        pub fn appendWithHash(this: *Buf, str: string, hash: u64) OOM!String {
+            if (canInline(str)) {
+                return initInline(str);
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            // new entry
+            const new = try String.initAppend(this.allocator, this.bytes, str);
+            entry.value_ptr.* = new;
+            return new;
+        }
+
+        pub fn appendExternal(this: *Buf, str: string) OOM!ExternalString {
+            const hash = Builder.stringHash(str);
+
+            if (canInline(str)) {
+                return .{
+                    .value = String.initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(this.allocator, this.bytes, str);
+            entry.value_ptr.* = new;
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
+
+        pub fn appendExternalWithHash(this: *Buf, str: string, hash: u64) OOM!ExternalString {
+            if (canInline(str)) {
+                return .{
+                    .value = initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(this.allocator, this.bytes, str);
+            entry.value_ptr.* = new;
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
+    };
+
     pub const Tag = enum {
         small,
         big,
@@ -54,6 +154,29 @@ pub const String = extern struct {
         pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
+        }
+    };
+
+    /// Escapes for json. Expects string to be prequoted
+    pub inline fn fmtJson(self: *const String, buf: []const u8, opts: JsonFormatter.Options) JsonFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+            .opts = opts,
+        };
+    }
+
+    pub const JsonFormatter = struct {
+        str: *const String,
+        buf: string,
+        opts: Options,
+
+        pub const Options = struct {
+            quote: bool = true,
+        };
+
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
         }
     };
 
@@ -185,6 +308,62 @@ pub const String = extern struct {
                 )) | 1 << 63),
             ),
         };
+    }
+
+    pub fn initInline(
+        in: string,
+    ) String {
+        bun.assertWithLocation(canInline(in), @src());
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+            8 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+            else => unreachable,
+        };
+    }
+
+    pub fn initAppendIfNeeded(
+        allocator: std.mem.Allocator,
+        buf: *std.ArrayListUnmanaged(u8),
+        in: string,
+    ) OOM!String {
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+
+            max_inline_len =>
+            // If they use the final bit, then it's a big string.
+            // This should only happen for non-ascii strings that are exactly 8 bytes.
+            // so that's an edge-case
+            if ((in[max_inline_len - 1]) >= 128)
+                try initAppend(allocator, buf, in)
+            else
+                .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+
+            else => try initAppend(allocator, buf, in),
+        };
+    }
+
+    pub fn initAppend(
+        allocator: std.mem.Allocator,
+        buf: *std.ArrayListUnmanaged(u8),
+        in: string,
+    ) OOM!String {
+        try buf.appendSlice(allocator, in);
+        const in_buf = buf.items[buf.items.len - in.len ..];
+        return @bitCast((@as(u64, 0) | @as(u64, @as(max_addressable_space, @truncate(@as(u64, @bitCast(Pointer.init(buf.items, in_buf))))))) | 1 << 63);
     }
 
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {
@@ -525,34 +704,6 @@ pub const ExternalString = extern struct {
     }
 };
 
-pub const BigExternalString = extern struct {
-    off: u32 = 0,
-    len: u32 = 0,
-    hash: u64 = 0,
-
-    pub fn from(in: string) BigExternalString {
-        return BigExternalString{
-            .off = 0,
-            .len = @as(u32, @truncate(in.len)),
-            .hash = bun.Wyhash.hash(0, in),
-        };
-    }
-
-    pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
-
-        return BigExternalString{
-            .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
-            .len = @as(u32, @truncate(in.len)),
-            .hash = hash,
-        };
-    }
-
-    pub fn slice(this: BigExternalString, buf: string) string {
-        return buf[this.off..][0..this.len];
-    }
-};
-
 pub const SlicedString = struct {
     buf: string,
     slice: string,
@@ -592,14 +743,12 @@ pub const SlicedString = struct {
     }
 };
 
-const RawType = void;
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
     _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
-    // raw: RawType = RawType{},
 
     /// Assumes that there is only one buffer for all the strings
     pub fn sortGt(ctx: []const u8, lhs: Version, rhs: Version) bool {
@@ -1286,9 +1435,7 @@ pub const Version = extern struct {
                             .none => {},
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
+
                                 state = State.none;
                             },
                             .build => {
@@ -1539,10 +1686,6 @@ pub const Version = extern struct {
         }
 
         result.len = @as(u32, @intCast(i));
-
-        if (comptime RawType != void) {
-            result.version.raw = sliced_string.sub(input[0..i]).external();
-        }
 
         return result;
     }
@@ -2064,7 +2207,7 @@ pub const Query = struct {
             };
         }
 
-        pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
+        pub const FlagsBitSet = bun.bit_set.IntegerBitSet(3);
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
@@ -2393,13 +2536,11 @@ pub const Query = struct {
         };
     };
 
-    const ParseError = error{OutOfMemory};
-
     pub fn parse(
         allocator: Allocator,
         input: string,
         sliced: SlicedString,
-    ) ParseError!Group {
+    ) bun.OOM!Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
@@ -2651,16 +2792,15 @@ pub const SemverObject = struct {
     pub fn order(
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();
 
-        const arguments = callFrame.arguments(2).slice();
+        const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];
@@ -2681,13 +2821,11 @@ pub const SemverObject = struct {
         const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
 
         if (!left_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
         }
 
         if (!right_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
         }
 
         const left_version = left_result.version.max();
@@ -2700,26 +2838,22 @@ pub const SemverObject = struct {
         };
     }
 
-    pub fn satisfies(
-        globalThis: *JSC.JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSC.JSValue {
+    pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();
 
-        const arguments = callFrame.arguments(2).slice();
+        const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];
         const right_arg = arguments[1];
 
-        const left_string = left_arg.toStringOrNull(globalThis) orelse return .false;
-        const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return .zero;
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return .zero;
 
         const left = left_string.toSlice(globalThis, allocator);
         defer left.deinit();
@@ -2736,18 +2870,11 @@ pub const SemverObject = struct {
 
         const left_version = left_result.version.min();
 
-        const right_group = Query.parse(
+        const right_group = try Query.parse(
             allocator,
             right.slice(),
             SlicedString.init(right.slice(), right.slice()),
-        ) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        );
         defer right_group.deinit();
 
         const right_version = right_group.getExactVersion();

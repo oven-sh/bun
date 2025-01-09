@@ -7,12 +7,20 @@ function generate(ssl) {
     hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
+    memoryCost: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
         length: 0,
       },
-
+      resume: {
+        fn: "resumeFromJS",
+        length: 0,
+      },
+      pause: {
+        fn: "pauseFromJS",
+        length: 0,
+      },
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -82,6 +90,17 @@ function generate(ssl) {
       },
       alpnProtocol: {
         getter: "getALPNProtocol",
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
+      setNoDelay: {
+        fn: "setNoDelay",
+        length: 1,
+      },
+      setKeepAlive: {
+        fn: "setKeepAlive",
+        length: 2,
       },
       write: {
         fn: "write",
@@ -163,7 +182,6 @@ function generate(ssl) {
         fn: "reload",
         length: 1,
       },
-
       setServername: {
         fn: "setServername",
         length: 1,
@@ -171,6 +189,16 @@ function generate(ssl) {
       getServername: {
         fn: "getServername",
         length: 0,
+      },
+      "writeBuffered": {
+        fn: "writeBuffered",
+        length: 2,
+        privateSymbol: "write",
+      },
+      "endBuffered": {
+        fn: "endBuffered",
+        length: 2,
+        privateSymbol: "end",
       },
     },
     finalize: true,

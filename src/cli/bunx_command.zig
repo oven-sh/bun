@@ -63,13 +63,13 @@ pub const BunxCommand = struct {
     /// 1 day
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
-    fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
+    fn getBinNameFromSubpath(transpiler: *bun.Transpiler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, bun.O.RDONLY, 0).unwrap();
         const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
         defer target_package_json.close();
 
-        const package_json_read = target_package_json.readToEnd(bundler.allocator);
+        const package_json_read = target_package_json.readToEnd(transpiler.allocator);
 
         // TODO: make this better
         if (package_json_read.err) |err| {
@@ -82,7 +82,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(&source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -90,7 +90,7 @@ pub const BunxCommand = struct {
                 .e_object => |object| {
                     for (object.properties.slice()) |prop| {
                         if (prop.key) |key| {
-                            if (key.asString(bundler.allocator)) |bin_name| {
+                            if (key.asString(transpiler.allocator)) |bin_name| {
                                 if (bin_name.len == 0) continue;
                                 return bin_name;
                             }
@@ -99,7 +99,7 @@ pub const BunxCommand = struct {
                 },
                 .e_string => {
                     if (expr.get("name")) |name_expr| {
-                        if (name_expr.asString(bundler.allocator)) |name| {
+                        if (name_expr.asString(transpiler.allocator)) |name| {
                             return name;
                         }
                     }
@@ -110,7 +110,7 @@ pub const BunxCommand = struct {
 
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
-                if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
+                if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer _ = bun.sys.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
@@ -124,7 +124,7 @@ pub const BunxCommand = struct {
 
                         if (current.kind == .file) {
                             if (current.name.len == 0) continue;
-                            return try bundler.allocator.dupe(u8, current.name.slice());
+                            return try transpiler.allocator.dupe(u8, current.name.slice());
                         }
                     }
                 }
@@ -134,13 +134,13 @@ pub const BunxCommand = struct {
         return error.NoBinFound;
     }
 
-    fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
+    fn getBinNameFromProjectDirectory(transpiler: *bun.Transpiler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: bun.PathBuffer = undefined;
         const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
-        return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
+        return try getBinNameFromSubpath(transpiler, dir_fd, subpath_z);
     }
 
-    fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
+    fn getBinNameFromTempDirectory(transpiler: *bun.Transpiler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
         var subpath: bun.PathBuffer = undefined;
         if (with_stale_check) {
             const subpath_z = std.fmt.bufPrintZ(
@@ -186,19 +186,19 @@ pub const BunxCommand = struct {
             .{ tempdir_name, package_name },
         ) catch unreachable;
 
-        return try getBinNameFromSubpath(bundler, bun.FD.cwd(), subpath_z);
+        return try getBinNameFromSubpath(transpiler, bun.FD.cwd(), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
-    fn getBinName(bundler: *bun.Bundler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
+    fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
         toplevel_fd.assertValid();
-        return getBinNameFromProjectDirectory(bundler, toplevel_fd, package_name) catch |err| {
+        return getBinNameFromProjectDirectory(transpiler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
             }
 
-            return getBinNameFromTempDirectory(bundler, tempdir_name, package_name, true) catch |err2| {
+            return getBinNameFromTempDirectory(transpiler, tempdir_name, package_name, true) catch |err2| {
                 if (err2 == error.NoBinFound) {
                     return error.NoBinFound;
                 }
@@ -271,6 +271,7 @@ pub const BunxCommand = struct {
         defer requests_buf.deinit(ctx.allocator);
         const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
+            null,
             ctx.log,
             &.{package_name},
             &requests_buf,
@@ -303,12 +304,12 @@ pub const BunxCommand = struct {
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
-        var this_bundler: bun.Bundler = undefined;
+        var this_transpiler: bun.Transpiler = undefined;
         var ORIGINAL_PATH: string = "";
 
         const root_dir_info = try Run.configureEnvForRun(
             ctx,
-            &this_bundler,
+            &this_transpiler,
             null,
             true,
             true,
@@ -317,19 +318,28 @@ pub const BunxCommand = struct {
         try Run.configurePathForRun(
             ctx,
             root_dir_info,
-            &this_bundler,
+            &this_transpiler,
             &ORIGINAL_PATH,
             root_dir_info.abs_path,
             ctx.debug.run_in_bun,
         );
+        this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_script", package_name) catch unreachable;
 
-        const ignore_cwd = this_bundler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
-
-        if (ignore_cwd.len > 0) {
-            _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        if (strings.eqlComptime(package_name, "bun-repl")) {
+            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_transpiler.env.map.remove("BUN_INSPECT");
         }
 
-        var PATH = this_bundler.env.get("PATH").?;
+        const ignore_cwd = this_transpiler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
+
+        if (ignore_cwd.len > 0) {
+            _ = this_transpiler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        }
+
+        var PATH = this_transpiler.env.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
@@ -444,7 +454,7 @@ pub const BunxCommand = struct {
             ),
         };
 
-        try this_bundler.env.map.put("PATH", PATH);
+        try this_transpiler.env.map.put("PATH", PATH);
         const bunx_cache_dir = PATH[0 .. temp_dir.len +
             "/bunx--".len +
             package_fmt.len +
@@ -471,7 +481,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -482,7 +492,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -529,10 +539,10 @@ pub const BunxCommand = struct {
 
                 try Run.runBinary(
                     ctx,
-                    try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                     destination,
-                    this_bundler.fs.top_level_dir,
-                    this_bundler.env,
+                    this_transpiler.fs.top_level_dir,
+                    this_transpiler.env,
                     passthrough,
                     null,
                 );
@@ -543,7 +553,7 @@ pub const BunxCommand = struct {
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
             bun.assert(root_dir_fd != .zero);
-            if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+            if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
@@ -553,7 +563,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             bunx_cache_dir,
-                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                            if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -561,16 +571,16 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                        if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
                         try Run.runBinary(
                             ctx,
-                            try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                            try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                             destination,
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
+                            this_transpiler.fs.top_level_dir,
+                            this_transpiler.env,
                             passthrough,
                             null,
                         );
@@ -626,12 +636,12 @@ pub const BunxCommand = struct {
         const argv_to_use = args.slice();
 
         debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
-        this_bundler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
+        this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
 
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = argv_to_use,
 
-            .envp = try this_bundler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = try this_transpiler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
 
             .cwd = bunx_cache_dir,
             .stderr = .inherit,
@@ -639,7 +649,7 @@ pub const BunxCommand = struct {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_bundler.env)),
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
             } else {},
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
@@ -681,16 +691,16 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+            if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
             try Run.runBinary(
                 ctx,
-                try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                 destination,
-                this_bundler.fs.top_level_dir,
-                this_bundler.env,
+                this_transpiler.fs.top_level_dir,
+                this_transpiler.env,
                 passthrough,
                 null,
             );
@@ -699,23 +709,23 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
+        if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
                     try Run.runBinary(
                         ctx,
-                        try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                        try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                         destination,
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
+                        this_transpiler.fs.top_level_dir,
+                        this_transpiler.env,
                         passthrough,
                         null,
                     );

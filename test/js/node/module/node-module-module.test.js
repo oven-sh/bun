@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
-import Module, { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
+import Module, { _nodeModulePaths, builtinModules, isBuiltin, wrap, createRequire } from "module";
 import path from "path";
 
 test("builtinModules exists", () => {
@@ -21,6 +21,20 @@ test("isBuiltin() works", () => {
 
 test("module.globalPaths exists", () => {
   expect(Array.isArray(require("module").globalPaths)).toBe(true);
+});
+
+test("createRequire trailing slash", () => {
+  const req = createRequire(import.meta.dir + "/");
+  expect(req.resolve("./node-module-module.test.js")).toBe(
+    ospath(path.resolve(import.meta.dir, "./node-module-module.test.js")),
+  );
+});
+
+test("createRequire trailing slash file url", () => {
+  const req = createRequire(Bun.pathToFileURL(import.meta.dir + "/"));
+  expect(req.resolve("./node-module-module.test.js")).toBe(
+    ospath(path.resolve(import.meta.dir, "./node-module-module.test.js")),
+  );
 });
 
 test("Module exists", () => {
@@ -120,4 +134,8 @@ test("Module._resolveLookupPaths", () => {
   expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
   expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
   expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
+});
+
+test("Module.findSourceMap doesn't throw", () => {
+  expect(Module.findSourceMap("foo")).toEqual(undefined);
 });

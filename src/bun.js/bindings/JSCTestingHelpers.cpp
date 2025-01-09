@@ -26,7 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsUTF16String,
     }
 
     throwTypeError(globalObject, scope, "Expected a string"_s);
-    return JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
@@ -46,7 +46,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     }
 
     throwTypeError(globalObject, scope, "Expected a string"_s);
-    return JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)

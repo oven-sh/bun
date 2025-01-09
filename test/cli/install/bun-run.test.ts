@@ -1,9 +1,17 @@
 import { file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+  stderrForInstall,
+  readdirSorted,
+} from "harness";
 import { join } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
 
@@ -275,7 +283,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -300,7 +308,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err2 = await new Response(stderr2).text();
+  const err2 = stderrForInstall(await new Response(stderr2).text());
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -339,7 +347,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = await new Response(stderr1).text();
+  const err1 = stderrForInstall(await new Response(stderr1).text());
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
@@ -474,4 +482,170 @@ it("--ignore-dce-annotations ignores DCE annotations", () => {
 
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("Hello, world!\n");
+});
+
+it("$npm_command is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $npm_command",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_command\n`);
+  expect(await new Response(p.stdout).text()).toBe(`run-script\n`);
+});
+
+it("$npm_lifecycle_event is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "presample": "echo $npm_lifecycle_event",
+        "sample": "echo $npm_lifecycle_event",
+        "postsample": "echo $npm_lifecycle_event",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  // prettier-ignore
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n`,);
+  expect(await new Response(p.stdout).text()).toBe(`presample\nsample\npostsample\n`);
+});
+
+it("$npm_package_config_* works", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "config": {
+        "foo": "bar"
+      },
+      "scripts": {
+        "sample": "echo $npm_package_config_foo",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo\n`);
+  expect(await new Response(p.stdout).text()).toBe(`bar\n`);
+});
+
+it("should pass arguments correctly in scripts", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      workspaces: ["a", "b"],
+      scripts: { "root_script": "bun index.ts" },
+    }),
+    "index.ts": `for(const arg of Bun.argv) console.log(arg);`,
+    "a/package.json": JSON.stringify({ name: "a", scripts: { echo2: "echo" } }),
+    "b/package.json": JSON.stringify({ name: "b", scripts: { echo2: "npm run echo3", echo3: "echo" } }),
+  });
+
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "run", "root_script", "$HOME (!)", "argument two"].filter(Boolean),
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe('$ bun index.ts "\\$HOME (!)" "argument two"\n');
+    expect(stdout.toString()).toEndWith("\n$HOME (!)\nargument two\n");
+    expect(exitCode).toBe(0);
+  }
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "--filter", "*", "echo2", "$HOME (!)", "argument two"].filter(Boolean),
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().split("\n").sort().join("\n")).toBe(
+      [
+        "a echo2: $HOME (!) argument two",
+        "a echo2: Exited with code 0",
+        'b echo2: $ echo "\\$HOME (!)" "argument two"',
+        "b echo2: $HOME (!) argument two",
+        "b echo2: Exited with code 0",
+        "",
+      ]
+        .sort()
+        .join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  }
+});
+
+const cases = [
+  ["yarn run", "run"],
+  ["yarn add", "passthrough"],
+  ["yarn audit", "passthrough"],
+  ["yarn -abcd run", "passthrough"],
+  ["yarn info", "passthrough"],
+  ["yarn generate-lock-entry", "passthrough"],
+  ["yarn", "run"],
+  ["npm run", "run"],
+  ["npx", "x"],
+  ["pnpm run", "run"],
+  ["pnpm dlx", "x"],
+  ["pnpx", "x"],
+];
+describe("should handle run case", () => {
+  for (const ccase of cases) {
+    it(ccase[0], async () => {
+      const dir = tempDirWithFiles("test", {
+        "package.json": JSON.stringify({
+          scripts: {
+            "root_script": `   ${ccase[0]} target_script%    `,
+            "target_script%": "   echo target_script    ",
+          },
+        }),
+      });
+      {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "root_script"],
+          cwd: dir,
+          env: bunEnv,
+        });
+
+        if (ccase[1] === "run") {
+          expect(stderr.toString()).toMatch(
+            /^\$    bun(-debug)? run target_script%    \n\$    echo target_script    \n/,
+          );
+          expect(stdout.toString()).toEndWith("target_script\n");
+          expect(exitCode).toBe(0);
+        } else if (ccase[1] === "x") {
+          expect(stderr.toString()).toMatch(
+            /^\$    bun(-debug)? x target_script%    \nerror: unrecognised dependency format: target_script%/,
+          );
+          expect(exitCode).toBe(1);
+        } else {
+          expect(stderr.toString()).toStartWith(`$    ${ccase[0]} target_script%    \n`);
+        }
+      }
+    });
+  }
 });

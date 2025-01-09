@@ -31,6 +31,7 @@
 // IN THE SOFTWARE.
 
 const { pathToFileURL } = require("node:url");
+let BufferModule;
 
 const primordials = require("internal/primordials");
 const {
@@ -139,6 +140,21 @@ const kFulfilled = Symbol("kFulfilled"); // state ID 1
 const kRejected = Symbol("kRejected"); // state ID 2
 const ALL_PROPERTIES = 0;
 const ONLY_ENUMERABLE = 2;
+
+/**
+ * Fast path for {@link extractedSplitNewLines} for ASCII/Latin1 strings.
+ * @returns `value` split on newlines (newline included at end), or `undefined`
+ * if non-ascii UTF8/UTF16.
+ *
+ * Passing this a non-string will cause a panic.
+ *
+ * @type {(value: string) => string[] | undefined}
+ */
+const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
+  "node_util_binding.zig",
+  "extractedSplitNewLinesFastPathStringsOnly",
+  1,
+);
 
 const isAsyncFunction = v =>
   typeof v === "function" && StringPrototypeStartsWith(FunctionPrototypeToString(v), "async");
@@ -396,7 +412,7 @@ let strEscapeSequencesRegExp,
   strEscapeSequencesReplacer,
   strEscapeSequencesRegExpSingle,
   strEscapeSequencesReplacerSingle,
-  extractedSplitNewLines;
+  extractedSplitNewLinesSlow;
 try {
   // Change from regex literals to RegExp constructors to avoid unrecoverable
   // syntax error at load time.
@@ -415,7 +431,7 @@ try {
     "g",
   );
   const extractedNewLineRe = new RegExp("(?<=\\n)");
-  extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
+  extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
   // CI doesn't run in an elderly runtime
 } catch {
   // These are from a previous version of node,
@@ -425,7 +441,7 @@ try {
   strEscapeSequencesReplacer = /[\x00-\x1f\x27\x5c\x7f-\x9f]/g;
   strEscapeSequencesRegExpSingle = /[\x00-\x1f\x5c\x7f-\x9f]/;
   strEscapeSequencesReplacerSingle = /[\x00-\x1f\x5c\x7f-\x9f]/g;
-  extractedSplitNewLines = value => {
+  extractedSplitNewLinesSlow = value => {
     const lines = RegExpPrototypeSymbolSplit(/\n/, value);
     const last = ArrayPrototypePop(lines);
     const nlLines = ArrayPrototypeMap(lines, line => line + "\n");
@@ -435,6 +451,13 @@ try {
     return nlLines;
   };
 }
+
+const extractedSplitNewLines = value => {
+  if (typeof value === "string") {
+    return extractedSplitNewLinesFastPathStringsOnly(value) || extractedSplitNewLinesSlow(value);
+  }
+  return extractedSplitNewLinesSlow(value);
+};
 
 const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;
@@ -2071,6 +2094,11 @@ function formatArray(ctx, value, recurseTimes) {
 }
 
 function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
+  if (Buffer.isBuffer(value)) {
+    BufferModule ??= require("node:buffer");
+    const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
+    ctx.maxArrayLength = MathMin(ctx.maxArrayLength, INSPECT_MAX_BYTES);
+  }
   const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
   const remaining = value.length - maxLength;
   const output = new Array(maxLength);

@@ -1,6 +1,8 @@
+import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -12,13 +14,14 @@ async function createProxyServer(is_tls: boolean) {
       rejectUnauthorized: false,
     });
   }
+  const log: Array<string> = [];
   serverArgs.push((clientSocket: net.Socket | tls.TLSSocket) => {
     clientSocket.once("data", data => {
       const request = data.toString();
       const [method, path] = request.split(" ");
       let host: string;
       let port: number | string = 0;
-      let request_path: string;
+      let request_path = "";
       if (path.indexOf("http") !== -1) {
         const url = new URL(path);
         host = url.hostname;
@@ -30,6 +33,8 @@ async function createProxyServer(is_tls: boolean) {
       }
       const destinationPort = Number.parseInt((port || (method === "CONNECT" ? "443" : "80")).toString(), 10);
       const destinationHost = host || "";
+      log.push(`${method} ${host}:${port}${request_path}`);
+
       // Establish a connection to the destination server
       const serverSocket = net.connect(destinationPort, destinationHost, () => {
         if (method === "CONNECT") {
@@ -46,6 +51,8 @@ async function createProxyServer(is_tls: boolean) {
           serverSocket.pipe(clientSocket);
         }
       });
+      // ignore client errors (can happen because of happy eye balls and now we error on write when not connected for node.js compatibility)
+      clientSocket.on("error", () => {});
 
       serverSocket.on("error", err => {
         clientSocket.end();
@@ -60,13 +67,13 @@ async function createProxyServer(is_tls: boolean) {
   await once(server, "listening");
   const port = server.address().port;
   const url = `http${is_tls ? "s" : ""}://localhost:${port}`;
-  return { server, url };
+  return { server, url, log: log };
 }
 
 let httpServer: Server;
 let httpsServer: Server;
-let httpProxyServer: { server: net.Server; url: string };
-let httpsProxyServer: { server: net.Server; url: string };
+let httpProxyServer: { server: net.Server; url: string; log: string[] };
+let httpsProxyServer: { server: net.Server; url: string; log: string[] };
 
 beforeAll(async () => {
   httpServer = Bun.serve({
@@ -239,4 +246,18 @@ test("unsupported protocol", async () => {
       code: "UnsupportedProxyProtocol",
     }),
   );
+});
+
+test("axios with https-proxy-agent", async () => {
+  httpProxyServer.log.length = 0;
+  const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
+    rejectUnauthorized: false, // this should work with self-signed certs
+  });
+
+  const result = await axios.get(httpsServer.url.href, {
+    httpsAgent,
+  });
+  expect(result.data).toBe("");
+  // did we got proxied?
+  expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });

@@ -7,8 +7,53 @@ const js_lexer = bun.js_lexer;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
+const sha = bun.sha;
 
 pub usingnamespace std.fmt;
+
+pub const TableSymbols = struct {
+    enable_ansi_colors: bool,
+
+    pub const unicode = TableSymbols{ .enable_ansi_colors = true };
+    pub const ascii = TableSymbols{ .enable_ansi_colors = false };
+
+    pub fn topLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┌" else "|";
+    }
+    pub fn topRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┐" else "|";
+    }
+    pub fn topColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┬" else "-";
+    }
+
+    pub fn bottomLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "└" else "|";
+    }
+    pub fn bottomRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┘" else "|";
+    }
+    pub fn bottomColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┴" else "-";
+    }
+
+    pub fn middleLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "├" else "|";
+    }
+    pub fn middleRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┤" else "|";
+    }
+    pub fn middleColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┼" else "|";
+    }
+
+    pub fn horizontalEdge(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "─" else "-";
+    }
+    pub fn verticalEdge(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "│" else "|";
+    }
+};
 
 pub fn Table(
     comptime column_color: []const u8,
@@ -16,46 +61,12 @@ pub fn Table(
     comptime column_right_pad: usize,
     comptime enable_ansi_colors: bool,
 ) type {
+    const symbols = TableSymbols{ .enable_ansi_colors = enable_ansi_colors };
     return struct {
         column_names: []const []const u8,
         column_inside_lengths: []const usize,
 
-        pub fn topLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┌" else "|";
-        }
-        pub fn topRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┐" else "|";
-        }
-        pub fn topColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┬" else "-";
-        }
-
-        pub fn bottomLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "└" else "|";
-        }
-        pub fn bottomRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┘" else "|";
-        }
-        pub fn bottomColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┴" else "-";
-        }
-
-        pub fn middleLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "├" else "|";
-        }
-        pub fn middleRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┤" else "|";
-        }
-        pub fn middleColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┼" else "|";
-        }
-
-        pub fn horizontalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "─" else "-";
-        }
-        pub fn verticalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "│" else "|";
-        }
+        comptime symbols: TableSymbols = symbols,
 
         pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
             return .{
@@ -65,15 +76,15 @@ pub fn Table(
         }
 
         pub fn printTopLineSeparator(this: *const @This()) void {
-            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+            this.printLine(symbols.topLeftSep(), symbols.topRightSep(), symbols.topColumnSep());
         }
 
         pub fn printBottomLineSeparator(this: *const @This()) void {
-            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+            this.printLine(symbols.bottomLeftSep(), symbols.bottomRightSep(), symbols.bottomColumnSep());
         }
 
         pub fn printLineSeparator(this: *const @This()) void {
-            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+            this.printLine(symbols.middleLeftSep(), symbols.middleRightSep(), symbols.middleColumnSep());
         }
 
         pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
@@ -84,7 +95,7 @@ pub fn Table(
                     Output.pretty("{s}", .{column_separator});
                 }
 
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{symbols.horizontalEdge()});
 
                 if (i == this.column_inside_lengths.len - 1) {
                     Output.pretty("{s}\n", .{right_edge_separator});
@@ -94,16 +105,157 @@ pub fn Table(
 
         pub fn printColumnNames(this: *const @This()) void {
             for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                Output.pretty("{s}", .{this.verticalEdge()});
+                Output.pretty("{s}", .{symbols.verticalEdge()});
                 for (0..column_left_pad) |_| Output.pretty(" ", .{});
                 Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
                 for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                 if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("{s}\n", .{this.verticalEdge()});
+                    Output.pretty("{s}\n", .{symbols.verticalEdge()});
                 }
             }
         }
     };
+}
+
+pub const RedactedNpmUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (i < this.url.len) {
+            if (strings.startsWithUUID(this.url[i..])) {
+                try writer.writeAll("***");
+                i += 36;
+                continue;
+            }
+
+            const npm_secret_len = strings.startsWithNpmSecret(this.url[i..]);
+            if (npm_secret_len > 0) {
+                try writer.writeAll("***");
+                i += npm_secret_len;
+                continue;
+            }
+
+            // TODO: redact password from `https://username:password@registry.com/`
+
+            try writer.writeByte(this.url[i]);
+            i += 1;
+        }
+    }
+};
+
+pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
+    return .{
+        .url = str,
+    };
+}
+
+pub const RedactedSourceFormatter = struct {
+    text: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (i < this.text.len) {
+            if (strings.startsWithSecret(this.text[i..])) |secret| {
+                const offset, const len = secret;
+                try writer.writeAll(this.text[i..][0..offset]);
+                try writer.writeByteNTimes('*', len);
+                i += offset + len;
+                continue;
+            }
+
+            try writer.writeByte(this.text[i]);
+            i += 1;
+        }
+    }
+};
+
+pub fn redactedSource(str: string) RedactedSourceFormatter {
+    return .{
+        .text = str,
+    };
+}
+
+// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
+pub const DependencyUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = this.url;
+        while (strings.indexOfChar(remain, '/')) |slash| {
+            try writer.writeAll(remain[0..slash]);
+            try writer.writeAll("%2f");
+            remain = remain[slash + 1 ..];
+        }
+        try writer.writeAll(remain);
+    }
+};
+
+pub fn dependencyUrl(url: string) DependencyUrlFormatter {
+    return .{
+        .url = url,
+    };
+}
+
+const IntegrityFormatStyle = enum {
+    short,
+    full,
+};
+
+pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
+    return struct {
+        bytes: [sha.SHA512.digest]u8,
+
+        pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
+            const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
+
+            const encoded = buf[0..count];
+
+            if (comptime style == .short)
+                try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] })
+            else
+                try writer.print("sha512-{s}", .{encoded});
+        }
+    };
+}
+
+pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatStyle) IntegrityFormatter(style) {
+    return .{ .bytes = bytes };
+}
+
+const JSONFormatter = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
+    }
+};
+
+const JSONFormatterUTF8 = struct {
+    input: []const u8,
+    opts: Options,
+
+    pub const Options = struct {
+        quote: bool = true,
+    };
+
+    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (self.opts.quote) {
+            try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        } else {
+            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+        }
+    }
+};
+
+/// Expects latin1
+pub fn formatJSONStringLatin1(text: []const u8) JSONFormatter {
+    return .{ .input = text };
+}
+
+pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) JSONFormatterUTF8 {
+    return .{ .input = text, .opts = opts };
 }
 
 const SharedTempBuffer = [32 * 1024]u8;
@@ -552,17 +704,29 @@ pub const QuotedFormatter = struct {
     }
 };
 
-pub fn fmtJavaScript(text: []const u8, enable_ansi_colors: bool) QuickAndDirtyJavaScriptSyntaxHighlighter {
+pub fn fmtJavaScript(text: []const u8, opts: QuickAndDirtyJavaScriptSyntaxHighlighter.Options) QuickAndDirtyJavaScriptSyntaxHighlighter {
     return QuickAndDirtyJavaScriptSyntaxHighlighter{
         .text = text,
-        .enable_colors = enable_ansi_colors,
+        .opts = opts,
     };
 }
 
 pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     text: []const u8,
-    enable_colors: bool = false,
-    limited: bool = true,
+    opts: Options,
+
+    pub const Options = struct {
+        enable_colors: bool,
+        check_for_unhighlighted_write: bool = true,
+
+        redact_sensitive_information: bool = false,
+
+        pub const default: Options = .{
+            .enable_colors = Output.enable_ansi_colors,
+            .check_for_no_highlighting = true,
+            .redact_sensitive_information = false,
+        };
+    };
 
     const ColorCode = enum {
         magenta,
@@ -717,18 +881,33 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
     pub const Keywords = bun.ComptimeEnumMap(Keyword);
 
+    pub const RedactedKeyword = enum {
+        _auth,
+        _authToken,
+        token,
+        _password,
+        email,
+    };
+
+    pub const RedactedKeywords = bun.ComptimeEnumMap(RedactedKeyword);
+
     pub fn format(this: @This(), comptime unused_fmt: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         comptime bun.assert(unused_fmt.len == 0);
 
         var text = this.text;
-        if (this.limited) {
-            if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
-                try writer.writeAll(text);
+        if (this.opts.check_for_unhighlighted_write) {
+            if (!this.opts.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
+                if (this.opts.redact_sensitive_information) {
+                    try writer.print("{}", .{redactedSource(text)});
+                } else {
+                    try writer.writeAll(text);
+                }
                 return;
             }
         }
 
         var prev_keyword: ?Keyword = null;
+        var should_redact_value = false;
 
         outer: while (text.len > 0) {
             if (js_lexer.isIdentifierStart(text[0])) {
@@ -739,11 +918,13 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                 }
 
                 if (Keywords.get(text[0..i])) |keyword| {
+                    should_redact_value = false;
                     if (keyword != .as)
                         prev_keyword = keyword;
                     const code = keyword.colorCode();
                     try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), text[0..i] });
                 } else {
+                    should_redact_value = this.opts.redact_sensitive_information and RedactedKeywords.has(text[0..i]);
                     write: {
                         if (prev_keyword) |prev| {
                             switch (prev) {
@@ -778,11 +959,45 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                 }
                 text = text[i..];
             } else {
+                if (this.opts.redact_sensitive_information and should_redact_value) {
+                    while (text.len > 0 and std.ascii.isWhitespace(text[0])) {
+                        try writer.writeByte(text[0]);
+                        text = text[1..];
+                    }
+
+                    if (text.len > 0 and (text[0] == '=' or text[0] == ':')) {
+                        try writer.writeByte(text[0]);
+                        text = text[1..];
+                        while (text.len > 0 and std.ascii.isWhitespace(text[0])) {
+                            try writer.writeByte(text[0]);
+                            text = text[1..];
+                        }
+
+                        if (text.len == 0) return;
+                    }
+                }
+
                 switch (text[0]) {
-                    '0'...'9' => {
+                    '0'...'9' => |num| {
+                        if (this.opts.redact_sensitive_information) {
+                            if (should_redact_value) {
+                                should_redact_value = false;
+                                const end = strings.indexOfChar(text, '\n') orelse text.len;
+                                text = text[end..];
+                                try writer.writeAll(Output.prettyFmt("<r><yellow>***<r>", true));
+                                continue;
+                            }
+
+                            if (strings.startsWithUUID(text)) {
+                                text = text[36..];
+                                try writer.writeAll(Output.prettyFmt("<r><yellow>***<r>", true));
+                                continue;
+                            }
+                        }
+
                         prev_keyword = null;
                         var i: usize = 1;
-                        if (text.len > 1 and text[0] == '0' and text[1] == 'x') {
+                        if (text.len > 1 and num == '0' and text[1] == 'x') {
                             i += 1;
                             while (i < text.len and switch (text[i]) {
                                 '0'...'9', 'a'...'f', 'A'...'F' => true,
@@ -807,7 +1022,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                         var i: usize = 1;
                         while (i < text.len and text[i] != char) {
-                            if (char == '`') {
+                            // if we're redacting, no need to syntax highlight contents
+                            if (!should_redact_value and char == '`') {
                                 if (text[i] == '$' and i + 1 < text.len and text[i + 1] == '{') {
                                     const curly_start = i;
                                     i += 2;
@@ -821,10 +1037,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                                     try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..curly_start]});
                                     try writer.writeAll("${");
+                                    var opts = this.opts;
+                                    opts.check_for_unhighlighted_write = false;
                                     const curly_remain = QuickAndDirtyJavaScriptSyntaxHighlighter{
                                         .text = text[curly_start + 2 .. i],
-                                        .enable_colors = this.enable_colors,
-                                        .limited = false,
+                                        .opts = opts,
                                     };
 
                                     if (curly_remain.text.len > 0) {
@@ -856,11 +1073,81 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         // Include the trailing quote, if any
                         i += @intFromBool(i < text.len);
 
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            if (i > 2 and text[i - 1] == char) {
+                                const len = text[0..i].len - 2;
+                                try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                try writer.writeByteNTimes('*', len);
+                                try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
+                            } else {
+                                try writer.writeByteNTimes('*', text[0..i].len);
+                            }
+                            text = text[i..];
+                            continue;
+                        } else if (this.opts.redact_sensitive_information) {
+                            try_redact: {
+                                var inner = text[1..i];
+                                if (inner.len > 0 and inner[inner.len - 1] == char) {
+                                    inner = inner[0 .. inner.len - 1];
+                                }
+
+                                if (inner.len == 0) {
+                                    break :try_redact;
+                                }
+
+                                if (inner.len == 36 and strings.isUUID(inner)) {
+                                    try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                    try writer.writeByteNTimes('*', 36);
+                                    try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
+                                    text = text[i..];
+                                    continue;
+                                }
+
+                                const npm_secret_len = strings.startsWithNpmSecret(inner);
+                                if (npm_secret_len != 0) {
+                                    try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                    try writer.writeByteNTimes('*', npm_secret_len);
+                                    try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
+                                    text = text[i..];
+                                    continue;
+                                }
+
+                                if (strings.findUrlPassword(inner)) |url_pass| {
+                                    const offset, const len = url_pass;
+                                    try writer.print(Output.prettyFmt("<r><green>{c}{s}", true), .{
+                                        char,
+                                        inner[0..offset],
+                                    });
+                                    try writer.writeByteNTimes('*', len);
+                                    try writer.print(Output.prettyFmt("{s}{c}<r>", true), .{
+                                        inner[offset + len ..],
+                                        char,
+                                    });
+                                    text = text[i..];
+                                    continue;
+                                }
+                            }
+
+                            try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
+                            text = text[i..];
+                            continue;
+                        }
+
                         try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
                         text = text[i..];
                     },
                     '/' => {
                         prev_keyword = null;
+
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
+
                         var i: usize = 1;
 
                         // the start of a line comment
@@ -878,7 +1165,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 i += 1;
                             }
 
-                            try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
+                            if (this.opts.redact_sensitive_information) {
+                                try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(remain_to_print)});
+                            } else {
+                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
+                            }
                             text = text[i..];
                             continue;
                         }
@@ -898,7 +1189,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     break :as_multiline_comment;
                                 }
 
-                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{text[0..i]});
+                                if (this.opts.redact_sensitive_information) {
+                                    try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(text[0..i])});
+                                } else {
+                                    try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{text[0..i]});
+                                }
                                 text = text[i..];
                                 continue;
                             }
@@ -907,27 +1202,58 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         try writer.writeAll(text[0..i]);
                         text = text[i..];
                     },
-                    '}', '{' => {
+                    '}', '{' => |brace| {
                         // support potentially highlighting "from" in an import statement
                         if ((prev_keyword orelse Keyword.@"continue") != .import) {
                             prev_keyword = null;
                         }
 
-                        try writer.writeAll(text[0..1]);
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
+
+                        try writer.writeByte(brace);
                         text = text[1..];
                     },
-                    '[', ']' => {
+                    '[', ']' => |bracket| {
                         prev_keyword = null;
-                        try writer.writeAll(text[0..1]);
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
+                        try writer.writeByte(bracket);
                         text = text[1..];
                     },
                     ';' => {
                         prev_keyword = null;
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
                         try writer.print(Output.prettyFmt("<r><d>;<r>", true), .{});
                         text = text[1..];
                     },
                     '.' => {
                         prev_keyword = null;
+
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
+
                         var i: usize = 1;
                         if (text.len > 1 and (js_lexer.isIdentifierStart(text[1]) or text[1] == '#')) {
                             i = 2;
@@ -944,11 +1270,18 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             i = 1;
                         }
 
-                        try writer.writeAll(text[0..1]);
+                        try writer.writeByte(text[0]);
                         text = text[1..];
                     },
 
                     '<' => {
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
                         var i: usize = 1;
 
                         // JSX
@@ -988,8 +1321,15 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         text = text[i..];
                     },
 
-                    else => {
-                        try writer.writeAll(text[0..1]);
+                    else => |c| {
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
+                            continue;
+                        }
+                        try writer.writeByte(c);
                         text = text[1..];
                     },
                 }
@@ -1386,53 +1726,37 @@ fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.Form
     try writer.writeAll(remain);
 }
 
-pub const fmt_js_test_bindings = struct {
-    const Formatter = enum {
-        fmtJavaScript,
-        escapePowershell,
-    };
+pub const js_bindings = struct {
+    const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
-        const args = callframe.arguments(2);
-        if (args.len < 2) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse
-            return .zero;
-        defer code.deinit();
-
+    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 
-        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
         switch (formatter_id) {
-            .fmtJavaScript => {
-                var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-                formatter.limited = false;
+            .highlight_javascript => {
+                const formatter = bun.fmt.fmtJavaScript(code, .{
+                    .enable_colors = true,
+                    .check_for_unhighlighted_write = false,
+                });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+                    return global.throwError(err, "while formatting");
                 };
             },
-            .escapePowershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+            .escape_powershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
+                    return global.throwError(err, "while formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting");
-            return .zero;
+            return global.throwError(err, "while formatting");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8(buffer.list.items);
     }
 };
 
@@ -1495,4 +1819,31 @@ pub const OutOfRangeOptions = struct {
 
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
     return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+}
+
+/// esbuild has an 8 character truncation of a base32 encoded bytes. this
+/// is not exactly that, but it will appear as such. the character list
+/// chosen omits similar characters in the unlikely case someone is
+/// trying to memorize a hash.
+///
+/// this hash is used primarily for the hashes in bundler chunk file names. the
+/// output is all lowercase to avoid issues with case-insensitive filesystems.
+pub fn truncatedHash32(int: u64) std.fmt.Formatter(truncatedHash32Impl) {
+    return .{ .data = int };
+}
+
+fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    comptime bun.assert(fmt_str.len == 0);
+    const in_bytes = std.mem.asBytes(&int);
+    const chars = "0123456789abcdefghjkmnpqrstvwxyz";
+    try writer.writeAll(&.{
+        chars[in_bytes[0] & 31],
+        chars[in_bytes[1] & 31],
+        chars[in_bytes[2] & 31],
+        chars[in_bytes[3] & 31],
+        chars[in_bytes[4] & 31],
+        chars[in_bytes[5] & 31],
+        chars[in_bytes[6] & 31],
+        chars[in_bytes[7] & 31],
+    });
 }

@@ -281,10 +281,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
 }
 
@@ -299,7 +299,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
 
     RefPtr<Blob> blobValue = nullptr;
@@ -310,11 +310,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
     }
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
 }
@@ -354,7 +354,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_deleteBody(JSC:
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name)); })));
 }
 
@@ -373,9 +373,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getBody(JSC::JS
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.get(WTFMove(name)))));
+    auto* nameStr = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto name = nameStr->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.get(name))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_get, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -393,9 +395,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto entries = impl.getAll(WTFMove(name));
+    auto* nameStr = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto name = nameStr->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto entries = impl.getAll(name);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     for (auto entry : entries) {
         if (auto string = std::get_if<String>(&entry)) {
@@ -425,7 +429,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_hasBody(JSC::JS
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name)))));
 }
 
@@ -443,10 +447,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set1Body(JSC::J
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(value)); })));
 }
 
@@ -459,7 +463,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     EnsureStillAliveScope argument2 = callFrame->argument(2);
 
@@ -471,10 +475,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
     }
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
 }
@@ -760,4 +764,11 @@ DOMFormData* JSDOMFormData::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
+
+size_t JSDOMFormData::estimatedSize(JSCell* cell, JSC::VM& vm)
+{
+    auto& wrapped = jsCast<JSDOMFormData*>(cell)->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 }

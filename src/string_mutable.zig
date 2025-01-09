@@ -9,6 +9,7 @@ const js_lexer = bun.js_lexer;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
+const OOM = bun.OOM;
 
 pub const MutableString = struct {
     allocator: std.mem.Allocator,
@@ -18,7 +19,7 @@ pub const MutableString = struct {
         return MutableString.init(allocator, 2048);
     }
 
-    pub const Writer = std.io.Writer(*@This(), anyerror, MutableString.writeAll);
+    pub const Writer = std.io.Writer(*@This(), OOM, MutableString.writeAll);
     pub fn writer(self: *MutableString) Writer {
         return Writer{
             .context = self,
@@ -36,15 +37,15 @@ pub const MutableString = struct {
         }
     }
 
-    pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+    pub fn owns(this: *const MutableString, items: []const u8) bool {
+        return bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity]);
     }
 
-    pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
+    pub fn growIfNeeded(self: *MutableString, amount: usize) OOM!void {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub fn write(self: *MutableString, bytes: anytype) !usize {
+    pub fn write(self: *MutableString, bytes: anytype) OOM!usize {
         bun.debugAssert(bytes.len == 0 or !bun.isSliceInBuffer(bytes, self.list.allocatedSlice()));
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
@@ -54,7 +55,7 @@ pub const MutableString = struct {
         return BufferedWriter{ .context = self };
     }
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) std.mem.Allocator.Error!MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) OOM!MutableString {
         return MutableString{ .allocator = allocator, .list = if (capacity > 0)
             try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
         else
@@ -67,7 +68,7 @@ pub const MutableString = struct {
 
     pub const ensureUnusedCapacity = growIfNeeded;
 
-    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
+    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) OOM!MutableString {
         var mutable = try MutableString.init(allocator, str.len);
         try mutable.copy(str);
         return mutable;
@@ -118,8 +119,8 @@ pub const MutableString = struct {
                 str[0..start_i]);
             needs_gap = false;
 
-            var slice = str[start_i..];
-            iterator = strings.CodepointIterator.init(slice);
+            var items = str[start_i..];
+            iterator = strings.CodepointIterator.init(items);
             cursor = strings.CodepointIterator.Cursor{};
 
             while (iterator.next(&cursor)) {
@@ -129,7 +130,7 @@ pub const MutableString = struct {
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    try mutable.append(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
+                    try mutable.append(items[cursor.i .. cursor.i + @as(u32, cursor.width)]);
                 } else if (!needs_gap) {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
@@ -171,17 +172,16 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub inline fn appendSlice(self: *MutableString, slice: []const u8) !void {
-        try self.list.appendSlice(self.allocator, slice);
+    pub inline fn appendSlice(self: *MutableString, items: []const u8) !void {
+        try self.list.appendSlice(self.allocator, items);
     }
 
-    pub inline fn appendSliceExact(self: *MutableString, slice: []const u8) !void {
-        if (slice.len == 0) return;
-
-        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
+    pub inline fn appendSliceExact(self: *MutableString, items: []const u8) !void {
+        if (items.len == 0) return;
+        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + items.len);
         var end = self.list.items.ptr + self.list.items.len;
-        self.list.items.len += slice.len;
-        @memcpy(end[0..slice.len], slice);
+        self.list.items.len += items.len;
+        @memcpy(end[0..items.len], items);
     }
 
     pub inline fn reset(
@@ -200,6 +200,10 @@ pub const MutableString = struct {
 
     pub fn inflate(self: *MutableString, amount: usize) !void {
         try self.list.resize(self.allocator, amount);
+    }
+
+    pub inline fn appendCharNTimes(self: *MutableString, char: u8, n: usize) !void {
+        try self.list.appendNTimes(self.allocator, char, n);
     }
 
     pub inline fn appendChar(self: *MutableString, char: u8) !void {
@@ -232,7 +236,7 @@ pub const MutableString = struct {
         return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
-    pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
+    pub fn slice(self: *MutableString) []u8 {
         return self.list.items;
     }
 
@@ -243,7 +247,8 @@ pub const MutableString = struct {
         return out;
     }
 
-    pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
+    /// Appends `0` if needed
+    pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
         if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {
             self.list.append(
                 self.allocator,
@@ -258,10 +263,6 @@ pub const MutableString = struct {
         self.list.shrinkAndFree(self.allocator, length);
         return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
-
-    // pub fn deleteAt(self: *MutableString, i: usize)  {
-    //     self.list.swapRemove(i);
-    // }
 
     pub fn containsChar(self: *const MutableString, char: u8) bool {
         return self.indexOfChar(char) != null;
@@ -305,18 +306,18 @@ pub const MutableString = struct {
 
         const max = 2048;
 
-        pub const Writer = std.io.Writer(*BufferedWriter, anyerror, BufferedWriter.writeAll);
+        pub const Writer = std.io.Writer(*BufferedWriter, OOM, BufferedWriter.writeAll);
 
         inline fn remain(this: *BufferedWriter) []u8 {
             return this.buffer[this.pos..];
         }
 
-        pub fn flush(this: *BufferedWriter) !void {
+        pub fn flush(this: *BufferedWriter) OOM!void {
             _ = try this.context.writeAll(this.buffer[0..this.pos]);
             this.pos = 0;
         }
 
-        pub fn writeAll(this: *BufferedWriter, bytes: []const u8) anyerror!usize {
+        pub fn writeAll(this: *BufferedWriter, bytes: []const u8) OOM!usize {
             const pending = bytes;
 
             if (pending.len >= max) {
@@ -341,7 +342,7 @@ pub const MutableString = struct {
         /// Write a E.String to the buffer.
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
-        pub fn writeString(this: *BufferedWriter, bytes: *E.String) anyerror!usize {
+        pub fn writeString(this: *BufferedWriter, bytes: *E.String) OOM!usize {
             if (bytes.isUTF8()) {
                 return try this.writeAll(bytes.slice(this.context.allocator));
             }
@@ -352,7 +353,7 @@ pub const MutableString = struct {
         /// Write a UTF-16 string to the (UTF-8) buffer
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
-        pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
+        pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) OOM!usize {
             const pending = bytes;
 
             if (pending.len >= max) {
@@ -384,7 +385,7 @@ pub const MutableString = struct {
             return pending.len;
         }
 
-        pub fn writeHTMLAttributeValueString(this: *BufferedWriter, str: *E.String) anyerror!void {
+        pub fn writeHTMLAttributeValueString(this: *BufferedWriter, str: *E.String) OOM!void {
             if (str.isUTF8()) {
                 try this.writeHTMLAttributeValue(str.slice(this.context.allocator));
                 return;
@@ -393,47 +394,47 @@ pub const MutableString = struct {
             try this.writeHTMLAttributeValue16(str.slice16());
         }
 
-        pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) anyerror!void {
-            var slice = bytes;
-            while (slice.len > 0) {
+        pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) OOM!void {
+            var items = bytes;
+            while (items.len > 0) {
                 // TODO: SIMD
-                if (strings.indexOfAny(slice, "\"<>")) |j| {
-                    _ = try this.writeAll(slice[0..j]);
-                    _ = switch (slice[j]) {
+                if (strings.indexOfAny(items, "\"<>")) |j| {
+                    _ = try this.writeAll(items[0..j]);
+                    _ = switch (items[j]) {
                         '"' => try this.writeAll("&quot;"),
                         '<' => try this.writeAll("&lt;"),
                         '>' => try this.writeAll("&gt;"),
                         else => unreachable,
                     };
 
-                    slice = slice[j + 1 ..];
+                    items = items[j + 1 ..];
                     continue;
                 }
 
-                _ = try this.writeAll(slice);
+                _ = try this.writeAll(items);
                 break;
             }
         }
 
-        pub fn writeHTMLAttributeValue16(this: *BufferedWriter, bytes: []const u16) anyerror!void {
-            var slice = bytes;
-            while (slice.len > 0) {
-                if (strings.indexOfAny16(slice, "\"<>")) |j| {
+        pub fn writeHTMLAttributeValue16(this: *BufferedWriter, bytes: []const u16) OOM!void {
+            var items = bytes;
+            while (items.len > 0) {
+                if (strings.indexOfAny16(items, "\"<>")) |j| {
                     // this won't handle strings larger than 4 GB
                     // that's fine though, 4 GB of SSR'd HTML is quite a lot...
-                    _ = try this.writeAll16(slice[0..j]);
-                    _ = switch (slice[j]) {
+                    _ = try this.writeAll16(items[0..j]);
+                    _ = switch (items[j]) {
                         '"' => try this.writeAll("&quot;"),
                         '<' => try this.writeAll("&lt;"),
                         '>' => try this.writeAll("&gt;"),
                         else => unreachable,
                     };
 
-                    slice = slice[j + 1 ..];
+                    items = items[j + 1 ..];
                     continue;
                 }
 
-                _ = try this.writeAll16(slice);
+                _ = try this.writeAll16(items);
                 break;
             }
         }
@@ -443,7 +444,7 @@ pub const MutableString = struct {
         }
     };
 
-    pub fn writeAll(self: *MutableString, bytes: string) std.mem.Allocator.Error!usize {
+    pub fn writeAll(self: *MutableString, bytes: string) OOM!usize {
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }

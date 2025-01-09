@@ -242,7 +242,7 @@ pub const FDImpl = packed struct {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.system.close(fd.cast()))) {
+                break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
@@ -251,7 +251,7 @@ pub const FDImpl = packed struct {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
+                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
@@ -263,7 +263,7 @@ pub const FDImpl = packed struct {
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
-                            .{ .errno = errno, .syscall = .close, .fd = this.encode() }
+                            .{ .errno = errno, .syscall = .close, .fd = this.encode(), .from_libuv = true }
                         else
                             null;
                     },
@@ -320,12 +320,10 @@ pub const FDImpl = packed struct {
 
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
+    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) bun.JSError!?FDImpl {
         if (!value.isAnyInt()) return null;
         const fd64 = value.toInt64();
-        if (!JSC.Node.Valid.fileDescriptor(fd64, global, exception_ref)) {
-            return error.JSException;
-        }
+        try JSC.Node.Valid.fileDescriptor(fd64, global);
         const fd: i32 = @intCast(fd64);
 
         if (comptime env.isWindows) {
@@ -345,11 +343,10 @@ pub const FDImpl = packed struct {
     pub fn toJS(value: FDImpl, global: *JSC.JSGlobalObject) JSValue {
         const fd = value.makeLibUVOwned() catch {
             _ = value.close();
-            global.throwValue((JSC.SystemError{
+            return global.throwValue((JSC.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global));
-            return .zero;
+            }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(fd.uv());
     }

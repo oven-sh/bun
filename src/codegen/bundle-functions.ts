@@ -221,15 +221,18 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
+      target: "bun",
       minify: { syntax: true, whitespace: false },
+      throw: true,
     });
+    // TODO: Wait a few versions before removing this
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }
     if (build.outputs.length !== 1) {
       throw new Error("expected one output");
     }
-    const output = await build.outputs[0].text();
+    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

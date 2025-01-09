@@ -81,6 +81,20 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 }
 ```
 
+## Installing dependencies for specific packages
+
+In a monorepo, you can install the dependencies for a subset of packages using the `--filter` flag.
+
+```bash
+# Install dependencies for all workspaces except `pkg-c`
+$ bun install --filter '!pkg-c'
+
+# Install dependencies for only `pkg-a` in `./packages/pkg-a`
+$ bun install --filter './packages/pkg-a'
+```
+
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/install#bun-install-and-bun-outdated)
+
 ## Overrides and resolutions
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.sh/docs/install/overrides) for complete documentation.
@@ -130,6 +144,20 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
 
+## Omitting dependencies
+
+To omit dev, peer, or optional dependencies use the `--omit` flag.
+
+```bash
+# Exclude "devDependencies" from the installation. This will apply to the
+# root package and workspaces if they exist. Transitive dependencies will
+# not have "devDependencies".
+$ bun install --omit dev
+
+# Install only dependencies from "dependencies"
+$ bun install --omit=dev --omit=peer --omit=optional
+```
+
 ## Dry run
 
 To perform a dry run (i.e. don't actually install anything):
@@ -149,7 +177,8 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
     "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
     "moment": "git@github.com:moment/moment.git",
     "zod": "github:colinhacks/zod",
-    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
   }
 }
 ```
@@ -172,6 +201,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false

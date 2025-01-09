@@ -915,7 +915,7 @@ const PatchLinesParser = struct {
     fn parseHunkHeaderLineImpl(text_: []const u8) ParseErr!struct { line_nr: u32, line_count: u32, rest: []const u8 } {
         var text = text_;
         const DIGITS = brk: {
-            var set = std.bit_set.IntegerBitSet(256).initEmpty();
+            var set = bun.bit_set.IntegerBitSet(256).initEmpty();
             for ('0'..'9' + 1) |c| set.set(c);
             break :brk set;
         };
@@ -1026,8 +1026,8 @@ const PatchLinesParser = struct {
 
         const delimiter_start = std.mem.indexOf(u8, line, "..") orelse return null;
 
-        const VALID_CHARS: std.bit_set.IntegerBitSet(256) = comptime brk: {
-            var bitset = std.bit_set.IntegerBitSet(256).initEmpty();
+        const VALID_CHARS: bun.bit_set.IntegerBitSet(256) = comptime brk: {
+            var bitset = bun.bit_set.IntegerBitSet(256).initEmpty();
             // TODO: the regex uses \w which is [a-zA-Z0-9_]
             for ('0'..'9' + 1) |c| bitset.set(c);
             for ('a'..'z' + 1) |c| bitset.set(c);
@@ -1094,20 +1094,18 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
-    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
-            globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return globalThis.throw("expected 2 strings", .{});
         };
         const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
-            globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return globalThis.throw("expected 2 strings", .{});
         };
         const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
@@ -1119,8 +1117,7 @@ pub const TestingAPIs = struct {
         defer new_folder.deinit();
 
         return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
-            globalThis.throwError(e, "failed to make diff");
-            return .undefined;
+            return globalThis.throwError(e, "failed to make diff");
         }) {
             .result => |s| {
                 defer s.deinit();
@@ -1128,8 +1125,7 @@ pub const TestingAPIs = struct {
             },
             .err => |e| {
                 defer e.deinit();
-                globalThis.throw("failed to make diff: {s}", .{e.items});
-                return .undefined;
+                return globalThis.throw("failed to make diff: {s}", .{e.items});
             },
         };
     }
@@ -1146,7 +1142,7 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
@@ -1154,47 +1150,42 @@ pub const TestingAPIs = struct {
         defer args.deinit();
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
-            globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .undefined;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
 
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
-            globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
-            return .undefined;
+            return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
         };
         const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
             if (e == error.hunk_header_integrity_check_failed) {
-                globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
-            } else globalThis.throwError(e, "failed to parse patch file");
-
-            return .undefined;
+                return globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
+            } else {
+                return globalThis.throwError(e, "failed to parse patch file");
+            }
         };
         defer patchfile.deinit(bun.default_allocator);
 
-        const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
-            globalThis.throw("apply: expected at least 1 argument, got 0", .{});
+            globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
             return .{ .err = .undefined };
         };
 
@@ -1206,7 +1197,7 @@ pub const TestingAPIs = struct {
 
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
-                    globalThis.throwValue(e.withPath(path).toJSC(globalThis));
+                    globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
                     return .{ .err = .undefined };
                 },
                 .result => |fd| fd,
@@ -1223,7 +1214,7 @@ pub const TestingAPIs = struct {
             }
 
             patchfile_src.deinit();
-            globalThis.throwError(e, "failed to parse patchfile");
+            globalThis.throwError(e, "failed to parse patchfile") catch {};
             return .{ .err = .undefined };
         };
 

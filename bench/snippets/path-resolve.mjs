@@ -1,8 +1,10 @@
-import { bench, run } from "mitata";
 import { posix } from "path";
+import { bench, run } from "../runner.mjs";
 
 const pathConfigurations = [
   "",
+  ".",
+  "./",
   ["", ""].join("|"),
   ["./abc.js"].join("|"),
   ["foo/bar", "/tmp/file/", "..", "a/../subfile"].join("|"),

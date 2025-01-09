@@ -12,7 +12,7 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
+const JSON = bun.JSON;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
@@ -21,16 +21,14 @@ const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;
 
-fn exists(path: anytype) bool {
-    return bun.sys.exists(path);
-}
 pub const InitCommand = struct {
-    fn prompt(
+    pub fn prompt(
         alloc: std.mem.Allocator,
         comptime label: string,
         default: []const u8,
-        _: bool,
     ) ![]const u8 {
         Output.pretty(label, .{});
         if (default.len > 0) {
@@ -171,7 +169,7 @@ pub const InitCommand = struct {
             process_package_json: {
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
                 var log = logger.Log.init(alloc);
-                var package_json_expr = ParseJSON(&source, &log, alloc) catch {
+                var package_json_expr = JSON.parsePackageJSONUTF8(&source, &log, alloc) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -211,7 +209,7 @@ pub const InitCommand = struct {
                 };
 
                 for (paths_to_try) |path| {
-                    if (exists(path)) {
+                    if (existsZ(path)) {
                         fields.entry_point = bun.asByteSlice(path);
                         break :infer;
                     }
@@ -248,7 +246,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
@@ -260,7 +257,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
@@ -282,16 +278,16 @@ pub const InitCommand = struct {
 
         var steps = Steps{};
 
-        steps.write_gitignore = !exists(".gitignore");
+        steps.write_gitignore = !existsZ(".gitignore");
 
-        steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
+        steps.write_readme = !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
 
         steps.write_tsconfig = brk: {
-            if (exists("tsconfig.json")) {
+            if (existsZ("tsconfig.json")) {
                 break :brk false;
             }
 
-            if (exists("jsconfig.json")) {
+            if (existsZ("jsconfig.json")) {
                 break :brk false;
             }
 
@@ -439,7 +435,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{JSPrinter.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }
@@ -447,7 +443,7 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        if (exists("package.json")) {
+        if (existsZ("package.json")) {
             var process = std.process.Child.init(
                 &.{
                     try bun.selfExePath(),

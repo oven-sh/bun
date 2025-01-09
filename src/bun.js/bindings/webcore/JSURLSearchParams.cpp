@@ -124,7 +124,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto init = argument0.value().isUndefined() ? emptyString() : convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>, IDLUSVString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = URLSearchParams::create(WTFMove(init));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -255,10 +255,10 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_appendBody(
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
 }
 
@@ -278,13 +278,13 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String value;
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     if (!argument1.value().isUndefined()) {
         value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name), WTFMove(value)); })));
@@ -305,9 +305,11 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getBody(JSC
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, throwScope, impl.get(WTFMove(name)))));
+    auto* nameString = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    const auto name = nameString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, throwScope, impl.get(name))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_get, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -325,9 +327,11 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getAllBody(
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLUSVString>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getAll(WTFMove(name)))));
+    auto* nameString = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    const auto name = nameString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLUSVString>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getAll(name))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -345,17 +349,19 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto* nameString = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    const auto name = nameString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String value;
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     if (!argument1.value().isUndefined()) {
         value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name), WTFMove(value)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(name, WTFMove(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -374,10 +380,10 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_setBody(JSC
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(value)); })));
 }
 
@@ -656,4 +662,12 @@ URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
+
+size_t JSURLSearchParams::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSURLSearchParams*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 }

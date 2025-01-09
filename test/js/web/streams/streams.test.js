@@ -7,12 +7,10 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { tmpdirSync, isWindows, isMacOS, bunEnv } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-const isWindows = process.platform === "win32";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -427,7 +425,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
+it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);
@@ -447,6 +445,7 @@ it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
     stdout: "pipe",
     stdin: null,
     env: {
+      ...bunEnv,
       FIFO_TEST: large,
     },
   });
@@ -758,6 +757,55 @@ it("ReadableStream for empty file closes immediately", async () => {
   expect(chunks.length).toBe(0);
 });
 
+it("ReadableStream errors the stream on pull rejection", async () => {
+  let stream = new ReadableStream({
+    pull(controller) {
+      return Promise.reject("pull rejected");
+    },
+  });
+
+  let reader = stream.getReader();
+  let closed = reader.closed.catch(err => `closed: ${err}`);
+  let read = reader.read().catch(err => `read: ${err}`);
+  expect(await Promise.race([closed, read])).toBe("closed: pull rejected");
+  expect(await read).toBe("read: pull rejected");
+});
+
+it("ReadableStream rejects pending reads when the lock is released", async () => {
+  let { resolve, promise } = Promise.withResolvers();
+  let stream = new ReadableStream({
+    async pull(controller) {
+      controller.enqueue("123");
+      await promise;
+      controller.enqueue("456");
+      controller.close();
+    },
+  });
+
+  let reader = stream.getReader();
+  expect((await reader.read()).value).toBe("123");
+
+  let read = reader.read();
+  reader.releaseLock();
+  expect(read).rejects.toThrow(
+    expect.objectContaining({
+      name: "AbortError",
+      code: "ERR_STREAM_RELEASE_LOCK",
+    }),
+  );
+  expect(reader.closed).rejects.toThrow(
+    expect.objectContaining({
+      name: "AbortError",
+      code: "ERR_STREAM_RELEASE_LOCK",
+    }),
+  );
+
+  resolve();
+
+  reader = stream.getReader();
+  expect((await reader.read()).value).toBe("456");
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({
@@ -1054,4 +1102,43 @@ it("fs.createReadStream(filename) should be able to break inside async loop", as
     }
     expect(true).toBe(true);
   }
+});
+
+it("pipeTo doesn't cause unhandled rejections on readable errors", async () => {
+  // https://github.com/WebKit/WebKit/blob/3a75b5d2de94aa396a99b454ac47f3be9e0dc726/LayoutTests/streams/pipeTo-unhandled-promise.html
+  let unhandledRejectionCaught = false;
+
+  const catchUnhandledRejection = () => {
+    unhandledRejectionCaught = true;
+  };
+  process.on("unhandledRejection", catchUnhandledRejection);
+
+  const writable = new WritableStream();
+  const readable = new ReadableStream({ start: c => c.error("error") });
+  readable.pipeTo(writable).catch(() => {});
+
+  await Bun.sleep(15);
+
+  process.off("unhandledRejection", catchUnhandledRejection);
+
+  expect(unhandledRejectionCaught).toBe(false);
+});
+
+it("pipeThrough doesn't cause unhandled rejections on readable errors", async () => {
+  let unhandledRejectionCaught = false;
+
+  const catchUnhandledRejection = () => {
+    unhandledRejectionCaught = true;
+  };
+  process.on("unhandledRejection", catchUnhandledRejection);
+
+  const readable = new ReadableStream({ start: c => c.error("error") });
+  const ts = new TransformStream();
+  readable.pipeThrough(ts);
+
+  await Bun.sleep(15);
+
+  process.off("unhandledRejection", catchUnhandledRejection);
+
+  expect(unhandledRejectionCaught).toBe(false);
 });

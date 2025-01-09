@@ -141,6 +141,13 @@ static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__revokeObjectURL, 1 } },
 };
 
+size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSDOMURL*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -151,10 +158,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = base.isEmpty() ? DOMURL::create(WTFMove(url)) : DOMURL::create(WTFMove(url), WTFMove(base));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -630,10 +637,10 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSG
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, DOMURL::parse(WTFMove(url), WTFMove(base)))));
 }
 
@@ -652,10 +659,10 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_canParseBody(JSC::
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(WTFMove(url), WTFMove(base)))));
 }
 
@@ -690,7 +697,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURL1Bo
     return JSValue::encode(jsUndefined());
     // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     // auto blob = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "blob", "URL", "createObjectURL", "Blob"); });
-    // RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    // RETURN_IF_EXCEPTION(throwScope, {});
     // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, DOMURL::createObjectURL(*context, *blob))));
 }
 
@@ -707,7 +714,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBod
     return JSValue::encode(jsUndefined());
     // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     // auto url = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    // RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    // RETURN_IF_EXCEPTION(throwScope, {});
     // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return DOMURL::revokeObjectURL(*context, WTFMove(url)); })));
 }
 

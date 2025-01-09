@@ -12,26 +12,28 @@ pub const BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // pub extern fn BrotliSharedDictionaryCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) ?*BrotliSharedDictionary;
 // pub extern fn BrotliSharedDictionaryDestroyInstance(dict: ?*BrotliSharedDictionary) void;
 // pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
+
+pub extern fn BrotliDecoderSetParameter(state: *BrotliDecoder, param: c_uint, value: u32) callconv(.C) c_int;
+pub extern fn BrotliDecoderAttachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) callconv(.C) c_int;
+pub extern fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliDecoder;
+pub extern fn BrotliDecoderDestroyInstance(state: *BrotliDecoder) callconv(.C) void;
+pub extern fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) callconv(.C) BrotliDecoderResult;
+pub extern fn BrotliDecoderDecompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult;
+pub extern fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) callconv(.C) c_int;
+pub extern fn BrotliDecoderTakeOutput(state: *BrotliDecoder, size: *usize) callconv(.C) ?[*]const u8;
+pub extern fn BrotliDecoderIsUsed(state: *const BrotliDecoder) callconv(.C) c_int;
+pub extern fn BrotliDecoderIsFinished(state: *const BrotliDecoder) callconv(.C) c_int;
+pub extern fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode2;
+pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) callconv(.C) ?[*:0]const u8;
+pub extern fn BrotliDecoderVersion() callconv(.C) u32;
+
 pub const BrotliDecoder = opaque {
-    extern "C" fn BrotliDecoderSetParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int;
-    extern "C" fn BrotliDecoderAttachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) callconv(.C) c_int;
-    extern "C" fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliDecoder;
-    extern "C" fn BrotliDecoderDestroyInstance(state: *BrotliDecoder) callconv(.C) void;
-    extern "C" fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) callconv(.C) BrotliDecoderResult;
-    extern "C" fn BrotliDecoderDecompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult;
-    extern "C" fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) callconv(.C) c_int;
-    extern "C" fn BrotliDecoderTakeOutput(state: *BrotliDecoder, size: *usize) callconv(.C) ?[*]const u8;
-    extern "C" fn BrotliDecoderIsUsed(state: *const BrotliDecoder) callconv(.C) c_int;
-    extern "C" fn BrotliDecoderIsFinished(state: *const BrotliDecoder) callconv(.C) c_int;
-    extern "C" fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode;
-    extern "C" fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) callconv(.C) ?[*:0]const u8;
-    extern "C" fn BrotliDecoderVersion() callconv(.C) u32;
     const BrotliDecoderSetMetadataCallbacks = fn (state: *BrotliDecoder, start_func: brotli_decoder_metadata_start_func, chunk_func: brotli_decoder_metadata_chunk_func, @"opaque": ?*anyopaque) callconv(.C) void;
     const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
     const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.C) void;
 
     pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) bool {
-        return BrotliDecoderSetParameter(state, param, value) > 0;
+        return BrotliDecoderSetParameter(state, @intFromEnum(param), value) > 0;
     }
 
     pub fn attachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data: []const u8) callconv(.C) c_int {
@@ -73,7 +75,7 @@ pub const BrotliDecoder = opaque {
     }
 
     pub fn getErrorCode(state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode {
-        return BrotliDecoderGetErrorCode(state);
+        return @enumFromInt(@intFromEnum(BrotliDecoderGetErrorCode(state)));
     }
 
     pub fn errorString(c: BrotliDecoderErrorCode) callconv(.C) [:0]const u8 {
@@ -151,6 +153,38 @@ pub const BrotliDecoderErrorCode = enum(c_int) {
     ALLOC_RING_BUFFER_2 = -27,
     ALLOC_BLOCK_TYPE_TREES = -30,
     UNREACHABLE = -31,
+};
+pub const BrotliDecoderErrorCode2 = enum(c_int) {
+    NO_ERROR = 0,
+    SUCCESS = 1,
+    NEEDS_MORE_INPUT = 2,
+    NEEDS_MORE_OUTPUT = 3,
+    ERROR_FORMAT_EXUBERANT_NIBBLE = -1,
+    ERROR_FORMAT_RESERVED = -2,
+    ERROR_FORMAT_EXUBERANT_META_NIBBLE = -3,
+    ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET = -4,
+    ERROR_FORMAT_SIMPLE_HUFFMAN_SAME = -5,
+    ERROR_FORMAT_CL_SPACE = -6,
+    ERROR_FORMAT_HUFFMAN_SPACE = -7,
+    ERROR_FORMAT_CONTEXT_MAP_REPEAT = -8,
+    ERROR_FORMAT_BLOCK_LENGTH_1 = -9,
+    ERROR_FORMAT_BLOCK_LENGTH_2 = -10,
+    ERROR_FORMAT_TRANSFORM = -11,
+    ERROR_FORMAT_DICTIONARY = -12,
+    ERROR_FORMAT_WINDOW_BITS = -13,
+    ERROR_FORMAT_PADDING_1 = -14,
+    ERROR_FORMAT_PADDING_2 = -15,
+    ERROR_FORMAT_DISTANCE = -16,
+    ERROR_COMPOUND_DICTIONARY = -18,
+    ERROR_DICTIONARY_NOT_SET = -19,
+    ERROR_INVALID_ARGUMENTS = -20,
+    ERROR_ALLOC_CONTEXT_MODES = -21,
+    ERROR_ALLOC_TREE_GROUPS = -22,
+    ERROR_ALLOC_CONTEXT_MAP = -25,
+    ERROR_ALLOC_RING_BUFFER_1 = -26,
+    ERROR_ALLOC_RING_BUFFER_2 = -27,
+    ERROR_ALLOC_BLOCK_TYPE_TREES = -30,
+    ERROR_UNREACHABLE = -31,
 };
 pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: c_int = 0;
 pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: c_int = 1;

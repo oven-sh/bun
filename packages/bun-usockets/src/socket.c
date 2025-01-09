@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <errno.h>
 
 #ifndef WIN32
@@ -310,7 +309,11 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
 #else
     struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    int rc = us_poll_start_rc(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (rc != 0) {
+        us_poll_free(p1, ctx->loop);
+        return 0;
+    }
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->context = ctx;
@@ -493,6 +496,19 @@ void us_socket_ref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
+void us_socket_nodelay(struct us_socket_t *s, int enabled) {
+    if (!us_socket_is_shut_down(0, s)) {
+        bsd_socket_nodelay(us_poll_fd((struct us_poll_t *) s), enabled);
+    }
+}
+
+int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay){
+    if (!us_socket_is_shut_down(0, s)) {
+        bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
+    }
+    return 0;
+}
+
 void us_socket_unref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_unref((uv_handle_t*)s->p.uv_p);
@@ -503,3 +519,28 @@ void us_socket_unref(struct us_socket_t *s) {
 struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
     return c->context->loop;
 }
+
+void us_socket_pause(int ssl, struct us_socket_t *s) {
+    // closed cannot be paused because it is already closed
+    if(us_socket_is_closed(ssl, s)) return;
+    if(us_socket_is_shut_down(ssl, s)) {
+        // we already sent FIN so we pause all events because we are read-only
+        us_poll_change(&s->p, s->context->loop, 0);
+        return;
+    }
+    // we are readable and writable so we can just pause readable side
+    us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+}
+
+void us_socket_resume(int ssl, struct us_socket_t *s) {
+    // closed cannot be resumed
+    if(us_socket_is_closed(ssl, s)) return;
+
+    if(us_socket_is_shut_down(ssl, s)) {
+      // we already sent FIN so we resume only readable side we are read-only
+      us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE);
+      return;
+    }
+    // we are readable and writable so we resume everything
+    us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  }

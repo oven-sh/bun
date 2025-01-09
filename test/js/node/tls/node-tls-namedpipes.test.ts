@@ -1,10 +1,10 @@
-import { expect, it } from "bun:test";
-import { tls, isWindows, expectMaxObjectTypeCount } from "harness";
-import { connect, createServer } from "node:tls";
-import net from "node:net";
-import { once } from "node:events";
-import { randomUUID } from "node:crypto";
 import { heapStats } from "bun:jsc";
+import { expect, it } from "bun:test";
+import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import net from "node:net";
+import { connect, createServer } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   async function test(pipe_name: string) {

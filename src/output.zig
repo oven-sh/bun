@@ -1,4 +1,3 @@
-const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
@@ -89,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {
@@ -103,26 +103,32 @@ pub const Source = struct {
         return no_color.len != 0;
     }
 
-    pub fn isForceColor() bool {
-        const force_color = bun.getenvZ("FORCE_COLOR") orelse return false;
+    pub fn getForceColorDepth() ?ColorDepth {
+        const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
+        // - "0" to indicate no color support
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        return force_color.len == 0 or
-            strings.eqlComptime(force_color, "1") or
-            strings.eqlComptime(force_color, "true") or
-            strings.eqlComptime(force_color, "2") or
-            strings.eqlComptime(force_color, "3");
+        if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
+            return ColorDepth.@"16";
+        }
+
+        if (strings.eqlComptime(force_color, "2")) {
+            return ColorDepth.@"256";
+        }
+        if (strings.eqlComptime(force_color, "3")) {
+            return ColorDepth.@"16m";
+        }
+
+        return ColorDepth.none;
+    }
+
+    pub fn isForceColor() bool {
+        return (getForceColorDepth() orelse ColorDepth.none) != .none;
     }
 
     pub fn isColorTerminal() bool {
-        if (bun.getenvZ("COLORTERM")) |color_term| {
-            return !strings.eqlComptime(color_term, "0");
-        }
-        if (bun.getenvZ("TERM")) |term| {
-            return !strings.eqlComptime(term, "dumb");
-        }
         if (Environment.isWindows) {
             // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
             // Windows 10 build 10586 is the first Windows release that supports 256 colors.
@@ -130,7 +136,8 @@ pub const Source = struct {
             // Every other version supports 16 colors.
             return true;
         }
-        return false;
+
+        return colorDepth() != .none;
     }
 
     export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
@@ -245,7 +252,7 @@ pub const Source = struct {
             const stdout = bun.sys.File.from(std.io.getStdOut());
             const stderr = bun.sys.File.from(std.io.getStdErr());
 
-            Output.Source.init(stdout, stderr)
+            Source.init(stdout, stderr)
                 .set();
 
             if (comptime Environment.isDebug or Environment.enable_logs) {
@@ -262,6 +269,131 @@ pub const Source = struct {
         }
     };
 
+    pub const ColorDepth = enum {
+        none,
+        @"16",
+        @"256",
+        @"16m",
+    };
+    var lazy_color_depth: ColorDepth = .none;
+    var color_depth_once = std.once(getColorDepthOnce);
+    fn getColorDepthOnce() void {
+        if (getForceColorDepth()) |depth| {
+            lazy_color_depth = depth;
+            return;
+        }
+
+        if (isNoColor()) {
+            return;
+        }
+
+        const term = bun.getenvZ("TERM") orelse "";
+        if (strings.eqlComptime(term, "dumb")) {
+            return;
+        }
+
+        if (bun.getenvZ("TMUX") != null) {
+            lazy_color_depth = .@"256";
+            return;
+        }
+
+        if (bun.getenvZ("CI")) |ci| {
+            inline for (.{ "APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS" }) |ci_env| {
+                if (strings.eqlComptime(ci, ci_env)) {
+                    lazy_color_depth = .@"256";
+                    return;
+                }
+            }
+
+            lazy_color_depth = .@"16";
+            return;
+        }
+
+        if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
+            if (strings.eqlComptime(term_program, "iTerm.app")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "WezTerm")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "ghostty")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+        }
+
+        var has_color_term_set = false;
+
+        if (bun.getenvZ("COLORTERM")) |color_term| {
+            if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+            has_color_term_set = true;
+        }
+
+        if (term.len > 0) {
+            if (strings.hasPrefixComptime(term, "xterm-256")) {
+                lazy_color_depth = .@"256";
+                return;
+            }
+            const pairs = .{
+                .{ "st", ColorDepth.@"16" },
+                .{ "hurd", ColorDepth.@"16" },
+                .{ "eterm", ColorDepth.@"16" },
+                .{ "gnome", ColorDepth.@"16" },
+                .{ "kterm", ColorDepth.@"16" },
+                .{ "mosh", ColorDepth.@"16m" },
+                .{ "putty", ColorDepth.@"16" },
+                .{ "cons25", ColorDepth.@"16" },
+                .{ "cygwin", ColorDepth.@"16" },
+                .{ "dtterm", ColorDepth.@"16" },
+                .{ "mlterm", ColorDepth.@"16" },
+                .{ "console", ColorDepth.@"16" },
+                .{ "jfbterm", ColorDepth.@"16" },
+                .{ "konsole", ColorDepth.@"16" },
+                .{ "terminator", ColorDepth.@"16m" },
+                .{ "xterm-ghostty", ColorDepth.@"16m" },
+                .{ "rxvt-unicode-24bit", ColorDepth.@"16m" },
+            };
+
+            inline for (pairs) |pair| {
+                if (strings.eqlComptime(term, pair[0])) {
+                    lazy_color_depth = pair[1];
+                    return;
+                }
+            }
+
+            if (strings.includes(term, "con") or
+                strings.includes(term, "ansi") or
+                strings.includes(term, "rxvt") or
+                strings.includes(term, "color") or
+                strings.includes(term, "linux") or
+                strings.includes(term, "vt100") or
+                strings.includes(term, "xterm") or
+                strings.includes(term, "screen"))
+            {
+                lazy_color_depth = .@"16";
+                return;
+            }
+        }
+
+        if (has_color_term_set) {
+            lazy_color_depth = .@"16";
+            return;
+        }
+
+        lazy_color_depth = .none;
+    }
+    pub fn colorDepth() ColorDepth {
+        color_depth_once.call();
+        return lazy_color_depth;
+    }
+
     pub fn set(new_source: *const Source) void {
         source = new_source.*;
 
@@ -269,13 +401,6 @@ pub const Source = struct {
         if (!stdout_stream_set) {
             stdout_stream_set = true;
             if (comptime Environment.isNative) {
-                var enable_color: ?bool = null;
-                if (isForceColor()) {
-                    enable_color = true;
-                } else if (isNoColor() or !isColorTerminal()) {
-                    enable_color = false;
-                }
-
                 const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
@@ -284,6 +409,15 @@ pub const Source = struct {
                 const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
+                }
+
+                var enable_color: ?bool = null;
+                if (isForceColor()) {
+                    enable_color = true;
+                } else if (isNoColor()) {
+                    enable_color = false;
+                } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
+                    enable_color = true;
                 }
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
@@ -335,42 +469,49 @@ pub fn isVerbose() bool {
     return false;
 }
 
-var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
-var _source_for_test_set = false;
-pub fn initTest() void {
-    if (_source_for_test_set) return;
-    _source_for_test_set = true;
-    const in = std.io.getStdErr();
-    const out = std.io.getStdOut();
-    _source_for_test = Output.Source.init(File.from(out), File.from(in));
-    Output.Source.set(&_source_for_test);
-}
+// var _source_for_test: if (Environment.isTest) Source else void = undefined;
+// var _source_for_test_set = false;
+// pub fn initTest() void {
+//     if (_source_for_test_set) return;
+//     _source_for_test_set = true;
+//     const in = std.io.getStdErr();
+//     const out = std.io.getStdOut();
+//     _source_for_test = Source.init(File.from(out), File.from(in));
+//     Source.set(&_source_for_test);
+// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
 
 pub fn disableBuffering() void {
-    Output.flush();
+    flush();
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
-    if (Output.isEmojiEnabled()) {
-        std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
+    if (isEmojiEnabled()) {
+        std.debug.panic(comptime prettyFmt(fmt, true), args);
     } else {
-        std.debug.panic(comptime Output.prettyFmt(fmt, false), args);
+        std.debug.panic(comptime prettyFmt(fmt, false), args);
     }
 }
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+// TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() WriterType {
     bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
+pub fn errorWriterBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_error_stream.writer();
+}
+
+// TODO: investigate returning the buffered_error_stream
 pub fn errorStream() Source.StreamType {
     bun.debugAssert(source_set);
     return source.error_stream;
@@ -471,11 +612,11 @@ pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: a
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
+    printElapsedToWithCtx(elapsed, prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
+    printElapsedToWithCtx(elapsed, pretty, false, {});
 }
 
 pub fn printElapsedStdoutTrim(elapsed: f64) void {
@@ -534,7 +675,7 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isRelease) return;
+    if (!Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -569,19 +710,31 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
+
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = switch (@TypeOf(tag)) {
-        @Type(.EnumLiteral) => @tagName(tag),
-        else => tag,
+    const tagname = comptime brk: {
+        const input = switch (@TypeOf(tag)) {
+            @Type(.EnumLiteral) => @tagName(tag),
+            else => tag,
+        };
+        var ascii_slice: [input.len]u8 = undefined;
+        for (input, &ascii_slice) |in, *out| {
+            out.* = std.ascii.toLower(in);
+        }
+        break :brk ascii_slice;
     };
 
-    if (comptime !Environment.isDebug and !Environment.enable_logs) {
+    return ScopedLogger(&tagname, disabled);
+}
+
+fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+    if (comptime !Environment.enable_logs) {
         return struct {
-            pub fn isVisible() bool {
+            pub inline fn isVisible() bool {
                 return false;
             }
-            pub fn log(comptime _: string, _: anytype) void {}
+            pub inline fn log(comptime _: string, _: anytype) void {}
         };
     }
 
@@ -598,12 +751,22 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         pub fn isVisible() bool {
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
+                } else {
+                    for (bun.argv) |arg| {
+                        if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                            really_disable = false;
+                            break;
+                        } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                            really_disable = false;
+                            break;
+                        }
+                    }
                 }
             }
             return !really_disable;
@@ -645,7 +808,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+            if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -669,7 +832,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 }
 
 pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(tag, disabled).log;
+    return Scoped(
+        tag,
+        disabled,
+    ).log;
 }
 
 // Valid "colors":
@@ -870,17 +1036,17 @@ pub const DebugTimer = struct {
     }
 };
 
-/// Print a blue note message
+/// Print a blue note message to stderr
 pub inline fn note(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
 }
 
-/// Print a yellow warning message
+/// Print a yellow warning message to stderr
 pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug warn", false);
+const debugWarnScope = Scoped("debug_warn", false);
 
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
@@ -991,7 +1157,7 @@ pub fn initScopedDebugWriterAtStartup() void {
             const fd = std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,
             }) catch |open_err| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
+                panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();

@@ -238,6 +238,31 @@ If `exports` is not defined, Bun falls back to `"module"` (ESM imports only) the
 }
 ```
 
+### Custom conditions
+
+The `--conditions` flag allows you to specify a list of conditions to use when resolving packages from package.json `"exports"`.
+
+This flag is supported in both `bun build` and Bun's runtime.
+
+```sh
+# Use it with bun build:
+$ bun build --conditions="react-server" --target=bun ./app/foo/route.js
+
+# Use it with bun's runtime:
+$ bun --conditions="react-server" ./app/foo/route.js
+```
+
+You can also use `conditions` programmatically with `Bun.build`:
+
+```js
+await Bun.build({
+  conditions: ["react-server"],
+  target: "bun",
+  entryPoints: ["./app/foo/route.js"],
+  throw: true,
+});
+```
+
 ## Path re-mapping
 
 In the spirit of treating TypeScript as a first-class citizen, the Bun runtime will re-map import paths according to the [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) field in `tsconfig.json`. This is a major divergence from Node.js, which doesn't support any form of import path re-mapping.

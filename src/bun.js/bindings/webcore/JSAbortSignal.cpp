@@ -271,7 +271,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), *context, WTFMove(reason)))));
 }
 
@@ -293,7 +293,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_timeoutBody(J
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto milliseconds = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, WTFMove(milliseconds)))));
 }
 
@@ -315,7 +315,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto signals = convert<IDLSequence<IDLInterface<AbortSignal>>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTFMove(signals)))));
 }
 
@@ -337,6 +337,13 @@ static inline JSC::EncodedJSValue jsAbortSignalPrototypeFunction_throwIfAbortedB
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSAbortSignal>::call<jsAbortSignalPrototypeFunction_throwIfAbortedBody>(*lexicalGlobalObject, *callFrame, "throwIfAborted");
+}
+
+size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
 
 JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)

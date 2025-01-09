@@ -18,7 +18,7 @@ const URL = @import("./url.zig").URL;
 const PercentEncoding = @import("./url.zig").PercentEncoding;
 pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
-const Lock = @import("./lock.zig").Lock;
+const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
@@ -1041,8 +1041,8 @@ pub const HTTPThread = struct {
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
     queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
 
-    queued_shutdowns_lock: bun.Lock = .{},
-    queued_writes_lock: bun.Lock = .{},
+    queued_shutdowns_lock: bun.Mutex = .{},
+    queued_writes_lock: bun.Mutex = .{},
 
     queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
 

@@ -72,8 +72,8 @@ pub const MessageType = enum(u32) {
     _,
 };
 
-var stderr_mutex: bun.Lock = .{};
-var stdout_mutex: bun.Lock = .{};
+var stderr_mutex: bun.Mutex = .{};
+var stdout_mutex: bun.Mutex = .{};
 
 threadlocal var stderr_lock_count: u16 = 0;
 threadlocal var stdout_lock_count: u16 = 0;

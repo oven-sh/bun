@@ -562,9 +562,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
+
   if (env) {
     Object.assign(bunEnv, env);
   }
+
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;

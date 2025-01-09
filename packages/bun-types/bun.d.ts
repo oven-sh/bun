@@ -6431,8 +6431,10 @@ declare module "bun" {
         devDependencies?: Record<string, string>;
         optionalDependencies?: Record<string, string>;
         peerDependencies?: Record<string, string>;
+        optionalPeers?: string[]
       };
     };
+    overrides?: Record<string, string>;
     patchedDependencies?: Record<string, string>;
     trustedDependencies?: string[];
 
@@ -6468,10 +6470,12 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
     os?: string | string[];
     cpu?: string | string[];
     bin?: Record<string, string>;
     binDir?: string;
+    bundled?: true;
   };
 }
 

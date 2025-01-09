@@ -57,7 +57,7 @@ public:
     // Fills a null-terminated string representation of the given
     // unencodable character into the given replacement buffer.
     // The length of the string (not including the null) will be returned.
-    static int getUnencodableReplacement(char32_t, UnencodableHandling, UnencodableReplacementArray&);
+    static std::span<char> getUnencodableReplacement(char32_t, UnencodableHandling, UnencodableReplacementArray& LIFETIME_BOUND);
 };
 
 Function<void(char32_t, Vector<uint8_t>&)> unencodableHandler(UnencodableHandling);

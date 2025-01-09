@@ -39,11 +39,11 @@ namespace PAL {
 
 static const TextEncoding& UTF7Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF7Encoding("UTF-7");
+    static NeverDestroyed<TextEncoding> globalUTF7Encoding("UTF-7"_s);
     return globalUTF7Encoding;
 }
 
-TextEncoding::TextEncoding(const char* name)
+TextEncoding::TextEncoding(ASCIILiteral name)
     : m_name(atomCanonicalTextEncodingName(name))
     , m_backslashAsCurrencySymbol(backslashAsCurrencySymbol())
 {
@@ -65,7 +65,7 @@ String TextEncoding::decode(std::span<const uint8_t> data, bool stopOnError, boo
     if (m_name.isNull())
         return String();
 
-    return newTextCodec(*this).value()->decode(data, true, stopOnError, sawError);
+    return newTextCodec(*this)->decode(data, true, stopOnError, sawError);
 }
 
 Vector<uint8_t> TextEncoding::encode(StringView string, PAL::UnencodableHandling handling, NFCNormalize normalize) const
@@ -77,8 +77,8 @@ Vector<uint8_t> TextEncoding::encode(StringView string, PAL::UnencodableHandling
     // It's a little strange to do it inside the encode function.
     // Perhaps normalization should be an explicit step done before calling encode.
     if (normalize == NFCNormalize::Yes)
-        return newTextCodec(*this).value()->encode(normalizedNFC(string).view, handling);
-    return newTextCodec(*this).value()->encode(string, handling);
+        return newTextCodec(*this)->encode(normalizedNFC(string).view, handling);
+    return newTextCodec(*this)->encode(string, handling);
 }
 
 ASCIILiteral TextEncoding::domName() const
@@ -93,7 +93,7 @@ ASCIILiteral TextEncoding::domName() const
     // FIXME: This is not thread-safe. At the moment, this function is
     // only accessed in a single thread, but eventually has to be made
     // thread-safe along with usesVisualOrdering().
-    static const ASCIILiteral windows949 = atomCanonicalTextEncodingName("windows-949");
+    static const ASCIILiteral windows949 = atomCanonicalTextEncodingName("windows-949"_s);
     if (m_name == windows949)
         return "EUC-KR"_s;
     return m_name;
@@ -104,7 +104,7 @@ bool TextEncoding::usesVisualOrdering() const
     if (noExtendedTextEncodingNameUsed())
         return false;
 
-    static const ASCIILiteral iso88598 = atomCanonicalTextEncodingName("ISO-8859-8");
+    static const ASCIILiteral iso88598 = atomCanonicalTextEncodingName("ISO-8859-8"_s);
     return m_name == iso88598;
 }
 
@@ -152,38 +152,38 @@ const TextEncoding& TextEncoding::encodingForFormSubmissionOrURLParsing() const
 
 const TextEncoding& ASCIIEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalASCIIEncoding("ASCII");
+    static NeverDestroyed<TextEncoding> globalASCIIEncoding("ASCII"_s);
     return globalASCIIEncoding;
 }
 
 const TextEncoding& Latin1Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalLatin1Encoding("latin1");
+    static NeverDestroyed<TextEncoding> globalLatin1Encoding("latin1"_s);
     return globalLatin1Encoding;
 }
 
 const TextEncoding& UTF16BigEndianEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF16BigEndianEncoding("UTF-16BE");
+    static NeverDestroyed<TextEncoding> globalUTF16BigEndianEncoding("UTF-16BE"_s);
     return globalUTF16BigEndianEncoding;
 }
 
 const TextEncoding& UTF16LittleEndianEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF16LittleEndianEncoding("UTF-16LE");
+    static NeverDestroyed<TextEncoding> globalUTF16LittleEndianEncoding("UTF-16LE"_s);
     return globalUTF16LittleEndianEncoding;
 }
 
 const TextEncoding& UTF8Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF8Encoding("UTF-8");
+    static NeverDestroyed<TextEncoding> globalUTF8Encoding("UTF-8"_s);
     ASSERT(globalUTF8Encoding.get().isValid());
     return globalUTF8Encoding;
 }
 
 const TextEncoding& WindowsLatin1Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalWindowsLatin1Encoding("WinLatin-1");
+    static NeverDestroyed<TextEncoding> globalWindowsLatin1Encoding("WinLatin-1"_s);
     return globalWindowsLatin1Encoding;
 }
 

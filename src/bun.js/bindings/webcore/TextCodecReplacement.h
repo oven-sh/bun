@@ -25,14 +25,13 @@
 
 #pragma once
 
-#include "TextCodec.h"
+#include "TextCodecUTF8.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace PAL {
 
 class TextCodecReplacement final : public TextCodec {
     WTF_MAKE_TZONE_ALLOCATED(TextCodecReplacement);
-
 public:
     static void registerEncodingNames(EncodingNameRegistrar);
     static void registerCodecs(TextCodecRegistrar);

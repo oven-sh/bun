@@ -27,7 +27,7 @@
 #pragma once
 
 #include "TextCodec.h"
-#include <wtf/unicode/icu/unicode/ucnv.h>
+#include "unicode-ucnv.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
@@ -53,7 +53,7 @@ private:
     void createICUConverter() const;
     void releaseICUConverter() const;
 
-    int decodeToBuffer(UChar* buffer, UChar* bufferLimit, const char*& source, const char* sourceLimit, int32_t* offsets, bool flush, UErrorCode&);
+    int decodeToBuffer(std::span<UChar> buffer, std::span<const uint8_t>& source, int32_t* offsets, bool flush, UErrorCode&);
 
     ASCIILiteral m_encodingName;
     ASCIILiteral const m_canonicalConverterName;

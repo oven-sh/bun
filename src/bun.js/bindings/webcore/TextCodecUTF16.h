@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,38 +20,34 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
 #pragma once
 
-#include <memory>
-#include <wtf/Forward.h>
-
-#if PLATFORM(COCOA)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
+#include "TextCodec.h"
+#include <optional>
+#include <wtf/TZoneMalloc.h>
 
 namespace PAL {
 
-class TextCodec;
-class TextEncoding;
+class TextCodecUTF16 final : public TextCodec {
+    WTF_MAKE_TZONE_ALLOCATED(TextCodecUTF16);
+public:
+    static void registerEncodingNames(EncodingNameRegistrar);
+    static void registerCodecs(TextCodecRegistrar);
 
-// Use TextResourceDecoder::decode to decode resources, since it handles BOMs.
-// Use TextEncoding::encode to encode, since it takes care of normalization.
-std::unique_ptr<TextCodec> newTextCodec(const TextEncoding&);
+    explicit TextCodecUTF16(bool littleEndian);
 
-// Only TextEncoding should use the following functions directly.
-ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral alias);
-ASCIILiteral atomCanonicalTextEncodingName(StringView);
-bool noExtendedTextEncodingNameUsed();
-bool isJapaneseEncoding(ASCIILiteral canonicalEncodingName);
-bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName);
+private:
+    void stripByteOrderMark() final { m_shouldStripByteOrderMark = true; }
+    String decode(std::span<const uint8_t>, bool flush, bool stopOnError, bool& sawError) final;
+    Vector<uint8_t> encode(StringView, UnencodableHandling) const final;
 
-String defaultTextEncodingNameForSystemLanguage();
-
-#if PLATFORM(COCOA)
-CFStringEncoding webDefaultCFStringEncoding();
-#endif
+    bool m_littleEndian;
+    std::optional<uint8_t> m_leadByte;
+    std::optional<UChar> m_leadSurrogate;
+    bool m_shouldStripByteOrderMark { false };
+};
 
 } // namespace PAL

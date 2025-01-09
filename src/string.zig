@@ -1228,6 +1228,10 @@ pub const String = extern struct {
         }
 
         const u16_bytes = this.utf16();
+        if (comptime values.len == 0) {
+            @compileError("values.len must be > 0");
+        }
+
         const buffer: [values[0].len]u8 = brk: {
             var bytes: [values[0].len]u8 = undefined;
             for (&bytes, u16_bytes) |*byte, uchar| {

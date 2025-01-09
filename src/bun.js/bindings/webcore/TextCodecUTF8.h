@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,33 +25,34 @@
 
 #pragma once
 
-#include <memory>
-#include <wtf/Forward.h>
-
-#if PLATFORM(COCOA)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
+#include "TextCodec.h"
+#include <unicode/utf8.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/text/LChar.h>
 
 namespace PAL {
 
-class TextCodec;
-class TextEncoding;
+class TextCodecUTF8 final : public TextCodec {
+    WTF_MAKE_TZONE_ALLOCATED(TextCodecUTF8);
+public:
+    static void registerEncodingNames(EncodingNameRegistrar);
+    static void registerCodecs(TextCodecRegistrar);
 
-// Use TextResourceDecoder::decode to decode resources, since it handles BOMs.
-// Use TextEncoding::encode to encode, since it takes care of normalization.
-std::unique_ptr<TextCodec> newTextCodec(const TextEncoding&);
+    static Vector<uint8_t> encodeUTF8(StringView);
+    static std::unique_ptr<TextCodecUTF8> codec();
 
-// Only TextEncoding should use the following functions directly.
-ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral alias);
-ASCIILiteral atomCanonicalTextEncodingName(StringView);
-bool noExtendedTextEncodingNameUsed();
-bool isJapaneseEncoding(ASCIILiteral canonicalEncodingName);
-bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName);
+private:
+    void stripByteOrderMark() final { m_shouldStripByteOrderMark = true; }
+    String decode(std::span<const uint8_t>, bool flush, bool stopOnError, bool& sawError) final;
+    Vector<uint8_t> encode(StringView, UnencodableHandling) const final;
 
-String defaultTextEncodingNameForSystemLanguage();
+    bool handlePartialSequence(std::span<LChar>& destination, std::span<const uint8_t>& source, bool flush);
+    void handlePartialSequence(std::span<UChar>& destination, std::span<const uint8_t>& source, bool flush, bool stopOnError, bool& sawError);
+    void consumePartialSequenceByte();
 
-#if PLATFORM(COCOA)
-CFStringEncoding webDefaultCFStringEncoding();
-#endif
+    int m_partialSequenceSize { 0 };
+    std::array<uint8_t, U8_MAX_LENGTH> m_partialSequence;
+    bool m_shouldStripByteOrderMark { false };
+};
 
 } // namespace PAL

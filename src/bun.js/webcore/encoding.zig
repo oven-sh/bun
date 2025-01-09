@@ -293,7 +293,7 @@ pub const EncodingLabel = enum {
     pub fn which(input_: string) ?EncodingLabel {
         const input = strings.trim(input_, " \t\r\n");
 
-        return strings.inMapCaseInsensitive(input, EncodingLabel.map);
+        return map.getASCIIICaseInsensitive(input);
     }
 };
 
@@ -804,7 +804,7 @@ pub const TextDecoder = struct {
                 else
                     buffer_slice;
 
-                var decoded, const saw_error = try this.decodeUTF16(input, encoding == .@"UTF-16BE", flush);
+                var decoded, const saw_error = try this.decodeUTF16(input, encoding == .@"utf-16be", flush);
 
                 if (saw_error and this.fatal) {
                     decoded.deinit(bun.default_allocator);
@@ -822,14 +822,10 @@ pub const TextDecoder = struct {
                 if (did_stop_on_error and this.fatal) {
                     var name = codec.name();
                     defer name.deref();
-                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {} data", .{name}).throw();
-                    return .zero;
+                    return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {} data", .{name}).throw();
                 }
 
                 return str.toJS(globalThis);
-            },
-            else => {
-                return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
             },
         }
     }

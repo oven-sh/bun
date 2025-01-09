@@ -27,8 +27,10 @@
 #include "TextCodecSingleByte.h"
 
 #include "EncodingTables.h"
+#include <array>
 #include <mutex>
 #include <wtf/IteratorRange.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CodePointIterator.h>
 #include <wtf/text/StringBuilder.h>
@@ -53,7 +55,7 @@ enum class TextCodecSingleByte::Encoding : uint8_t {
 
 using SingleByteDecodeTable = std::array<UChar, 128>;
 using SingleByteEncodeTableEntry = std::pair<UChar, uint8_t>;
-using SingleByteEncodeTable = IteratorRange<const SingleByteEncodeTableEntry*>;
+using SingleByteEncodeTable = std::span<const SingleByteEncodeTableEntry>;
 
 // From https://encoding.spec.whatwg.org/index-iso-8859-3.txt with 0xFFFD filling the gaps
 static constexpr SingleByteDecodeTable iso88593 {
@@ -177,24 +179,23 @@ static constexpr SingleByteDecodeTable ibm866 {
 template<const SingleByteDecodeTable& decodeTable> SingleByteEncodeTable tableForEncoding()
 {
     // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    // FIXME: With the C++20 version of std::count, we should be able to change this from const to constexpr and compute the size at compile time.
-    static const auto size = std::size(decodeTable) - std::count(std::begin(decodeTable), std::end(decodeTable), replacementCharacter);
-    static const SingleByteEncodeTableEntry* entries;
+    static constexpr auto size = std::size(decodeTable) - std::count(std::begin(decodeTable), std::end(decodeTable), replacementCharacter);
+    static const std::array<SingleByteEncodeTableEntry, size>* entries;
     static std::once_flag once;
     std::call_once(once, [&] {
-        auto* mutableEntries = new SingleByteEncodeTableEntry[size];
+        auto* mutableEntries = new std::array<SingleByteEncodeTableEntry, size>();
         size_t j = 0;
-        for (uint8_t i = 0; i < std::size(decodeTable); i++) {
+        for (size_t i = 0; i < std::size(decodeTable); ++i) {
             if (decodeTable[i] != replacementCharacter)
-                mutableEntries[j++] = { decodeTable[i], i + 0x80 };
+                (*mutableEntries)[j++] = { decodeTable[i], i + 0x80 };
         }
         ASSERT(j == size);
-        auto collection = WTF::makeIteratorRange(&mutableEntries[0], &mutableEntries[size]);
+        auto collection = std::span { *mutableEntries };
         sortByFirst(collection);
         ASSERT(sortedFirstsAreUnique(collection));
         entries = mutableEntries;
     });
-    return WTF::makeIteratorRange(&entries[0], &entries[size]);
+    return std::span { *entries };
 }
 
 static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding encoding)

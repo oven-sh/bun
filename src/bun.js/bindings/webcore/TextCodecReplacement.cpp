@@ -64,7 +64,7 @@ String TextCodecReplacement::decode(std::span<const uint8_t>, bool, bool, bool& 
 
 Vector<uint8_t> TextCodecReplacement::encode(StringView string, UnencodableHandling) const
 {
-    return {};
+    return TextCodecUTF8::encodeUTF8(string);
 }
 
 } // namespace PAL

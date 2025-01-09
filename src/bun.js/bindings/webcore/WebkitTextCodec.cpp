@@ -21,8 +21,8 @@ public:
     {
         const auto encoding = TextEncoding(String(encodingLabel));
         auto codec = newTextCodec(encoding);
-        if (codec.has_value()) {
-            return new WebKitTextCodec(WTFMove(*codec), encoding);
+        if (codec) {
+            return new WebKitTextCodec(WTFMove(codec), encoding);
         }
 
         return nullptr;

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "root.h"
+
 #include "UnencodableHandling.h"
 #include <wtf/URL.h>
 #include <wtf/text/StringView.h>
@@ -37,7 +39,7 @@ enum class NFCNormalize : bool { No,
 class TextEncoding : public WTF::URLTextEncoding {
 public:
     TextEncoding() = default;
-    TextEncoding(const char* name);
+    TextEncoding(ASCIILiteral name);
     TextEncoding(StringView name);
     TextEncoding(const String& name);
 

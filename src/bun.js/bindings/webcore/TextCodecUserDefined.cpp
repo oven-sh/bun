@@ -68,8 +68,7 @@ static Vector<uint8_t> encodeComplexUserDefined(StringView string, UnencodableHa
         else {
             // No way to encode this character with x-user-defined.
             UnencodableReplacementArray replacement;
-            int replacementLength = TextCodec::getUnencodableReplacement(character, handling, replacement);
-            result.append(std::span(replacement.data(), replacementLength));
+            result.append(TextCodec::getUnencodableReplacement(character, handling, replacement));
         }
     }
 
@@ -80,12 +79,12 @@ Vector<uint8_t> TextCodecUserDefined::encode(StringView string, UnencodableHandl
 {
     {
         Vector<uint8_t> result(string.length());
-        auto* bytes = result.data();
+        size_t index = 0;
 
         // Convert and simultaneously do a check to see if it's all ASCII.
         UChar ored = 0;
         for (auto character : string.codeUnits()) {
-            *bytes++ = character;
+            result[index++] = character;
             ored |= character;
         }
 

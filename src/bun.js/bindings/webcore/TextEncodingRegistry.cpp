@@ -27,12 +27,13 @@
 #include "config.h"
 #include "TextEncodingRegistry.h"
 
-#include "TextCodec.h"
 #include "TextCodecCJK.h"
 #include "TextCodecICU.h"
 #include "TextCodecLatin1.h"
 #include "TextCodecReplacement.h"
 #include "TextCodecSingleByte.h"
+#include "TextCodecUTF16.h"
+#include "TextCodecUTF8.h"
 #include "TextCodecUserDefined.h"
 #include "TextEncoding.h"
 #include <mutex>
@@ -48,55 +49,62 @@
 
 namespace PAL {
 
-const size_t maxEncodingNameLength = 63;
+constexpr size_t maxEncodingNameLength = 63;
 
 // Hash for all-ASCII strings that does case folding.
 struct TextEncodingNameHash {
-    static bool equal(const char* s1, const char* s2)
+    static bool equal(std::span<const LChar> s1, std::span<const LChar> s2)
     {
-        char c1;
-        char c2;
-        do {
-            c1 = *s1++;
-            c2 = *s2++;
-            if (toASCIILower(c1) != toASCIILower(c2))
+        if (s1.size() != s2.size())
+            return false;
+
+        for (size_t i = 0; i < s1.size(); ++i) {
+            if (toASCIILower(s1[i]) != toASCIILower(s2[i]))
                 return false;
-        } while (c1 && c2);
-        return !c1 && !c2;
+        }
+
+        return true;
+    }
+
+    static bool equal(ASCIILiteral s1, ASCIILiteral s2)
+    {
+        return equal(s1.span8(), s2.span8());
     }
 
     // This algorithm is the one-at-a-time hash from:
     // http://burtleburtle.net/bob/hash/hashfaq.html
     // http://burtleburtle.net/bob/hash/doobs.html
-    static unsigned hash(const char* s)
+    static unsigned hash(std::span<const LChar> s)
     {
         unsigned h = WTF::stringHashingStartValue;
-        for (;;) {
-            char c = *s++;
-            if (!c) {
-                h += (h << 3);
-                h ^= (h >> 11);
-                h += (h << 15);
-                return h;
-            }
+        for (char c : s) {
             h += toASCIILower(c);
             h += (h << 10);
             h ^= (h >> 6);
         }
+        h += (h << 3);
+        h ^= (h >> 11);
+        h += (h << 15);
+        return h;
+    }
+
+    static unsigned hash(ASCIILiteral s)
+    {
+        return hash(s.span8());
     }
 
     static const bool safeToCompareToEmptyOrDeleted = false;
 };
 
 struct HashTranslatorTextEncodingName {
-    static unsigned hash(const char* literal)
+    static unsigned hash(std::span<const LChar> literal)
     {
         return TextEncodingNameHash::hash(literal);
     }
 
-    static bool equal(const ASCIILiteral& a, const char* b)
+    static bool equal(const ASCIILiteral& a, std::span<const LChar> b)
     {
-        return TextEncodingNameHash::equal(a.characters(), b);
+        return TextEncodingNameHash::equal(a.span8(), b);
     }
 };
 
@@ -178,6 +186,12 @@ static void buildBaseTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     TextCodecLatin1::registerEncodingNames(addToTextEncodingNameMap);
     TextCodecLatin1::registerCodecs(addToTextCodecMap);
 
+    TextCodecUTF8::registerEncodingNames(addToTextEncodingNameMap);
+    TextCodecUTF8::registerCodecs(addToTextCodecMap);
+
+    TextCodecUTF16::registerEncodingNames(addToTextEncodingNameMap);
+    TextCodecUTF16::registerCodecs(addToTextCodecMap);
+
     TextCodecUserDefined::registerEncodingNames(addToTextEncodingNameMap);
     TextCodecUserDefined::registerCodecs(addToTextCodecMap);
 }
@@ -253,29 +267,29 @@ static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     buildQuirksSets();
 }
 
-std::optional<std::unique_ptr<TextCodec>> newTextCodec(const TextEncoding& encoding)
+std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
 {
     Locker locker { encodingRegistryLock };
 
     ASSERT(textCodecMap);
     if (!encoding.isValid()) {
-        return std::nullopt;
+        return nullptr;
     }
     auto result = textCodecMap->find(encoding.name());
     if (result == textCodecMap->end()) {
-        return std::nullopt;
+        return nullptr;
     }
     if (!result->value) {
-        RELEASE_LOG_ERROR(TextEncoding, "Codec for encoding %" PUBLIC_LOG_STRING " is null. Will default to UTF-8", encoding.name().characters());
-        return std::nullopt;
+        // RELEASE_LOG_ERROR(TextEncoding, "Codec for encoding %" PUBLIC_LOG_STRING " is null. Will default to UTF-8", encoding.name().characters());
+        return nullptr;
     }
 
-    return { result->value() };
+    return result->value();
 }
 
-ASCIILiteral atomCanonicalTextEncodingName(const char* name)
+static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
 {
-    if (!name || !name[0])
+    if (name.empty())
         return {};
 
     Locker locker { encodingRegistryLock };
@@ -293,17 +307,21 @@ ASCIILiteral atomCanonicalTextEncodingName(const char* name)
     return textEncodingNameMap->get<HashTranslatorTextEncodingName>(name);
 }
 
-template<typename CharacterType> static ASCIILiteral atomCanonicalTextEncodingName(std::span<const CharacterType> characters)
+static ASCIILiteral atomCanonicalTextEncodingName(std::span<const UChar> characters)
 {
-    char buffer[maxEncodingNameLength + 1];
-    size_t j = 0;
-    for (auto character : characters) {
-        if (j == maxEncodingNameLength)
-            return {};
-        buffer[j++] = character;
-    }
-    buffer[j] = 0;
-    return atomCanonicalTextEncodingName(buffer);
+    if (characters.size() > maxEncodingNameLength)
+        return {};
+
+    std::array<LChar, maxEncodingNameLength> buffer;
+    for (size_t i = 0; i < characters.size(); ++i)
+        buffer[i] = characters[i];
+
+    return atomCanonicalTextEncodingName(std::span { buffer }.first(characters.size()));
+}
+
+ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral name)
+{
+    return atomCanonicalTextEncodingName(name.span8());
 }
 
 ASCIILiteral atomCanonicalTextEncodingName(StringView alias)

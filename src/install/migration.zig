@@ -719,7 +719,6 @@ pub fn migrateNPMLockfile(
                         sliced.slice,
                         &sliced,
                         log,
-                        manager,
                     ) orelse {
                         return error.InvalidNPMLockfile;
                     };
@@ -802,7 +801,6 @@ pub fn migrateNPMLockfile(
                                                         tag,
                                                         &dep_resolved_sliced,
                                                         log,
-                                                        manager,
                                                     ) orelse return error.InvalidNPMLockfile;
 
                                                     break :dep_resolved dep_resolved;

@@ -2978,8 +2978,13 @@ it("should get npm alias with matching version", async () => {
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.5.tgz`,
+    `${root_url}/boba`,
+    `${root_url}/boba-0.0.5.tgz`,
+  ]);
+  expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
   expect(await file(join(package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
     name: "baz",

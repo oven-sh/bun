@@ -861,7 +861,6 @@ pub const PackageJSON = struct {
                                 .npm,
                                 &sliced,
                                 r.log,
-                                pm,
                             )) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
                                     if (pm.lockfile.resolvePackageFromNameAndVersion(package_json.name, dependency_version)) |resolved| {
@@ -983,7 +982,6 @@ pub const PackageJSON = struct {
                                         version_str,
                                         &sliced_str,
                                         r.log,
-                                        r.package_manager,
                                     )) |dependency_version| {
                                         const dependency = Dependency{
                                             .name = name,

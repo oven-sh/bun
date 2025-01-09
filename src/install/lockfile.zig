@@ -342,7 +342,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -397,7 +397,7 @@ pub fn loadFromDir(
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -1211,7 +1211,6 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                                 sliced.slice,
                                 &sliced,
                                 null,
-                                manager,
                             ) orelse Dependency.Version{};
                         }
                     }
@@ -1337,7 +1336,7 @@ pub fn cleanWithLogger(
         var builder = new.stringBuilder();
         old.overrides.count(old, &builder);
         try builder.allocate();
-        new.overrides = try old.overrides.clone(manager, old, new, &builder);
+        new.overrides = try old.overrides.clone(old, new, &builder);
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -1360,7 +1359,7 @@ pub fn cleanWithLogger(
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-    _ = try root.clone(manager, old, new, package_id_mapping, &cloner);
+    _ = try root.clone(old, new, package_id_mapping, &cloner);
 
     // Clone workspace_paths and workspace_versions at the end.
     if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
@@ -1542,7 +1541,6 @@ const Cloner = struct {
             const old_package = this.old.packages.get(to_clone.old_resolution);
 
             this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
-                this.manager,
                 this.old,
                 this.lockfile,
                 this.mapping,
@@ -2966,14 +2964,14 @@ pub const OverrideMap = struct {
         }
     }
 
-    pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+    pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
         var new = OverrideMap{};
         try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
 
         for (this.map.keys(), this.map.values()) |k, v| {
             new.map.putAssumeCapacity(
                 k,
-                try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+                try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
             );
         }
 
@@ -3023,7 +3021,6 @@ pub const OverrideMap = struct {
     /// It is assumed the input map is uninitialized (zero entries)
     pub fn parseAppend(
         this: *OverrideMap,
-        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         log: *logger.Log,
@@ -3035,9 +3032,9 @@ pub const OverrideMap = struct {
             assert(this.map.entries.len == 0); // only call parse once
         }
         if (expr.asProperty("overrides")) |overrides| {
-            try this.parseFromOverrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder);
+            try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
         } else if (expr.asProperty("resolutions")) |resolutions| {
-            try this.parseFromResolutions(pm, lockfile, root_package, json_source, log, resolutions.expr, builder);
+            try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
         }
         debug("parsed {d} overrides", .{this.map.entries.len});
     }
@@ -3045,7 +3042,6 @@ pub const OverrideMap = struct {
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
     pub fn parseFromOverrides(
         this: *OverrideMap,
-        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         source: logger.Source,
@@ -3105,7 +3101,6 @@ pub const OverrideMap = struct {
             if (try parseOverrideValue(
                 "override",
                 lockfile,
-                pm,
                 root_package,
                 source,
                 value.loc,
@@ -3123,7 +3118,6 @@ pub const OverrideMap = struct {
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
     pub fn parseFromResolutions(
         this: *OverrideMap,
-        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         source: logger.Source,
@@ -3177,7 +3171,6 @@ pub const OverrideMap = struct {
             if (try parseOverrideValue(
                 "resolution",
                 lockfile,
-                pm,
                 root_package,
                 source,
                 value.loc,
@@ -3195,7 +3188,6 @@ pub const OverrideMap = struct {
     pub fn parseOverrideValue(
         comptime field: []const u8,
         lockfile: *Lockfile,
-        package_manager: *PackageManager,
         root_package: *Lockfile.Package,
         source: logger.Source,
         loc: logger.Loc,
@@ -3243,7 +3235,6 @@ pub const OverrideMap = struct {
                 literalSliced.slice,
                 &literalSliced,
                 log,
-                package_manager,
             ) orelse {
                 try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
                 return null;
@@ -3744,7 +3735,6 @@ pub const Package = extern struct {
 
     pub fn clone(
         this: *const Lockfile.Package,
-        pm: *PackageManager,
         old: *Lockfile,
         new: *Lockfile,
         package_id_mapping: []PackageID,
@@ -3841,7 +3831,6 @@ pub const Package = extern struct {
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
             new_dep.* = try old_dep.clone(
-                pm,
                 old_string_buf,
                 *Lockfile.StringBuilder,
                 builder,
@@ -3875,7 +3864,6 @@ pub const Package = extern struct {
 
     pub fn fromPackageJSON(
         lockfile: *Lockfile,
-        pm: *PackageManager,
         package_json: *PackageJSON,
         comptime features: Features,
     ) !Lockfile.Package {
@@ -3935,7 +3923,7 @@ pub const Package = extern struct {
             for (package_dependencies) |dep| {
                 if (!dep.behavior.isEnabled(features)) continue;
 
-                dependencies[0] = try dep.clone(pm, source_buf, @TypeOf(&string_builder), &string_builder);
+                dependencies[0] = try dep.clone(source_buf, @TypeOf(&string_builder), &string_builder);
                 dependencies = dependencies[1..];
                 if (dependencies.len == 0) break;
             }
@@ -3965,7 +3953,6 @@ pub const Package = extern struct {
     }
 
     pub fn fromNPM(
-        pm: *PackageManager,
         allocator: Allocator,
         lockfile: *Lockfile,
         log: *logger.Log,
@@ -4129,7 +4116,6 @@ pub const Package = extern struct {
                             sliced.slice,
                             &sliced,
                             log,
-                            pm,
                         ) orelse Dependency.Version{},
                     };
 
@@ -4549,7 +4535,6 @@ pub const Package = extern struct {
 
     fn parseDependency(
         lockfile: *Lockfile,
-        pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
@@ -4599,7 +4584,6 @@ pub const Package = extern struct {
             tag,
             &sliced,
             log,
-            pm,
         ) orelse Dependency.Version{};
         var workspace_range: ?Semver.Query.Group = null;
         const name_hash = switch (dependency_version.tag) {
@@ -4670,7 +4654,6 @@ pub const Package = extern struct {
                             .workspace,
                             &path,
                             log,
-                            pm,
                         )) |dep| {
                             found_workspace = true;
                             dependency_version = dep;
@@ -5774,7 +5757,6 @@ pub const Package = extern struct {
 
                     if (try parseDependency(
                         lockfile,
-                        pm,
                         allocator,
                         log,
                         source,
@@ -5817,7 +5799,6 @@ pub const Package = extern struct {
 
                                 if (try parseDependency(
                                     lockfile,
-                                    pm,
                                     allocator,
                                     log,
                                     source,
@@ -5874,7 +5855,7 @@ pub const Package = extern struct {
 
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
-            try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+            try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
         }
 
         string_builder.clamp();
@@ -6479,7 +6460,6 @@ const Buffers = struct {
             .log = log,
             .allocator = allocator,
             .buffer = string_buf,
-            .package_manager = pm_,
         };
 
         this.dependencies.expandToCapacity();
@@ -6875,7 +6855,6 @@ pub const Serializer = struct {
                         .allocator = allocator,
                         .log = log,
                         .buffer = lockfile.buffers.string_bytes.items,
-                        .package_manager = manager,
                     };
                     for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
                         map.putAssumeCapacity(name, Dependency.toDependency(value, context));

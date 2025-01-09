@@ -2737,9 +2737,6 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
-    // name hash from alias package name -> aliased package dependency version info
-    known_npm_aliases: NpmAliasMap = .{},
-
     event_loop: JSC.AnyEventLoop,
 
     // During `installPackages` we learn exactly what dependencies from --trust
@@ -3278,7 +3275,7 @@ pub const PackageManager = struct {
 
             builder.allocate() catch |err| return .{ .failure = err };
 
-            const dep = dummy.cloneWithDifferentBuffers(this, name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
             builder.clamp();
             const index = this.lockfile.buffers.dependencies.items.len;
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -4352,7 +4349,6 @@ pub const PackageManager = struct {
 
         // appendPackage sets the PackageID on the package
         const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
-            this,
             this.allocator,
             this.lockfile,
             this.log,
@@ -5183,29 +5179,6 @@ pub const PackageManager = struct {
         };
 
         const version = version: {
-            if (dependency.version.tag == .npm) {
-                if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                    const group = dependency.version.value.npm.version;
-                    const buf = this.lockfile.buffers.string_bytes.items;
-                    var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
-                    while (curr_list) |queries| {
-                        var curr: ?*const Semver.Query = &queries.head;
-                        while (curr) |query| {
-                            if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
-                                name = aliased.value.npm.name;
-                                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                                break :version aliased;
-                            }
-                            curr = query.next;
-                        }
-                        curr_list = queries.next;
-                    }
-
-                    // fallthrough. a package that matches the name of an alias but does not match
-                    // the version should be enqueued as a normal npm dependency, overrides allowed
-                }
-            }
-
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
             if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
@@ -10327,7 +10300,7 @@ pub const PackageManager = struct {
 
             var array = Array{};
 
-            const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
+            const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
                 return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
@@ -10349,18 +10322,16 @@ pub const PackageManager = struct {
 
         pub fn parse(
             allocator: std.mem.Allocator,
-            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
             subcommand: Subcommand,
         ) []UpdateRequest {
-            return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
+            return parseWithError(allocator, log, positionals, update_requests, subcommand, true) catch Global.crash();
         }
 
         fn parseWithError(
             allocator: std.mem.Allocator,
-            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
@@ -10411,7 +10382,6 @@ pub const PackageManager = struct {
                     null,
                     &SlicedString.init(input, value),
                     log,
-                    pm,
                 ) orelse {
                     if (fatal) {
                         Output.errGeneric("unrecognised dependency format: {s}", .{
@@ -10434,7 +10404,6 @@ pub const PackageManager = struct {
                         null,
                         &SlicedString.init(input, input),
                         log,
-                        pm,
                     )) |ver| {
                         alias = null;
                         version = ver;
@@ -10689,7 +10658,7 @@ pub const PackageManager = struct {
         const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
             &[_]UpdateRequest{}
         else
-            UpdateRequest.parse(ctx.allocator, manager, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
+            UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
         try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
             updates,
@@ -14576,7 +14545,7 @@ pub const PackageManager = struct {
                             break :brk all_name_hashes;
                         };
 
-                        manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
+                        manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -14599,7 +14568,7 @@ pub const PackageManager = struct {
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
 
                         for (new_dependencies, 0..) |new_dep, i| {
-                            dependencies[i] = try new_dep.clone(manager, lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                             if (mapping[i] != invalid_package_id) {
                                 resolutions[i] = old_resolutions[mapping[i]];
                             }

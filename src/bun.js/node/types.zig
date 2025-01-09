@@ -37,24 +37,6 @@ pub const Buffer = JSC.MarkedArrayBuffer;
 /// On unix it is what the utimens api expects
 pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 
-pub const Flavor = enum {
-    sync,
-    promise,
-    callback,
-
-    pub fn Wrap(comptime this: Flavor, comptime T: type) type {
-        return comptime brk: {
-            switch (this) {
-                .sync => break :brk T,
-                // .callback => {
-                //     const Callback = CallbackTask(Type);
-                // },
-                else => @compileError("Not implemented yet"),
-            }
-        };
-    }
-};
-
 /// Node.js expects the error to include contextual information
 /// - "syscall"
 /// - "path"
@@ -1067,15 +1049,14 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef) bun.JSError!void {
-        if (fd < 0) {
-            return ctx.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{});
-        }
-
+    pub fn fileDescriptor(fd: i64, global: JSC.C.JSContextRef) bun.JSError!void {
         const fd_t = if (Environment.isWindows) bun.windows.libuv.uv_file else bun.FileDescriptorInt;
-
-        if (fd > std.math.maxInt(fd_t)) {
-            return ctx.throwInvalidArguments("Invalid file descriptor, must not be greater than {d}", .{std.math.maxInt(fd_t)});
+        if (fd < 0 or fd > std.math.maxInt(fd_t)) {
+            return global.throwRangeError(fd, .{
+                .min = 0,
+                .max = std.math.maxInt(fd_t),
+                .field_name = "fd",
+            });
         }
     }
 
@@ -1089,7 +1070,7 @@ pub const Valid = struct {
                 return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
-        unreachable;
+        comptime unreachable;
     }
 
     pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef) bun.JSError!void {
@@ -1102,7 +1083,7 @@ pub const Valid = struct {
                 return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
-        unreachable;
+        comptime unreachable;
     }
 
     pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef) bun.JSError!void {
@@ -1122,7 +1103,7 @@ pub const Valid = struct {
             },
             1...bun.MAX_PATH_BYTES => return,
         }
-        unreachable;
+        comptime unreachable;
     }
 };
 
@@ -1306,11 +1287,11 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
             return ctx.throwInvalidArgumentTypeValue("mode", "number", value);
         }
 
-        //        An easier method of constructing the mode is to use a sequence of
-        //        three octal digits (e.g. 765). The left-most digit (7 in the example),
-        //        specifies the permissions for the file owner. The middle digit (6 in
-        //        the example), specifies permissions for the group. The right-most
-        //        digit (5 in the example), specifies the permissions for others.
+        // An easier method of constructing the mode is to use a sequence of
+        // three octal digits (e.g. 765). The left-most digit (7 in the example),
+        // specifies the permissions for the file owner. The middle digit (6 in
+        // the example), specifies permissions for the group. The right-most
+        // digit (5 in the example), specifies the permissions for others.
 
         var zig_str = JSC.ZigString.Empty;
         value.toZigString(&zig_str, ctx);

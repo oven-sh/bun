@@ -176,8 +176,7 @@ if (process.env.NODE_TEST_WITH_ASYNC_HOOKS) {
   const destroydIdsList = {};
   const destroyListList = {};
   const initHandles = {};
-  const { internalBinding } = require('internal/test/binding');
-  const async_wrap = internalBinding('async_wrap');
+  const async_wrap = process.binding('async_wrap');
 
   process.on('exit', () => {
     // Iterate through handles to make sure nothing crashes
@@ -564,8 +563,7 @@ function _mustCallInner(fn, criteria = 1, field) {
 }
 
 function hasMultiLocalhost() {
-  const { internalBinding } = require('internal/test/binding');
-  const { TCP, constants: TCPConstants } = internalBinding('tcp_wrap');
+  const { TCP, constants: TCPConstants } = process.binding('tcp_wrap');
   const t = new TCP(TCPConstants.SOCKET);
   const ret = t.bind('127.0.0.2', 0);
   t.close();

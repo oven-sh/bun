@@ -194,7 +194,7 @@ pub const Tag = enum(u8) {
     link,
     lseek,
     lstat,
-    lutimes,
+    lutime,
     mkdir,
     mkdtemp,
     fnctl,
@@ -211,7 +211,7 @@ pub const Tag = enum(u8) {
     symlink,
     symlinkat,
     unlink,
-    utimes,
+    utime,
     write,
     getcwd,
     getenv,
@@ -229,6 +229,7 @@ pub const Tag = enum(u8) {
     pidfd_open,
     poll,
     watch,
+    scandir,
 
     kevent,
     kqueue,
@@ -353,6 +354,21 @@ pub const Error = struct {
             .errno = this.errno,
             .syscall = this.syscall,
             .path = bun.span(path),
+        };
+    }
+
+    pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
+        if (std.meta.Child(@TypeOf(path)) == u16) {
+            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (path)");
+        }
+        if (std.meta.Child(@TypeOf(dest)) == u16) {
+            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (dest)");
+        }
+        return Error{
+            .errno = this.errno,
+            .syscall = this.syscall,
+            .path = bun.span(path),
+            .dest = bun.span(dest),
         };
     }
 
@@ -2068,7 +2084,7 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
 
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSysPD(syscall.symlink(target, dest), .symlink, target, dest)) |err| {
+        if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

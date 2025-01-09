@@ -12135,7 +12135,7 @@ pub const PackageManager = struct {
         const args = bun.JSC.Node.Arguments.Mkdir{
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
-        if (nodefs.mkdirRecursive(args, .sync).asErr()) |e| {
+        if (nodefs.mkdirRecursive(args).asErr()) |e| {
             Output.prettyError(
                 "<r><red>error<r>: failed to make patches dir {}<r>\n",
                 .{e.toSystemError()},

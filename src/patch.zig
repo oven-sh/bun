@@ -108,7 +108,7 @@ pub const PatchFile = struct {
                             .path = .{ .string = bun.PathString.init(path_to_make) },
                             .recursive = true,
                             .mode = 0o755,
-                        }, .sync).asErr()) |e| return e.toSystemError();
+                        }).asErr()) |e| return e.toSystemError();
                     }
 
                     if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
@@ -126,7 +126,7 @@ pub const PatchFile = struct {
                             .path = .{ .string = bun.PathString.init(filedir) },
                             .recursive = true,
                             .mode = @intCast(@intFromEnum(mode)),
-                        }, .sync).asErr()) |e| return e.toSystemError();
+                        }).asErr()) |e| return e.toSystemError();
                     }
 
                     const newfile_fd = switch (bun.sys.openat(

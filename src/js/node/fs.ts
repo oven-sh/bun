@@ -15,10 +15,9 @@ const isDate = types.isDate;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 // Private exports
+// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
 
-// reusing a different private symbol
-// this points to `node_fs_binding.zig`'s `createBinding` function.
 const constants = $processBindingConstants.fs;
 
 var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
@@ -112,18 +111,18 @@ class FSWatcher extends EventEmitter {
 }
 
 /** Implemented in `node_fs_stat_watcher.zig` */
-// interface StatWatcherHandle {
-//   ref();
-//   unref();
-//   close();
-// }
+interface StatWatcherHandle {
+  ref();
+  unref();
+  close();
+}
 
 function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
 }
 
 class StatWatcher extends EventEmitter {
-  // _handle: StatWatcherHandle;
+  _handle: StatWatcherHandle | null;
 
   constructor(path, options) {
     super();

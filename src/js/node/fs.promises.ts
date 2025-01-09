@@ -573,11 +573,11 @@ export default exports;
 
 function throwEBADFIfNecessary(fn, fd) {
   if (fd === -1) {
-    // eslint-disable-next-line no-restricted-syntax
-    const err = new Error("Bad file descriptor");
+    const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";
     err.name = "SystemError";
-    err.syscall = fn.name;
+    var { name } = fn;
+    err.syscall = name.startsWith("bound ") ? name.slice(6) : name;
     throw err;
   }
 }

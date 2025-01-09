@@ -13,7 +13,7 @@ $ bun --hot run index.ts
 Bun detects when you are running an HTTP server with `Bun.serve()`. It reloads your fetch handler when source files change, _without_ restarting the `bun` process. This makes hot reloads nearly instantaneous.
 
 {% callout %}
-Note that this doesn't reload the page on your brower.
+Note that this doesn't reload the page on your browser.
 {% /callout %}
 
 ```ts

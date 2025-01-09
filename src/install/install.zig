@@ -44,7 +44,7 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
@@ -3065,7 +3065,7 @@ pub const PackageManager = struct {
             duration: u64,
         };
 
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
         list: std.ArrayListUnmanaged(Entry) = .{},
 
         pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {

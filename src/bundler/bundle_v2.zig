@@ -93,7 +93,7 @@ const OOM = bun.OOM;
 const HTMLScanner = @import("../HTMLScanner.zig");
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -141,7 +141,7 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
-    workers_assignments_lock: bun.Lock = .{},
+    workers_assignments_lock: bun.Mutex = .{},
 
     v2: *BundleV2 = undefined,
 

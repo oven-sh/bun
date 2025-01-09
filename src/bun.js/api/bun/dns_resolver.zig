@@ -1239,7 +1239,7 @@ pub const InternalDNS = struct {
     const GlobalCache = struct {
         const MAX_ENTRIES = 256;
 
-        lock: bun.Lock = .{},
+        lock: bun.Mutex = .{},
         cache: [MAX_ENTRIES]*Request = undefined,
         len: usize = 0,
 

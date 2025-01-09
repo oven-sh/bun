@@ -50,6 +50,7 @@ export default [
   ["ERR_SOCKET_BAD_PORT", RangeError],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
+  ["ERR_INVALID_IP_ADDRESS", TypeError],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
   ["ERR_INVALID_URI", URIError],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error],
@@ -75,6 +76,9 @@ export default [
 
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+
+  // DNS
+  ["ERR_DNS_SET_SERVERS_FAILED", Error],
 
   // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],

@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    82b2c2277a4d570187c07b376557dc5bde81d848
+    57eee51f46b4a5710468259c3251157900f9abcd
 )
 
 set(MIMALLOC_CMAKE_ARGS

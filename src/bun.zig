@@ -1963,7 +1963,8 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @import("./lock.zig").Lock;
+pub const Lock = @compileError("Use bun.Mutex instead");
+pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -3439,7 +3440,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock: Lock = .{};
+        var lock: Mutex = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -4075,7 +4076,7 @@ pub fn Once(comptime f: anytype) type {
 
         done: bool = false,
         payload: Return = undefined,
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the

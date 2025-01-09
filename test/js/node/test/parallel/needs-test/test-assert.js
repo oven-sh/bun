@@ -23,9 +23,9 @@
 
 const assert = require('node:assert');
 
-require('../../harness');
+require('../../../harness');
 
-const {invalidArgTypeHelper} = require('../common');
+const {invalidArgTypeHelper} = require('../../common');
 const {inspect} = require('util');
 const {test} = require('node:test');
 const vm = require('vm');

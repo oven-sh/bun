@@ -56,6 +56,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Path to bun binary */
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -247,10 +248,11 @@ async function runTests() {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replaceAll(sep, "/");
       if (isNodeParallelTest(testPath)) {
+        const subcommand = title.includes("needs-test") ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: ["--config=./test/js/node/bunfig.toml", title],
+            args: [subcommand, "--config=./test/js/node/bunfig.toml", title],
             timeout: 10_000,
             env: {
               FORCE_COLOR: "0",
@@ -532,7 +534,7 @@ async function spawnSafe(options) {
 }
 
 /**
- * @param {string} execPath
+ * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */

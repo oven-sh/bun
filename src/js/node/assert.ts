@@ -388,22 +388,7 @@ const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffe
 function compareBranch(actual, expected, comparedObjects) {
   // Check for Map object equality
   if (isMap(actual) && isMap(expected)) {
-    if (actual.size !== expected.size) {
-      return false;
-    }
-    const safeIterator = FunctionPrototypeCall(SafeMap.prototype[SymbolIterator], actual);
-
-    comparedObjects ??= new SafeWeakSet();
-
-    for (const { 0: key, 1: val } of safeIterator) {
-      if (!expected.$has(key)) {
-        return false;
-      }
-      if (!compareBranch(val, expected.$get(key), comparedObjects)) {
-        return false;
-      }
-    }
-    return true;
+    return Bun.deepEquals(actual, expected, true);
   }
 
   for (const type of typesToCallDeepStrictEqualWith) {

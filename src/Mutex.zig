@@ -57,13 +57,15 @@ const Impl = if (builtin.mode == .Debug and !builtin.single_threaded)
 else
     ReleaseImpl;
 
-const ReleaseImpl =
+pub const ReleaseImpl =
     if (builtin.os.tag == .windows)
     WindowsImpl
 else if (builtin.os.tag.isDarwin())
     DarwinImpl
 else
     FutexImpl;
+
+pub const ExternImpl = ReleaseImpl.Type;
 
 const DebugImpl = struct {
     locking_thread: std.atomic.Value(Thread.Id) = std.atomic.Value(Thread.Id).init(0), // 0 means it's not locked.
@@ -96,7 +98,7 @@ const DebugImpl = struct {
 // SRWLOCK on windows is almost always faster than Futex solution.
 // It also implements an efficient Condition with requeue support for us.
 const WindowsImpl = struct {
-    srwlock: windows.SRWLOCK = .{},
+    srwlock: Type = .{},
 
     fn tryLock(self: *@This()) bool {
         return windows.kernel32.TryAcquireSRWLockExclusive(&self.srwlock) != windows.FALSE;
@@ -111,11 +113,13 @@ const WindowsImpl = struct {
     }
 
     const windows = std.os.windows;
+
+    pub const Type = windows.SRWLOCK;
 };
 
 // os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
 const DarwinImpl = struct {
-    oul: c.os_unfair_lock = .{},
+    oul: Type = .{},
 
     fn tryLock(self: *@This()) bool {
         return c.os_unfair_lock_trylock(&self.oul);
@@ -130,6 +134,7 @@ const DarwinImpl = struct {
     }
 
     const c = std.c;
+    pub const Type = c.os_unfair_lock;
 };
 
 const FutexImpl = struct {
@@ -196,16 +201,22 @@ const FutexImpl = struct {
             Futex.wake(&self.state, 1);
         }
     }
+
+    pub const Type = u32;
 };
 
 const Mutex = @This();
 
 pub fn spinCycle() void {}
 
-export fn Bun__lock(ptr: *Mutex) void {
+// These have to be a size known to C.
+export fn Bun__lock(ptr: *ReleaseImpl) void {
     ptr.lock();
 }
 
-export fn Bun__unlock(ptr: *Mutex) void {
+// These have to be a size known to C.
+export fn Bun__unlock(ptr: *ReleaseImpl) void {
     ptr.unlock();
 }
+
+export const Bun__lock__size: usize = @sizeOf(ReleaseImpl);

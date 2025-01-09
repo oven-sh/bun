@@ -195,7 +195,7 @@ const exports = {
   read: asyncWrap(fs.read),
   write: asyncWrap(fs.write),
   readdir: asyncWrap(fs.readdir),
-  readfile: function (filehandleorfdorpath, ...args) {
+  readFile: function (filehandleorfdorpath, ...args) {
     filehandleorfdorpath = filehandleorfdorpath?.[kfd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },

@@ -19,7 +19,11 @@ let exports = {
   reset: "",
   hasColors: false,
   shouldColorize(stream: WriteStream) {
-    if (stream?.isTTY) return lazyGetColorDepth().$call(stream) > 2;
+    if (stream?.isTTY) {
+      const depth = lazyGetColorDepth().$call(stream);
+      console.error("stream is a tty with color depth", depth);
+      return depth > 2;
+    }
 
     // do not cache these since users may update them as the process runs
     const { NO_COLOR, NODE_DISABLE_COLORS, FORCE_COLOR } = process.env;

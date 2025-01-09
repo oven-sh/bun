@@ -29,7 +29,7 @@ const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;

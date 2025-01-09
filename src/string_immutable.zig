@@ -832,7 +832,7 @@ pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool
         return false;
     }
 
-    return eqlLong(bun.reinterpretSlice(u8, self[0..str.len]), str, false);
+    return eqlLong(bun.reinterpretSlice(u8, self[0..str.len]), bun.reinterpretSlice(u8, str[0..str.len]), false);
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
@@ -1135,6 +1135,19 @@ pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []con
 
 pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
     return hasPrefixCaseInsensitiveT(u8, str, prefix);
+}
+
+pub fn eqlLongT(comptime T: type, a_str: []const T, b_str: []const T, comptime check_len: bool) bool {
+    if (comptime check_len) {
+        const len = b_str.len;
+        if (len == 0) {
+            return a_str.len == 0;
+        }
+        if (a_str.len != len) {
+            return false;
+        }
+    }
+    return eqlLong(bun.reinterpretSlice(u8, a_str), bun.reinterpretSlice(u8, b_str), false);
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {

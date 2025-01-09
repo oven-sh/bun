@@ -65,6 +65,7 @@ pub const InitCommand = struct {
         const @".gitignore" = @embedFile("init/gitignore.default");
         const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
         const @"README.md" = @embedFile("init/README.default.md");
+        const @"bunfig.toml" = @embedFile("init/bunfig.default.toml");
 
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -321,6 +322,7 @@ pub const InitCommand = struct {
             write_gitignore: bool = true,
             write_package_json: bool = true,
             write_tsconfig: bool = true,
+            write_bunfig: bool = true,
             write_readme: bool = true,
         };
 
@@ -341,6 +343,8 @@ pub const InitCommand = struct {
 
             break :brk true;
         };
+
+        steps.write_bunfig = !existsZ("bunfig.toml");
 
         {
             try fields.object.putString(alloc, "name", fields.name);
@@ -436,6 +440,12 @@ pub const InitCommand = struct {
 
         if (steps.write_gitignore) {
             Assets.create(".gitignore", .{}) catch {
+                // suppressed
+            };
+        }
+
+        if (steps.write_bunfig) {
+            Assets.create("bunfig.toml", .{}) catch {
                 // suppressed
             };
         }

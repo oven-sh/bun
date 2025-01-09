@@ -1,0 +1,6 @@
+# Bun-specific configuration. This file is optional.
+# Docs: https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Use a text-based lockfile instead of a binary one. This will become the default in v1.2
+saveTextLockfile = true

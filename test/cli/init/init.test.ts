@@ -37,6 +37,7 @@ test("bun init works", () => {
   expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
 }, 30_000);
 
 test("bun init with piped cli", () => {
@@ -73,4 +74,5 @@ test("bun init with piped cli", () => {
   expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
 }, 30_000);

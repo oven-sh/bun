@@ -2112,7 +2112,7 @@ pub const Query = struct {
         head: List = List{},
         tail: ?*List = null,
         allocator: Allocator,
-        input: string = "",
+        input: String = .{},
 
         flags: FlagsBitSet = FlagsBitSet.initEmpty(),
         pub const Flags = struct {
@@ -2538,14 +2538,14 @@ pub const Query = struct {
 
     pub fn parse(
         allocator: Allocator,
-        input: string,
         sliced: SlicedString,
     ) bun.OOM!Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
-            .input = input,
+            .input = sliced.value(),
         };
+        const input = sliced.slice;
 
         var token = Token{};
         var prev_token = Token{};
@@ -2872,7 +2872,6 @@ pub const SemverObject = struct {
 
         const right_group = try Query.parse(
             allocator,
-            right.slice(),
             SlicedString.init(right.slice(), right.slice()),
         );
         defer right_group.deinit();

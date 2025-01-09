@@ -925,7 +925,6 @@ pub fn parseWithTag(
 
             const version = Semver.Query.parse(
                 allocator,
-                input,
                 sliced.sub(input),
             ) catch |err| {
                 switch (err) {

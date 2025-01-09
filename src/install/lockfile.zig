@@ -4219,6 +4219,8 @@ pub const Package = extern struct {
             var to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
+            const from_pkgs = from_lockfile.packages.slice();
+            const from_pkg_resolutions = from_pkgs.items(.resolution);
             var to_i: usize = 0;
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
@@ -4364,7 +4366,9 @@ pub const Package = extern struct {
                 break :patched_dependencies_changed false;
             };
 
-            for (from_deps, 0..) |*from_dep, i| {
+            for (from_deps, 0..) |*from_dep, _from_dep_id| {
+                const from_dep_id: DependencyID = @truncate(_from_dep_id);
+
                 found: {
                     const prev_i = to_i;
 
@@ -4389,7 +4393,45 @@ pub const Package = extern struct {
                 }
                 defer to_i += 1;
 
-                if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
+                const to_dep = to_deps[to_i];
+
+                const match = match: {
+                    eql: {
+                        if (to_dep.version.tag != .npm) {
+                            break :eql;
+                        }
+                        if (from_dep_id >= from_lockfile.buffers.resolutions.items.len) {
+                            break :eql;
+                        }
+                        const from_pkg_id = from_lockfile.buffers.resolutions.items[from_dep_id];
+                        if (from_pkg_id >= from_lockfile.packages.len) {
+                            break :eql;
+                        }
+                        const from_res = from_pkg_resolutions[from_pkg_id];
+                        if (from_res.tag != .npm) {
+                            break :eql;
+                        }
+
+                        // if it satisfies we should not update it
+                        const satisfies = to_dep.version.value.npm.version.satisfies(
+                            from_res.value.npm.version,
+                            to_lockfile.buffers.string_bytes.items,
+                            from_lockfile.buffers.string_bytes.items,
+                        );
+
+                        if (satisfies) {
+                            // need to make sure the lockfile is saved even
+                            // though there possibly no diff
+                            summary.update += 1;
+                        }
+
+                        break :match satisfies;
+                    }
+
+                    break :match to_dep.eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items);
+                };
+
+                if (match) {
                     if (update_requests) |updates| {
                         if (updates.len == 0 or brk: {
                             for (updates) |request| {
@@ -4404,7 +4446,7 @@ pub const Package = extern struct {
                     }
 
                     if (id_mapping) |mapping| {
-                        const version = to_deps[to_i].version;
+                        const version = to_dep.version;
                         const update_mapping = switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
@@ -4435,7 +4477,7 @@ pub const Package = extern struct {
 
                                 to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
 
-                                var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
+                                var from_pkg = from_lockfile.packages.get(from_resolutions[from_dep_id]);
                                 const diff = try generate(
                                     pm,
                                     allocator,
@@ -4463,7 +4505,7 @@ pub const Package = extern struct {
                         };
 
                         if (update_mapping) {
-                            mapping[to_i] = @truncate(i);
+                            mapping[to_i] = from_dep_id;
                             continue;
                         }
                     } else {
@@ -4594,14 +4636,14 @@ pub const Package = extern struct {
                 if (trimmed.len != 1 or (trimmed[0] != '*' and trimmed[0] != '^' and trimmed[0] != '~')) {
                     const at = strings.lastIndexOfChar(input, '@') orelse 0;
                     if (at > 0) {
-                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch |err| {
+                        workspace_range = Semver.Query.parse(allocator, sliced.sub(input[at + 1 ..])) catch |err| {
                             switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                             }
                         };
                         break :brk String.Builder.stringHash(input[0..at]);
                     }
-                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch |err| {
+                    workspace_range = Semver.Query.parse(allocator, sliced) catch |err| {
                         switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                         }
@@ -4686,7 +4728,8 @@ pub const Package = extern struct {
                         }
 
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
-                        const version_literal = strings.trim(range.input, &strings.whitespace_chars);
+                        const range_input = range.input.slice(lockfile.buffers.string_bytes.items);
+                        const version_literal = strings.trim(range_input, &strings.whitespace_chars);
                         if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;

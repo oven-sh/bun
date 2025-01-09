@@ -1520,6 +1520,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#agent;
   }
 
+  set agent(value) {
+    this.#agent = value;
+  }
+
   #createStream() {
     if (!this.#stream) {
       var self = this;

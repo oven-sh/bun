@@ -49,7 +49,6 @@ const {
 } = require("internal/primordials");
 
 const { Buffer } = require("node:buffer");
-const { deprecate } = require("node:util");
 const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 
@@ -980,8 +979,8 @@ var CallTracker;
 Object.defineProperty(assert, "CallTracker", {
   get() {
     if (CallTracker === undefined) {
-      CallTracker = require("internal/assert/calltracker");
-      deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
+      const { deprecate } = require("node:util");
+      CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
     }
     return CallTracker;
   },

@@ -253,13 +253,14 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replaceAll(sep, "/");
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeParallelTest(testPath)) {
         const subcommand = title.includes("needs-test") ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [subcommand, "--config=./test/js/node/bunfig.toml", title],
+            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",

@@ -2419,7 +2419,7 @@ class ServerHttp2Session extends Http2Session {
     // throwNotImplemented("ServerHttp2Stream.prototype.origin()");
   }
 
-  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
+  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
     super();
     this[kServer] = server;
     this.#connected = true;

@@ -41,7 +41,7 @@ $ bun outdated --filter 'pkg-*'
 $ bun outdated --filter './'
 ```
 
-For more infomation on both these commands, see [`bun install`](https://bun.sh/docs/cli/install) and [`bun outdated`](https://bun.sh/docs/cli/outdated).
+For more information on both these commands, see [`bun install`](https://bun.sh/docs/cli/install) and [`bun outdated`](https://bun.sh/docs/cli/outdated).
 
 ## Running scripts with `--filter`
 

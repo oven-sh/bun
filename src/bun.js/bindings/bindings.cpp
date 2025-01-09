@@ -1978,6 +1978,12 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
+    if (err.hostname.tag != BunStringTag::Empty) {
+        JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
+        result->putDirect(vm, names.hostnamePublicName(), hostname,
+            JSC::PropertyAttribute::DontDelete | 0);
+    }
+
     result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_),
         JSC::PropertyAttribute::DontDelete | 0);
 

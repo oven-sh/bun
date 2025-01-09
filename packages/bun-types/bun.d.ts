@@ -1035,6 +1035,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {

@@ -7,7 +7,6 @@ const {
   FunctionPrototype,
   ObjectFreeze,
   Proxy,
-  ReflectApply,
   SafeSet,
   SafeWeakMap,
 } = require("internal/primordials");
@@ -107,7 +106,7 @@ class CallTracker {
       __proto__: null,
       apply(fn, thisArg, argList) {
         context.track(thisArg, argList);
-        return ReflectApply(fn, thisArg, argList);
+        return fn.$apply(thisArg, argList);
       },
     });
     this.#callChecks.add(context);

@@ -35,7 +35,6 @@ const {
   ObjectIs,
   ObjectKeys,
   ObjectPrototypeIsPrototypeOf,
-  ReflectApply,
   ReflectHas,
   ReflectOwnKeys,
   RegExpPrototypeExec,
@@ -655,7 +654,7 @@ function expectedException(actual, expected, message, fn) {
     throwError = true;
   } else {
     // Check validation functions return value.
-    const res = ReflectApply(expected, {}, [actual]);
+    const res = expected.$apply({}, [actual]);
     if (res !== true) {
       if (!message) {
         generatedMessage = true;
@@ -789,7 +788,7 @@ function hasMatchingError(actual, expected) {
   if (ObjectPrototypeIsPrototypeOf(Error, expected)) {
     return false;
   }
-  return ReflectApply(expected, {}, [actual]) === true;
+  return expected.$apply({}, [actual]) === true;
 }
 
 function expectsNoError(stackStartFn, actual, error, message) {

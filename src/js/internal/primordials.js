@@ -159,7 +159,6 @@ export default {
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectApply: Reflect["apply"],
   ReflectHas: Reflect.has,
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,

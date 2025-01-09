@@ -4783,7 +4783,11 @@ describe("transitive file dependencies", () => {
       "",
       "+ @another-scope/file-dep@1.0.0",
       "+ @scoped/file-dep@1.0.0",
-      "+ aliased-file-dep@1.0.1",
+      // 'aliased-file-dep' is hoisted to the root, because
+      // it coming from the registry, and since this
+      // install is from the workspace, it won't be included
+      // in the terminal output
+      // "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
       expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
@@ -4814,7 +4818,7 @@ describe("transitive file dependencies", () => {
       "",
       "+ @another-scope/file-dep@1.0.0",
       "+ @scoped/file-dep@1.0.0",
-      "+ aliased-file-dep@1.0.1",
+      // "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
       expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",

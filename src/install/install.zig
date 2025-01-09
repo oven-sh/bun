@@ -44,7 +44,7 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
@@ -57,7 +57,7 @@ const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
@@ -3068,7 +3068,7 @@ pub const PackageManager = struct {
             duration: u64,
         };
 
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
         list: std.ArrayListUnmanaged(Entry) = .{},
 
         pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {

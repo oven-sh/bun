@@ -2,7 +2,7 @@ const std = @import("std");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const bun = @import("root").bun;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
@@ -1420,7 +1420,9 @@ pub const ThreadSafeFunction = struct {
 
     // User implementation error can cause this number to go negative.
     thread_count: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    // for std.condvar
     lock: std.Thread.Mutex = .{},
+
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 

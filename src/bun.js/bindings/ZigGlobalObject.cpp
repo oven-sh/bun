@@ -496,8 +496,10 @@ WTF::String Bun::formatStackTrace(
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (frame.hasLineAndColumnInfo()) {
             auto* callee = frame.callee();
-            if (auto* object = callee->getObject()) {
-                globalObjectForFrame = object->globalObject();
+            if (callee) {
+                if (auto* object = callee->getObject()) {
+                    globalObjectForFrame = object->globalObject();
+                }
             }
         }
 

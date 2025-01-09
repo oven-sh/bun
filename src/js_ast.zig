@@ -26,7 +26,7 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
 const Loader = bun.options.Loader;
@@ -132,7 +132,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
-            store.debug_lock.assertUnlocked();
             log("reset", .{});
 
             if (Environment.isDebug) {
@@ -152,8 +151,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             comptime if (!supportsType(T)) {
                 @compileError("Store does not know about type: " ++ @typeName(T));
             };
-
-            store.debug_lock.assertUnlocked();
 
             if (store.current.tryAlloc(T)) |ptr|
                 return ptr;

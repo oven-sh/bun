@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const options = @import("./options.zig");
 
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
@@ -117,9 +117,7 @@ const INotify = struct {
         bun.assert(this.loaded_inotify);
 
         restart: while (true) {
-            Futex.wait(&this.watch_count, 0, null) catch |err| switch (err) {
-                error.TimedOut => unreachable, // timeout is infinite
-            };
+            Futex.waitForever(&this.watch_count, 0);
 
             const rc = std.posix.system.read(
                 this.inotify_fd,
@@ -647,9 +645,6 @@ pub const NewWatcher = if (true)
                 this.close_descriptors = close_descriptors;
                 this.running = false;
             } else {
-                // if the mutex is locked, then that's now a UAF.
-                this.mutex.releaseAssertUnlocked("Watcher mutex is locked when it should not be.");
-
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {

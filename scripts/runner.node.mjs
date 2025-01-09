@@ -49,6 +49,13 @@ const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
+function getNodeParallelTestTimeout(testPath) {
+  if (testPath.includes("test-dns")) {
+    return 90_000;
+  }
+  return 10_000;
+}
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
@@ -246,12 +253,12 @@ async function runTests() {
   if (!failedResults.length) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      if (title.startsWith("test/js/node/test/parallel/")) {
+      if (isNodeParallelTest(testPath)) {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
-            timeout: 10_000,
+            timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
             },
@@ -851,11 +858,19 @@ function isJavaScriptTest(path) {
 }
 
 /**
+ * @param {string} testPath
+ * @returns {boolean}
+ */
+function isNodeParallelTest(testPath) {
+  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/")
+}
+
+/**
  * @param {string} path
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
+  if (isNodeParallelTest(path) && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
@@ -1035,7 +1050,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+    tests = tests.filter(isNodeParallelTest);
   }
 
   const isMatch = (testPath, filter) => {

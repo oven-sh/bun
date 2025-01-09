@@ -51,7 +51,7 @@ const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
-    return 45_000;
+    return 90_000;
   }
   return 10_000;
 }

@@ -1230,6 +1230,16 @@ declare module "bun" {
      * Deletes the file.
      */
     unlink(): Promise<void>;
+
+    /**
+     * Deletes the file.
+    */
+    delete(): Promise<void>
+
+    /**
+     *  Provides useful information about the file.
+    */
+    stat(): Stats
   }
   interface NetworkSink extends FileSink {
     /**

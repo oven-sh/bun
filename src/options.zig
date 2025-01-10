@@ -1289,16 +1289,16 @@ pub fn definesFromTransformOptions(
 
 const default_loader_ext_bun = [_]string{".node"};
 const default_loader_ext = [_]string{
-    ".jsx",     ".json",
-    ".js",      ".mjs",
-    ".cjs",     ".css",
+    ".jsx",   ".json",
+    ".js",    ".mjs",
+    ".cjs",   ".css",
 
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-    ".ts",      ".tsx",
-    ".mts",     ".cts",
+    ".ts",    ".tsx",
+    ".mts",   ".cts",
 
-    ".toml",    ".wasm",
-    ".txt",     ".text",
+    ".toml",  ".wasm",
+    ".txt",   ".text",
 
     ".jsonc",
 };

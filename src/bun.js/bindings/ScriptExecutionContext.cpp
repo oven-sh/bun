@@ -226,7 +226,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
 ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
 {
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(2);
+    return allScriptExecutionContextsMap().get(1);
 }
 
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)

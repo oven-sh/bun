@@ -792,7 +792,7 @@ describe.todo("run from stdin", async () => {
   // - which says 'catch return false'
 });
 
-describe.only("should run scripts from the project root (#16169)", async () => {
+describe("should run scripts from the project root (#16169)", async () => {
   const dir = tempDirWithFiles("test", {
     "run_here": {
       "myscript.ts": "console.log('successful run')",
@@ -819,6 +819,17 @@ describe.only("should run scripts from the project root (#16169)", async () => {
   it("inside", () => {
     const run_inside = spawnSync({
       cmd: [bunExe(), "run", "sample"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("run_here");
+    expect(run_inside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside --shell=bun", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "--shell=bun", "run", "sample"],
       cwd: dir + "/run_here/dont_run_in_here",
       env: bunEnv,
     });

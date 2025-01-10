@@ -39,7 +39,7 @@ pub const ExecCommand = struct {
         };
         const script_path = bun.path.join(parts, .auto);
 
-        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script) catch |err| {
+        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script, null) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script_path, @errorName(err) });
             Global.exit(1);
         };

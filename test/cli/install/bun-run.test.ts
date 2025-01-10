@@ -854,7 +854,13 @@ describe("should run scripts from the project root (#16169)", async () => {
       cwd: dir + "/run_here/dont_run_in_here",
       env: bunEnv,
     });
-    expect(run_inside.stderr.toString()).toBe('error: Module not found "myscript.ts"\n');
+    const stderr = run_inside.stderr.toString();
+    if (stderr.includes("myscript.ts") && stderr.includes("EACCESS")) {
+      // for some reason on musl, the run_here folder is in $PATH
+      // 'error: Failed to run "myscript.ts" due to:\nEACCES: run_here/myscript.ts: Permission denied (posix_spawn())'
+    } else {
+      expect(stderr).toBe('error: Module not found "myscript.ts"\n');
+    }
     expect(run_inside.exitCode).toBe(1);
   });
 

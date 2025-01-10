@@ -169,6 +169,7 @@ pub const FolderResolution = union(Tag) {
 
     fn readPackageJSONFromDisk(
         manager: *PackageManager,
+        lockfile: *Lockfile,
         abs: stringZ,
         comptime features: Features,
         comptime ResolverType: type,
@@ -183,7 +184,7 @@ pub const FolderResolution = union(Tag) {
             const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
 
             try package.parseWithJSON(
-                manager.lockfile,
+                lockfile,
                 manager,
                 manager.allocator,
                 manager.log,
@@ -214,7 +215,7 @@ pub const FolderResolution = union(Tag) {
             };
 
             try package.parse(
-                manager.lockfile,
+                lockfile,
                 manager,
                 manager.allocator,
                 manager.log,
@@ -237,13 +238,13 @@ pub const FolderResolution = union(Tag) {
 
         package.meta.setHasInstallScript(has_scripts);
 
-        if (manager.lockfile.getPackageID(package.name_hash, &package.resolution)) |existing_id| {
+        if (lockfile.getPackageID(package.name_hash, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;
             manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);
         }
 
-        return manager.lockfile.appendPackage(package);
+        return lockfile.appendPackage(package);
     }
 
     pub const GlobalOrRelative = union(enum) {
@@ -252,7 +253,7 @@ pub const FolderResolution = union(Tag) {
         cache_folder: []const u8,
     };
 
-    pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
+    pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager, lockfile: *Lockfile) FolderResolution {
         var joined: bun.PathBuffer = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
         const abs = paths.abs;
@@ -265,7 +266,7 @@ pub const FolderResolution = union(Tag) {
         }
         const abs_hash = hash(abs);
 
-        const entry = manager.folders.getOrPut(manager.allocator, abs_hash) catch unreachable;
+        const entry = lockfile.folder_resolutions.getOrPut(lockfile.allocator, abs_hash) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {
@@ -277,6 +278,7 @@ pub const FolderResolution = union(Tag) {
                 };
                 break :global readPackageJSONFromDisk(
                     manager,
+                    lockfile,
                     abs,
                     Features.link,
                     SymlinkResolver,
@@ -290,6 +292,7 @@ pub const FolderResolution = union(Tag) {
                     };
                     break :folder readPackageJSONFromDisk(
                         manager,
+                        lockfile,
                         abs,
                         Features.folder,
                         Resolver,
@@ -302,6 +305,7 @@ pub const FolderResolution = union(Tag) {
                     };
                     break :workspace readPackageJSONFromDisk(
                         manager,
+                        lockfile,
                         abs,
                         Features.workspace,
                         WorkspaceResolver,
@@ -316,6 +320,7 @@ pub const FolderResolution = union(Tag) {
                 };
                 break :cache_folder readPackageJSONFromDisk(
                     manager,
+                    lockfile,
                     abs,
                     Features.npm,
                     CacheFolderResolver,

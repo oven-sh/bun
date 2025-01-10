@@ -157,6 +157,8 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 
+folder_resolutions: FolderResolution.Map = .{},
+
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
@@ -4183,6 +4185,10 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
 
+            // Dependency version literal changed, but it still
+            // satisfies the version of the package in the lockfile.
+            satisfied_versions: u32 = 0,
+
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
             added_trusted_dependencies: std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, bool, ArrayIdentityContext, false) = .{},
@@ -4208,20 +4214,22 @@ pub const Package = extern struct {
             pm: *PackageManager,
             allocator: Allocator,
             log: *logger.Log,
-            from_lockfile: *Lockfile,
+            from_lockfile: *const Lockfile,
             to_lockfile: *Lockfile,
-            from: *Lockfile.Package,
-            to: *Lockfile.Package,
+            from_pkg_id: PackageID,
+            to_pkg_id: PackageID,
             update_requests: ?[]PackageManager.UpdateRequest,
-            id_mapping: ?[]PackageID,
+            dep_map: *std.ArrayList(DependencyID),
+            pkg_map: *std.ArrayList(PackageID),
         ) !Summary {
             var summary = Summary{};
-            var to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
-            const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
-            const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
+
             const from_pkgs = from_lockfile.packages.slice();
             const from_pkg_resolutions = from_pkgs.items(.resolution);
-            var to_i: usize = 0;
+            const from_pkg_dependencies = from_pkgs.items(.dependencies);
+            const from_pkg_scripts = from_pkgs.items(.scripts);
+
+            const from_deps = from_pkg_dependencies[from_pkg_id];
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
                 summary.overrides_changed = true;
@@ -4366,23 +4374,32 @@ pub const Package = extern struct {
                 break :patched_dependencies_changed false;
             };
 
-            for (from_deps, 0..) |*from_dep, _from_dep_id| {
+            const to_deps_off: DependencyID, const to_deps_len = to_deps: {
+                const to_deps = to_lockfile.packages.items(.dependencies)[to_pkg_id];
+                break :to_deps .{ to_deps.off, to_deps.len };
+            };
+            const to_deps_end = to_deps_off + to_deps_len;
+
+            var to_dep_id = to_deps_off;
+
+            for (from_deps.begin()..from_deps.end()) |_from_dep_id| {
                 const from_dep_id: DependencyID = @truncate(_from_dep_id);
+                const from_dep = from_lockfile.buffers.dependencies.items[from_dep_id];
 
                 found: {
-                    const prev_i = to_i;
+                    const prev_i = to_dep_id;
 
                     // common case, dependency is present in both versions:
                     // - in the same position
                     // - shifted by a constant offset
-                    while (to_i < to_deps.len) : (to_i += 1) {
-                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    while (to_dep_id < to_deps_end) : (to_dep_id += 1) {
+                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) break :found;
                     }
 
                     // less common, o(n^2) case
-                    to_i = 0;
-                    while (to_i < prev_i) : (to_i += 1) {
-                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    to_dep_id = to_deps_off;
+                    while (to_dep_id < prev_i) : (to_dep_id += 1) {
+                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) break :found;
                     }
 
                     // We found a removed dependency!
@@ -4391,11 +4408,10 @@ pub const Package = extern struct {
                     summary.remove += 1;
                     continue;
                 }
-                defer to_i += 1;
-
-                const to_dep = to_deps[to_i];
+                defer to_dep_id += 1;
 
                 const match = match: {
+                    const to_dep = to_lockfile.buffers.dependencies.items[to_dep_id];
                     eql: {
                         if (to_dep.version.tag != .npm) {
                             break :eql;
@@ -4403,32 +4419,35 @@ pub const Package = extern struct {
                         if (from_dep_id >= from_lockfile.buffers.resolutions.items.len) {
                             break :eql;
                         }
-                        const from_pkg_id = from_lockfile.buffers.resolutions.items[from_dep_id];
-                        if (from_pkg_id >= from_lockfile.packages.len) {
+                        const from_dep_pkg_id = from_lockfile.buffers.resolutions.items[from_dep_id];
+                        if (from_dep_pkg_id >= from_lockfile.packages.len) {
                             break :eql;
                         }
-                        const from_res = from_pkg_resolutions[from_pkg_id];
+                        const from_res = from_pkg_resolutions[from_dep_pkg_id];
                         if (from_res.tag != .npm) {
                             break :eql;
                         }
 
-                        // if it satisfies we should not update it
+                        const equals = to_dep.eql(&from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items);
+
+                        if (equals) {
+                            break :match true;
+                        }
+
+                        // if it satisfies we should not update the resolution
                         const satisfies = to_dep.version.value.npm.version.satisfies(
                             from_res.value.npm.version,
                             to_lockfile.buffers.string_bytes.items,
                             from_lockfile.buffers.string_bytes.items,
                         );
 
-                        if (satisfies) {
-                            // need to make sure the lockfile is saved even
-                            // though there possibly no diff
-                            summary.update += 1;
-                        }
+                        // but we want the version to update in the lockfile
+                        summary.satisfied_versions += @intFromBool(satisfies);
 
                         break :match satisfies;
                     }
 
-                    break :match to_dep.eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items);
+                    break :match to_dep.eql(&from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items);
                 };
 
                 if (match) {
@@ -4445,49 +4464,48 @@ pub const Package = extern struct {
                         }
                     }
 
-                    if (id_mapping) |mapping| {
-                        const version = to_dep.version;
-                        const update_mapping = switch (version.tag) {
-                            .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
+                    {
+                        const is_workspace_only = to_lockfile.buffers.dependencies.items[to_dep_id].behavior.isWorkspaceOnly();
+                        const is_workspace_version = to_lockfile.buffers.dependencies.items[to_dep_id].version.tag == .workspace;
+                        const update_mapping = !is_workspace_only or !is_workspace_version or update_mapping: {
+                            const path_ptr = to_lockfile.workspace_paths.getPtr(from_dep.name_hash) orelse {
+                                break :update_mapping false;
+                            };
+
+                            {
                                 const path = to_lockfile.str(path_ptr);
                                 var local_buf: bun.PathBuffer = undefined;
-                                const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
 
-                                const source = bun.sys.File.toSource(package_json_path, allocator).unwrap() catch {
-                                    // Can't guarantee this workspace still exists
-                                    break :brk false;
-                                };
-
-                                var workspace = Package{};
-
-                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
-
-                                var resolver: void = {};
-                                try workspace.parseWithJSON(
-                                    to_lockfile,
-                                    pm,
-                                    allocator,
-                                    log,
-                                    source,
-                                    json.root,
-                                    void,
-                                    &resolver,
-                                    Features.workspace,
+                                const workspace_path = Path.joinAbsStringBuf(
+                                    FileSystem.instance.top_level_dir,
+                                    &local_buf,
+                                    &[_]string{path},
+                                    .auto,
                                 );
 
-                                to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
+                                // version isn't used for workspaces
+                                const dummy_version: Dependency.Version = .{};
+                                const workspace_to_pkg_id = switch (FolderResolution.getOrPut(.{ .relative = .workspace }, dummy_version, workspace_path, pm, to_lockfile)) {
+                                    .err => break :update_mapping false,
+                                    .new_package_id, .package_id => |pkg_id| pkg_id,
+                                };
 
-                                var from_pkg = from_lockfile.packages.get(from_resolutions[from_dep_id]);
+                                to_lockfile.buffers.resolutions.items[to_dep_id] = workspace_to_pkg_id;
+                                const workspace_from_pkg_id = from_lockfile.buffers.resolutions.items[from_dep_id];
+
+                                try pkg_map.append(workspace_from_pkg_id);
+
                                 const diff = try generate(
                                     pm,
                                     allocator,
                                     log,
                                     from_lockfile,
                                     to_lockfile,
-                                    &from_pkg,
-                                    &workspace,
+                                    workspace_from_pkg_id,
+                                    workspace_to_pkg_id,
                                     update_requests,
-                                    null,
+                                    dep_map,
+                                    pkg_map,
                                 );
 
                                 if (PackageManager.verbose_install and (diff.add + diff.remove + diff.update) > 0) {
@@ -4499,17 +4517,17 @@ pub const Package = extern struct {
                                     });
                                 }
 
-                                break :brk !diff.hasDiffs();
-                            } else false,
-                            else => true,
+                                summary.satisfied_versions += diff.satisfied_versions;
+
+                                break :update_mapping !diff.hasDiffs();
+                            }
                         };
 
                         if (update_mapping) {
-                            mapping[to_i] = from_dep_id;
+                            try dep_map.appendNTimes(invalid_dependency_id, (to_dep_id + 1) -| dep_map.items.len);
+                            dep_map.items[to_dep_id] = from_dep_id;
                             continue;
                         }
-                    } else {
-                        continue;
                     }
                 }
 
@@ -4520,11 +4538,13 @@ pub const Package = extern struct {
             // Use saturating arithmetic here because a migrated
             // package-lock.json could be out of sync with the package.json, so the
             // number of from_deps could be greater than to_deps.
-            summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
+            summary.add = @truncate((to_deps_len) -| (from_deps.len -| summary.remove));
 
+            const to_scripts = to_lockfile.packages.items(.scripts)[to_pkg_id];
+            const from_scripts = from_pkg_scripts[from_pkg_id];
             inline for (Lockfile.Scripts.names) |hook| {
-                if (!@field(to.scripts, hook).eql(
-                    @field(from.scripts, hook),
+                if (!@field(to_scripts, hook).eql(
+                    @field(from_scripts, hook),
                     to_lockfile.buffers.string_bytes.items,
                     from_lockfile.buffers.string_bytes.items,
                 )) {

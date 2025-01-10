@@ -147,7 +147,7 @@ Duplex.toWeb = function (duplex) {
 
 let duplexify;
 Duplex.from = function (body) {
-  // duplexify ??= require("internal/streams/duplexify");
+  duplexify ??= require("internal/streams/duplexify");
   return duplexify(body, "body");
 };
 

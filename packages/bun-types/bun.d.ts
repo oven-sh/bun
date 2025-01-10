@@ -1237,9 +1237,9 @@ declare module "bun" {
     delete(): Promise<void>
 
     /**
-     *  Provides useful information about the file. (same type as in node:fs)
+     *  Provides useful information about the file.
     */
-    stat(): Stats
+    stat(): Promise<Stats>
   }
   interface NetworkSink extends FileSink {
     /**

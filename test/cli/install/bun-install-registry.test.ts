@@ -329,6 +329,7 @@ ${iniInner.join("\n")}
 
     const ini = /* ini */ `
 registry = http://localhost:${port}/
+@needs-auth:registry=http://localhost:${port}/
 //localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
 `;
 
@@ -338,6 +339,7 @@ registry = http://localhost:${port}/
       main: "index.js",
       version: "1.0.0",
       dependencies: {
+        "no-deps": "1.0.0",
         "@needs-auth/test-pkg": "1.0.0",
       },
       "publishConfig": {

@@ -1,0 +1,4 @@
+# FIXME: move this back to test/js/node
+# https://github.com/oven-sh/bun/issues/16289
+[test]
+preload = ["./test/js/node/harness.ts", "./test/preload.ts"]

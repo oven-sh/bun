@@ -855,7 +855,7 @@ describe("should run scripts from the project root (#16169)", async () => {
       env: bunEnv,
     });
     const stderr = run_inside.stderr.toString();
-    if (stderr.includes("myscript.ts") && stderr.includes("EACCESS")) {
+    if (stderr.includes("myscript.ts") && stderr.includes("EACCES")) {
       // for some reason on musl, the run_here folder is in $PATH
       // 'error: Failed to run "myscript.ts" due to:\nEACCES: run_here/myscript.ts: Permission denied (posix_spawn())'
     } else {

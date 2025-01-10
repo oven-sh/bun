@@ -10,7 +10,7 @@ function isDockerEnabled(): boolean {
   }
 
   try {
-    const info = child_process.execSync(`${dockerCLI} info`, { stdio: "ignore" });
+    const info = child_process.execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
     return false;

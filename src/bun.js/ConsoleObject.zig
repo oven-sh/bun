@@ -3262,6 +3262,10 @@ pub const Formatter = struct {
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );
+                if (arrayBuffer.len == 0) {
+                    writer.print("({d}) []", .{arrayBuffer.len});
+                    return;
+                }
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
                 if (slice.len > 0) {

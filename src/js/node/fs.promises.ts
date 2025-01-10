@@ -467,8 +467,21 @@ function asyncWrap(fn: any) {
 
       if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
 
+      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
+      if (isArrayBufferView(buffer)) {
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
+        }
+
+        if (offset == null) {
+          offset = 0;
+        }
+        if (typeof length !== "number") length = buffer.byteLength - offset;
+        if (typeof position !== "number") position = null;
+      }
       try {
         this[kRef]();
+        console.log({ fd, buffer, offset, length, position });
         return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };
       } finally {
         this[kUnref]();

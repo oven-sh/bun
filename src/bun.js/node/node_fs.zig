@@ -2412,8 +2412,8 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            if (arguments.next()) |current_| parse: {
-                var current = current_;
+            parse: {
+                var current = arguments.next() orelse break :parse;
                 switch (buffer) {
                     // fs.write(fd, string[, position[, encoding]], callback)
                     else => {
@@ -2430,31 +2430,39 @@ pub const Arguments = struct {
                     },
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     .buffer => {
-                        if (!current.isNumber()) {
-                            break :parse;
-                        }
-
-                        if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        args.offset = current.to(u52);
+                        args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", .{}, 0, 9007199254740991));
                         arguments.eat();
                         current = arguments.next() orelse break :parse;
 
                         if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        args.length = current.to(u52);
-                        const buf_len = args.buffer.slice().len;
-                        if (args.length > 0) {
-                            if (args.length > buf_len) {
-                                return ctx.throwRangeError(
-                                    @as(f64, @floatFromInt(args.length)),
-                                    .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
-                                );
-                            }
+                        const length = current.to(i52);
+                        const buf_len = args.buffer.buffer.slice().len;
+                        if (args.offset > buf_len) {
+                            return ctx.throwRangeError(
+                                @as(f64, @floatFromInt(args.length)),
+                                .{ .field_name = "offset", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                            );
                         }
+                        if (length > buf_len - args.offset) {
+                            return ctx.throwRangeError(
+                                @as(f64, @floatFromInt(args.length)),
+                                .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                            );
+                        }
+                        if (length < 0) {
+                            return ctx.throwRangeError(
+                                @as(f64, @floatFromInt(args.length)),
+                                .{ .field_name = "length", .min = 0 },
+                            );
+                        }
+                        args.length = @intCast(length);
+
                         arguments.eat();
                         current = arguments.next() orelse break :parse;
 
                         if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        args.position = current.to(i52);
+                        const position = current.to(i52);
+                        if (position >= 0) args.position = position;
                         arguments.eat();
                     },
                 }
@@ -2521,7 +2529,9 @@ pub const Arguments = struct {
                     if (arguments.next()) |arg_position| {
                         arguments.eat();
                         if (arg_position.isNumber() or arg_position.isBigInt()) {
-                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                            const num = arg_position.to(i52);
+                            if (num > 0)
+                                args.position = @as(ReadPosition, @intCast(num));
                         }
                     }
                 } else if (current.isObject()) {
@@ -2540,7 +2550,9 @@ pub const Arguments = struct {
 
                     if (try current.getTruthy(ctx, "position")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
-                            args.position = num.to(i52);
+                            const n = num.to(i52);
+                            if (n > 0)
+                                args.position = num.to(i52);
                         }
                     }
                 }

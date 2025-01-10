@@ -3077,7 +3077,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
     switch (this.state.request_stage) {
         .pending, .headers => {
-            var stack_fallback = std.heap.stackFallback(16384, default_allocator);
+            var stack_fallback = std.heap.stackFallback(64 * 1024, default_allocator);
             const allocator = stack_fallback.get();
             var list = std.ArrayList(u8).initCapacity(allocator, stack_fallback.buffer.len) catch unreachable;
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();

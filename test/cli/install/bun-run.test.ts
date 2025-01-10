@@ -884,3 +884,52 @@ describe("should run scripts from the project root (#16169)", async () => {
     expect(run_inside_script.exitCode).toBe(0);
   });
 });
+
+describe("run main within monorepo", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      name: "monorepo_root",
+      main: "monorepo_root.ts",
+      workspaces: ["packages/*"],
+    }),
+    "monorepo_root.ts": "console.log('monorepo_root')",
+    "packages": {
+      "package_a": {
+        "package.json": JSON.stringify({ name: "package_a", main: "package_a.ts" }),
+        "package_a.ts": "console.log('package_a')",
+      },
+      "package_b": {
+        "package.json": JSON.stringify({ name: "package_b" }),
+      },
+    },
+  });
+
+  it("should run main from monorepo root", () => {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "."],
+      cwd: dir,
+      env: bunEnv,
+    });
+    expect(stdout.toString()).toBe("monorepo_root\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("should run package_a from package_a", () => {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "."],
+      cwd: dir + "/packages/package_a",
+      env: bunEnv,
+    });
+    expect(stdout.toString()).toBe("package_a\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("should fail from package_b", () => {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "."],
+      cwd: dir + "/packages/package_b",
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(1);
+  });
+});

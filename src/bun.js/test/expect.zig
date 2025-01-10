@@ -2172,6 +2172,10 @@ pub const Expect = struct {
                         break :brk innerConstructorValue;
                     }
                 }
+            } else if (value.isString()) {
+                // `.toThrow("") behaves the same as `.toThrow()`
+                const s = value.toString(globalThis);
+                if (s.length() == 0) break :brk .zero;
             }
             break :brk value;
         };

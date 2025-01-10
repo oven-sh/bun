@@ -791,3 +791,57 @@ describe.todo("run from stdin", async () => {
   // note limit of around 1gb when running from stdin
   // - which says 'catch return false'
 });
+
+describe("should run scripts from the project root (#16169)", async () => {
+  const dir = tempDirWithFiles("test", {
+    "run_here": {
+      "myscript.ts": "console.log('successful run')",
+      "package.json": JSON.stringify({
+        scripts: { "sample": "pwd", "runscript": "bun myscript.ts" },
+      }),
+      "dont_run_in_here": {},
+    },
+  });
+
+  it("outside", () => {
+    const run_outside = spawnSync({
+      cmd: [bunExe(), "run", "sample"],
+      cwd: dir + "/run_here",
+      env: bunEnv,
+    });
+    expect(run_outside.stdout.toString()).toContain("run_here");
+    expect(run_outside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_outside.exitCode).toBe(0);
+  });
+
+  it("inside", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "sample"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("run_here");
+    expect(run_inside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("outside 2", () => {
+    const run_outside_script = spawnSync({
+      cmd: [bunExe(), "runscript"],
+      cwd: dir + "/run_here",
+      env: bunEnv,
+    });
+    expect(run_outside_script.stdout.toString()).toBe("successful run\n");
+    expect(run_outside_script.exitCode).toBe(0);
+  });
+
+  it("inside 2", () => {
+    const run_inside_script = spawnSync({
+      cmd: [bunExe(), "runscript"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside_script.stdout.toString()).toBe("successful run\n");
+    expect(run_inside_script.exitCode).toBe(0);
+  });
+});

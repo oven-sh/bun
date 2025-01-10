@@ -1358,13 +1358,17 @@ pub const RunCommand = struct {
                     var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "\x00pre{s}", .{target_name});
                     defer ctx.allocator.free(temp_script_buffer);
 
+                    const package_json_path = root_dir_info.enclosing_package_json.?.source.path.text;
+                    const package_json_dir = strings.withoutTrailingSlash(strings.withoutSuffixComptime(package_json_path, "package.json"));
+                    log("Running in dir `{s}`", .{package_json_dir});
+
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
-                            this_transpiler.fs.top_level_dir,
+                            package_json_dir,
                             this_transpiler.env,
                             &.{},
                             ctx.debug.silent,
@@ -1377,7 +1381,7 @@ pub const RunCommand = struct {
                         ctx.allocator,
                         script_content,
                         target_name,
-                        this_transpiler.fs.top_level_dir,
+                        package_json_dir,
                         this_transpiler.env,
                         passthrough,
                         ctx.debug.silent,
@@ -1392,7 +1396,7 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
-                            this_transpiler.fs.top_level_dir,
+                            package_json_dir,
                             this_transpiler.env,
                             &.{},
                             ctx.debug.silent,

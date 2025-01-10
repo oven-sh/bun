@@ -584,8 +584,8 @@ describe("mkdirSync", () => {
   });
 
   it("should throw ENOENT for empty string", () => {
-    expect(() => mkdirSync("", { recursive: true })).toThrow("No such file or directory");
-    expect(() => mkdirSync("")).toThrow("No such file or directory");
+    expect(() => mkdirSync("", { recursive: true })).toThrow("no such file or directory");
+    expect(() => mkdirSync("")).toThrow("no such file or directory");
   });
 
   it("throws for invalid options", () => {
@@ -673,7 +673,7 @@ it("promises.readFile", async () => {
       expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
-      expect(e.message).toBe("No such file or directory");
+      expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
       expect(e.errno).toBe(-2);
       expect(e.path).toBe("/i-dont-exist");
@@ -1004,10 +1004,10 @@ it("statSync throwIfNoEntry", () => {
 
 it("statSync throwIfNoEntry: true", () => {
   const path = join(tmpdirSync(), "does", "not", "exist");
-  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => statSync(path)).toThrow("No such file or directory");
-  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => lstatSync(path)).toThrow("No such file or directory");
+  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("no such file or directory");
+  expect(() => statSync(path)).toThrow("no such file or directory");
+  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("no such file or directory");
+  expect(() => lstatSync(path)).toThrow("no such file or directory");
 });
 
 it("stat == statSync", async () => {
@@ -3279,20 +3279,20 @@ it("new Stats", () => {
 
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
-  expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("Bad file descriptor");
-  expect(() => readlinkSync(path)).toThrow("No such file or directory");
-  expect(() => realpathSync(path)).toThrow("No such file or directory");
-  expect(() => readFileSync(path)).toThrow("No such file or directory");
-  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
-  expect(() => statSync(path)).toThrow("No such file or directory");
-  expect(() => unlinkSync(path)).toThrow("No such file or directory");
-  expect(() => rmSync(path)).toThrow("No such file or directory");
-  expect(() => rmdirSync(path)).toThrow("No such file or directory");
-  expect(() => closeSync(2147483640)).toThrow("Bad file descriptor");
+  expect(() => openSync(path, "r")).toThrow("no such file or directory");
+  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("bad file descriptor");
+  expect(() => readlinkSync(path)).toThrow("no such file or directory");
+  expect(() => realpathSync(path)).toThrow("no such file or directory");
+  expect(() => readFileSync(path)).toThrow("no such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("no such file or directory");
+  expect(() => statSync(path)).toThrow("no such file or directory");
+  expect(() => unlinkSync(path)).toThrow("no such file or directory");
+  expect(() => rmSync(path)).toThrow("no such file or directory");
+  expect(() => rmdirSync(path)).toThrow("no such file or directory");
+  expect(() => closeSync(2147483640)).toThrow("bad file descriptor");
 
   mkdirSync(path);
-  expect(() => mkdirSync(path)).toThrow("File or folder exists");
+  expect(() => mkdirSync(path)).toThrow("file or folder exists");
   expect(() => unlinkSync(path)).toThrow(
     (
       {

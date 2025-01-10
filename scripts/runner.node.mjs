@@ -63,6 +63,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Path to bun binary */
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -252,15 +253,19 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeParallelTest(testPath)) {
+        const subcommand = title.includes("needs-test") ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [title],
+            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
@@ -278,9 +283,9 @@ async function runTests() {
             stdoutPreview: stdoutPreview,
           };
         });
-        continue;
+      } else {
+        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
       }
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
 
@@ -537,7 +542,7 @@ async function spawnSafe(options) {
 }
 
 /**
- * @param {string} execPath
+ * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
@@ -565,9 +570,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
+
   if (env) {
     Object.assign(bunEnv, env);
   }
+
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;
@@ -862,7 +869,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeParallelTest(testPath) {
-  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/")
+  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/");
 }
 
 /**
@@ -892,6 +899,9 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
+/** Files with these extensions are not treated as test cases */
+const IGNORED_EXTENSIONS = new Set([".md"]);
+
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -901,8 +911,9 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
+      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename)) {
+      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
         continue;
       }
       if (entry.isFile() && isTest(filename)) {

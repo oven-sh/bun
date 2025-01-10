@@ -994,6 +994,7 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    /// use `byteSlice` to get a `[]const u8`.
     pub fn toSlice(this: String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         return SliceWithUnderlyingString{
             .utf8 = this.toUTF8(allocator),

@@ -3262,90 +3262,88 @@ pub const Formatter = struct {
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );
-                if (arrayBuffer.len == 0) {
+                if (slice.len == 0) {
                     writer.print("({d}) []", .{arrayBuffer.len});
                     return;
                 }
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
-                if (slice.len > 0) {
-                    switch (jsType) {
-                        .Int8Array => this.writeTypedArray(
+                switch (jsType) {
+                    .Int8Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i8,
+                        @alignCast(std.mem.bytesAsSlice(i8, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i16,
+                        @alignCast(std.mem.bytesAsSlice(i16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u16,
+                        @alignCast(std.mem.bytesAsSlice(u16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i32,
+                        @alignCast(std.mem.bytesAsSlice(i32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u32,
+                        @alignCast(std.mem.bytesAsSlice(u32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f16,
+                        @alignCast(std.mem.bytesAsSlice(f16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f32,
+                        @alignCast(std.mem.bytesAsSlice(f32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f64,
+                        @alignCast(std.mem.bytesAsSlice(f64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigInt64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i64,
+                        @alignCast(std.mem.bytesAsSlice(i64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigUint64Array => {
+                        this.writeTypedArray(
                             *@TypeOf(writer),
                             &writer,
-                            i8,
-                            @as([]align(std.meta.alignment([]i8)) i8, @alignCast(std.mem.bytesAsSlice(i8, slice))),
+                            u64,
+                            @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
                             enable_ansi_colors,
-                        ),
-                        .Int16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i16,
-                            @as([]align(std.meta.alignment([]i16)) i16, @alignCast(std.mem.bytesAsSlice(i16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u16,
-                            @as([]align(std.meta.alignment([]u16)) u16, @alignCast(std.mem.bytesAsSlice(u16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Int32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i32,
-                            @as([]align(std.meta.alignment([]i32)) i32, @alignCast(std.mem.bytesAsSlice(i32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u32,
-                            @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f16,
-                            @as([]align(std.meta.alignment([]f16)) f16, @alignCast(std.mem.bytesAsSlice(f16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f32,
-                            @as([]align(std.meta.alignment([]f32)) f32, @alignCast(std.mem.bytesAsSlice(f32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f64,
-                            @as([]align(std.meta.alignment([]f64)) f64, @alignCast(std.mem.bytesAsSlice(f64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigInt64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i64,
-                            @as([]align(std.meta.alignment([]i64)) i64, @alignCast(std.mem.bytesAsSlice(i64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigUint64Array => {
-                            this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                u64,
-                                @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
-                                enable_ansi_colors,
-                            );
-                        },
+                        );
+                    },
 
-                        // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                        else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
-                    }
+                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                    else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
                 }
 
                 writer.writeAll(" ]");

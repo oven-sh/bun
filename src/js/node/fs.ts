@@ -9,7 +9,6 @@ const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { validateInteger } = require("internal/validators");
 
 const NumberIsFinite = Number.isFinite;
-const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
 const isDate = types.isDate;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -585,11 +584,8 @@ var access = function access(path, mode, callback) {
     }, callback);
   };
 
-// TODO: make symbols a separate export somewhere
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-
 exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
-
 read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
   const { isArrayBufferView } = require("node:util/types");
   let buffer;
@@ -608,11 +604,12 @@ read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
 
   return { bytesRead, buffer };
 };
-
 write[kCustomPromisifiedSymbol] = async function (fd, stringOrBuffer, ...rest) {
   const bytesWritten = await fs.write(fd, stringOrBuffer, ...rest);
   return { bytesWritten, buffer: stringOrBuffer };
 };
+writev[kCustomPromisifiedSymbol] = promises.writev;
+readv[kCustomPromisifiedSymbol] = promises.readv;
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple
@@ -1427,19 +1424,21 @@ function cp(src, dest, options, callback) {
   promises.cp(src, dest, options).then(() => callback(), callback);
 }
 
-function _toUnixTimestamp(time, name = "time") {
+function _toUnixTimestamp(time: any, name = "time") {
+  // @ts-ignore
   if (typeof time === "string" && +time == time) {
     return +time;
   }
-  if (NumberIsFinite(time)) {
+  // @ts-ignore
+  if ($isFinite(time)) {
     if (time < 0) {
-      return DateNow() / 1000;
+      return Date.now() / 1000;
     }
     return time;
   }
   if (isDate(time)) {
     // Convert to 123.456 UNIX timestamp
-    return DatePrototypeGetTime(time) / 1000;
+    return time.getTime() / 1000;
   }
   throw new TypeError(`Expected ${name} to be a number or Date`);
 }

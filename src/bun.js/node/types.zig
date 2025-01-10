@@ -1230,42 +1230,68 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSE
         null;
 }
 
+// Equivalent to `toUnixTimestamp`
+//
 // Node.js docs:
 // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
 pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?TimeLike {
-    if (value.jsType() == .JSDate) {
-        const milliseconds = value.getUnixTimestamp();
-        if (!std.math.isFinite(milliseconds)) {
-            return null;
+    // Number is most common case
+    if (value.isNumber()) {
+        const seconds = value.asNumber();
+        if (std.math.isFinite(seconds)) {
+            if (seconds < 0) {
+                return timeLikeFromNow();
+            }
+            return timeLikeFromSeconds(seconds);
         }
-
-        if (comptime Environment.isWindows) {
-            return milliseconds / 1000.0;
-        }
-
-        return TimeLike{
-            .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-            .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
-        };
-    }
-
-    if (!value.isNumber() and !value.isString()) {
         return null;
+    } else switch (value.jsType()) {
+        .JSDate => {
+            const milliseconds = value.getUnixTimestamp();
+            if (std.math.isFinite(milliseconds)) {
+                return timeLikeFromMilliseconds(milliseconds);
+            }
+        },
+        .String => {
+            const seconds = value.coerceToDouble(globalObject);
+            if (std.math.isFinite(seconds)) {
+                return timeLikeFromSeconds(seconds);
+            }
+        },
+        else => {},
     }
+    return null;
+}
 
-    const seconds = value.coerce(f64, globalObject);
-    if (!std.math.isFinite(seconds)) {
-        return null;
-    }
-
-    if (comptime Environment.isWindows) {
+fn timeLikeFromSeconds(seconds: f64) TimeLike {
+    if (Environment.isWindows) {
         return seconds;
     }
-
-    return TimeLike{
+    return .{
         .tv_sec = @intFromFloat(seconds),
-        .tv_nsec = @intFromFloat(@mod(seconds, 1.0) * std.time.ns_per_s),
+        .tv_nsec = @intFromFloat(@mod(seconds, 1) * std.time.ns_per_s),
+    };
+}
+
+fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
+    if (Environment.isWindows) {
+        return milliseconds / 1000.0;
+    }
+    return .{
+        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
+        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+    };
+}
+
+fn timeLikeFromNow() TimeLike {
+    const nanos = std.time.nanoTimestamp();
+    if (Environment.isWindows) {
+        return @as(TimeLike, nanos) / std.time.ns_per_s;
+    }
+    return .{
+        .tv_sec = @truncate(@divFloor(nanos, std.time.ns_per_s)),
+        .tv_nsec = @truncate(@mod(nanos, std.time.ns_per_s)),
     };
 }
 

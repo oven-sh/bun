@@ -2530,7 +2530,7 @@ pub const Arguments = struct {
                         arguments.eat();
                         if (arg_position.isNumber() or arg_position.isBigInt()) {
                             const num = arg_position.to(i52);
-                            if (num > 0)
+                            if (num >= 0)
                                 args.position = @as(ReadPosition, @intCast(num));
                         }
                     }
@@ -2551,7 +2551,7 @@ pub const Arguments = struct {
                     if (try current.getTruthy(ctx, "position")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             const n = num.to(i52);
-                            if (n > 0)
+                            if (n >= 0)
                                 args.position = num.to(i52);
                         }
                     }
@@ -3679,7 +3679,11 @@ pub const NodeFS = struct {
             defer req.deinit();
             const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.mtime, args.atime, null);
             return if (rc.errno()) |e|
-                Maybe(Return.Futimes){ .err = .{ .errno = e, .syscall = .futime } }
+                .{ .err = .{
+                    .errno = e,
+                    .syscall = .futime,
+                    .fd = args.fd,
+                } }
             else
                 Maybe(Return.Futimes).success;
         }
@@ -3689,7 +3693,7 @@ pub const NodeFS = struct {
             args.atime,
         };
 
-        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd.int(), &times), .futime)) |err|
+        return if (Maybe(Return.Futimes).errnoSysFd(system.futimens(args.fd.int(), &times), .futime, args.fd)) |err|
             err
         else
             Maybe(Return.Futimes).success;

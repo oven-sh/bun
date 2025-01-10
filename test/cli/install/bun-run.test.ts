@@ -792,14 +792,16 @@ describe.todo("run from stdin", async () => {
   // - which says 'catch return false'
 });
 
-describe("should run scripts from the project root (#16169)", async () => {
+describe.only("should run scripts from the project root (#16169)", async () => {
   const dir = tempDirWithFiles("test", {
     "run_here": {
       "myscript.ts": "console.log('successful run')",
       "package.json": JSON.stringify({
         scripts: { "sample": "pwd", "runscript": "bun myscript.ts" },
       }),
-      "dont_run_in_here": {},
+      "dont_run_in_here": {
+        "runme.ts": "console.log('do run this script')",
+      },
     },
   });
 
@@ -823,6 +825,26 @@ describe("should run scripts from the project root (#16169)", async () => {
     expect(run_inside.stdout.toString()).toContain("run_here");
     expect(run_inside.stdout.toString()).not.toContain("dont_run_in_here");
     expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside script", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "runme.ts"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("do run this script");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside wrong script", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "myscript.ts"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stderr.toString()).toBe('error: Module not found "myscript.ts"\n');
+    expect(run_inside.exitCode).toBe(1);
   });
 
   it("outside 2", () => {

@@ -41,7 +41,7 @@ const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
-const Lock = @import("./lock.zig").Lock;
+const Lock = bun.Mutex;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
@@ -1068,11 +1068,14 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
+        module_info: ?*@import("analyze_transpiled_module.zig").ModuleInfo,
     ) !usize {
         const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
+
+        if (module_info != null) bun.assert(format == .esm or format == .esm_ascii);
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1120,6 +1123,7 @@ pub const Transpiler = struct {
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                 },
                 enable_source_map,
+                module_info,
             ),
             .esm_ascii => switch (transpiler.options.target.isBun()) {
                 inline else => |is_bun| try js_printer.printAst(
@@ -1154,6 +1158,7 @@ pub const Transpiler = struct {
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     },
                     enable_source_map,
+                    module_info,
                 ),
             },
             else => unreachable,
@@ -1176,6 +1181,7 @@ pub const Transpiler = struct {
             false,
             null,
             null,
+            null,
         );
     }
 
@@ -1186,6 +1192,7 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
+        module_info: ?*@import("analyze_transpiled_module.zig").ModuleInfo,
     ) !usize {
         if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
             return transpiler.printWithSourceMapMaybe(
@@ -1197,6 +1204,7 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                module_info,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -1208,6 +1216,7 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            module_info,
         );
     }
 

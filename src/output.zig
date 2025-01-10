@@ -310,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -746,7 +745,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {

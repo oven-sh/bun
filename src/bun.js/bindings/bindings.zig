@@ -1731,6 +1731,7 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
+    hostname: String = String.empty,
     fd: bun.FileDescriptor = bun.toFD(-1),
     dest: String = String.empty,
 
@@ -1756,6 +1757,7 @@ pub const SystemError = extern struct {
         this.code.deref();
         this.message.deref();
         this.syscall.deref();
+        this.hostname.deref();
         this.dest.deref();
     }
 
@@ -1764,17 +1766,11 @@ pub const SystemError = extern struct {
         this.code.ref();
         this.message.ref();
         this.syscall.ref();
-        this.dest.ref();
+        this.hostname.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
-        defer {
-            this.path.deref();
-            this.code.deref();
-            this.message.deref();
-            this.syscall.deref();
-            this.dest.deref();
-        }
+        defer this.deref();
 
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
@@ -2965,6 +2961,16 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
+        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, value.toFmt(&formatter) }).throw();
+    }
+
+    /// "The <argname> argument must be of type <typename>. Received <value>"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3004,6 +3010,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
+    /// Not enough arguments passed to function named `name_`
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -4050,6 +4057,25 @@ pub const JSValue = enum(i64) {
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };
+    }
+
+    pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
+        if (this.isNumber()) {
+            // const double = try this.toNumber(global);
+            const double = this.coerceToDouble(global);
+            if (std.math.isNan(double)) {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+            }
+
+            const port = this.to(i64);
+            if (0 <= port and port <= 65535) {
+                return @as(u16, @truncate(@max(0, port)));
+            } else {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+            }
+        }
+
+        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
     }
 
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
@@ -7036,3 +7062,7 @@ pub const DeferredError = struct {
         return err;
     }
 };
+
+comptime {
+    _ = @import("../../analyze_transpiled_module.zig");
+}

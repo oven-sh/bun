@@ -8765,7 +8765,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -9243,7 +9243,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10746,7 +10746,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },

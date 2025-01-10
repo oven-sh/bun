@@ -3566,7 +3566,7 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
     return true;
 }
 
-var stderr_mutex = std.Thread.Mutex{};
+var stderr_mutex = bun.Mutex{};
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {

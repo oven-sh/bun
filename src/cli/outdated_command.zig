@@ -18,6 +18,8 @@ const FileSystem = bun.fs.FileSystem;
 const path = bun.path;
 const glob = bun.glob;
 const Table = bun.fmt.Table;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const OOM = bun.OOM;
 
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -138,7 +140,7 @@ pub const OutdatedCommand = struct {
         original_cwd: string,
         manager: *PackageManager,
         filters: []const string,
-    ) error{OutOfMemory}![]const PackageID {
+    ) OOM![]const PackageID {
         const lockfile = manager.lockfile;
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
@@ -152,36 +154,10 @@ pub const OutdatedCommand = struct {
         }
 
         const converted_filters = converted_filters: {
-            const buf = try allocator.alloc(FilterType, filters.len);
+            const buf = try allocator.alloc(WorkspaceFilter, filters.len);
+            var path_buf: bun.PathBuffer = undefined;
             for (filters, buf) |filter, *converted| {
-                if ((filter.len == 1 and filter[0] == '*') or strings.eqlComptime(filter, "**")) {
-                    converted.* = .all;
-                    continue;
-                }
-
-                const is_path = filter.len > 0 and filter[0] == '.';
-
-                const joined_filter = if (is_path)
-                    strings.withoutTrailingSlash(path.joinAbsString(original_cwd, &[_]string{filter}, .posix))
-                else
-                    filter;
-
-                if (joined_filter.len == 0) {
-                    converted.* = FilterType.init(&.{}, is_path);
-                    continue;
-                }
-
-                const length = bun.simdutf.length.utf32.from.utf8.le(joined_filter);
-                const convert_buf = try allocator.alloc(u32, length);
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    // nothing would match
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], is_path);
+                converted.* = try WorkspaceFilter.init(allocator, filter, original_cwd, &path_buf);
             }
             break :converted_filters buf;
         };

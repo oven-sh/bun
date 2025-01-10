@@ -140,12 +140,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         if (auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
             options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         if (auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
             options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         if (auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s))) {

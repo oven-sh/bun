@@ -12,9 +12,10 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ErrorableString = bun.JSC.ErrorableString;
-const Arena = @import("../mimalloc_arena.zig").Arena;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
 
+const Exception = bun.JSC.Exception;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
@@ -70,7 +71,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -83,6 +83,7 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
+const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 pub const GenericWatcher = @import("../watcher.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
@@ -92,7 +93,7 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
 
 pub const Buffer = MarkedArrayBuffer;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
 const Async = bun.Async;
@@ -123,7 +124,7 @@ const uv = bun.windows.libuv;
 pub const SavedSourceMap = struct {
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
-    mutex: bun.Lock = .{},
+    mutex: bun.Mutex = .{},
 
     pub const vlq_offset = 24;
 
@@ -790,6 +791,7 @@ pub const VirtualMachine = struct {
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
+    dns_result_order: DNSResolver.Order = .verbatim,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *JSC.VM = undefined,
@@ -885,6 +887,7 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionExceptionList: ?*ExceptionList = null,
     unhandled_error_counter: usize = 0,
     is_handling_uncaught_exception: bool = false,
+    exit_on_uncaught_exception: bool = false,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -1190,6 +1193,10 @@ pub const VirtualMachine = struct {
     extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
+    export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
+        this.exit_on_uncaught_exception = true;
+    }
+
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
         if (this.isShuttingDown()) {
             Output.debugWarn("unhandledRejection during shutdown.", .{});
@@ -1226,6 +1233,11 @@ pub const VirtualMachine = struct {
             this.runErrorHandler(err, null);
             Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
+        }
+        if (this.exit_on_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            Bun__Process__exit(globalObject, 1);
+            @panic("made it past Bun__Process__exit");
         }
         this.is_handling_uncaught_exception = true;
         defer this.is_handling_uncaught_exception = false;
@@ -1594,7 +1606,7 @@ pub const VirtualMachine = struct {
 
             Debugger.log("spin", .{});
             while (futex_atomic.load(.monotonic) > 0) {
-                std.Thread.Futex.wait(&futex_atomic, 1);
+                bun.Futex.waitForever(&futex_atomic, 1);
             }
             if (comptime Environment.enable_logs)
                 Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
@@ -1758,7 +1770,7 @@ pub const VirtualMachine = struct {
 
             log("wake", .{});
             futex_atomic.store(0, .monotonic);
-            std.Thread.Futex.wake(&futex_atomic, 1);
+            bun.Futex.wake(&futex_atomic, 1);
 
             other_vm.eventLoop().wakeup();
 
@@ -1967,6 +1979,7 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+        dns_result_order: DNSResolver.Order = .verbatim,
 
         // --print needs the result from evaluating the main module
         eval: bool = false,
@@ -2060,6 +2073,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
+        vm.dns_result_order = opts.dns_result_order;
 
         if (opts.smol)
             is_smol_mode = opts.smol;
@@ -2322,6 +2336,7 @@ pub const VirtualMachine = struct {
                 .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
+                .module_info = null,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -2337,6 +2352,7 @@ pub const VirtualMachine = struct {
             .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
+            .module_info = null,
         };
     }
 
@@ -3312,7 +3328,7 @@ pub const VirtualMachine = struct {
                     var holder = ZigException.Holder.init();
                     var zig_exception: *ZigException = holder.zigException();
                     holder.deinit(this);
-                    exception_.getStackTrace(&zig_exception.stack);
+                    exception_.getStackTrace(this.global, &zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         if (allow_ansi_color) {
                             printStackTrace(Writer, writer, zig_exception.stack, true) catch {};
@@ -3952,11 +3968,11 @@ pub const VirtualMachine = struct {
                     .observable = false,
                     .only_non_index_properties = true,
                 });
-                var iterator = Iterator.init(this.global, error_instance);
+                var iterator = try Iterator.init(this.global, error_instance);
                 defer iterator.deinit();
                 const longest_name = @min(iterator.getLongestPropertyName(), 10);
                 var is_first_property = true;
-                while (iterator.next() orelse iterator.getCodeProperty()) |field| {
+                while ((try iterator.next()) orelse iterator.getCodeProperty()) |field| {
                     const value = iterator.value;
                     if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
                         continue;
@@ -3964,15 +3980,7 @@ pub const VirtualMachine = struct {
 
                     // We special-case the code property. Let's avoid printing it twice.
                     if (field.eqlComptime("code")) {
-                        if (value.isString()) {
-                            const str = value.toBunString(this.global);
-                            defer str.deref();
-                            if (!str.isEmpty()) {
-                                if (str.eql(name)) {
-                                    continue;
-                                }
-                            }
-                        }
+                        if (!iterator.tried_code_property) continue;
                     }
 
                     const kind = value.jsType();
@@ -4008,7 +4016,7 @@ pub const VirtualMachine = struct {
 
                         try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
 
-                        // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                        // When we're printing errors for a top-level uncaught exception / rejection, suppress further errors here.
                         if (allow_side_effects) {
                             if (this.global.hasException()) {
                                 this.global.clearException();
@@ -4029,7 +4037,7 @@ pub const VirtualMachine = struct {
                         ) catch {};
 
                         if (allow_side_effects) {
-                            // When we're printing errors for a top-level uncaught eception / rejection, suppress further errors here.
+                            // When we're printing errors for a top-level uncaught exception / rejection, suppress further errors here.
                             if (this.global.hasException()) {
                                 this.global.clearException();
                             }
@@ -4088,11 +4096,7 @@ pub const VirtualMachine = struct {
     fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
-
-            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
-                display_name,
-                message,
-            });
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{ display_name, message });
         } else if (!name.isEmpty()) {
             if (!name.hasPrefixComptime("error")) {
                 try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{name});

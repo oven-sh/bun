@@ -1,1271 +1,995 @@
-// Hardcoded module "node:assert"
-const util = require("node:util");
+/// <reference path="../builtins.d.ts" />
+// Copied from Node.js (src/lib/assert.js)
+// Originally from narwhal.js (http://narwhaljs.org)
+// Copyright (c) 2009 Thomas Robinson <280north.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the 'Software'), to
+// deal in the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-var isDeepEqual = Bun.deepEquals;
-var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
-  function () {
-    return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  };
+"use strict";
 
-// assert/build/internal/errors.js
-var require_errors = __commonJS({
-  "assert/build/internal/errors.js"(exports, module2) {
-    "use strict";
-    function _typeof(obj) {
-      return (
-        typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
-          ? (_typeof = function (obj2) {
-              return typeof obj2;
-            })
-          : (_typeof = function (obj2) {
-              return obj2 && typeof Symbol == "function" && obj2.constructor === Symbol && obj2 !== Symbol.prototype
-                ? "symbol"
-                : typeof obj2;
-            }),
-        _typeof(obj)
-      );
-    }
-    function _classCallCheck(instance, Constructor) {
-      if (!(instance instanceof Constructor)) throw new TypeError("Cannot call a class as a function");
-    }
-    function _possibleConstructorReturn(self, call) {
-      return call && (_typeof(call) === "object" || typeof call == "function") ? call : _assertThisInitialized(self);
-    }
-    function _assertThisInitialized(self) {
-      if (self === void 0) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-      return self;
-    }
-    function _getPrototypeOf(o) {
-      return (
-        (_getPrototypeOf = Object.setPrototypeOf
-          ? Object.getPrototypeOf
-          : function (o2) {
-              return o2.__proto__ || Object.getPrototypeOf(o2);
-            }),
-        _getPrototypeOf(o)
-      );
-    }
-    function _inherits(subClass, superClass) {
-      if (typeof superClass != "function" && superClass !== null)
-        throw new TypeError("Super expression must either be null or a function");
-      (subClass.prototype = Object.create(superClass && superClass.prototype, {
-        constructor: { value: subClass, writable: !0, configurable: !0 },
-      })),
-        superClass && _setPrototypeOf(subClass, superClass);
-    }
-    function _setPrototypeOf(o, p) {
-      return (
-        (_setPrototypeOf =
-          Object.setPrototypeOf ||
-          function (o2, p2) {
-            return (o2.__proto__ = p2), o2;
-          }),
-        _setPrototypeOf(o, p)
-      );
-    }
-    var codes = {},
-      assert,
-      util;
-    function createErrorType(code, message, Base) {
-      Base || (Base = Error);
-      function getMessage(arg1, arg2, arg3) {
-        return typeof message == "string" ? message : message(arg1, arg2, arg3);
-      }
-      var NodeError = /* @__PURE__ */ (function (_Base) {
-        _inherits(NodeError2, _Base);
-        function NodeError2(arg1, arg2, arg3) {
-          var _this;
-          return (
-            _classCallCheck(this, NodeError2),
-            (_this = _possibleConstructorReturn(
-              this,
-              _getPrototypeOf(NodeError2).$call(this, getMessage(arg1, arg2, arg3)),
-            )),
-            (_this.code = code),
-            _this
-          );
-        }
-        return NodeError2;
-      })(Base);
-      codes[code] = NodeError;
-    }
-    function oneOf(expected, thing) {
-      if (Array.isArray(expected)) {
-        var len = expected.length;
-        return (
-          (expected = expected.map(function (i) {
-            return String(i);
-          })),
-          len > 2
-            ? "one of ".concat(thing, " ").concat(expected.slice(0, len - 1).join(", "), ", or ") + expected[len - 1]
-            : len === 2
-              ? "one of ".concat(thing, " ").concat(expected[0], " or ").concat(expected[1])
-              : "of ".concat(thing, " ").concat(expected[0])
-        );
-      } else return "of ".concat(thing, " ").concat(String(expected));
-    }
-    function startsWith(str, search, pos) {
-      return str.substr(!pos || pos < 0 ? 0 : +pos, search.length) === search;
-    }
-    function endsWith(str, search, this_len) {
-      return (
-        (this_len === void 0 || this_len > str.length) && (this_len = str.length),
-        str.substring(this_len - search.length, this_len) === search
-      );
-    }
-    function includes(str, search, start) {
-      return (
-        typeof start != "number" && (start = 0),
-        start + search.length > str.length ? !1 : str.indexOf(search, start) !== -1
-      );
-    }
-    createErrorType("ERR_AMBIGUOUS_ARGUMENT", 'The "%s" argument is ambiguous. %s', TypeError);
-    createErrorType(
-      "ERR_INVALID_ARG_TYPE",
-      function (name, expected, actual) {
-        assert === void 0 && (assert = require_assert()), assert(typeof name == "string", "'name' must be a string");
-        var determiner;
-        typeof expected == "string" && startsWith(expected, "not ")
-          ? ((determiner = "must not be"), (expected = expected.replace(/^not /, "")))
-          : (determiner = "must be");
-        var msg;
-        if (endsWith(name, " argument"))
-          msg = "The ".concat(name, " ").concat(determiner, " ").concat(oneOf(expected, "type"));
-        else {
-          var type = includes(name, ".") ? "property" : "argument";
-          msg = 'The "'.concat(name, '" ').concat(type, " ").concat(determiner, " ").concat(oneOf(expected, "type"));
-        }
-        return (msg += ". Received type ".concat(_typeof(actual))), msg;
-      },
-      TypeError,
-    );
-    createErrorType(
-      "ERR_INVALID_ARG_VALUE",
-      function (name, value) {
-        var reason = arguments.length > 2 && arguments[2] !== void 0 ? arguments[2] : "is invalid";
-        var inspected = util.inspect(value);
-        return (
-          inspected.length > 128 && (inspected = "".concat(inspected.slice(0, 128), "...")),
-          "The argument '".concat(name, "' ").concat(reason, ". Received ").concat(inspected)
-        );
-      },
-      TypeError,
-      RangeError,
-    );
-    createErrorType(
-      "ERR_INVALID_RETURN_VALUE",
-      function (input, name, value) {
-        var type;
-        return (
-          value && value.constructor && value.constructor.name
-            ? (type = "instance of ".concat(value.constructor.name))
-            : (type = "type ".concat(_typeof(value))),
-          "Expected ".concat(input, ' to be returned from the "').concat(name, '"') +
-            " function but got ".concat(type, ".")
-        );
-      },
-      TypeError,
-    );
-    createErrorType(
-      "ERR_MISSING_ARGS",
-      function () {
-        for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++)
-          args[_key] = arguments[_key];
-        assert === void 0 && (assert = require_assert()),
-          assert(args.length > 0, "At least one arg needs to be specified");
-        var msg = "The ",
-          len = args.length;
-        switch (
-          ((args = args.map(function (a) {
-            return '"'.concat(a, '"');
-          })),
-          len)
-        ) {
-          case 1:
-            msg += "".concat(args[0], " argument");
-            break;
-          case 2:
-            msg += "".concat(args[0], " and ").concat(args[1], " arguments");
-            break;
-          default:
-            (msg += args.slice(0, len - 1).join(", ")), (msg += ", and ".concat(args[len - 1], " arguments"));
-            break;
-        }
-        return "".concat(msg, " must be specified");
-      },
-      TypeError,
-    );
-    module2.exports.codes = codes;
-  },
-});
+const {
+  ArrayFrom,
+  ArrayPrototypeIndexOf,
+  ArrayPrototypeJoin,
+  ArrayPrototypePush,
+  ArrayPrototypeSlice,
+  Error,
+  FunctionPrototypeCall,
+  NumberIsNaN,
+  ObjectAssign,
+  ObjectIs,
+  ObjectKeys,
+  ObjectPrototypeIsPrototypeOf,
+  ReflectHas,
+  ReflectOwnKeys,
+  RegExpPrototypeExec,
+  SafeMap,
+  SafeSet,
+  SafeWeakSet,
+  StringPrototypeIndexOf,
+  StringPrototypeSlice,
+  StringPrototypeSplit,
+  SymbolIterator,
+} = require("internal/primordials");
 
-// assert/build/internal/assert/assertion_error.js
-var require_assertion_error = __commonJS({
-  "assert/build/internal/assert/assertion_error.js"(exports, module2) {
-    "use strict";
-    function _objectSpread(target) {
-      for (var i = 1; i < arguments.length; i++) {
-        var source = arguments[i] != null ? arguments[i] : {},
-          ownKeys = Object.keys(source);
-        typeof Object.getOwnPropertySymbols == "function" &&
-          (ownKeys = ownKeys.concat(
-            Object.getOwnPropertySymbols(source).filter(function (sym) {
-              return Object.getOwnPropertyDescriptor(source, sym).enumerable;
-            }),
-          )),
-          ownKeys.forEach(function (key) {
-            _defineProperty(target, key, source[key]);
-          });
-      }
-      return target;
-    }
-    function _defineProperty(obj, key, value) {
-      return (
-        key in obj
-          ? Object.defineProperty(obj, key, {
-              value,
-              enumerable: !0,
-              configurable: !0,
-              writable: !0,
-            })
-          : (obj[key] = value),
-        obj
-      );
-    }
-    function _classCallCheck(instance, Constructor) {
-      if (!(instance instanceof Constructor)) throw new TypeError("Cannot call a class as a function");
-    }
-    function _defineProperties(target, props) {
-      for (var i = 0; i < props.length; i++) {
-        var descriptor = props[i];
-        (descriptor.enumerable = descriptor.enumerable || !1),
-          (descriptor.configurable = !0),
-          "value" in descriptor && (descriptor.writable = !0),
-          Object.defineProperty(target, descriptor.key, descriptor);
-      }
-    }
-    function _createClass(Constructor, protoProps, staticProps) {
-      return (
-        protoProps && _defineProperties(Constructor.prototype, protoProps),
-        staticProps && _defineProperties(Constructor, staticProps),
-        Constructor
-      );
-    }
-    function _possibleConstructorReturn(self, call) {
-      return call && (_typeof(call) === "object" || typeof call == "function") ? call : _assertThisInitialized(self);
-    }
-    function _assertThisInitialized(self) {
-      if (self === void 0) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-      return self;
-    }
-    function _inherits(subClass, superClass) {
-      if (typeof superClass != "function" && superClass !== null)
-        throw new TypeError("Super expression must either be null or a function");
-      (subClass.prototype = Object.create(superClass && superClass.prototype, {
-        constructor: { value: subClass, writable: !0, configurable: !0 },
-      })),
-        superClass && _setPrototypeOf(subClass, superClass);
-    }
-    function _wrapNativeSuper(Class) {
-      var _cache = typeof Map == "function" ? new Map() : void 0;
-      return (
-        (_wrapNativeSuper = function (Class2) {
-          if (Class2 === null || !_isNativeFunction(Class2)) return Class2;
-          if (typeof Class2 != "function") throw new TypeError("Super expression must either be null or a function");
-          if (typeof _cache != "undefined") {
-            if (_cache.has(Class2)) return _cache.get(Class2);
-            _cache.set(Class2, Wrapper);
-          }
-          function Wrapper() {
-            return _construct(Class2, arguments, _getPrototypeOf(this).constructor);
-          }
-          return (
-            (Wrapper.prototype = Object.create(Class2.prototype, {
-              constructor: {
-                value: Wrapper,
-                enumerable: !1,
-                writable: !0,
-                configurable: !0,
-              },
-            })),
-            _setPrototypeOf(Wrapper, Class2)
-          );
-        }),
-        _wrapNativeSuper(Class)
-      );
-    }
-    function isNativeReflectConstruct() {
-      if (typeof Reflect == "undefined" || !Reflect.construct || Reflect.construct.sham) return !1;
-      if (typeof Proxy == "function") return !0;
-      try {
-        return Date.prototype.toString.$call(Reflect.construct(Date, [], function () {})), !0;
-      } catch {
-        return !1;
-      }
-    }
-    function _construct(Parent, args, Class) {
-      return (
-        isNativeReflectConstruct()
-          ? (_construct = Reflect.construct)
-          : (_construct = function (Parent2, args2, Class2) {
-              var a = [null];
-              a.push.$apply(a, args2);
-              var Constructor = Function.bind.$apply(Parent2, a),
-                instance = new Constructor();
-              return Class2 && _setPrototypeOf(instance, Class2.prototype), instance;
-            }),
-        _construct.$apply(null, arguments)
-      );
-    }
-    function _isNativeFunction(fn) {
-      return Function.toString.$call(fn).indexOf("[native code]") !== -1;
-    }
-    function _setPrototypeOf(o, p) {
-      return (
-        (_setPrototypeOf =
-          Object.setPrototypeOf ||
-          function (o2, p2) {
-            return (o2.__proto__ = p2), o2;
-          }),
-        _setPrototypeOf(o, p)
-      );
-    }
-    function _getPrototypeOf(o) {
-      return (
-        (_getPrototypeOf = Object.setPrototypeOf
-          ? Object.getPrototypeOf
-          : function (o2) {
-              return o2.__proto__ || Object.getPrototypeOf(o2);
-            }),
-        _getPrototypeOf(o)
-      );
-    }
-    function _typeof(obj) {
-      return (
-        typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
-          ? (_typeof = function (obj2) {
-              return typeof obj2;
-            })
-          : (_typeof = function (obj2) {
-              return obj2 && typeof Symbol == "function" && obj2.constructor === Symbol && obj2 !== Symbol.prototype
-                ? "symbol"
-                : typeof obj2;
-            }),
-        _typeof(obj)
-      );
-    }
-    var inspect = util.inspect,
-      _require2 = require_errors(),
-      ERR_INVALID_ARG_TYPE = _require2.codes.ERR_INVALID_ARG_TYPE;
-    function endsWith(str, search, this_len) {
-      return (
-        (this_len === void 0 || this_len > str.length) && (this_len = str.length),
-        str.substring(this_len - search.length, this_len) === search
-      );
-    }
-    function repeat(str, count) {
-      if (((count = Math.floor(count)), str.length == 0 || count == 0)) return "";
-      var maxCount = str.length * count;
-      for (count = Math.floor(Math.log(count) / Math.log(2)); count; ) (str += str), count--;
-      return (str += str.substring(0, maxCount - str.length)), str;
-    }
-    var blue = "",
-      green = "",
-      red = "",
-      white = "",
-      kReadableOperator = {
-        deepStrictEqual: "Expected values to be strictly deep-equal:",
-        strictEqual: "Expected values to be strictly equal:",
-        strictEqualObject: 'Expected "actual" to be reference-equal to "expected":',
-        deepEqual: "Expected values to be loosely deep-equal:",
-        equal: "Expected values to be loosely equal:",
-        notDeepStrictEqual: 'Expected "actual" not to be strictly deep-equal to:',
-        notStrictEqual: 'Expected "actual" to be strictly unequal to:',
-        notStrictEqualObject: 'Expected "actual" not to be reference-equal to "expected":',
-        notDeepEqual: 'Expected "actual" not to be loosely deep-equal to:',
-        notEqual: 'Expected "actual" to be loosely unequal to:',
-        notIdentical: "Values identical but not reference-equal:",
-      },
-      kMaxShortLength = 10;
-    function copyError(source) {
-      var keys = Object.keys(source),
-        target = Object.create(Object.getPrototypeOf(source));
-      return (
-        keys.forEach(function (key) {
-          target[key] = source[key];
-        }),
-        Object.defineProperty(target, "message", {
-          value: source.message,
-        }),
-        target
-      );
-    }
-    function inspectValue(val) {
-      return inspect(val, {
-        compact: !1,
-        customInspect: !1,
-        depth: 1e3,
-        maxArrayLength: 1 / 0,
-        showHidden: !1,
-        breakLength: 1 / 0,
-        showProxy: !1,
-        sorted: !0,
-        getters: !0,
-      });
-    }
-    function createErrDiff(actual, expected, operator) {
-      var other = "",
-        res = "",
-        lastPos = 0,
-        end = "",
-        skipped = !1,
-        actualInspected = inspectValue(actual),
-        actualLines = actualInspected.split(`
-`),
-        expectedLines = inspectValue(expected).split(`
-`),
-        i = 0,
-        indicator = "";
-      if (
-        (operator === "strictEqual" &&
-          _typeof(actual) === "object" &&
-          _typeof(expected) === "object" &&
-          actual !== null &&
-          expected !== null &&
-          (operator = "strictEqualObject"),
-        actualLines.length === 1 && expectedLines.length === 1 && actualLines[0] !== expectedLines[0])
-      ) {
-        var inputLength = actualLines[0].length + expectedLines[0].length;
-        if (inputLength <= kMaxShortLength) {
-          if (
-            (_typeof(actual) !== "object" || actual === null) &&
-            (_typeof(expected) !== "object" || expected === null) &&
-            (actual !== 0 || expected !== 0)
-          )
-            return (
-              "".concat(
-                kReadableOperator[operator],
-                `
+const { Buffer } = require("node:buffer");
+const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
+const { innerOk } = require("internal/assert/utils");
 
-`,
-              ) +
-              "".concat(actualLines[0], " !== ").concat(
-                expectedLines[0],
-                `
-`,
-              )
-            );
-        } else if (operator !== "strictEqualObject") {
-          var maxLength = process.stderr && process.stderr.isTTY ? process.stderr.columns : 80;
-          if (inputLength < maxLength) {
-            for (; actualLines[0][i] === expectedLines[0][i]; ) i++;
-            i > 2 &&
-              ((indicator = `
-  `.concat(repeat(" ", i), "^")),
-              (i = 0));
-          }
-        }
-      }
-      for (
-        var a = actualLines[actualLines.length - 1], b = expectedLines[expectedLines.length - 1];
-        a === b &&
-        (i++ < 2
-          ? (end = `
-  `
-              .concat(a)
-              .concat(end))
-          : (other = a),
-        actualLines.pop(),
-        expectedLines.pop(),
-        !(actualLines.length === 0 || expectedLines.length === 0));
+const { validateFunction } = require("internal/validators");
 
-      )
-        (a = actualLines[actualLines.length - 1]), (b = expectedLines[expectedLines.length - 1]);
-      var maxLines = Math.max(actualLines.length, expectedLines.length);
-      if (maxLines === 0) {
-        var _actualLines = actualInspected.split(`
-`);
-        if (_actualLines.length > 30)
-          for (_actualLines[26] = "".concat(blue, "...").concat(white); _actualLines.length > 27; ) _actualLines.pop();
-        return ""
-          .concat(
-            kReadableOperator.notIdentical,
-            `
+type nodeAssert = typeof import("node:assert");
 
-`,
-          )
-          .concat(
-            _actualLines.join(`
-`),
-            `
-`,
-          );
-      }
-      i > 3 &&
-        ((end = `
-`
-          .concat(blue, "...")
-          .concat(white)
-          .concat(end)),
-        (skipped = !0)),
-        other !== "" &&
-          ((end = `
-  `
-            .concat(other)
-            .concat(end)),
-          (other = ""));
-      var printedLines = 0,
-        msg =
-          kReadableOperator[operator] +
-          `
-`
-            .concat(green, "+ actual")
-            .concat(white, " ")
-            .concat(red, "- expected")
-            .concat(white),
-        skippedMsg = " ".concat(blue, "...").concat(white, " Lines skipped");
-      for (i = 0; i < maxLines; i++) {
-        var cur = i - lastPos;
-        if (actualLines.length < i + 1)
-          cur > 1 &&
-            i > 2 &&
-            (cur > 4
-              ? ((res += `
-`
-                  .concat(blue, "...")
-                  .concat(white)),
-                (skipped = !0))
-              : cur > 3 &&
-                ((res += `
-  `.concat(expectedLines[i - 2])),
-                printedLines++),
-            (res += `
-  `.concat(expectedLines[i - 1])),
-            printedLines++),
-            (lastPos = i),
-            (other += `
-`
-              .concat(red, "-")
-              .concat(white, " ")
-              .concat(expectedLines[i])),
-            printedLines++;
-        else if (expectedLines.length < i + 1)
-          cur > 1 &&
-            i > 2 &&
-            (cur > 4
-              ? ((res += `
-`
-                  .concat(blue, "...")
-                  .concat(white)),
-                (skipped = !0))
-              : cur > 3 &&
-                ((res += `
-  `.concat(actualLines[i - 2])),
-                printedLines++),
-            (res += `
-  `.concat(actualLines[i - 1])),
-            printedLines++),
-            (lastPos = i),
-            (res += `
-`
-              .concat(green, "+")
-              .concat(white, " ")
-              .concat(actualLines[i])),
-            printedLines++;
-        else {
-          var expectedLine = expectedLines[i],
-            actualLine = actualLines[i],
-            divergingLines =
-              actualLine !== expectedLine && (!endsWith(actualLine, ",") || actualLine.slice(0, -1) !== expectedLine);
-          divergingLines &&
-            endsWith(expectedLine, ",") &&
-            expectedLine.slice(0, -1) === actualLine &&
-            ((divergingLines = !1), (actualLine += ",")),
-            divergingLines
-              ? (cur > 1 &&
-                  i > 2 &&
-                  (cur > 4
-                    ? ((res += `
-`
-                        .concat(blue, "...")
-                        .concat(white)),
-                      (skipped = !0))
-                    : cur > 3 &&
-                      ((res += `
-  `.concat(actualLines[i - 2])),
-                      printedLines++),
-                  (res += `
-  `.concat(actualLines[i - 1])),
-                  printedLines++),
-                (lastPos = i),
-                (res += `
-`
-                  .concat(green, "+")
-                  .concat(white, " ")
-                  .concat(actualLine)),
-                (other += `
-`
-                  .concat(red, "-")
-                  .concat(white, " ")
-                  .concat(expectedLine)),
-                (printedLines += 2))
-              : ((res += other),
-                (other = ""),
-                (cur === 1 || i === 0) &&
-                  ((res += `
-  `.concat(actualLine)),
-                  printedLines++));
-        }
-        if (printedLines > 20 && i < maxLines - 2)
-          return (
-            ""
-              .concat(msg)
-              .concat(
-                skippedMsg,
-                `
-`,
-              )
-              .concat(
-                res,
-                `
-`,
-              )
-              .concat(blue, "...")
-              .concat(white)
-              .concat(
-                other,
-                `
-`,
-              ) + "".concat(blue, "...").concat(white)
-          );
-      }
-      return ""
-        .concat(msg)
-        .concat(
-          skipped ? skippedMsg : "",
-          `
-`,
-        )
-        .concat(res)
-        .concat(other)
-        .concat(end)
-        .concat(indicator);
-    }
-    var AssertionError = /* @__PURE__ */ (function (_Error) {
-      function AssertionError2(options) {
-        var _this;
-        if ((_classCallCheck(this, AssertionError2), _typeof(options) !== "object" || options === null))
-          throw new ERR_INVALID_ARG_TYPE("options", "object", options);
-        var message = options.message,
-          operator = options.operator,
-          stackStartFn = options.stackStartFn,
-          actual = options.actual,
-          expected = options.expected,
-          limit = Error.stackTraceLimit;
-        if (((Error.stackTraceLimit = 0), message != null))
-          _this = _possibleConstructorReturn(this, _getPrototypeOf(AssertionError2).$call(this, String(message)));
-        else if (
-          (process.stderr &&
-            process.stderr.isTTY &&
-            (process.stderr && process.stderr.getColorDepth && process.stderr.getColorDepth() !== 1
-              ? ((blue = "[34m"), (green = "[32m"), (white = "[39m"), (red = "[31m"))
-              : ((blue = ""), (green = ""), (white = ""), (red = ""))),
-          _typeof(actual) === "object" &&
-            actual !== null &&
-            _typeof(expected) === "object" &&
-            expected !== null &&
-            "stack" in actual &&
-            actual instanceof Error &&
-            "stack" in expected &&
-            expected instanceof Error &&
-            ((actual = copyError(actual)), (expected = copyError(expected))),
-          operator === "deepStrictEqual" || operator === "strictEqual")
-        )
-          _this = _possibleConstructorReturn(
-            this,
-            _getPrototypeOf(AssertionError2).$call(this, createErrDiff(actual, expected, operator)),
-          );
-        else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
-          var base = kReadableOperator[operator],
-            res = inspectValue(actual).split(`
-`);
-          if (
-            (operator === "notStrictEqual" &&
-              _typeof(actual) === "object" &&
-              actual !== null &&
-              (base = kReadableOperator.notStrictEqualObject),
-            res.length > 30)
-          )
-            for (res[26] = "".concat(blue, "...").concat(white); res.length > 27; ) res.pop();
-          res.length === 1
-            ? (_this = _possibleConstructorReturn(
-                this,
-                _getPrototypeOf(AssertionError2).$call(this, "".concat(base, " ").concat(res[0])),
-              ))
-            : (_this = _possibleConstructorReturn(
-                this,
-                _getPrototypeOf(AssertionError2).$call(
-                  this,
-                  ""
-                    .concat(
-                      base,
-                      `
-
-`,
-                    )
-                    .concat(
-                      res.join(`
-`),
-                      `
-`,
-                    ),
-                ),
-              ));
-        } else {
-          var _res = inspectValue(actual),
-            other = "",
-            knownOperators = kReadableOperator[operator];
-          operator === "notDeepEqual" || operator === "notEqual"
-            ? ((_res = ""
-                .concat(
-                  kReadableOperator[operator],
-                  `
-
-`,
-                )
-                .concat(_res)),
-              _res.length > 1024 && (_res = "".concat(_res.slice(0, 1021), "...")))
-            : ((other = "".concat(inspectValue(expected))),
-              _res.length > 512 && (_res = "".concat(_res.slice(0, 509), "...")),
-              other.length > 512 && (other = "".concat(other.slice(0, 509), "...")),
-              operator === "deepEqual" || operator === "equal"
-                ? (_res = ""
-                    .concat(
-                      knownOperators,
-                      `
-
-`,
-                    )
-                    .concat(
-                      _res,
-                      `
-
-should equal
-
-`,
-                    ))
-                : (other = " ".concat(operator, " ").concat(other))),
-            (_this = _possibleConstructorReturn(
-              this,
-              _getPrototypeOf(AssertionError2).$call(this, "".concat(_res).concat(other)),
-            ));
-        }
-        return (
-          (Error.stackTraceLimit = limit),
-          (_this.generatedMessage = !message),
-          Object.defineProperty(_assertThisInitialized(_this), "name", {
-            value: "AssertionError [ERR_ASSERTION]",
-            enumerable: !1,
-            writable: !0,
-            configurable: !0,
-          }),
-          (_this.code = "ERR_ASSERTION"),
-          (_this.actual = actual),
-          (_this.expected = expected),
-          (_this.operator = operator),
-          Error.captureStackTrace && Error.captureStackTrace(_assertThisInitialized(_this), stackStartFn),
-          _this.stack,
-          (_this.name = "AssertionError"),
-          _possibleConstructorReturn(_this)
-        );
-      }
-      AssertionError2.prototype = {};
-      _inherits(AssertionError2, _Error);
-      return (
-        _createClass(AssertionError2, [
-          {
-            key: "toString",
-            value: function () {
-              return "".concat(this.name, " [").concat(this.code, "]: ").concat(this.message);
-            },
-          },
-          {
-            key: inspect.custom,
-            value: function (recurseTimes, ctx) {
-              return inspect(
-                this,
-                _objectSpread({}, ctx, {
-                  customInspect: !1,
-                  depth: 0,
-                }),
-              );
-            },
-          },
-        ]),
-        AssertionError2
-      );
-    })(_wrapNativeSuper(Error));
-    module2.exports = AssertionError;
-  },
-});
-
-// assert/build/assert.js
-var require_assert = __commonJS({
-  "assert/build/assert.js"(exports, module2) {
-    "use strict";
-    function _typeof(obj) {
-      return (
-        typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
-          ? (_typeof = function (obj2) {
-              return typeof obj2;
-            })
-          : (_typeof = function (obj2) {
-              return obj2 && typeof Symbol == "function" && obj2.constructor === Symbol && obj2 !== Symbol.prototype
-                ? "symbol"
-                : typeof obj2;
-            }),
-        _typeof(obj)
-      );
-    }
-    function _classCallCheck(instance, Constructor) {
-      if (!(instance instanceof Constructor)) throw new TypeError("Cannot call a class as a function");
-    }
-
-    var _require = require_errors(),
-      _require$codes = _require.codes,
-      ERR_AMBIGUOUS_ARGUMENT = _require$codes.ERR_AMBIGUOUS_ARGUMENT,
-      ERR_INVALID_ARG_TYPE = _require$codes.ERR_INVALID_ARG_TYPE,
-      ERR_INVALID_ARG_VALUE = _require$codes.ERR_INVALID_ARG_VALUE,
-      ERR_INVALID_RETURN_VALUE = _require$codes.ERR_INVALID_RETURN_VALUE,
-      ERR_MISSING_ARGS = _require$codes.ERR_MISSING_ARGS,
-      AssertionError = require_assertion_error(),
-      _require2 = util,
-      inspect = _require2.inspect,
-      _require$types = util.types,
-      isPromise = _require$types.isPromise,
-      isRegExp = _require$types.isRegExp,
-      objectAssign = Object.assign,
-      objectIs = Object.is,
-      errorCache = new Map();
-
-    var warned = !1,
-      assert = (module2.exports = ok),
-      NO_EXCEPTION_SENTINEL = {};
-    function innerFail(obj) {
-      throw obj.message instanceof Error ? obj.message : new AssertionError(obj);
-    }
-    function fail(actual, expected, message, operator, stackStartFn) {
-      var argsLen = arguments.length,
-        internalMessage;
-      if (argsLen === 0) internalMessage = "Failed";
-      else if (argsLen === 1) (message = actual), (actual = void 0);
-      else {
-        if (warned === !1) {
-          warned = !0;
-          var warn = process.emitWarning ? process.emitWarning : console.warn.bind(console);
-          warn(
-            "assert.fail() with more than one argument is deprecated. Please use assert.strictEqual() instead or only pass a message.",
-            "DeprecationWarning",
-            "DEP0094",
-          );
-        }
-        argsLen === 2 && (operator = "!=");
-      }
-      if (message instanceof Error) throw message;
-      var errArgs = {
-        actual,
-        expected,
-        operator: operator === void 0 ? "fail" : operator,
-        stackStartFn: stackStartFn || fail,
-      };
-      message !== void 0 && (errArgs.message = message);
-      var err = new AssertionError(errArgs);
-      throw (internalMessage && ((err.message = internalMessage), (err.generatedMessage = !0)), err);
-    }
-    assert.fail = fail;
-    assert.AssertionError = AssertionError;
-    function innerOk(fn, argLen, value, message) {
-      if (!value) {
-        var generatedMessage = !1;
-        if (argLen === 0) (generatedMessage = !0), (message = "No value argument passed to `assert.ok()`");
-        else if (message instanceof Error) throw message;
-        var err = new AssertionError({
-          actual: value,
-          expected: !0,
-          message,
-          operator: "==",
-          stackStartFn: fn,
-        });
-        throw ((err.generatedMessage = generatedMessage), err);
-      }
-    }
-    function ok() {
-      for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++)
-        args[_key] = arguments[_key];
-      innerOk.$apply(void 0, [ok, args.length].concat(args));
-    }
-    assert.ok = ok;
-    assert.equal = function equal(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      actual != expected &&
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "==",
-          stackStartFn: equal,
-        });
-    };
-    assert.notEqual = function notEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      actual == expected &&
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "!=",
-          stackStartFn: notEqual,
-        });
-    };
-    assert.deepEqual = function deepEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      isDeepEqual(actual, expected, false) ||
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "deepEqual",
-          stackStartFn: deepEqual,
-        });
-    };
-    assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      isDeepEqual(actual, expected, false) &&
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "notDeepEqual",
-          stackStartFn: notDeepEqual,
-        });
-    };
-    assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-
-      isDeepEqual(actual, expected, true) ||
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "deepStrictEqual",
-          stackStartFn: deepStrictEqual,
-        });
-    };
-    assert.notDeepStrictEqual = notDeepStrictEqual;
-    function notDeepStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-
-      isDeepEqual(actual, expected, true) &&
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "notDeepStrictEqual",
-          stackStartFn: notDeepStrictEqual,
-        });
-    }
-    assert.strictEqual = function strictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      objectIs(actual, expected) ||
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "strictEqual",
-          stackStartFn: strictEqual,
-        });
-    };
-    assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      objectIs(actual, expected) &&
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: "notStrictEqual",
-          stackStartFn: notStrictEqual,
-        });
-    };
-    var internalMatch = function (actual, expected, message, fn) {
-      if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
-      if (typeof actual !== "string") throw new ERR_INVALID_ARG_TYPE("actual", "string", actual);
-      if (!isRegExp(expected)) throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
-      var match = fn === assert.match;
-      expected.test(actual) === match ||
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: fn.name,
-          stackStartFn: fn,
-        });
-    };
-    assert.doesNotMatch = function doesNotMatch(actual, expected, message) {
-      internalMatch(actual, expected, message, doesNotMatch);
-    };
-    assert.match = function match(actual, expected, message) {
-      internalMatch(actual, expected, message, match);
-    };
-    var Comparison = function Comparison2(obj, keys, actual) {
-      var _this = this;
-      _classCallCheck(this, Comparison2),
-        keys.forEach(function (key) {
-          key in obj &&
-            (actual !== void 0 && typeof actual[key] == "string" && isRegExp(obj[key]) && obj[key].test(actual[key])
-              ? (_this[key] = actual[key])
-              : (_this[key] = obj[key]));
-        });
-    };
-    Comparison.prototype = {};
-    function compareExceptionKey(actual, expected, key, message, keys, fn) {
-      if (!(key in actual) || !isDeepEqual(actual[key], expected[key], true)) {
-        if (!message) {
-          var a = new Comparison(actual, keys),
-            b = new Comparison(expected, keys, actual),
-            err = new AssertionError({
-              actual: a,
-              expected: b,
-              operator: "deepStrictEqual",
-              stackStartFn: fn,
-            });
-          throw ((err.actual = actual), (err.expected = expected), (err.operator = fn.name), err);
-        }
-        innerFail({
-          actual,
-          expected,
-          message,
-          operator: fn.name,
-          stackStartFn: fn,
-        });
-      }
-    }
-    function expectedException(actual, expected, msg, fn) {
-      if (typeof expected != "function") {
-        if (isRegExp(expected)) return expected.test(actual);
-        if (arguments.length === 2) throw new ERR_INVALID_ARG_TYPE("expected", ["Function", "RegExp"], expected);
-        if (_typeof(actual) !== "object" || actual === null) {
-          var err = new AssertionError({
-            actual,
-            expected,
-            message: msg,
-            operator: "deepStrictEqual",
-            stackStartFn: fn,
-          });
-          throw ((err.operator = fn.name), err);
-        }
-        var keys = Object.keys(expected);
-        if (expected instanceof Error) keys.push("name", "message");
-        else if (keys.length === 0) throw new ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
-        return (
-          keys.forEach(function (key) {
-            return (
-              (typeof actual[key] == "string" && isRegExp(expected[key]) && expected[key].test(actual[key])) ||
-              compareExceptionKey(actual, expected, key, msg, keys, fn)
-            );
-          }),
-          !0
-        );
-      }
-      return expected.prototype !== void 0 && actual instanceof expected
-        ? !0
-        : Error.isPrototypeOf(expected)
-          ? !1
-          : expected.$call({}, actual) === !0;
-    }
-    function getActual(fn) {
-      if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "function", fn);
-      try {
-        fn();
-      } catch (e) {
-        return e;
-      }
-      return NO_EXCEPTION_SENTINEL;
-    }
-    function checkIsPromise(obj) {
-      return (
-        isPromise(obj) ||
-        (obj !== null && _typeof(obj) === "object" && typeof obj.then == "function" && typeof obj.catch == "function")
-      );
-    }
-    function waitForActual(promiseFn) {
-      return Promise.resolve().then(function () {
-        var resultPromise;
-        if (typeof promiseFn == "function") {
-          if (((resultPromise = promiseFn()), !checkIsPromise(resultPromise)))
-            throw new ERR_INVALID_RETURN_VALUE("instance of Promise", "promiseFn", resultPromise);
-        } else if (checkIsPromise(promiseFn)) resultPromise = promiseFn;
-        else throw new ERR_INVALID_ARG_TYPE("promiseFn", ["Function", "Promise"], promiseFn);
-        return Promise.resolve()
-          .then(function () {
-            return resultPromise;
-          })
-          .then(function () {
-            return NO_EXCEPTION_SENTINEL;
-          })
-          .catch(function (e) {
-            return e;
-          });
-      });
-    }
-    function expectsError(stackStartFn, actual, error, message) {
-      if (typeof error == "string") {
-        if (arguments.length === 4)
-          throw new ERR_INVALID_ARG_TYPE("error", ["Object", "Error", "Function", "RegExp"], error);
-        if (_typeof(actual) === "object" && actual !== null) {
-          if (actual.message === error)
-            throw new ERR_AMBIGUOUS_ARGUMENT(
-              "error/message",
-              'The error message "'.concat(actual.message, '" is identical to the message.'),
-            );
-        } else if (actual === error)
-          throw new ERR_AMBIGUOUS_ARGUMENT(
-            "error/message",
-            'The error "'.concat(actual, '" is identical to the message.'),
-          );
-        (message = error), (error = void 0);
-      } else if (error != null && _typeof(error) !== "object" && typeof error != "function")
-        throw new ERR_INVALID_ARG_TYPE("error", ["Object", "Error", "Function", "RegExp"], error);
-      if (actual === NO_EXCEPTION_SENTINEL) {
-        var details = "";
-        error && error.name && (details += " (".concat(error.name, ")")),
-          (details += message ? ": ".concat(message) : ".");
-        var fnType = stackStartFn.name === "rejects" ? "rejection" : "exception";
-        innerFail({
-          actual: void 0,
-          expected: error,
-          operator: stackStartFn.name,
-          message: "Missing expected ".concat(fnType).concat(details),
-          stackStartFn,
-        });
-      }
-      if (error && !expectedException(actual, error, message, stackStartFn)) throw actual;
-    }
-    function expectsNoError(stackStartFn, actual, error, message) {
-      if (actual !== NO_EXCEPTION_SENTINEL) {
-        if (
-          (typeof error == "string" && ((message = error), (error = void 0)),
-          !error || expectedException(actual, error))
-        ) {
-          var details = message ? ": ".concat(message) : ".",
-            fnType = stackStartFn.name === "doesNotReject" ? "rejection" : "exception";
-          innerFail({
-            actual,
-            expected: error,
-            operator: stackStartFn.name,
-            message:
-              "Got unwanted ".concat(fnType).concat(
-                details,
-                `
-`,
-              ) + 'Actual message: "'.concat(actual && actual.message, '"'),
-            stackStartFn,
-          });
-        }
-        throw actual;
-      }
-    }
-    assert.throws = function throws(promiseFn) {
-      for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++)
-        args[_key2 - 1] = arguments[_key2];
-      expectsError.$apply(void 0, [throws, getActual(promiseFn)].concat(args));
-    };
-    assert.rejects = function rejects(promiseFn) {
-      for (var _len3 = arguments.length, args = new Array(_len3 > 1 ? _len3 - 1 : 0), _key3 = 1; _key3 < _len3; _key3++)
-        args[_key3 - 1] = arguments[_key3];
-      return waitForActual(promiseFn).then(function (result) {
-        return expectsError.$apply(void 0, [rejects, result].concat(args));
-      });
-    };
-    assert.doesNotThrow = function doesNotThrow(fn) {
-      for (var _len4 = arguments.length, args = new Array(_len4 > 1 ? _len4 - 1 : 0), _key4 = 1; _key4 < _len4; _key4++)
-        args[_key4 - 1] = arguments[_key4];
-      expectsNoError.$apply(void 0, [doesNotThrow, getActual(fn)].concat(args));
-    };
-    assert.doesNotReject = function doesNotReject(fn) {
-      for (var _len5 = arguments.length, args = new Array(_len5 > 1 ? _len5 - 1 : 0), _key5 = 1; _key5 < _len5; _key5++)
-        args[_key5 - 1] = arguments[_key5];
-      return waitForActual(fn).then(function (result) {
-        return expectsNoError.$apply(void 0, [doesNotReject, result].concat(args));
-      });
-    };
-    assert.ifError = function ifError(err) {
-      if (err != null) {
-        var message = "ifError got unwanted exception: ";
-        _typeof(err) === "object" && typeof err.message == "string"
-          ? err.message.length === 0 && err.constructor
-            ? (message += err.constructor.name)
-            : (message += err.message)
-          : (message += inspect(err));
-        var newErr = new AssertionError({
-            actual: err,
-            expected: null,
-            operator: "ifError",
-            message,
-            stackStartFn: ifError,
-          }),
-          origStack = err.stack;
-        if (typeof origStack == "string") {
-          var tmp2 = origStack.split(`
-`);
-          tmp2.shift();
-          for (
-            var tmp1 = newErr.stack.split(`
-`),
-              i = 0;
-            i < tmp2.length;
-            i++
-          ) {
-            var pos = tmp1.indexOf(tmp2[i]);
-            if (pos !== -1) {
-              tmp1 = tmp1.slice(0, pos);
-              break;
-            }
-          }
-          newErr.stack = ""
-            .concat(
-              tmp1.join(`
-`),
-              `
-`,
-            )
-            .concat(
-              tmp2.join(`
-`),
-            );
-        }
-        throw newErr;
-      }
-    };
-    function strict() {
-      for (var _len6 = arguments.length, args = new Array(_len6), _key6 = 0; _key6 < _len6; _key6++)
-        args[_key6] = arguments[_key6];
-      innerOk.$apply(void 0, [strict, args.length].concat(args));
-    }
-    assert.strict = objectAssign(strict, assert, {
-      equal: assert.strictEqual,
-      deepEqual: assert.deepStrictEqual,
-      notEqual: assert.notStrictEqual,
-      notDeepEqual: assert.notDeepStrictEqual,
-    });
-    assert.strict.strict = assert.strict;
-  },
-});
-var assert_module = require_assert();
-
-function CallTracker() {
-  throw new Error("CallTracker is not supported yet");
+function isDeepEqual(a, b) {
+  return Bun.deepEquals(a, b, false);
+}
+function isDeepStrictEqual(a, b) {
+  return Bun.deepEquals(a, b, true);
 }
 
-assert_module["CallTracker"] = CallTracker;
+var _inspect;
+function lazyInspect() {
+  if (_inspect === undefined) {
+    _inspect = require("internal/util/inspect").inspect;
+  }
+  return _inspect;
+}
 
-export default assert_module;
+var AssertionError;
+function loadAssertionError() {
+  if (AssertionError === undefined) {
+    AssertionError = require("internal/assert/assertion_error");
+  }
+}
+
+let warned = false;
+
+// The assert module provides functions that throw
+// AssertionError's when particular conditions are not met. The
+// assert module must conform to the following interface.
+
+const assert: nodeAssert = ok as any;
+export default assert;
+
+const NO_EXCEPTION_SENTINEL = {};
+
+// All of the following functions must throw an AssertionError
+// when a corresponding condition is not met, with a message that
+// may be undefined if not provided. All assertion methods provide
+// both the actual and expected values to the assertion error for
+// display purposes.
+
+function innerFail(obj) {
+  if (obj.message instanceof Error) throw obj.message;
+
+  throw new AssertionError(obj);
+}
+
+function fail(message?: string | Error): never;
+/** @deprecated since v10.0.0 - use fail([message]) or other assert functions instead. */
+function fail(
+  actual: unknown,
+  expected: unknown,
+  message?: string | Error,
+  operator?: string,
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  stackStartFn?: Function,
+): never;
+function fail(
+  actual: unknown,
+  expected: unknown,
+  message?: string | Error,
+  operator?: string,
+  stackStartFn?: Function,
+) {
+  const argsLen = arguments.length;
+
+  let internalMessage = false;
+  if (actual == null && argsLen <= 1) {
+    internalMessage = true;
+    message = "Failed";
+  } else if (argsLen === 1) {
+    message = actual;
+    actual = undefined;
+  } else {
+    if (warned === false) {
+      warned = true;
+      process.emitWarning(
+        "assert.fail() with more than one argument is deprecated. " +
+          "Please use assert.strictEqual() instead or only pass a message.",
+        "DeprecationWarning",
+        "DEP0094",
+      );
+    }
+    if (argsLen === 2) operator = "!=";
+  }
+
+  if (message instanceof Error) throw message;
+
+  const errArgs = {
+    actual,
+    expected,
+    operator: operator === undefined ? "fail" : operator,
+    stackStartFn: stackStartFn || fail,
+    message,
+  };
+  if (AssertionError === undefined) loadAssertionError();
+  const err = new AssertionError(errArgs);
+  if (internalMessage) {
+    err.generatedMessage = true;
+  }
+  throw err;
+}
+
+assert.fail = fail;
+
+// The AssertionError is defined in internal/error.
+assert.AssertionError = AssertionError;
+Object.defineProperty(assert, "AssertionError", {
+  get() {
+    loadAssertionError();
+    return AssertionError;
+  },
+  set(value) {
+    AssertionError = value;
+  },
+  configurable: true,
+  enumerable: true,
+});
+
+/**
+ * Pure assertion tests whether a value is truthy, as determined
+ * by !!value.
+ * @param {...any} args
+ * @returns {void}
+ */
+
+function ok(value: unknown, message?: string | Error): asserts value;
+function ok(...args: unknown[]): void {
+  innerOk(ok, args.length, ...args);
+}
+assert.ok = ok;
+
+/**
+ * The equality assertion tests shallow, coercive equality with ==.
+ * @param actual
+ * @param expected
+ * @param  message
+ * @returns {void}
+ */
+/* eslint-disable no-restricted-properties */
+assert.equal = function equal(actual: unknown, expected: unknown, message?: string | Error) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  // eslint-disable-next-line eqeqeq
+  // if (actual != expected && (!NumberIsNaN(actual) || !NumberIsNaN(expected))) {
+  if (actual != expected && !(isNaN(actual) && isNaN(expected))) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "==",
+      stackStartFn: equal,
+    });
+  }
+};
+
+/**
+ * The non-equality assertion tests for whether two objects are not
+ * equal with !=.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.notEqual = function notEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  // eslint-disable-next-line eqeqeq
+  if (actual == expected || (NumberIsNaN(actual) && NumberIsNaN(expected))) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "!=",
+      stackStartFn: notEqual,
+    });
+  }
+};
+
+/**
+ * The deep equivalence assertion tests a deep equality relation.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.deepEqual = function deepEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (!isDeepEqual(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "deepEqual",
+      stackStartFn: deepEqual,
+    });
+  }
+};
+
+/**
+ * The deep non-equivalence assertion tests for any deep inequality.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (isDeepEqual(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "notDeepEqual",
+      stackStartFn: notDeepEqual,
+    });
+  }
+};
+/* eslint-enable */
+
+/**
+ * The deep strict equivalence assertion tests a deep strict equality
+ * relation.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (!isDeepStrictEqual(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "deepStrictEqual",
+      stackStartFn: deepStrictEqual,
+    });
+  }
+};
+
+/**
+ * The deep strict non-equivalence assertion tests for any deep strict
+ * inequality.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.notDeepStrictEqual = notDeepStrictEqual;
+function notDeepStrictEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (isDeepStrictEqual(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "notDeepStrictEqual",
+      stackStartFn: notDeepStrictEqual,
+    });
+  }
+}
+
+/**
+ * The strict equivalence assertion tests a strict equality relation.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.strictEqual = function strictEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (!ObjectIs(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "strictEqual",
+      stackStartFn: strictEqual,
+    });
+  }
+};
+
+/**
+ * The strict non-equivalence assertion tests for any strict inequality.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+  if (ObjectIs(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "notStrictEqual",
+      stackStartFn: notStrictEqual,
+    });
+  }
+};
+
+function isSpecial(obj) {
+  return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
+}
+
+const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
+
+/**
+ * Compares two objects or values recursively to check if they are equal.
+ * @param {any} actual - The actual value to compare.
+ * @param {any} expected - The expected value to compare.
+ * @param {Set} [comparedObjects=new Set()] - Set to track compared objects for handling circular references.
+ * @returns {boolean} - Returns `true` if the actual value matches the expected value, otherwise `false`.
+ * @example
+ * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
+ */
+function compareBranch(actual, expected, comparedObjects) {
+  // Check for Map object equality
+  if (isMap(actual) && isMap(expected)) {
+    return Bun.deepEquals(actual, expected, true);
+  }
+
+  for (const type of typesToCallDeepStrictEqualWith) {
+    if (type(actual) || type(expected)) {
+      return isDeepStrictEqual(actual, expected);
+    }
+  }
+
+  // Check for Set object equality
+  if (isSet(actual) && isSet(expected)) {
+    if (expected.size > actual.size) {
+      return false; // `expected` can't be a subset if it has more elements
+    }
+
+    const actualArray = ArrayFrom(FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], actual));
+    const expectedIterator = FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], expected);
+    const usedIndices = new SafeSet();
+
+    expectedIteration: for (const expectedItem of expectedIterator) {
+      for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
+        if (!usedIndices.has(actualIdx) && isDeepStrictEqual(actualArray[actualIdx], expectedItem)) {
+          usedIndices.add(actualIdx);
+          continue expectedIteration;
+        }
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  // Check if expected array is a subset of actual array
+  if ($isArray(actual) && $isArray(expected)) {
+    if (expected.length > actual.length) {
+      return false;
+    }
+
+    // Create a map to count occurrences of each element in the expected array
+    const expectedCounts = new SafeMap();
+    for (const expectedItem of expected) {
+      let found = false;
+      for (const { 0: key, 1: count } of expectedCounts) {
+        if (isDeepStrictEqual(key, expectedItem)) {
+          expectedCounts.$set(key, count + 1);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        expectedCounts.$set(expectedItem, 1);
+      }
+    }
+
+    // Create a map to count occurrences of relevant elements in the actual array
+    for (const actualItem of actual) {
+      for (const { 0: key, 1: count } of expectedCounts) {
+        if (isDeepStrictEqual(key, actualItem)) {
+          if (count === 1) {
+            expectedCounts.$delete(key);
+          } else {
+            expectedCounts.$set(key, count - 1);
+          }
+          break;
+        }
+      }
+    }
+
+    return !expectedCounts.size;
+  }
+
+  // Comparison done when at least one of the values is not an object
+  if (isSpecial(actual) || isSpecial(expected)) {
+    return isDeepStrictEqual(actual, expected);
+  }
+
+  // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
+  const keysExpected = ReflectOwnKeys(expected);
+
+  comparedObjects ??= new SafeWeakSet();
+
+  // Handle circular references
+  if (comparedObjects.has(actual)) {
+    return true;
+  }
+  comparedObjects.add(actual);
+
+  if (AssertionError === undefined) loadAssertionError();
+  // Check if all expected keys and values match
+  for (let i = 0; i < keysExpected.length; i++) {
+    const key = keysExpected[i];
+    assert(
+      ReflectHas(actual, key),
+      new AssertionError({ message: `Expected key ${String(key)} not found in actual object` }),
+    );
+    if (!compareBranch(actual[key], expected[key], comparedObjects)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * The strict equivalence assertion test between two objects
+ * @param {any} actual
+ * @param {any} expected
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
+  // emitExperimentalWarning("assert.partialDeepStrictEqual");
+  if (arguments.length < 2) {
+    throw $ERR_MISSING_ARGS("actual", "expected");
+  }
+
+  if (!compareBranch(actual, expected)) {
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: "partialDeepStrictEqual",
+      stackStartFn: partialDeepStrictEqual,
+    });
+  }
+};
+
+class Comparison {
+  constructor(obj, keys, actual) {
+    for (const key of keys) {
+      if (key in obj) {
+        if (
+          actual !== undefined &&
+          typeof actual[key] === "string" &&
+          isRegExp(obj[key]) &&
+          RegExpPrototypeExec(obj[key], actual[key]) !== null
+        ) {
+          this[key] = actual[key];
+        } else {
+          this[key] = obj[key];
+        }
+      }
+    }
+  }
+}
+
+function compareExceptionKey(actual, expected, key, message, keys, fn) {
+  if (!(key in actual) || !isDeepStrictEqual(actual[key], expected[key])) {
+    if (!message) {
+      // Create placeholder objects to create a nice output.
+      const a = new Comparison(actual, keys);
+      const b = new Comparison(expected, keys, actual);
+
+      if (AssertionError === undefined) loadAssertionError();
+      const err = new AssertionError({
+        actual: a,
+        expected: b,
+        operator: "deepStrictEqual",
+        stackStartFn: fn,
+      });
+      err.actual = actual;
+      err.expected = expected;
+      err.operator = fn.name;
+      throw err;
+    }
+    innerFail({
+      actual,
+      expected,
+      message,
+      operator: fn.name,
+      stackStartFn: fn,
+    });
+  }
+}
+
+function expectedException(actual, expected, message, fn) {
+  let generatedMessage = false;
+  let throwError = false;
+
+  if (typeof expected !== "function") {
+    // Handle regular expressions.
+    if (isRegExp(expected)) {
+      const str = String(actual);
+      if (RegExpPrototypeExec(expected, str) !== null) return;
+      const inspect = lazyInspect();
+
+      if (!message) {
+        generatedMessage = true;
+        message =
+          "The input did not match the regular expression " + `${inspect(expected)}. Input:\n\n${inspect(str)}\n`;
+      }
+      throwError = true;
+      // Handle primitives properly.
+    } else if (typeof actual !== "object" || actual === null) {
+      if (AssertionError === undefined) loadAssertionError();
+      const err = new AssertionError({
+        actual,
+        expected,
+        message,
+        operator: "deepStrictEqual",
+        stackStartFn: fn,
+      });
+      err.operator = fn.name;
+      throw err;
+    } else {
+      // Handle validation objects.
+      const keys = ObjectKeys(expected);
+      // Special handle errors to make sure the name and the message are
+      // compared as well.
+      if (expected instanceof Error) {
+        ArrayPrototypePush(keys, "name", "message");
+      } else if (keys.length === 0) {
+        throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
+      }
+      for (const key of keys) {
+        if (
+          typeof actual[key] === "string" &&
+          isRegExp(expected[key]) &&
+          RegExpPrototypeExec(expected[key], actual[key]) !== null
+        ) {
+          continue;
+        }
+        compareExceptionKey(actual, expected, key, message, keys, fn);
+      }
+      return;
+    }
+    // Guard instanceof against arrow functions as they don't have a prototype.
+    // Check for matching Error classes.
+  } else if (expected.prototype !== undefined && actual instanceof expected) {
+    return;
+  } else if (ObjectPrototypeIsPrototypeOf(Error, expected)) {
+    if (!message) {
+      generatedMessage = true;
+      message = "The error is expected to be an instance of " + `"${expected.name}". Received `;
+      if (Error.isError(actual)) {
+        const name = actual.constructor?.name || actual.name;
+        if (expected.name === name) {
+          message += "an error with identical name but a different prototype.";
+        } else {
+          message += `"${name}"`;
+        }
+        if (actual.message) {
+          message += `\n\nError message:\n\n${actual.message}`;
+        }
+      } else {
+        message += `"${lazyInspect()(actual, { depth: -1 })}"`;
+      }
+    }
+    throwError = true;
+  } else {
+    // Check validation functions return value.
+    const res = expected.$apply({}, [actual]);
+    if (res !== true) {
+      if (!message) {
+        generatedMessage = true;
+        const name = expected.name ? `"${expected.name}" ` : "";
+        const inspect = lazyInspect();
+        message = `The ${name}validation function is expected to return` + ` "true". Received ${inspect(res)}`;
+
+        if (Error.isError(actual)) {
+          message += `\n\nCaught error:\n\n${actual}`;
+        }
+      }
+      throwError = true;
+    }
+  }
+
+  if (throwError) {
+    if (AssertionError === undefined) loadAssertionError();
+    const err = new AssertionError({
+      actual,
+      expected,
+      message,
+      operator: fn.name,
+      stackStartFn: fn,
+    });
+    err.generatedMessage = generatedMessage;
+    throw err;
+  }
+}
+
+function getActual(fn) {
+  validateFunction(fn, "fn");
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  return NO_EXCEPTION_SENTINEL;
+}
+
+function checkIsPromise(obj) {
+  // Accept native ES6 promises and promises that are implemented in a similar
+  // way. Do not accept thenables that use a function as `obj` and that have no
+  // `catch` handler.
+  return (
+    isPromise(obj) ||
+    (obj !== null && typeof obj === "object" && typeof obj.then === "function" && typeof obj.catch === "function")
+  );
+}
+
+async function waitForActual(promiseFn) {
+  let resultPromise;
+  if (typeof promiseFn === "function") {
+    // Return a rejected promise if `promiseFn` throws synchronously.
+    resultPromise = promiseFn();
+    // Fail in case no promise is returned.
+    if (!checkIsPromise(resultPromise)) {
+      throw $ERR_INVALID_RETURN_VALUE("instance of Promise", "promiseFn", resultPromise);
+    }
+  } else if (checkIsPromise(promiseFn)) {
+    resultPromise = promiseFn;
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["Function", "Promise"], promiseFn);
+  }
+
+  try {
+    await resultPromise;
+  } catch (e) {
+    return e;
+  }
+  return NO_EXCEPTION_SENTINEL;
+}
+
+function expectsError(stackStartFn: Function, actual: unknown, error: unknown, message?: string | Error) {
+  if (typeof error === "string") {
+    if (arguments.length === 4) {
+      throw $ERR_INVALID_ARG_TYPE("error", ["Object", "Error", "Function", "RegExp"], error);
+    }
+    if (typeof actual === "object" && actual !== null) {
+      if ((actual as { message?: unknown }).message === error) {
+        throw $ERR_AMBIGUOUS_ARGUMENT(
+          `The "error/message" argument is ambiguous. The error message "${(actual as { message?: unknown }).message}" is identical to the message.`,
+        );
+      }
+      if (Object.keys(error).length === 0) {
+        throw $ERR_INVALID_ARG_VALUE("error", error, "may not be an empty object");
+      }
+    } else if (actual === error) {
+      throw $ERR_AMBIGUOUS_ARGUMENT(
+        `The "error/message" argument is ambiguous. The error "${actual}" is identical to the message.`,
+      );
+    }
+    message = error;
+    error = undefined;
+  } else if (error != null && typeof error !== "object" && typeof error !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("error", ["Object", "Error", "Function", "RegExp"], error);
+  }
+
+  if (actual === NO_EXCEPTION_SENTINEL) {
+    let details = "";
+    if ((error as Error | undefined)?.name) {
+      details += ` (${(error as Error).name})`;
+    }
+    details += message ? `: ${message}` : ".";
+    const fnType = stackStartFn === assert.rejects ? "rejection" : "exception";
+    innerFail({
+      actual: undefined,
+      expected: error,
+      operator: stackStartFn.name,
+      message: `Missing expected ${fnType}${details}`,
+      stackStartFn,
+    });
+  }
+
+  if (!error) return;
+
+  expectedException(actual, error, message, stackStartFn);
+}
+
+function hasMatchingError(actual, expected) {
+  if (typeof expected !== "function") {
+    if (isRegExp(expected)) {
+      const str = String(actual);
+      return RegExpPrototypeExec(expected, str) !== null;
+    }
+    throw $ERR_INVALID_ARG_TYPE("expected", ["Function", "RegExp"], expected);
+  }
+  // Guard instanceof against arrow functions as they don't have a prototype.
+  if (expected.prototype !== undefined && actual instanceof expected) {
+    return true;
+  }
+  if (ObjectPrototypeIsPrototypeOf(Error, expected)) {
+    return false;
+  }
+  return expected.$apply({}, [actual]) === true;
+}
+
+function expectsNoError(stackStartFn, actual, error, message) {
+  if (actual === NO_EXCEPTION_SENTINEL) return;
+
+  if (typeof error === "string") {
+    message = error;
+    error = undefined;
+  }
+
+  if (!error || hasMatchingError(actual, error)) {
+    const details = message ? `: ${message}` : ".";
+    const fnType = stackStartFn === assert.doesNotReject ? "rejection" : "exception";
+    innerFail({
+      actual,
+      expected: error,
+      operator: stackStartFn.name,
+      message: `Got unwanted ${fnType}${details}\n` + `Actual message: "${actual?.message}"`,
+      stackStartFn,
+    });
+  }
+  throw actual;
+}
+
+/**
+ * Expects the function `promiseFn` to throw an error.
+ * @param {() => any} promiseFn
+ * @param {...any} [args]
+ * @returns {void}
+ */
+assert.throws = function throws(promiseFn: () => Promise<unknown> | Promise<unknown>, ...args: unknown[]): void {
+  expectsError(throws, getActual(promiseFn), ...args);
+};
+
+/**
+ * Expects `promiseFn` function or its value to reject.
+ * @param {() => Promise<any>} promiseFn
+ * @param {...any} [args]
+ * @returns {Promise<void>}
+ */
+function rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
+function rejects(
+  block: (() => Promise<unknown>) | Promise<unknown>,
+  error: nodeAssert.AssertPredicate,
+  message?: string | Error,
+): Promise<void>;
+assert.rejects = async function rejects(promiseFn: () => Promise<unknown>, ...args: any[]): Promise<void> {
+  expectsError(rejects, await waitForActual(promiseFn), ...args);
+};
+
+/**
+ * Asserts that the function `fn` does not throw an error.
+ * @param {() => any} fn
+ * @param {...any} [args]
+ * @returns {void}
+ */
+assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args: unknown[]): void {
+  expectsNoError(doesNotThrow, getActual(fn), ...args);
+};
+
+/**
+ * Expects `fn` or its value to not reject.
+ * @param {() => Promise<any>} fn
+ * @param {...any} [args]
+ * @returns {Promise<void>}
+ */
+assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
+  expectsNoError(doesNotReject, await waitForActual(fn), ...args);
+};
+
+/**
+ * Throws `value` if the value is not `null` or `undefined`.
+ * @param {any} err
+ * @returns {void}
+ */
+assert.ifError = function ifError(err: unknown): void {
+  if (err !== null && err !== undefined) {
+    let message = "ifError got unwanted exception: ";
+    if (typeof err === "object" && typeof err.message === "string") {
+      if (err.message.length === 0 && err.constructor) {
+        message += err.constructor.name;
+      } else {
+        message += err.message;
+      }
+    } else {
+      const inspect = lazyInspect();
+      message += inspect(err);
+    }
+
+    if (AssertionError === undefined) loadAssertionError();
+    const newErr = new AssertionError({
+      actual: err,
+      expected: null,
+      operator: "ifError",
+      message,
+      stackStartFn: ifError,
+    });
+
+    // Make sure we actually have a stack trace!
+    const origStack = err.stack;
+
+    if (typeof origStack === "string") {
+      // This will remove any duplicated frames from the error frames taken
+      // from within `ifError` and add the original error frames to the newly
+      // created ones.
+      const origStackStart = StringPrototypeIndexOf(origStack, "\n    at");
+      if (origStackStart !== -1) {
+        const originalFrames = StringPrototypeSplit(StringPrototypeSlice(origStack, origStackStart + 1), "\n");
+        // Filter all frames existing in err.stack.
+        let newFrames = StringPrototypeSplit(newErr.stack, "\n");
+        for (const errFrame of originalFrames) {
+          // Find the first occurrence of the frame.
+          const pos = ArrayPrototypeIndexOf(newFrames, errFrame);
+          if (pos !== -1) {
+            // Only keep new frames.
+            newFrames = ArrayPrototypeSlice(newFrames, 0, pos);
+            break;
+          }
+        }
+        const stackStart = ArrayPrototypeJoin(newFrames, "\n");
+        const stackEnd = ArrayPrototypeJoin(originalFrames, "\n");
+        newErr.stack = `${stackStart}\n${stackEnd}`;
+      }
+    }
+
+    throw newErr;
+  }
+};
+
+function internalMatch(string, regexp, message, fn) {
+  if (!isRegExp(regexp)) {
+    throw $ERR_INVALID_ARG_TYPE("regexp", "RegExp", regexp);
+  }
+  const match = fn === assert.match;
+  if (typeof string !== "string" || (RegExpPrototypeExec(regexp, string) !== null) !== match) {
+    if (message instanceof Error) {
+      throw message;
+    }
+
+    const generatedMessage = !message;
+    const inspect = lazyInspect();
+
+    // 'The input was expected to not match the regular expression ' +
+    message ||=
+      typeof string !== "string"
+        ? 'The "string" argument must be of type string. Received type ' + `${typeof string} (${inspect(string)})`
+        : (match
+            ? "The input did not match the regular expression "
+            : "The input was expected to not match the regular expression ") +
+          `${inspect(regexp)}. Input:\n\n${inspect(string)}\n`;
+    if (AssertionError === undefined) loadAssertionError();
+    const err = new AssertionError({
+      actual: string,
+      expected: regexp,
+      message,
+      operator: fn.name,
+      stackStartFn: fn,
+    });
+    err.generatedMessage = generatedMessage;
+    throw err;
+  }
+}
+
+/**
+ * Expects the `string` input to match the regular expression.
+ * @param {string} string
+ * @param {RegExp} regexp
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.match = function match(string, regexp, message) {
+  internalMatch(string, regexp, message, match);
+};
+
+/**
+ * Expects the `string` input not to match the regular expression.
+ * @param {string} string
+ * @param {RegExp} regexp
+ * @param {string | Error} [message]
+ * @returns {void}
+ */
+assert.doesNotMatch = function doesNotMatch(string, regexp, message) {
+  internalMatch(string, regexp, message, doesNotMatch);
+};
+
+var CallTracker;
+Object.defineProperty(assert, "CallTracker", {
+  get() {
+    if (CallTracker === undefined) {
+      const { deprecate } = require("node:util");
+      CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
+    }
+    return CallTracker;
+  },
+  set(value) {
+    CallTracker = value;
+  },
+  configurable: true,
+  enumerable: true,
+});
+// assert.CallTracker = CallTracker
+
+/**
+ * Expose a strict only variant of assert.
+ * @param {...any} args
+ * @returns {void}
+ */
+function strict(...args) {
+  innerOk(strict, args.length, ...args);
+}
+
+assert.strict = ObjectAssign(strict, assert, {
+  equal: assert.strictEqual,
+  deepEqual: assert.deepStrictEqual,
+  notEqual: assert.notStrictEqual,
+  notDeepEqual: assert.notDeepStrictEqual,
+});
+
+assert.strict.strict = assert.strict;

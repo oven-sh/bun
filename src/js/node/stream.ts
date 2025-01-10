@@ -31,23 +31,12 @@ const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFuncti
 const { kAutoDestroyed } = require("internal/shared");
 const {
   validateBoolean,
-  validateString,
-  validateNumber,
-  validateSignalName,
-  validateEncoding,
-  validatePort,
   validateInteger,
   validateInt32,
-  validateUint32,
-  validateArray,
-  validateBuffer,
   validateAbortSignal,
   validateFunction,
-  validatePlainFunction,
-  validateUndefined,
+  validateObject,
 } = require("internal/validators");
-
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const ProcessNextTick = process.nextTick;
 
@@ -69,14 +58,6 @@ $debug("node:stream loaded");
 //------------------------------------------------------------------------------
 // Node error polyfills
 //------------------------------------------------------------------------------
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  return new Error(`The argument '${name}' is invalid. Received '${value}' for type '${type}'`);
-}
-
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  return new Error(`The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`);
-}
 
 // node_modules/readable-stream/lib/ours/primordials.js
 var require_primordials = __commonJS({
@@ -517,18 +498,6 @@ var require_errors = __commonJS({
       TypeError,
     );
     E(
-      "ERR_INVALID_ARG_VALUE",
-      (name, value, reason = "is invalid") => {
-        let inspected = inspect(value);
-        if (inspected.length > 128) {
-          inspected = inspected.slice(0, 128) + "...";
-        }
-        const type = name.includes(".") ? "property" : "argument";
-        return `The ${type} '${name}' ${reason}. Received ${inspected}`;
-      },
-      TypeError,
-    );
-    E(
       "ERR_INVALID_RETURN_VALUE",
       (input, name, value) => {
         var _value$constructor;
@@ -605,79 +574,6 @@ var require_errors = __commonJS({
       aggregateTwoErrors: hideStackFrames(aggregateTwoErrors),
       hideStackFrames,
       codes,
-    };
-  },
-});
-
-// node_modules/readable-stream/lib/internal/validators.js
-var require_validators = __commonJS({
-  "node_modules/readable-stream/lib/internal/validators.js"(exports, module) {
-    "use strict";
-    var {
-      ArrayPrototypeIncludes,
-      ArrayPrototypeJoin,
-      ArrayPrototypeMap,
-      NumberParseInt,
-      RegExpPrototypeTest,
-      String: String2,
-    } = require_primordials();
-    var {
-      hideStackFrames,
-      codes: { ERR_SOCKET_BAD_PORT, ERR_INVALID_ARG_TYPE, ERR_INVALID_ARG_VALUE, ERR_OUT_OF_RANGE, ERR_UNKNOWN_SIGNAL },
-    } = require_errors();
-    var { normalizeEncoding } = require_util();
-    var { isAsyncFunction, isArrayBufferView } = require_util().types;
-    var signals = {};
-    function isInt32(value) {
-      return value === (value | 0);
-    }
-    function isUint32(value) {
-      return value === value >>> 0;
-    }
-    var octalReg = /^[0-7]+$/;
-    var modeDesc = "must be a 32-bit unsigned integer or an octal string";
-    function parseFileMode(value, name, def) {
-      if (typeof value === "undefined") {
-        value = def;
-      }
-      if (typeof value === "string") {
-        if (!RegExpPrototypeTest(octalReg, value)) {
-          throw new ERR_INVALID_ARG_VALUE(name, value, modeDesc);
-        }
-        value = NumberParseInt(value, 8);
-      }
-      validateInt32(value, name, 0, 2 ** 32 - 1);
-      return value;
-    }
-    var validateOneOf = hideStackFrames((value, name, oneOf) => {
-      if (!ArrayPrototypeIncludes(oneOf, value)) {
-        const allowed = ArrayPrototypeJoin(
-          ArrayPrototypeMap(oneOf, v => (typeof v === "string" ? `'${v}'` : String2(v))),
-          ", ",
-        );
-        const reason = "must be one of: " + allowed;
-        throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-      }
-    });
-    var validateObject = hideStackFrames((value, name, options) => {
-      const useDefaultOptions = options == null;
-      const allowArray = useDefaultOptions ? false : options.allowArray;
-      const allowFunction = useDefaultOptions ? false : options.allowFunction;
-      const nullable = useDefaultOptions ? false : options.nullable;
-      if (
-        (!nullable && value === null) ||
-        (!allowArray && $isJSArray(value)) ||
-        (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-      ) {
-        throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
-      }
-    });
-    module.exports = {
-      isInt32,
-      isUint32,
-      parseFileMode,
-      validateObject,
-      validateOneOf,
     };
   },
 });
@@ -975,7 +871,6 @@ var require_end_of_stream = __commonJS({
     var { AbortError, codes } = require_errors();
     var { ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = codes;
     var { once } = require_util();
-    var { validateObject } = require_validators();
     var { Promise: Promise2 } = require_primordials();
     var {
       isClosed,
@@ -1185,7 +1080,6 @@ var require_operators = __commonJS({
       codes: { ERR_INVALID_ARG_TYPE, ERR_MISSING_ARGS, ERR_OUT_OF_RANGE },
       AbortError,
     } = require_errors();
-    var { validateObject } = require_validators();
     var kWeakHandler = require_primordials().Symbol("kWeak");
     var { finished } = require_end_of_stream();
     var {
@@ -2018,7 +1912,7 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
   if (hwm != null) {
     if (!NumberIsInteger(hwm) || hwm < 0) {
       const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-      throw new ERR_INVALID_ARG_VALUE(name, hwm);
+      throw $ERR_INVALID_ARG_VALUE(name, hwm);
     }
     return MathFloor(hwm);
   }
@@ -2467,7 +2361,7 @@ var require_readable = __commonJS({
       } = options;
 
       if (encoding !== undefined && !Buffer.isEncoding(encoding))
-        throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+        throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
       validateBoolean(objectMode, "options.objectMode");
 
       // validateBoolean(native, "options.native");
@@ -2592,7 +2486,6 @@ var require_readable = __commonJS({
         ERR_STREAM_UNSHIFT_AFTER_END_EVENT,
       },
     } = require_errors();
-    var { validateObject } = require_validators();
     var from = require_from();
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;
@@ -5103,10 +4996,10 @@ var require_compose = __commonJS({
           continue;
         }
         if (n < streams.length - 1 && !isReadable(streams[n])) {
-          throw new ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
+          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
         }
         if (n > 0 && !isWritable(streams[n])) {
-          throw new ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
+          throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
         }
       }
       let ondrain;

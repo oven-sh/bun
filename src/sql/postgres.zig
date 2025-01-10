@@ -1398,7 +1398,9 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onClose(this: *PostgresSQLConnection) void {
         var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        const loop = vm.eventLoop();
+        loop.enter();
+        defer loop.exit();
         this.fail("Connection closed", error.ConnectionClosed);
     }
 
@@ -1987,6 +1989,8 @@ pub const PostgresSQLConnection = struct {
 
         value: Value,
         free_value: u8 = 0,
+        isIndexedColumn: u8 = 0,
+        index: u32 = 0,
 
         pub const Tag = enum(u8) {
             null = 0,
@@ -2280,6 +2284,13 @@ pub const PostgresSQLConnection = struct {
             }
         }
 
+        pub const Flags = packed struct(u32) {
+            has_indexed_columns: bool = false,
+            has_named_columns: bool = false,
+            has_duplicate_columns: bool = false,
+            _: u29 = 0,
+        };
+
         pub const Putter = struct {
             list: []DataCell,
             fields: []const protocol.FieldDescription,
@@ -2287,16 +2298,25 @@ pub const PostgresSQLConnection = struct {
             count: usize = 0,
             globalObject: *JSC.JSGlobalObject,
 
-            extern fn JSC__constructObjectFromDataCell(*JSC.JSGlobalObject, JSValue, JSValue, [*]DataCell, u32) JSValue;
-            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue) JSValue {
-                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len));
+            extern fn JSC__constructObjectFromDataCell(
+                *JSC.JSGlobalObject,
+                JSValue,
+                JSValue,
+                [*]DataCell,
+                u32,
+                Flags,
+            ) JSValue;
+
+            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags) JSValue {
+                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len), flags);
             }
 
             pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) !bool {
-                const oid = this.fields[index].type_oid;
+                const field = &this.fields[index];
+                const oid = field.type_oid;
                 debug("index: {d}, oid: {d}", .{ index, oid });
-
-                this.list[index] = if (optional_bytes) |data|
+                const cell: *DataCell = &this.list[index];
+                cell.* = if (optional_bytes) |data|
                     try DataCell.fromBytes(this.binary, oid, data.slice(), this.globalObject)
                 else
                     DataCell{
@@ -2306,6 +2326,21 @@ pub const PostgresSQLConnection = struct {
                         },
                     };
                 this.count += 1;
+                cell.index = switch (field.name_or_index) {
+                    // The indexed columns can be out of order.
+                    .index => |i| i,
+
+                    else => @intCast(index),
+                };
+
+                // TODO: when duplicate and we know the result will be an object
+                // and not a .values() array, we can discard the data
+                // immediately.
+                cell.isIndexedColumn = switch (field.name_or_index) {
+                    .duplicate => 2,
+                    .index => 1,
+                    .name => 0,
+                };
                 return true;
             }
         };
@@ -2380,6 +2415,7 @@ pub const PostgresSQLConnection = struct {
             .DataRow => {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
+                statement.checkForDuplicateFields();
 
                 var putter = DataCell.Putter{
                     .list = &.{},
@@ -2413,7 +2449,7 @@ pub const PostgresSQLConnection = struct {
 
                 const pending_value = PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
                 pending_value.ensureStillAlive();
-                const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject));
+                const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject), statement.fields_flags);
 
                 if (pending_value == .zero) {
                     PostgresSQLQuery.pendingValueSetCached(request.thisValue, this.globalObject, result);
@@ -2802,11 +2838,13 @@ pub const PostgresSQLConnection = struct {
 pub const PostgresSQLStatement = struct {
     cached_structure: JSC.Strong = .{},
     ref_count: u32 = 1,
-    fields: []const protocol.FieldDescription = &[_]protocol.FieldDescription{},
+    fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
     parameters: []const int4 = &[_]int4{},
     signature: Signature,
     status: Status = Status.parsing,
     error_response: protocol.ErrorResponse = .{},
+    needs_duplicate_check: bool = true,
+    fields_flags: PostgresSQLConnection.DataCell.Flags = .{},
 
     pub const Status = enum {
         parsing,
@@ -2827,13 +2865,58 @@ pub const PostgresSQLStatement = struct {
         }
     }
 
+    pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
+        if (!this.needs_duplicate_check) return;
+        this.needs_duplicate_check = false;
+
+        var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
+        defer seen_numbers.deinit();
+        var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
+        seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)) catch bun.outOfMemory();
+        defer seen_fields.deinit();
+
+        // iterate backwards
+        var remaining = this.fields.len;
+        var flags: PostgresSQLConnection.DataCell.Flags = .{};
+        while (remaining > 0) {
+            remaining -= 1;
+            const field: *protocol.FieldDescription = &this.fields[remaining];
+            switch (field.name_or_index) {
+                .name => |*name| {
+                    const seen = seen_fields.getOrPut(name.slice()) catch unreachable;
+                    if (seen.found_existing) {
+                        field.name_or_index = .duplicate;
+                        flags.has_duplicate_columns = true;
+                    }
+
+                    flags.has_named_columns = true;
+                },
+                .index => |index| {
+                    if (std.mem.indexOfScalar(u32, seen_numbers.items, index) != null) {
+                        field.name_or_index = .duplicate;
+                        flags.has_duplicate_columns = true;
+                    } else {
+                        seen_numbers.append(index) catch bun.outOfMemory();
+                    }
+
+                    flags.has_indexed_columns = true;
+                },
+                .duplicate => {
+                    flags.has_duplicate_columns = true;
+                },
+            }
+        }
+
+        this.fields_flags = flags;
+    }
+
     pub fn deinit(this: *PostgresSQLStatement) void {
         debug("PostgresSQLStatement deinit", .{});
 
         bun.assert(this.ref_count == 0);
 
         for (this.fields) |*field| {
-            @constCast(field).deinit();
+            field.deinit();
         }
         bun.default_allocator.free(this.fields);
         bun.default_allocator.free(this.parameters);
@@ -2845,21 +2928,37 @@ pub const PostgresSQLStatement = struct {
 
     pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
         return this.cached_structure.get() orelse {
-            const names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
+            const ids = bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, this.fields.len) catch return .undefined;
+            this.checkForDuplicateFields();
             defer {
-                for (names) |*name| {
-                    name.deref();
+                for (ids) |*name| {
+                    name.deinit();
                 }
-                bun.default_allocator.free(names);
+                bun.default_allocator.free(ids);
             }
-            for (this.fields, names) |*field, *name| {
-                name.* = String.fromUTF8(field.name.slice());
+
+            for (this.fields, ids) |*field, *id| {
+                id.tag = switch (field.name_or_index) {
+                    .name => 2,
+                    .index => 1,
+                    .duplicate => 0,
+                };
+                switch (field.name_or_index) {
+                    .name => |name| {
+                        id.value.name = String.createUTF8(name.slice());
+                    },
+                    .index => |index| {
+                        id.value.index = index;
+                    },
+                    .duplicate => {},
+                }
             }
             const structure_ = JSC.JSObject.createStructure(
                 globalObject,
                 owner,
-                @truncate(this.fields.len),
-                names.ptr,
+                @truncate(ids.len),
+                ids.ptr,
+                @bitCast(this.fields_flags),
             );
             this.cached_structure.set(globalObject, structure_);
             return structure_;

@@ -13,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
@@ -37,7 +37,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string,
+    top_level_dir: stringZ,
 
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
@@ -108,22 +108,14 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(top_level_dir: ?string) !*FileSystem {
+    pub fn init(top_level_dir: ?stringZ) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
-
-        // Ensure there's a trailing separator in the top level directory
-        // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
-            const tld = try allocator.alloc(u8, top_level_dir.len + 1);
-            bun.copy(u8, tld, top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
-            top_level_dir = tld;
-        }
+        _ = &top_level_dir;
 
         if (!instance_loaded or force) {
             instance = FileSystem{

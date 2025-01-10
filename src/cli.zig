@@ -47,6 +47,11 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ProcessNoDeprecation = false;
+export var Bun__Node__ProcessThrowDeprecation = false;
+
+pub var Bun__Node__ProcessTitle: ?string = null;
+
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
@@ -231,11 +236,16 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs is completely unsupported.") catch unreachable,
+        clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
+        clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
+        clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
+        clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
+        clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
-        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };
@@ -412,7 +422,7 @@ pub const Arguments = struct {
                 var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+                ctx.args.absolute_working_dir = try allocator.dupeZ(u8, cwd);
             }
 
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
@@ -487,16 +497,16 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
+        var cwd: [:0]u8 = undefined;
         if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
-                bun.sys.chdir(out).unwrap() catch |err| {
+                bun.sys.chdir("", out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
-                break :brk try allocator.dupe(u8, out);
+                break :brk try allocator.dupeZ(u8, out);
             };
         } else {
             cwd = try bun.getcwdAlloc(allocator);
@@ -754,6 +764,11 @@ pub const Arguments = struct {
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+            ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+            if (args.option("--dns-result-order")) |order| {
+                ctx.runtime_options.dns_result_order = order;
+            }
 
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -794,6 +809,15 @@ pub const Arguments = struct {
 
             if (args.flag("--expose-internals")) {
                 bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
+            if (args.flag("--no-deprecation")) {
+                Bun__Node__ProcessNoDeprecation = true;
+            }
+            if (args.flag("--throw-deprecation")) {
+                Bun__Node__ProcessThrowDeprecation = true;
+            }
+            if (args.option("--title")) |title| {
+                Bun__Node__ProcessTitle = title;
             }
         }
 
@@ -1479,6 +1503,10 @@ pub const Command = struct {
             eval_and_print: bool = false,
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
+        dns_result_order: []const u8 = "verbatim",
+        /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
+        /// compatibility.
+        expose_gc: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;

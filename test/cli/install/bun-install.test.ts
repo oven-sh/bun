@@ -23,6 +23,7 @@ import {
   runBunInstall,
   isWindows,
   textLockfile,
+  readdirSorted,
 } from "harness";
 import { join, sep, resolve } from "path";
 import {
@@ -32,7 +33,6 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  readdirSorted,
   requested,
   root_url,
   setHandler,

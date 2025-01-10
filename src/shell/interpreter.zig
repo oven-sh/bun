@@ -721,31 +721,24 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var env =
-            if (this.export_env) |*env|
-        brk: {
-            env.clearRetainingCapacity();
-            break :brk env.*;
-        } else EnvMap.init(bun.default_allocator);
-        defer this.export_env = env;
-
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
+        var env: EnvMap = EnvMap.init(bun.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while (object_iter.next()) |key| {
+        while (try object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
@@ -759,7 +752,10 @@ pub const ParsedShellScript = struct {
 
             env.insert(keyref, valueref);
         }
-
+        if (this.export_env) |*previous| {
+            previous.deinit();
+        }
+        this.export_env = env;
         return .undefined;
     }
 
@@ -8769,7 +8765,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -9247,7 +9243,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10750,7 +10746,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },

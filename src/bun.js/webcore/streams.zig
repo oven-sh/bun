@@ -43,7 +43,6 @@ const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
-const S3MultiPartUpload = @import("../../s3.zig").MultiPartUpload;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -379,7 +378,7 @@ pub const ReadableStream = struct {
                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
 
-                return credentials.s3ReadableStream(path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
+                return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
             },
         }
     }
@@ -482,7 +481,7 @@ pub const StreamStart = union(Tag) {
     FileSink: FileSinkOptions,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
-    FetchTaskletChunkedRequestSink: void,
+    NetworkSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
     done: bun.ByteList,
@@ -509,7 +508,7 @@ pub const StreamStart = union(Tag) {
         FileSink,
         HTTPSResponseSink,
         HTTPResponseSink,
-        FetchTaskletChunkedRequestSink,
+        NetworkSink,
         ready,
         owned_and_done,
         done,
@@ -660,7 +659,7 @@ pub const StreamStart = union(Tag) {
                     },
                 };
             },
-            .FetchTaskletChunkedRequestSink, .HTTPSResponseSink, .HTTPResponseSink => {
+            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
@@ -1790,16 +1789,23 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 return globalThis.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
-            const str = arg.getZigString(globalThis);
-            if (str.len == 0) {
+            const str = arg.toString(globalThis);
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+
+            const view = str.view(globalThis);
+
+            if (view.isEmpty()) {
                 return JSC.JSValue.jsNumber(0);
             }
 
-            if (str.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(str.utf16SliceAligned())) }).toJS(globalThis);
+            defer str.ensureStillAlive();
+            if (view.is16Bit()) {
+                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(view.utf16SliceAligned())) }).toJS(globalThis);
             }
 
-            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(str.slice()) }).toJS(globalThis);
+            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(view.slice()) }).toJS(globalThis);
         }
 
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1827,16 +1833,22 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             const arg = args[0];
 
-            const str = arg.getZigString(globalThis);
-            if (str.len == 0) {
+            const str = arg.toString(globalThis);
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+
+            const view = str.view(globalThis);
+            if (view.isEmpty()) {
                 return JSC.JSValue.jsNumber(0);
             }
 
+            defer str.ensureStillAlive();
             if (str.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = str.utf16SliceAligned() }).toJS(globalThis);
+                return this.sink.writeUTF16(.{ .temporary = view.utf16SliceAligned() }).toJS(globalThis);
             }
 
-            return this.sink.writeLatin1(.{ .temporary = str.slice() }).toJS(globalThis);
+            return this.sink.writeLatin1(.{ .temporary = view.slice() }).toJS(globalThis);
         }
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
@@ -2637,7 +2649,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 }
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
-pub const FetchTaskletChunkedRequestSink = struct {
+pub const NetworkSink = struct {
     task: ?HTTPWritableStream = null,
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
@@ -2645,16 +2657,17 @@ pub const FetchTaskletChunkedRequestSink = struct {
     buffer: bun.io.StreamBuffer,
     ended: bool = false,
     done: bool = false,
+    cancel: bool = false,
     encoded: bool = true,
 
     endPromise: JSC.JSPromise.Strong = .{},
 
     auto_flusher: AutoFlusher = AutoFlusher{},
 
-    pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
+    pub usingnamespace bun.New(NetworkSink);
     const HTTPWritableStream = union(enum) {
         fetch: *JSC.WebCore.Fetch.FetchTasklet,
-        s3_upload: *S3MultiPartUpload,
+        s3_upload: *bun.S3.MultiPartUpload,
     };
 
     fn getHighWaterMark(this: *@This()) Blob.SizeType {
@@ -2674,6 +2687,16 @@ pub const FetchTaskletChunkedRequestSink = struct {
     fn registerAutoFlusher(this: *@This()) void {
         if (!this.auto_flusher.registered)
             AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+    }
+
+    pub fn path(this: *@This()) ?[]const u8 {
+        if (this.task) |task| {
+            return switch (task) {
+                .s3_upload => |s3| s3.path,
+                else => null,
+            };
+        }
+        return null;
     }
 
     pub fn onAutoFlush(this: *@This()) bool {
@@ -2806,6 +2829,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
         this.ended = true;
         this.done = true;
         this.signal.close(null);
+        this.cancel = true;
         this.finalize();
     }
 
@@ -2950,7 +2974,7 @@ pub const FetchTaskletChunkedRequestSink = struct {
         return this.buffer.memoryCost();
     }
 
-    const name = "FetchTaskletChunkedRequestSink";
+    const name = "NetworkSink";
     pub const JSSink = NewJSSink(@This(), name);
 };
 pub const BufferedReadableStreamAction = enum {

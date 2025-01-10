@@ -311,6 +311,9 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/s3", "S3 Object Storage", {
+      description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
+    }),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),

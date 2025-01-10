@@ -191,10 +191,6 @@ pub const Runtime = struct {
 
         trim_unused_imports: bool = false,
 
-        /// Use `import.meta.require()` instead of require()?
-        /// This is only supported with --target=bun
-        use_import_meta_require: bool = false,
-
         /// Allow runtime usage of require(), converting `require` into `__require`
         auto_polyfill_require: bool = false,
 
@@ -240,7 +236,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,

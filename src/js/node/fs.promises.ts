@@ -1,5 +1,4 @@
 // Hardcoded module "node:fs/promises"
-// @ts-nocheck TODO: too many errors to fix
 import type { Dirent } from "fs";
 const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding");
@@ -22,6 +21,8 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
 
+const { validateObject } = require("internal/validators");
+
 function watch(
   filename: string | Buffer | URL,
   options: { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal } = {},
@@ -36,7 +37,7 @@ function watch(
   } else if (Buffer.isBuffer(filename)) {
     filename = filename.toString();
   } else if (typeof filename !== "string") {
-    throw new TypeError("Expected path to be a string or Buffer");
+    throw $ERR_INVALID_ARG_TYPE("filename", ["string", "Buffer", "URL"], filename);
   }
   let nextEventResolve: Function | null = null;
   if (typeof options === "string") {
@@ -150,7 +151,7 @@ const private_symbols = {
   kRef,
   kUnref,
   kFd,
-  FileHandle: null,
+  FileHandle: null as any,
   fs,
 };
 
@@ -164,8 +165,8 @@ const exports = {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
-  close: fs.close.bind(fs),
-  copyFile: fs.copyFile.bind(fs),
+  close: asyncWrap(fs.close),
+  copyFile: asyncWrap(fs.copyFile),
   cp,
   exists: async function exists() {
     try {
@@ -195,11 +196,11 @@ const exports = {
   read: asyncWrap(fs.read),
   write: asyncWrap(fs.write),
   readdir: asyncWrap(fs.readdir),
-  readFile: function (filehandleorfdorpath, ...args) {
-    filehandleorfdorpath = filehandleorfdorpath?.[kfd] ?? fileHandleOrFdOrPath;
+  readFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
-  writeFile: function (fileHandleOrFdOrPath, ...args) {
+  writeFile: function (fileHandleOrFdOrPath, ...args: any[]) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
       !$isTypedArrayView(args[0]) &&
@@ -208,6 +209,7 @@ const exports = {
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
+      // @ts-expect-error TODO
       return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
@@ -271,6 +273,7 @@ function asyncWrap(fn: any) {
     writev,
     close,
   } = exports;
+  let isArrayBufferView;
 
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
@@ -298,7 +301,7 @@ function asyncWrap(fn: any) {
     [kClosePromise];
     [kRefs];
 
-    async appendFile(data, options: object | string | undefined) {
+    async appendFile(data, options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
       let encoding = "utf8";
@@ -371,6 +374,20 @@ function asyncWrap(fn: any) {
     async read(buffer, offset, length, position) {
       const fd = this[kFd];
       throwEBADFIfNecessary(read, fd);
+
+      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
+      if (!isArrayBufferView(buffer)) {
+        // This is fh.read(params)
+        if (buffer != undefined) {
+          validateObject(buffer, "options");
+        }
+        ({ buffer = Buffer.alloc(16384), offset = 0, length, position = null } = buffer ?? {});
+      }
+      length = length ?? buffer?.byteLength - offset;
+
+      if (length === 0) {
+        return { buffer, bytesRead: 0 };
+      }
 
       try {
         this[kRef]();
@@ -448,6 +465,8 @@ function asyncWrap(fn: any) {
       const fd = this[kFd];
       throwEBADFIfNecessary(write, fd);
 
+      if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
+
       try {
         this[kRef]();
         return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };
@@ -468,7 +487,7 @@ function asyncWrap(fn: any) {
       }
     }
 
-    async writeFile(data: string, options: object | string | undefined = "utf8") {
+    async writeFile(data: string, options: any = "utf8") {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
       let encoding: string = "utf8";

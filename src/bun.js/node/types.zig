@@ -952,59 +952,36 @@ pub const PathLike = union(enum) {
     pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
-            JSC.JSValue.JSType.Uint8Array,
-            JSC.JSValue.JSType.DataView,
+            .Uint8Array,
+            .DataView,
             => {
                 const buffer = Buffer.fromTypedArray(ctx, arg);
                 try Valid.pathBuffer(buffer, ctx);
+                try Valid.pathNullBytes(buffer.slice(), ctx);
 
                 arguments.protectEat();
-                return PathLike{ .buffer = buffer };
+                return .{ .buffer = buffer };
             },
 
-            JSC.JSValue.JSType.ArrayBuffer => {
+            .ArrayBuffer => {
                 const buffer = Buffer.fromArrayBuffer(ctx, arg);
                 try Valid.pathBuffer(buffer, ctx);
+                try Valid.pathNullBytes(buffer.slice(), ctx);
 
                 arguments.protectEat();
-
-                return PathLike{ .buffer = buffer };
+                return .{ .buffer = buffer };
             },
 
-            JSC.JSValue.JSType.String,
-            JSC.JSValue.JSType.StringObject,
-            JSC.JSValue.JSType.DerivedStringObject,
+            .String,
+            .StringObject,
+            .DerivedStringObject,
             => {
                 var str = arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();
 
-                try Valid.pathStringLength(str.length(), ctx);
-
-                if (arguments.will_be_async) {
-                    var sliced = str.toThreadSafeSlice(allocator);
-                    sliced.reportExtraMemory(ctx.vm());
-
-                    if (sliced.underlying.isEmpty()) {
-                        return PathLike{ .encoded_slice = sliced.utf8 };
-                    }
-
-                    return PathLike{ .threadsafe_string = sliced };
-                } else {
-                    var sliced = str.toSlice(allocator);
-
-                    // Costs nothing to keep both around.
-                    if (sliced.isWTFAllocated()) {
-                        str.ref();
-                        return PathLike{ .slice_with_underlying_string = sliced };
-                    }
-
-                    sliced.reportExtraMemory(ctx.vm());
-
-                    // It is expensive to keep both around.
-                    return PathLike{ .encoded_slice = sliced.utf8 };
-                }
+                return try fromBunString(ctx, str, arguments.will_be_async, allocator);
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
@@ -1015,35 +992,45 @@ pub const PathLike = union(enum) {
                     }
                     arguments.eat();
 
-                    try Valid.pathStringLength(str.length(), ctx);
-
-                    if (arguments.will_be_async) {
-                        var sliced = str.toThreadSafeSlice(allocator);
-                        sliced.reportExtraMemory(ctx.vm());
-
-                        if (sliced.underlying.isEmpty()) {
-                            return PathLike{ .encoded_slice = sliced.utf8 };
-                        }
-
-                        return PathLike{ .threadsafe_string = sliced };
-                    } else {
-                        var sliced = str.toSlice(allocator);
-
-                        // Costs nothing to keep both around.
-                        if (sliced.isWTFAllocated()) {
-                            str.ref();
-                            return PathLike{ .slice_with_underlying_string = sliced };
-                        }
-
-                        sliced.reportExtraMemory(ctx.vm());
-
-                        // It is expensive to keep both around.
-                        return PathLike{ .encoded_slice = sliced.utf8 };
-                    }
+                    return try fromBunString(ctx, str, arguments.will_be_async, allocator);
                 }
 
                 return null;
             },
+        }
+    }
+
+    pub fn fromBunString(global: *JSC.JSGlobalObject, str: bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
+        try Valid.pathStringLength(str.length(), global);
+
+        if (will_be_async) {
+            var sliced = str.toThreadSafeSlice(allocator);
+            errdefer sliced.deinit();
+
+            try Valid.pathNullBytes(sliced.slice(), global);
+
+            sliced.reportExtraMemory(global.vm());
+
+            if (sliced.underlying.isEmpty()) {
+                return .{ .encoded_slice = sliced.utf8 };
+            }
+            return .{ .threadsafe_string = sliced };
+        } else {
+            var sliced = str.toSlice(allocator);
+            errdefer if (!sliced.isWTFAllocated()) sliced.deinit();
+
+            try Valid.pathNullBytes(sliced.slice(), global);
+
+            // Costs nothing to keep both around.
+            if (sliced.isWTFAllocated()) {
+                str.ref();
+                return .{ .slice_with_underlying_string = sliced };
+            }
+
+            sliced.reportExtraMemory(global.vm());
+
+            // It is expensive to keep both around.
+            return .{ .encoded_slice = sliced.utf8 };
         }
     }
 };
@@ -1104,6 +1091,12 @@ pub const Valid = struct {
             1...bun.MAX_PATH_BYTES => return,
         }
         comptime unreachable;
+    }
+
+    pub fn pathNullBytes(slice: []const u8, global: *JSC.JSGlobalObject) bun.JSError!void {
+        if (bun.strings.indexOfChar(slice, 0) != null) {
+            return global.ERR_INVALID_ARG_VALUE("The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+        }
     }
 };
 

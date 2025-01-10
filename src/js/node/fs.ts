@@ -649,7 +649,7 @@ function unwatchFile(filename, listener) {
   filename = getValidatedPath(filename);
 
   var stat = statWatchers.get(filename);
-  if (!stat) return;
+  if (!stat) return throwIfNullBytesInFileName(filename);
   if (listener) {
     stat.removeListener("change", listener);
     if (stat.listenerCount("change") !== 0) {
@@ -662,20 +662,9 @@ function unwatchFile(filename, listener) {
   statWatchers.delete(filename);
 }
 
-function callbackify(fsFunction, args) {
-  const callback = args[args.length - 1];
-  try {
-    var result = fsFunction.$apply(fs, args.slice(0, args.length - 1));
-    result.then(
-      (...args) => callback(null, ...args),
-      err => callback(err),
-    );
-  } catch (e) {
-    if (typeof callback === "function") {
-      callback(e);
-    } else {
-      throw e;
-    }
+function throwIfNullBytesInFileName(filename: string) {
+  if (filename.indexOf("\u0000") !== -1) {
+    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
   }
 }
 

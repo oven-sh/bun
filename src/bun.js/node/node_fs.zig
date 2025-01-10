@@ -2412,45 +2412,51 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            // TODO: make this faster by passing argument count at comptime
-            if (arguments.next()) |current_| {
-                parse: {
-                    var current = current_;
-                    switch (buffer) {
-                        // fs.write(fd, string[, position[, encoding]], callback)
-                        else => {
-                            if (current.isNumber()) {
-                                args.position = current.to(i52);
-                                arguments.eat();
-                                current = arguments.next() orelse break :parse;
-                            }
-
-                            if (current.isString()) {
-                                args.encoding = try Encoding.assert(current, ctx, args.encoding);
-                                arguments.eat();
-                            }
-                        },
-                        // fs.write(fd, buffer[, offset[, length[, position]]], callback)
-                        .buffer => {
-                            if (!current.isNumber()) {
-                                break :parse;
-                            }
-
-                            if (!(current.isNumber() or current.isBigInt())) break :parse;
-                            args.offset = current.to(u52);
-                            arguments.eat();
-                            current = arguments.next() orelse break :parse;
-
-                            if (!(current.isNumber() or current.isBigInt())) break :parse;
-                            args.length = current.to(u52);
-                            arguments.eat();
-                            current = arguments.next() orelse break :parse;
-
-                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+            if (arguments.next()) |current_| parse: {
+                var current = current_;
+                switch (buffer) {
+                    // fs.write(fd, string[, position[, encoding]], callback)
+                    else => {
+                        if (current.isNumber()) {
                             args.position = current.to(i52);
                             arguments.eat();
-                        },
-                    }
+                            current = arguments.next() orelse break :parse;
+                        }
+
+                        if (current.isString()) {
+                            args.encoding = try Encoding.assert(current, ctx, args.encoding);
+                            arguments.eat();
+                        }
+                    },
+                    // fs.write(fd, buffer[, offset[, length[, position]]], callback)
+                    .buffer => {
+                        if (!current.isNumber()) {
+                            break :parse;
+                        }
+
+                        if (!(current.isNumber() or current.isBigInt())) break :parse;
+                        args.offset = current.to(u52);
+                        arguments.eat();
+                        current = arguments.next() orelse break :parse;
+
+                        if (!(current.isNumber() or current.isBigInt())) break :parse;
+                        args.length = current.to(u52);
+                        const buf_len = args.buffer.slice().len;
+                        if (args.length > 0) {
+                            if (args.length > buf_len) {
+                                return ctx.throwRangeError(
+                                    @as(f64, @floatFromInt(args.length)),
+                                    .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                                );
+                            }
+                        }
+                        arguments.eat();
+                        current = arguments.next() orelse break :parse;
+
+                        if (!(current.isNumber() or current.isBigInt())) break :parse;
+                        args.position = current.to(i52);
+                        arguments.eat();
+                    },
                 }
             }
 
@@ -2540,9 +2546,18 @@ pub const Arguments = struct {
                 }
             }
 
-            if (defined_length and args.length > 0 and buffer.slice().len == 0) {
-                var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+            if (defined_length and args.length > 0) {
+                const buf_length = buffer.slice().len;
+                if (buf_length == 0) {
+                    var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+                    return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+                }
+                if (args.length > buf_length) {
+                    return ctx.throwRangeError(
+                        @as(f64, @floatFromInt(args.length)),
+                        .{ .field_name = "length", .max = @intCast(@min(buf_length, std.math.maxInt(i64))) },
+                    );
+                }
             }
 
             return args;

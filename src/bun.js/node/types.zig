@@ -1287,7 +1287,7 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
 fn timeLikeFromNow() TimeLike {
     const nanos = std.time.nanoTimestamp();
     if (Environment.isWindows) {
-        return @as(TimeLike, nanos) / std.time.ns_per_s;
+        return @as(TimeLike, @floatFromInt(nanos)) / std.time.ns_per_s;
     }
     return .{
         .tv_sec = @truncate(@divFloor(nanos, std.time.ns_per_s)),

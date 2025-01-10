@@ -251,6 +251,7 @@ pub const Tag = enum(u8) {
     try_write,
     socketpair,
     setsockopt,
+    statx,
 
     uv_spawn,
     uv_pipe,
@@ -2759,7 +2760,10 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path = bun.strings.toNTPath(wbuf, subpath);
+        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+            subpath
+        else
+            bun.strings.toNTPath(wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2781,7 +2785,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
-        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
+        if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
             return err;
         }
@@ -2797,7 +2801,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     const have_statx = Environment.isLinux;
     if (have_statx) brk: {
         var statx: std.os.linux.Statx = undefined;
-        if (Maybe(void).errnoSys(bun.C.linux.statx(
+        if (Maybe(bool).errnoSys(bun.C.linux.statx(
             dir_fd.cast(),
             subpath,
             std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.STATX_SYNC_AS_STAT,

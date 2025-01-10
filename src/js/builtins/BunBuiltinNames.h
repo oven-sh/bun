@@ -124,6 +124,7 @@ using namespace JSC;
     macro(isDisturbed) \
     macro(isPaused) \
     macro(isWindows) \
+    macro(isBlob) \
     macro(join) \
     macro(kind) \
     macro(lazy) \

@@ -1,7 +1,6 @@
 "use strict";
 
-const { AbortError } = require("internal/shared");
-const { aggregateTwoErrors } = require("internal/errors");
+const { AbortError, aggregateTwoErrors } = require("internal/errors");
 
 const {
   kIsDestroyed,

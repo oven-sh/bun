@@ -29,7 +29,7 @@ export default [
   ["ERR_SOCKET_BAD_TYPE", TypeError],
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
-  ["ERR_STREAM_DESTROYED", TypeError],
+  ["ERR_STREAM_DESTROYED", Error],
   ["ERR_STREAM_NULL_VALUES", TypeError],
   ["ERR_STREAM_WRITE_AFTER_END", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],

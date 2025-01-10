@@ -89,7 +89,7 @@ function eos(stream, options, callback) {
     }
 
     if (!readable || readableFinished) {
-      callback.call(stream);
+      callback.$call(stream);
     }
   };
 
@@ -108,12 +108,12 @@ function eos(stream, options, callback) {
     }
 
     if (!writable || writableFinished) {
-      callback.call(stream);
+      callback.$call(stream);
     }
   };
 
   const onerror = err => {
-    callback.call(stream, err);
+    callback.$call(stream, err);
   };
 
   let closed = isClosed(stream);
@@ -124,17 +124,17 @@ function eos(stream, options, callback) {
     const errored = isWritableErrored(stream) || isReadableErrored(stream);
 
     if (errored && typeof errored !== "boolean") {
-      return callback.call(stream, errored);
+      return callback.$call(stream, errored);
     }
 
     if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-      if (!isReadableFinished(stream, false)) return callback.call(stream, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isReadableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE());
     }
     if (writable && !writableFinished) {
-      if (!isWritableFinished(stream, false)) return callback.call(stream, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isWritableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE());
     }
 
-    callback.call(stream);
+    callback.$call(stream);
   };
 
   const onclosed = () => {
@@ -143,10 +143,10 @@ function eos(stream, options, callback) {
     const errored = isWritableErrored(stream) || isReadableErrored(stream);
 
     if (errored && typeof errored !== "boolean") {
-      return callback.call(stream, errored);
+      return callback.$call(stream, errored);
     }
 
-    callback.call(stream);
+    callback.$call(stream);
   };
 
   const onrequest = () => {
@@ -224,17 +224,17 @@ function eos(stream, options, callback) {
       // Keep it because cleanup removes it.
       const endCallback = callback;
       cleanup();
-      endCallback.call(stream, new AbortError(undefined, { cause: options.signal.reason }));
+      endCallback.$call(stream, new AbortError(undefined, { cause: options.signal.reason }));
     };
     if (options.signal.aborted) {
       process.nextTick(abort);
     } else {
-      // addAbortListener ??= require("internal/events/abort_listener").addAbortListener;
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
       const disposable = addAbortListener(options.signal, abort);
       const originalCallback = callback;
       callback = once((...args) => {
         disposable[SymbolDispose]();
-        originalCallback.apply(stream, args);
+        originalCallback.$apply(stream, args);
       });
     }
   }
@@ -248,23 +248,23 @@ function eosWeb(stream, options, callback) {
   if (options.signal) {
     abort = () => {
       isAborted = true;
-      callback.call(stream, new AbortError(undefined, { cause: options.signal.reason }));
+      callback.$call(stream, new AbortError(undefined, { cause: options.signal.reason }));
     };
     if (options.signal.aborted) {
       process.nextTick(abort);
     } else {
-      // addAbortListener ??= require("internal/events/abort_listener").addAbortListener;
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
       const disposable = addAbortListener(options.signal, abort);
       const originalCallback = callback;
       callback = once((...args) => {
         disposable[SymbolDispose]();
-        originalCallback.apply(stream, args);
+        originalCallback.$apply(stream, args);
       });
     }
   }
   const resolverFn = (...args) => {
     if (!isAborted) {
-      process.nextTick(() => callback.apply(stream, args));
+      process.nextTick(() => callback.$apply(stream, args));
     }
   };
   PromisePrototypeThen.$call(stream[kIsClosedPromise].promise, resolverFn, resolverFn);
@@ -280,7 +280,7 @@ function finished(stream, opts) {
     validateBoolean(opts.cleanup, "cleanup");
     autoCleanup = opts.cleanup;
   }
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const cleanup = eos(stream, opts, err => {
       if (autoCleanup) {
         cleanup();

@@ -68,7 +68,7 @@ function makeAsyncIterable(val) {
 
 async function* fromReadable(val) {
   Readable ??= require("internal/streams/readable");
-  yield* Readable.prototype[SymbolAsyncIterator].call(val);
+  yield* Readable.prototype[SymbolAsyncIterator].$call(val);
 }
 
 async function pumpToNode(iterable, writable, finish, { end }) {
@@ -88,7 +88,7 @@ async function pumpToNode(iterable, writable, finish, { end }) {
   };
 
   const wait = () =>
-    new Promise((resolve, reject) => {
+    new Promise<void>((resolve, reject) => {
       if (error) {
         reject(error);
       } else {
@@ -307,7 +307,7 @@ function pipelineImpl(streams, callback, opts?) {
         const then = ret?.then;
         if (typeof then === "function") {
           finishCount++;
-          then.call(
+          then.$call(
             ret,
             val => {
               value = val;

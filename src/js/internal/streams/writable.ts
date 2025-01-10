@@ -93,6 +93,7 @@ function makeBitMapDescriptor(bit) {
     },
   };
 }
+WritableState.prototype = {};
 ObjectDefineProperties(WritableState.prototype, {
   // Object stream flag to indicate whether or not this stream
   // contains buffers or objects.
@@ -386,7 +387,7 @@ function Writable(options) {
     if (options.signal) addAbortSignal(options.signal, this);
   }
 
-  Stream.call(this, options);
+  Stream.$call(this, options);
 
   if (this._construct != null) {
     destroyImpl.construct(this, () => {
@@ -1081,7 +1082,7 @@ Writable.prototype.destroy = function (err, cb) {
     process.nextTick(errorBuffer, state);
   }
 
-  destroy.call(this, err, cb);
+  destroy.$call(this, err, cb);
   return this;
 };
 

@@ -16,18 +16,6 @@ const ObjectKeys = Object.keys;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
-{
-  const keys = ObjectKeys(Writable.prototype);
-  // Allow the keys array to be GC'ed.
-  for (let i = 0; i < keys.length; i++) {
-    const method = keys[i];
-    Duplex.prototype[method] ||= Writable.prototype[method];
-  }
-}
-
-// Use the `destroy` method of `Writable`.
-Duplex.prototype.destroy = Writable.prototype.destroy;
-
 function Duplex(options) {
   if (!(this instanceof Duplex)) return Reflect.construct(Duplex, [options]);
 
@@ -85,7 +73,7 @@ function Duplex(options) {
     this.allowHalfOpen = true;
   }
 
-  Stream.call(this, options);
+  Stream.$call(this, options);
 
   if (this._construct != null) {
     destroyImpl.construct(this, () => {
@@ -95,6 +83,18 @@ function Duplex(options) {
   }
 }
 $toClass(Duplex, "Duplex", Readable);
+
+// Use the `destroy` method of `Writable`.
+Duplex.prototype.destroy = Writable.prototype.destroy;
+
+{
+  const keys = ObjectKeys(Writable.prototype);
+  // Allow the keys array to be GC'ed.
+  for (let i = 0; i < keys.length; i++) {
+    const method = keys[i];
+    Duplex.prototype[method] ||= Writable.prototype[method];
+  }
+}
 
 ObjectDefineProperties(Duplex.prototype, {
   writable: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable") },

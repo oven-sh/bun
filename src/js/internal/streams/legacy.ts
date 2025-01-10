@@ -6,7 +6,7 @@ const ReflectOwnKeys = Reflect.ownKeys;
 const ArrayIsArray = Array.isArray;
 
 function Stream(opts) {
-  EE.call(this, opts);
+  EE.$call(this, opts);
 }
 $toClass(Stream, "Stream", EE);
 

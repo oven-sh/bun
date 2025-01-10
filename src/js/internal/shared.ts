@@ -1,5 +1,4 @@
 const ObjectFreeze = Object.freeze;
-const ReflectApply = Reflect.apply;
 
 class NotImplementedError extends Error {
   code: string;
@@ -89,7 +88,7 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = ReflectApply(callback, this, args);
+    const result = callback.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };

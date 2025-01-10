@@ -181,11 +181,11 @@ function map(fn, options) {
         resume = null;
       }
     }
-  }.call(this);
+  }.$call(this);
 }
 
 async function some(fn, options = undefined) {
-  for await (const unused of filter.call(this, fn, options)) {
+  for await (const unused of filter.$call(this, fn, options)) {
     return true;
   }
   return false;
@@ -195,8 +195,8 @@ async function every(fn, options = undefined) {
   if (typeof fn !== "function") {
     throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
   }
-  // https://en.wikipedia.org/wiki/De_Morgan%27s_laws
-  return !(await some.call(
+  // https://en.wikipedia.org/wiki/De_Morgan's_laws
+  return !(await some.$call(
     this,
     async (...args) => {
       return !(await fn(...args));
@@ -206,7 +206,7 @@ async function every(fn, options = undefined) {
 }
 
 async function find(fn, options) {
-  for await (const result of filter.call(this, fn, options)) {
+  for await (const result of filter.$call(this, fn, options)) {
     return result;
   }
   return undefined;
@@ -221,7 +221,7 @@ async function forEach(fn, options) {
     return kEmpty;
   }
   // eslint-disable-next-line no-unused-vars
-  for await (const unused of map.call(this, forEachFn, options));
+  for await (const unused of map.$call(this, forEachFn, options));
 }
 
 function filter(fn, options) {
@@ -234,7 +234,7 @@ function filter(fn, options) {
     }
     return kEmpty;
   }
-  return map.call(this, filterFn, options);
+  return map.$call(this, filterFn, options);
 }
 
 // Specific to provide better error to reduce since the argument is only
@@ -313,12 +313,12 @@ async function toArray(options) {
 }
 
 function flatMap(fn, options) {
-  const values = map.call(this, fn, options);
+  const values = map.$call(this, fn, options);
   return async function* flatMap() {
     for await (const val of values) {
       yield* val;
     }
-  }.call(this);
+  }.$call(this);
 }
 
 function toIntegerOrInfinity(number) {
@@ -355,7 +355,7 @@ function drop(number, options?: { signal: AbortSignal }) {
         yield val;
       }
     }
-  }.call(this);
+  }.$call(this);
 }
 
 function take(number, options?: { signal: AbortSignal }) {
@@ -384,7 +384,7 @@ function take(number, options?: { signal: AbortSignal }) {
         return;
       }
     }
-  }.call(this);
+  }.$call(this);
 }
 
 export default {

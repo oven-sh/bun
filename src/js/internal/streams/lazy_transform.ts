@@ -15,7 +15,7 @@ $toClass(LazyTransform, "LazyTransform", Transform);
 
 function makeGetter(name) {
   return function () {
-    Transform.call(this, this._options);
+    Transform.$call(this, this._options);
     this._writableState.decodeStrings = false;
     return this[name];
   };

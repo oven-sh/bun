@@ -578,6 +578,7 @@ declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
+declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 
 /**
  * Convert a function to a class-like object.
@@ -592,3 +593,10 @@ declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+
+/**
+ * Determine if {value} is an instanceof {Blob} in a safe cross-Realm way.
+ *
+ * @param value {any}
+ */
+declare function $isBlob(value: any): boolean;

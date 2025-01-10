@@ -41,7 +41,6 @@ const SymbolAsyncIterator = Symbol.asyncIterator;
 const TypedArrayPrototypeSet = Uint8Array.prototype.set;
 
 const { errorOrDestroy } = destroyImpl;
-const FastBuffer = Buffer[Symbol.species];
 const nop = () => {};
 
 const kErroredValue = Symbol("kErroredValue");
@@ -82,6 +81,7 @@ function makeBitMapDescriptor(bit) {
     },
   };
 }
+ReadableState.prototype = {};
 ObjectDefineProperties(ReadableState.prototype, {
   objectMode: makeBitMapDescriptor(kObjectMode),
   ended: makeBitMapDescriptor(kEnded),
@@ -292,7 +292,7 @@ function Readable(options) {
     if (options.signal) addAbortSignal(options.signal, this);
   }
 
-  Stream.call(this, options);
+  Stream.$call(this, options);
 
   if (this._construct != null) {
     destroyImpl.construct(this, () => {
@@ -1028,7 +1028,7 @@ Readable.prototype.unpipe = function (dest) {
 // Set up data events if they are asked for
 // Ensure readable listeners eventually get something.
 Readable.prototype.on = function (ev, fn) {
-  const res = Stream.prototype.on.call(this, ev, fn);
+  const res = Stream.prototype.on.$call(this, ev, fn);
   const state = this._readableState;
 
   if (ev === "data") {
@@ -1062,7 +1062,7 @@ Readable.prototype.addListener = Readable.prototype.on;
 Readable.prototype.removeListener = function (ev, fn) {
   const state = this._readableState;
 
-  const res = Stream.prototype.removeListener.call(this, ev, fn);
+  const res = Stream.prototype.removeListener.$call(this, ev, fn);
 
   if (ev === "readable") {
     // We need to check if there is someone still listening to
@@ -1081,7 +1081,7 @@ Readable.prototype.removeListener = function (ev, fn) {
 Readable.prototype.off = Readable.prototype.removeListener;
 
 Readable.prototype.removeAllListeners = function (ev) {
-  const res = Stream.prototype.removeAllListeners.apply(this, arguments);
+  const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
 
   if (ev === "readable" || ev === undefined) {
     // We need to check if there is someone still listening to
@@ -1552,8 +1552,8 @@ function fromList(n, state) {
           TypedArrayPrototypeSet.$call(ret, data, retLen - n);
           buf[idx++] = null;
         } else {
-          TypedArrayPrototypeSet.$call(ret, new FastBuffer(data.buffer, data.byteOffset, n), retLen - n);
-          buf[idx] = new FastBuffer(data.buffer, data.byteOffset + n, data.length - n);
+          TypedArrayPrototypeSet.$call(ret, new $Buffer(data.buffer, data.byteOffset, n), retLen - n);
+          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, data.length - n);
         }
         break;
       }

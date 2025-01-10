@@ -19,9 +19,7 @@ print() {
 
 error() {
 	print "error: $@" >&2
-	if ! [ "$$" = "$pid" ]; then
-		kill -s TERM "$pid"
-	fi
+	kill -s TERM "$pid"
 	exit 1
 }
 
@@ -59,14 +57,14 @@ execute_as_user() {
 }
 
 grant_to_user() {
-	path="$1"
-	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
-		error "Could not find file or directory: \"$path\""
+	grant_path="$1"
+	if ! [ -f "$grant_path" ] && ! [ -d "$grant_path" ]; then
+		error "Could not find file or directory: \"$grant_path\""
 	fi
 
 	chown="$(require chown)"
-	execute_sudo "$chown" -R "$user:$group" "$path"
-	execute_sudo chmod -R 777 "$path"
+	execute_sudo "$chown" -R "$user:$group" "$grant_path"
+	execute_sudo chmod -R 777 "$grant_path"
 }
 
 which() {
@@ -74,11 +72,11 @@ which() {
 }
 
 require() {
-	path="$(which "$1")"
-	if ! [ -f "$path" ]; then
+	exe_path="$(which "$1")"
+	if ! [ -f "$exe_path" ]; then
 		error "Command \"$1\" is required, but is not installed."
 	fi
-	print "$path"
+	print "$exe_path"
 }
 
 fetch() {
@@ -106,79 +104,79 @@ compare_version() {
 }
 
 create_directory() {
-	path="$1"
-	path_dir="$path"
-	while ! [ -d "$path_dir" ]; do
-		path_dir="$(dirname "$path_dir")"
+	dir_path="$1"
+	dir_parent_path="$dir_path"
+	while ! [ -d "$dir_parent_path" ]; do
+		dir_parent_path="$(dirname "$dir_parent_path")"
 	done
 
-	path_needs_sudo="0"
-	if ! [ -r "$path_dir" ] || ! [ -w "$path_dir" ]; then
-		path_needs_sudo="1"
+	dir_needs_sudo="0"
+	if ! [ -r "$dir_parent_path" ] || ! [ -w "$dir_parent_path" ]; then
+		dir_needs_sudo="1"
 	fi
 
 	mkdir="$(require mkdir)"
-	if [ "$path_needs_sudo" = "1" ]; then
-		execute_sudo "$mkdir" -p "$path"
+	if [ "$dir_needs_sudo" = "1" ]; then
+		execute_sudo "$mkdir" -p "$dir_path"
 	else
-		execute "$mkdir" -p "$path"
+		execute "$mkdir" -p "$dir_path"
 	fi
 
-	grant_to_user "$path"
+	grant_to_user "$dir_path"
 }
 
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
-	path="$(execute "$mktemp" -d)"
-	grant_to_user "$path"	
-	print "$path"
+	tmp_path="$(execute "$mktemp" -d)"
+	grant_to_user "$tmp_path"	
+	print "$tmp_path"
 }
 
 create_file() {
-	path="$1"
-	path_dir="$(dirname "$path")"
-	if ! [ -d "$path_dir" ]; then
-		create_directory "$path_dir"
+	file_path="$1"
+	file_parent_path="$(dirname "$file_path")"
+	if ! [ -d "$file_parent_path" ]; then
+		create_directory "$file_parent_path"
 	fi
 
-	path_needs_sudo="0"
-	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
-		path_needs_sudo="1"
+	file_needs_sudo="0"
+	if ! [ -r "$file_path" ] || ! [ -w "$file_path" ]; then
+		file_needs_sudo="1"
 	fi
 
-	if [ "$path_needs_sudo" = "1" ]; then
-		execute_sudo touch "$path"
+	if [ "$file_needs_sudo" = "1" ]; then
+		execute_sudo touch "$file_path"
 	else
-		execute touch "$path"
+		execute touch "$file_path"
 	fi
 
-	content="$2"
-	if [ -n "$content" ]; then
-		append_file "$path" "$content"
+	file_content="$2"
+	if [ -n "$file_content" ]; then
+		append_file "$file_path" "$file_content"
 	fi
 
-	grant_to_user "$path"
+	grant_to_user "$file_path"
 }
 
 append_file() {
-	path="$1"
-	if ! [ -f "$path" ]; then
-		create_file "$path"
+	file_path="$1"
+	if ! [ -f "$file_path" ]; then
+		create_file "$file_path"
 	fi
 
-	path_needs_sudo="0"
-	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
-		path_needs_sudo="1"
+	file_needs_sudo="0"
+	if ! [ -r "$file_path" ] || ! [ -w "$file_path" ]; then
+		file_needs_sudo="1"
 	fi
 
 	content="$2"
 	print "$content" | while read -r line; do
-		if ! grep -q "$line" "$path"; then
+		if ! grep -q "$line" "$file_path"; then
 		  sh="$(require sh)"
-			if [ "$path_needs_sudo" = "1" ]; then
-				execute_sudo "$sh" -c "echo '$line' >> '$path'"
+			if [ "$file_needs_sudo" = "1" ]; then
+				execute_sudo "$sh" -c "echo '$line' >> '$file_path'"
 			else
-				execute "$sh" -c "echo '$line' >> '$path'"
+				execute "$sh" -c "echo '$line' >> '$file_path'"
 			fi
 		fi
 	done
@@ -197,7 +195,7 @@ download_file() {
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc .zshenv"
 	for profile in $profiles; do
 		for profile_path in "$current_home/$profile" "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
@@ -208,13 +206,13 @@ append_to_profile() {
 }
 
 append_to_path() {
-	path="$1"
-	if ! [ -d "$path" ]; then
-		error "Could not find directory: \"$path\""
+	bin_path="$1"
+	if ! [ -d "$bin_path" ]; then
+		error "Could not find directory: \"$bin_path\""
 	fi
 
-	append_to_profile "export PATH=\"$path:\$PATH\""
-	export PATH="$path:$PATH"
+	append_to_profile "export PATH=\"$bin_path:\$PATH\""
+	export PATH="$bin_path:$PATH"
 }
 
 move_to_bin() {
@@ -231,6 +229,13 @@ move_to_bin() {
 	done
 
 	grant_to_user "$exe_path"
+
+	if ! [ -d "$usr_path" ]; then
+		execute_sudo mkdir -p "$usr_path"
+		grant_to_user "$usr_path"
+	fi
+
+	append_to_path "$usr_path"
 	execute_sudo mv -f "$exe_path" "$usr_path/$(basename "$exe_path")"
 }
 
@@ -430,17 +435,18 @@ check_package_manager() {
 check_user() {
 	print "Checking user..."
 
+  id="$(require id)"
 	if [ -n "$SUDO_USER" ]; then
 		user="$SUDO_USER"
 	else
-		id="$(require id)"
 		user="$("$id" -un)"
-		group="$("$id" -gn)"
 	fi
 	if [ -z "$user" ]; then
 		error "Could not determine user"
 	fi
 	print "User: $user"
+
+	group="$("$id" -gn "$user")"
 	print "Group: $group"
 
 	home="$(execute_as_user echo '~')"
@@ -449,13 +455,14 @@ check_user() {
 	fi
 	print "Home: $home"
 
-	id="$(which id)"
-	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
-		sudo=1
-		print "Sudo: enabled"
-	elif [ -f "$(which sudo)" ] && [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
-		can_sudo=1
-		print "Sudo: can be used"
+	if [ -f "$(which sudo)" ] && [ -f "$(which id)" ]; then
+		if [ "$(id -u)" = "0" ]; then
+			sudo=1
+			print "Sudo: enabled"
+		elif [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
+			can_sudo=1
+			print "Sudo: can be used"
+		fi
 	fi
 
 	current_user="$user"
@@ -639,7 +646,7 @@ install_brew() {
 
 	bash="$(require bash)"
 	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
-	execute_as_user "$bash" -lc "NONINTERACTIVE=1 $script"
+	execute_as_user "$bash" -lc "$script"
 
 	case "$arch" in
 	x64)
@@ -793,7 +800,7 @@ install_bun() {
 	bun_zip="$(download_file "$bun_download_url")"
 	bun_tmpdir="$(dirname "$bun_zip")"
 	execute "$unzip" -o "$bun_zip" -d "$bun_tmpdir"
-
+	
 	move_to_bin "$bun_tmpdir/$bun_triplet/bun"
 	bun_path="$(require bun)"
 	execute_sudo ln -sf "$bun_path" "$(dirname "$bun_path")/bunx"
@@ -1021,7 +1028,7 @@ install_rust() {
 
 		sh="$(require sh)"
 		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
+		execute "$sh" -lc "CARGO_HOME=$rust_home RUSTUP_HOME=$rust_home $rustup_script -y --no-modify-path"
 		append_to_path "$rust_home/bin"
 		;;
 	esac
@@ -1065,7 +1072,7 @@ install_docker() {
 	fi
 
 	getent="$(which getent)"
-	if [ -n "$("$getent" group docker)" ]; then
+	if [ -f "$getent" ] && [ -n "$("$getent" group docker)" ]; then
 		usermod="$(which usermod)"
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
@@ -1128,6 +1135,10 @@ install_tailscale() {
 		install_packages go
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
+		tailscaled_path="$(which tailscaled)"
+		if [ -f "$tailscaled_path" ]; then
+			execute_sudo "$tailscaled_path" install-system-daemon
+		fi
 		;;
 	esac
 }
@@ -1312,6 +1323,112 @@ clean_system() {
 	done
 }
 
+optimize_system() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	case "$os" in
+	darwin)
+		optimize_system_darwin
+		;;
+	esac
+}
+
+optimize_system_darwin() {
+	print "Optimizing macOS system..."
+
+	disable_software_update() {
+		execute_sudo softwareupdate --schedule off
+		execute_sudo defaults write com.apple.SoftwareUpdate AutomaticDownload -bool false
+		execute_sudo defaults write com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false
+		execute_sudo defaults write com.apple.SoftwareUpdate ConfigDataInstall -int 0
+		execute_sudo defaults write com.apple.SoftwareUpdate CriticalUpdateInstall -int 0
+		execute_sudo defaults write com.apple.SoftwareUpdate ScheduleFrequency -int 0
+		execute_sudo defaults write com.apple.SoftwareUpdate AutomaticDownload -int 0
+		execute_sudo defaults write com.apple.commerce AutoUpdate -bool false
+		execute_sudo defaults write com.apple.commerce AutoUpdateRestartRequired -bool false
+	}
+
+	disable_spotlight() {
+		execute_sudo mdutil -i off -a
+		execute_sudo mdutil -E /
+	}
+
+	disable_siri() {
+		execute_sudo launchctl unload -w /System/Library/LaunchAgents/com.apple.Siri.agent.plist
+		execute_sudo defaults write com.apple.Siri StatusMenuVisible -bool false
+		execute_sudo defaults write com.apple.Siri UserHasDeclinedEnable -bool true
+		execute_sudo defaults write com.apple.assistant.support "Assistant Enabled" 0
+	}
+
+	disable_sleep() {
+		execute_sudo systemsetup -setsleep Never
+		execute_sudo systemsetup -setcomputersleep Never
+		execute_sudo systemsetup -setdisplaysleep Never
+		execute_sudo systemsetup -setharddisksleep Never
+	}
+
+	disable_screen_saver() {
+		execute_sudo defaults write com.apple.screensaver loginWindowIdleTime 0
+		execute_sudo defaults write com.apple.screensaver idleTime 0
+	}
+
+	disable_screen_lock() {
+		execute_sudo defaults write com.apple.loginwindow DisableScreenLock -bool true
+	}
+
+	disable_wallpaper() {
+		execute_sudo defaults write com.apple.loginwindow DesktopPicture ""
+	}
+
+	disable_application_state() {
+		execute_sudo defaults write com.apple.loginwindow TALLogoutSavesState -bool false
+	}
+
+	disable_accessibility() {
+		execute_sudo defaults write com.apple.Accessibility DifferentiateWithoutColor -int 1
+		execute_sudo defaults write com.apple.Accessibility ReduceMotionEnabled -int 1
+		execute_sudo defaults write com.apple.universalaccess reduceMotion -int 1
+		execute_sudo defaults write com.apple.universalaccess reduceTransparency -int 1
+	}
+
+	disable_dashboard() {
+		execute_sudo defaults write com.apple.dashboard mcx-disabled -boolean YES
+	}
+
+	disable_animations() {
+		execute_sudo defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
+		execute_sudo defaults write -g QLPanelAnimationDuration -float 0
+		execute_sudo defaults write com.apple.finder DisableAllAnimations -bool true
+	}
+
+	disable_time_machine() {
+		execute_sudo tmutil disable
+	}
+
+	enable_performance_mode() {
+		# https://support.apple.com/en-us/101992
+		if ! [ $(nvram boot-args 2>/dev/null | grep -q serverperfmode) ]; then
+			execute_sudo nvram boot-args="serverperfmode=1 $(nvram boot-args 2>/dev/null | cut -f 2-)"
+		fi
+	}
+
+	disable_software_update
+	disable_spotlight
+	disable_siri
+	disable_sleep
+	disable_screen_saver
+	disable_screen_lock
+	disable_wallpaper
+	disable_application_state
+	disable_accessibility
+	disable_dashboard
+	disable_animations
+	disable_time_machine
+	enable_performance_mode
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1324,6 +1441,7 @@ main() {
 	install_build_essentials
 	install_chromium
 	clean_system
+	optimize_system
 }
 
 main "$@"

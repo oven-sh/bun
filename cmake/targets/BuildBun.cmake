@@ -330,7 +330,6 @@ register_command(
     ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
     ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
   OUTPUTS
-    ${CODEGEN_PATH}/bake_empty_file
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
@@ -507,9 +506,7 @@ set(BUN_ZIG_GENERATED_SOURCES
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
-if (DEBUG)
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/bake_empty_file)
-else()
+if(NOT DEBUG)
   list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 

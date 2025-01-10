@@ -22,7 +22,7 @@
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
-#if CPU(X86_64) && !OS(WINDOWS)
+#if defined(__x86_64__) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
 {
     __builtin_cpu_init();

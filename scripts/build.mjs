@@ -59,10 +59,16 @@ async function build(args) {
     generateOptions["-S"] = process.cwd();
   }
 
+  const toolchain = generateOptions["--toolchain"];
+  if (toolchain) {
+    const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
+    generateOptions["--toolchain"] = toolchainPath;
+  }
+
   const cacheRead = isCacheReadEnabled();
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
-    const cachePath = getCachePath();
+    const cachePath = getCachePath(undefined);
     if (cacheRead && !existsSync(cachePath)) {
       const mainCachePath = getCachePath(getDefaultBranch());
       if (existsSync(mainCachePath)) {
@@ -98,12 +104,6 @@ async function build(args) {
     }
   }
 
-  const toolchain = generateOptions["--toolchain"];
-  if (toolchain) {
-    const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
-    generateOptions["--toolchain"] = toolchainPath;
-  }
-
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
@@ -132,7 +132,7 @@ function cmakePath(path) {
   return path.replace(/\\/g, "/");
 }
 
-function getCachePath(branch) {
+function getCachePath(branch, toolchain) {
   const buildPath = process.env.BUILDKITE_BUILD_PATH;
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;

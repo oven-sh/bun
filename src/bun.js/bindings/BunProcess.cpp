@@ -152,9 +152,9 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
 
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
-#if CPU(X86_64)
+#if defined(__x86_64__)
     return JSC::jsString(vm, makeAtomString("x64"_s));
-#elif CPU(ARM64)
+#elif defined(__aarch64__)
     return JSC::jsString(vm, makeAtomString("arm64"_s));
 #else
 #error "Unknown architecture"

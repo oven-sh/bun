@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  chownSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -937,6 +938,13 @@ export function readFile(filename, options = {}) {
 }
 
 /**
+ * @typedef {object} FileOptions
+ * @property {number} [mode]
+ * @property {number} [uid]
+ * @property {number} [gid]
+ */
+
+/**
  * @param {string} path
  * @param {number} mode
  */
@@ -946,10 +954,19 @@ export function chmod(path, mode) {
 }
 
 /**
+ * @param {string} path
+ * @param {number | string} [uid]
+ * @param {number | string} [gid]
+ */
+export function chown(path, uid, gid) {
+  debugLog("$", "chown", path, uid, gid);
+  chownSync(path, uid, gid);
+}
+
+/**
  * @param {string} filename
  * @param {string | Buffer} content
- * @param {object} [options]
- * @param {number} [options.mode]
+ * @param {FileOptions} [options]
  */
 export function writeFile(filename, content, options) {
   mkdir(dirname(filename));
@@ -959,14 +976,15 @@ export function writeFile(filename, content, options) {
 
   if (options?.mode) {
     chmod(filename, options.mode);
+  } else if (options?.uid || options?.gid) {
+    chown(filename, options.uid, options.gid);
   }
 }
 
 /**
  * @param {string} source
  * @param {string} destination
- * @param {object} [options]
- * @param {number} [options.mode]
+ * @param {FileOptions} [options]
  */
 export function copyFile(source, destination, options) {
   mkdir(dirname(destination));
@@ -976,21 +994,26 @@ export function copyFile(source, destination, options) {
 
   if (options?.mode) {
     chmod(destination, options.mode);
+  } else if (options?.uid || options?.gid) {
+    chown(destination, options.uid, options.gid);
   }
 }
 
 /**
  * @param {string} path
- * @param {object} [options]
- * @param {number} [options.mode]
+ * @param {FileOptions} [options]
  */
 export function mkdir(path, options = {}) {
-  if (existsSync(path)) {
-    return;
+  if (!existsSync(path)) {
+    debugLog("$", "mkdir", path);
+    mkdirSync(path, { ...options, recursive: true });
   }
 
-  debugLog("$", "mkdir", path);
-  mkdirSync(path, { ...options, recursive: true });
+  if (options?.mode) {
+    chmod(path, options.mode);
+  } else if (options?.uid || options?.gid) {
+    chown(path, options.uid, options.gid);
+  }
 }
 
 /**
@@ -1854,11 +1877,60 @@ export function getHostname() {
 }
 
 /**
+ * @returns {number}
+ */
+export function getUid() {
+  const originalUid = getEnv("SUDO_UID", false);
+  if (originalUid) {
+    return parseInt(originalUid);
+  }
+
+  const { uid } = userInfo();
+  return uid;
+}
+
+/**
  * @returns {string}
  */
 export function getUsername() {
+  const originalUsername = getEnv("SUDO_USER", false);
+  if (originalUsername) {
+    return originalUsername;
+  }
+
   const { username } = userInfo();
   return username;
+}
+
+/**
+ * @returns {number}
+ */
+export function getGid() {
+  const originalGid = getEnv("SUDO_GID", false);
+  if (originalGid) {
+    return parseInt(originalGid);
+  }
+
+  const { gid } = userInfo();
+  return gid;
+}
+
+/**
+ * @typedef {object} User
+ * @property {string} username
+ * @property {number} uid
+ * @property {number} gid
+ */
+
+/**
+ * @returns {User}
+ */
+export function getUser() {
+  return {
+    username: getUsername(),
+    uid: getUid(),
+    gid: getGid(),
+  };
 }
 
 /**
@@ -1887,30 +1959,6 @@ export function getUsernameForDistro(distro) {
   }
 
   throw new Error(`Unsupported distro: ${distro}`);
-}
-
-/**
- * @typedef {object} User
- * @property {string} username
- * @property {number} uid
- * @property {number} gid
- */
-
-/**
- * @param {string} username
- * @returns {Promise<User>}
- */
-export async function getUser(username) {
-  if (isWindows) {
-    throw new Error("TODO: Windows");
-  }
-
-  const [uid, gid] = await Promise.all([
-    spawnSafe(["id", "-u", username]).then(({ stdout }) => parseInt(stdout.trim())),
-    spawnSafe(["id", "-g", username]).then(({ stdout }) => parseInt(stdout.trim())),
-  ]);
-
-  return { username, uid, gid };
 }
 
 /**
@@ -2026,19 +2074,19 @@ let detectedCloud;
 /**
  * @returns {Promise<boolean | undefined>}
  */
-export async function isAws() {
+export function isAws() {
   if (typeof detectedCloud === "string") {
     return detectedCloud === "aws";
   }
 
-  async function checkAws() {
+  function checkAws() {
     if (isLinux) {
       const kernel = release();
       if (kernel.endsWith("-aws")) {
         return true;
       }
 
-      const { error: systemdError, stdout } = await spawn(["systemd-detect-virt"]);
+      const { error: systemdError, stdout } = spawnSync(["systemd-detect-virt"]);
       if (!systemdError) {
         if (stdout.includes("amazon")) {
           return true;
@@ -2047,7 +2095,7 @@ export async function isAws() {
 
       const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
       if (existsSync(dmiPath)) {
-        const dmiFile = readFileSync(dmiPath, { encoding: "utf-8" });
+        const dmiFile = readFile(dmiPath);
         if (dmiFile.startsWith("i-")) {
           return true;
         }
@@ -2060,7 +2108,7 @@ export async function isAws() {
         return true;
       }
 
-      const { error: powershellError, stdout } = await spawn([
+      const { error: powershellError, stdout } = spawnSync([
         "powershell",
         "-Command",
         "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
@@ -2071,7 +2119,7 @@ export async function isAws() {
     }
   }
 
-  if (await checkAws()) {
+  if (checkAws()) {
     detectedCloud = "aws";
     return true;
   }
@@ -2080,12 +2128,12 @@ export async function isAws() {
 /**
  * @returns {Promise<boolean | undefined>}
  */
-export async function isGoogleCloud() {
+export function isGoogleCloud() {
   if (typeof detectedCloud === "string") {
     return detectedCloud === "google";
   }
 
-  async function detectGoogleCloud() {
+  function detectGoogleCloud() {
     if (isLinux) {
       const vendorPaths = [
         "/sys/class/dmi/id/sys_vendor",
@@ -2095,7 +2143,7 @@ export async function isGoogleCloud() {
 
       for (const vendorPath of vendorPaths) {
         if (existsSync(vendorPath)) {
-          const vendorFile = readFileSync(vendorPath, { encoding: "utf-8" });
+          const vendorFile = readFile(vendorPath);
           if (vendorFile.includes("Google")) {
             return true;
           }
@@ -2104,25 +2152,25 @@ export async function isGoogleCloud() {
     }
   }
 
-  if (await detectGoogleCloud()) {
+  if (detectGoogleCloud()) {
     detectedCloud = "google";
     return true;
   }
 }
 
 /**
- * @returns {Promise<Cloud | undefined>}
+ * @returns {Cloud | undefined}
  */
-export async function getCloud() {
+export function getCloud() {
   if (typeof detectedCloud === "string") {
     return detectedCloud;
   }
 
-  if (await isAws()) {
+  if (isAws()) {
     return "aws";
   }
 
-  if (await isGoogleCloud()) {
+  if (isGoogleCloud()) {
     return "google";
   }
 }
@@ -2133,7 +2181,7 @@ export async function getCloud() {
  * @returns {Promise<string | undefined>}
  */
 export async function getCloudMetadata(name, cloud) {
-  cloud ??= await getCloud();
+  cloud ??= getCloud();
   if (!cloud) {
     return;
   }
@@ -2803,9 +2851,20 @@ export function getBuildkiteEmoji(emoji) {
 }
 
 /**
+ * @typedef SshOptions
+ * @property {string} hostname
+ * @property {number} [port]
+ * @property {string} [username]
+ * @property {string} [password]
+ * @property {string[]} [command]
+ * @property {string[]} [identityPaths]
+ * @property {number} [retries]
+ */
+
+/**
  * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ * @param {SpawnOptions} [spawnOptions]
+ * @returns {Promise<SpawnResult>}
  */
 export async function spawnSshSafe(options, spawnOptions = {}) {
   return spawnSsh(options, { throwOnError: true, ...spawnOptions });
@@ -2813,8 +2872,8 @@ export async function spawnSshSafe(options, spawnOptions = {}) {
 
 /**
  * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ * @param {SpawnOptions} [spawnOptions]
+ * @returns {Promise<SpawnResult>}
  */
 export async function spawnSsh(options, spawnOptions = {}) {
   const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
@@ -2845,10 +2904,10 @@ export async function spawnSsh(options, spawnOptions = {}) {
   }
   const stdio = spawnCommand ? "pipe" : "inherit";
   if (spawnCommand) {
-    command.push(...spawnCommand);
+    command.push(...spawnCommand.map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)));
   }
 
-  /** @type {import("./utils.mjs").SpawnResult} */
+  /** @type {SpawnResult} */
   let result;
   for (let i = 0; i < retries; i++) {
     result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
@@ -2874,6 +2933,63 @@ export async function spawnSsh(options, spawnOptions = {}) {
   }
 
   return result;
+}
+
+/**
+ * @typedef ScpOptions
+ * @property {string} hostname
+ * @property {string} source
+ * @property {string} destination
+ * @property {string[]} [identityPaths]
+ * @property {string} [port]
+ * @property {string} [username]
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {ScpOptions} options
+ * @returns {Promise<void>}
+ */
+export async function spawnScp(options) {
+  const { hostname, port, username, identityPaths, password, source, destination, retries = 10 } = options;
+  await waitForPort({ hostname, port: port || 22 });
+
+  const command = ["scp", "-o", "StrictHostKeyChecking=no"];
+  if (!password) {
+    command.push("-o", "BatchMode=yes");
+  }
+  if (port) {
+    command.push("-P", port);
+  }
+  if (password) {
+    const sshPass = which("sshpass", { required: true });
+    command.unshift(sshPass, "-p", password);
+  } else if (identityPaths) {
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
+  }
+  command.push(resolve(source));
+  if (username) {
+    command.push(`${username}@${hostname}:${destination}`);
+  } else {
+    command.push(`${hostname}:${destination}`);
+  }
+
+  let cause;
+  for (let i = 0; i < retries; i++) {
+    const result = await spawn(command, { stdio: "inherit" });
+    const { exitCode, stderr } = result;
+    if (exitCode === 0) {
+      return;
+    }
+
+    cause = stderr.trim() || undefined;
+    if (/(bad configuration option)|(no such file or directory)/i.test(stderr)) {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  }
+
+  throw new Error(`SCP failed: ${source} -> ${username}@${hostname}:${destination}`, { cause });
 }
 
 /**

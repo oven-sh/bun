@@ -322,7 +322,6 @@ function getCppAgent(platform, options) {
  * @returns {Agent}
  */
 function getZigAgent(platform, options) {
-  const { arch } = platform;
   return {
     queue: "build-zig",
   };
@@ -334,13 +333,14 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, release } = platform;
 
   if (os === "darwin") {
     return {
       queue: `test-${os}`,
       os,
       arch,
+      release,
     };
   }
 

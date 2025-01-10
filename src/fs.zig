@@ -1608,13 +1608,8 @@ pub const PathName = struct {
 
         // Strip off the extension
         if (strings.lastIndexOfChar(base, '.')) |dot| {
-            if (strings.eqlComptime(base, "bun.lock")) {
-                ext = "bun.lock";
-                base = "";
-            } else {
-                ext = base[dot..];
-                base = base[0..dot];
-            }
+            ext = base[dot..];
+            base = base[0..dot];
         } else {
             ext = "";
         }

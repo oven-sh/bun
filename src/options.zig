@@ -770,7 +770,6 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
-        .{ "bun.lock", .json },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -796,7 +795,6 @@ pub const Loader = enum(u8) {
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
         .{ "html", .html },
-        .{ "bun.lock", .json },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -913,7 +911,6 @@ const default_loaders_posix = .{
     .{ ".text", .text },
     .{ ".html", .html },
     .{ ".jsonc", .json },
-    .{ "bun.lock", .json },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1303,7 +1300,7 @@ const default_loader_ext = [_]string{
     ".toml",    ".wasm",
     ".txt",     ".text",
 
-    "bun.lock", ".jsonc",
+    ".jsonc",
 };
 
 // Only set it for browsers by default.
@@ -1329,7 +1326,6 @@ const node_modules_default_loader_ext = [_]string{
     ".wasm",
     ".text",
     ".html",
-    "bun.lock",
 };
 
 pub const ResolveFileExtensions = struct {

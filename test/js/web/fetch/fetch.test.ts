@@ -896,7 +896,7 @@ describe("Bun.file", () => {
 
     forEachMethod(m => () => {
       const file = Bun.file(path);
-      expect(async () => await file[m]()).toThrow("Permission denied");
+      expect(async () => await file[m]()).toThrow("permission denied");
     });
 
     afterAll(() => {

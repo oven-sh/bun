@@ -2,11 +2,6 @@
 "use strict";
 
 type WriteStream = import("node:tty").WriteStream;
-type GetColorDepth = (this: import("node:tty").WriteStream, env?: NodeJS.ProcessEnv) => number;
-
-let getColorDepth: undefined | GetColorDepth;
-const lazyGetColorDepth = (): GetColorDepth =>
-  (getColorDepth ??= require("node:tty").WriteStream.prototype.getColorDepth);
 
 let exports = {
   blue: "",
@@ -19,15 +14,11 @@ let exports = {
   reset: "",
   hasColors: false,
   shouldColorize(stream: WriteStream) {
-    if (stream?.isTTY) {
-      const depth = lazyGetColorDepth().$call(stream);
-      console.error("stream is a tty with color depth", depth);
-      return depth > 2;
+    if (process.env.FORCE_COLOR !== undefined) {
+      return require("internal/tty").getColorDepth(process.env) > 2;
     }
 
-    // do not cache these since users may update them as the process runs
-    const { NO_COLOR, NODE_DISABLE_COLORS, FORCE_COLOR } = process.env;
-    return NO_COLOR === undefined && NODE_DISABLE_COLORS === undefined && FORCE_COLOR !== "0";
+    return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
   },
   refresh(): void {
     if (exports.shouldColorize(process.stderr)) {

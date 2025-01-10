@@ -19,7 +19,7 @@ function isDockerEnabled(): boolean {
 
 if (isDockerEnabled()) {
   describe("autobahn", async () => {
-    const url = "ws://localhost:9001";
+    const url = "ws://localhost:9002";
     const agent = encodeURIComponent("bun/1.0.0");
     let docker: child_process.ChildProcessWithoutNullStreams | null = null;
     const { promise, resolve } = Promise.withResolvers();
@@ -29,7 +29,7 @@ if (isDockerEnabled()) {
     // ],
     const CWD = tempDirWithFiles("autobahn", {
       "fuzzingserver.json": `{
-        "url": "ws://127.0.0.1:9001",
+        "url": "ws://127.0.0.1:9002",
         "outdir": "./",
         "cases": ["*"],
         "exclude-agent-cases": {}
@@ -48,7 +48,7 @@ if (isDockerEnabled()) {
         "-v",
         `${CWD}:/reports`,
         "-p",
-        "9001:9001",
+        "9002:9002",
         "--name",
         "fuzzingserver",
         "crossbario/autobahn-testsuite",

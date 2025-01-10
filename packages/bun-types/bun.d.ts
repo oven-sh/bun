@@ -1232,12 +1232,12 @@ declare module "bun" {
     unlink(): Promise<void>;
 
     /**
-     * Deletes the file.
+     * Deletes the file. ( same as unlink )
     */
     delete(): Promise<void>
 
     /**
-     *  Provides useful information about the file.
+     *  Provides useful information about the file. (same type as in node:fs)
     */
     stat(): Stats
   }

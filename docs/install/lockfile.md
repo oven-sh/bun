@@ -59,7 +59,7 @@ $ bun install --lockfile-only
 
 {% callout %}
 **Note** - using `--lockfile-only` will still populate the global install cache with registry metadata and git/tarball dependencies.
-{% endcallout %}
+{% /callout %}
 
 #### Can I opt out?
 

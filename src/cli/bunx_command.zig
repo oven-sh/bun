@@ -12,11 +12,89 @@ const std = @import("std");
 const cli = @import("../cli.zig");
 const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
+const Allocator = std.mem.Allocator;
 
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
     var path_buf: bun.PathBuffer = undefined;
+
+    /// bunx-specific options parsed from argv.
+    const Options = struct {
+        /// CLI arguments to pass to the command being run.
+        passthrough_list: std.ArrayListUnmanaged(string) = .{},
+        /// `bunx <package_name>`
+        package_name: string,
+        // `--silent` and `--verbose` are not mutually exclusive. Both the
+        // global CLI parser and `bun add` parser use them for different
+        // purposes.
+        verbose_install: bool = false,
+        silent_install: bool = false,
+        allocator: Allocator,
+
+        /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
+        ///
+        /// ## Exits
+        /// - `--revision` or `--version` flags are passed without a target
+        ///   command also being provided. This is not a failure.
+        /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
+        fn parse(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
+            var found_subcommand_name = false;
+            var maybe_package_name: ?string = null;
+            var has_version = false; //  --version
+            var has_revision = false; // --revision
+
+            // SAFETY: `opts` is only ever returned when a package name is found, otherwise the process exits.
+            var opts = Options{ .package_name = undefined, .allocator = ctx.allocator };
+            try opts.passthrough_list.ensureTotalCapacityPrecise(opts.allocator, argv.len);
+
+            for (argv) |positional| {
+                if (maybe_package_name != null) {
+                    opts.passthrough_list.appendAssumeCapacity(positional);
+                    continue;
+                }
+
+                if (positional.len > 0 and positional[0] == '-') {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
+                        opts.verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--silent")) {
+                        opts.silent_install = true;
+                    } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
+                        ctx.debug.run_in_bun = true;
+                    }
+                } else {
+                    if (!found_subcommand_name) {
+                        found_subcommand_name = true;
+                    } else {
+                        maybe_package_name = positional;
+                    }
+                }
+            }
+
+            // check if package_name_for_update_request is empty string or " "
+            if (maybe_package_name == null or maybe_package_name.?.len == 0) {
+                // no need to free memory b/c we're exiting
+                if (has_revision) {
+                    cli.printRevisionAndExit();
+                } else if (has_version) {
+                    cli.printVersionAndExit();
+                } else {
+                    exitWithUsage();
+                }
+            }
+            opts.package_name = maybe_package_name.?;
+            return opts;
+        }
+
+        fn deinit(self: *Options) void {
+            self.passthrough_list.deinit(self.allocator);
+            self.* = undefined;
+        }
+    };
 
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -217,55 +295,8 @@ pub const BunxCommand = struct {
         // Don't log stuff
         ctx.debug.silent = true;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
-        var maybe_package_name: ?string = null;
-        var verbose_install = false;
-        var silent_install = false;
-        var has_version = false;
-        var has_revision = false;
-        {
-            var found_subcommand_name = false;
-
-            for (argv) |positional| {
-                if (maybe_package_name != null) {
-                    passthrough_list.appendAssumeCapacity(positional);
-                    continue;
-                }
-
-                if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
-                        has_version = true;
-                    } else if (strings.eqlComptime(positional, "--revision")) {
-                        has_revision = true;
-                    } else if (strings.eqlComptime(positional, "--verbose")) {
-                        verbose_install = true;
-                    } else if (strings.eqlComptime(positional, "--silent")) {
-                        silent_install = true;
-                    } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
-                        ctx.debug.run_in_bun = true;
-                    }
-                } else {
-                    if (!found_subcommand_name) {
-                        found_subcommand_name = true;
-                    } else {
-                        maybe_package_name = positional;
-                    }
-                }
-            }
-        }
-
-        // check if package_name_for_update_request is empty string or " "
-        if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            if (has_revision) {
-                cli.printRevisionAndExit();
-            } else if (has_version) {
-                cli.printVersionAndExit();
-            } else {
-                exitWithUsage();
-            }
-        }
-
-        const package_name = maybe_package_name.?;
+        var opts = try Options.parse(ctx, argv);
+        defer opts.deinit();
 
         var requests_buf = bun.PackageManager.UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
         defer requests_buf.deinit(ctx.allocator);
@@ -273,7 +304,7 @@ pub const BunxCommand = struct {
             ctx.allocator,
             null,
             ctx.log,
-            &.{package_name},
+            &.{opts.package_name},
             &requests_buf,
             .add,
         );
@@ -325,9 +356,9 @@ pub const BunxCommand = struct {
         );
         this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
         this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
-        this_transpiler.env.map.put("npm_lifecycle_script", package_name) catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_script", opts.package_name) catch unreachable;
 
-        if (strings.eqlComptime(package_name, "bun-repl")) {
+        if (strings.eqlComptime(opts.package_name, "bun-repl")) {
             this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
             this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
             this_transpiler.env.map.remove("BUN_INSPECT");
@@ -469,7 +500,7 @@ pub const BunxCommand = struct {
             .{ bunx_cache_dir, initial_bin_name, bun.exe_suffix },
         ) catch return error.PathTooLong;
 
-        const passthrough = passthrough_list.items;
+        const passthrough = opts.passthrough_list.items;
 
         var do_cache_bust = update_request.version.tag == .dist_tag;
 
@@ -623,12 +654,12 @@ pub const BunxCommand = struct {
                 unreachable; // upper bound is known
         }
 
-        if (verbose_install) {
+        if (opts.verbose_install) {
             args.append("--verbose") catch
                 unreachable; // upper bound is known
         }
 
-        if (silent_install) {
+        if (opts.silent_install) {
             args.append("--silent") catch
                 unreachable; // upper bound is known
         }

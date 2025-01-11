@@ -1,4 +1,5 @@
 .DS_Store
+.direnv
 .env
 .envrc
 .eslintcache

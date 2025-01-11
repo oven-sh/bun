@@ -5672,7 +5672,14 @@ pub const NodeFS = struct {
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        return args.createFSWatcher();
+        return switch (args.createFSWatcher()) {
+            .result => |result| .{ .result = result.js_this },
+            .err => |err| .{ .err = .{
+                .errno = err.errno,
+                .syscall = err.syscall,
+                .path = if (err.path.len > 0) args.path.slice() else "",
+            } },
+        };
     }
 
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'

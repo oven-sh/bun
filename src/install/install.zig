@@ -11352,10 +11352,7 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :src s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
-                                .{e.withPath(package_json_path).toSystemError()},
-                            );
+                            Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
                             Global.crash();
                         },
                     }
@@ -11766,10 +11763,7 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :brk s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
-                                .{e.withPath(package_json_path).toSystemError()},
-                            );
+                            Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
                             Global.crash();
                         },
                     }
@@ -11874,10 +11868,7 @@ pub const PackageManager = struct {
                 const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
-                        Output.prettyError(
-                            "<r><red>error<r>: failed to read from cache {}<r>\n",
-                            .{e.toSystemError()},
-                        );
+                        Output.err(e, "failed to read from cache", .{});
                         Global.crash();
                     },
                 };
@@ -11888,10 +11879,7 @@ pub const PackageManager = struct {
             };
 
             const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
-                    .{@errorName(e)},
-                );
+                Output.err(e, "failed to make tempdir", .{});
                 Global.crash();
             });
 
@@ -11902,10 +11890,7 @@ pub const PackageManager = struct {
             // will `rename()` it out and back again.
             const has_nested_node_modules = has_nested_node_modules: {
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
+                    Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -11922,10 +11907,7 @@ pub const PackageManager = struct {
             };
 
             const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
-                    .{@errorName(e)},
-                );
+                Output.err(e, "failed to make tempdir", .{});
                 Global.crash();
             });
 
@@ -11943,10 +11925,7 @@ pub const PackageManager = struct {
                     break :has_bun_patch_tag null;
                 };
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
+                    Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -12097,20 +12076,14 @@ pub const PackageManager = struct {
         )) {
             .result => |fd| fd,
             .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to open temp file {}<r>\n",
-                    .{e.toSystemError()},
-                );
+                Output.err(e, "failed to open temp file", .{});
                 Global.crash();
             },
         };
         defer _ = bun.sys.close(tmpfd);
 
         if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to write patch to temp file {}<r>\n",
-                .{e.toSystemError()},
-            );
+            Output.err(e, "failed to write patch to temp file", .{});
             Global.crash();
         }
 
@@ -12136,10 +12109,7 @@ pub const PackageManager = struct {
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
         if (nodefs.mkdirRecursive(args).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to make patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
+            Output.err(e, "failed to make patches dir {}", .{bun.fmt.quote(args.path.slice())});
             Global.crash();
         }
 
@@ -12151,10 +12121,7 @@ pub const PackageManager = struct {
             path_in_patches_dir,
             .{ .move_fallback = true },
         ).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
+            Output.err(e, "failed renaming patch file to patches dir", .{});
             Global.crash();
         }
 

@@ -1051,7 +1051,6 @@ pub const Valid = struct {
         switch (zig_str.len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {
-                // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
                 return ctx.throwValue(system_error.toErrorInstance(ctx));
@@ -1064,7 +1063,6 @@ pub const Valid = struct {
         switch (len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {
-                // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
                 return ctx.throwValue(system_error.toErrorInstance(ctx));

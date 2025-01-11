@@ -13346,12 +13346,9 @@ pub const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
-                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                            defer message.deinit();
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(message.slice()),
+                            try c.log.addSysError(bun.default_allocator, err, "writing sourcemap for chunk {}", .{
                                 bun.fmt.quote(chunk.final_rel_path),
-                            }) catch unreachable;
+                            });
                             return error.WriteFailed;
                         },
                         .result => {},
@@ -13497,12 +13494,9 @@ pub const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
-                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                    defer message.deinit();
-                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(message.slice()),
+                    try c.log.addSysError(bun.default_allocator, err, "writing chunk {}", .{
                         bun.fmt.quote(chunk.final_rel_path),
-                    }) catch unreachable;
+                    });
                     return error.WriteFailed;
                 },
                 .result => {},
@@ -13617,10 +13611,7 @@ pub const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
-                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
-                        defer utf8.deinit();
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(utf8.slice()),
+                        c.log.addSysError(bun.default_allocator, err, "writing file {}", .{
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;

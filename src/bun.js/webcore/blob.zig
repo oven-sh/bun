@@ -2756,7 +2756,7 @@ pub const Blob = struct {
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
                 const globalThis = this.promise.strong.globalThis.?;
                 const promise = this.promise.swap();
-                const err_instance = err.toSystemError().toErrorInstance(globalThis);
+                const err_instance = err.toJS(globalThis);
                 var event_loop = this.event_loop;
                 event_loop.enter();
                 defer event_loop.exit();

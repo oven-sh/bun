@@ -2508,7 +2508,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
-            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
         },
         .result => |f| f,
@@ -2518,7 +2518,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
-            Output.err(e, "failed to write lockfile\n{}", .{});
+            Output.err(e, "failed to write lockfile", .{});
             Global.crash();
         },
         .result => {},
@@ -2534,7 +2534,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
-                Output.err(err, "failed to change lockfile permissions\n{}", .{});
+                Output.err(err, "failed to change lockfile permissions", .{});
                 Global.crash();
             },
             .result => {},

@@ -662,7 +662,7 @@ function SQL(o) {
     return pendingSQL(strings, values);
   }
 
-  sql.begin = async (options?: string, fn: TransactionCallback) => {
+  sql.begin = async (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
     /*
     BEGIN; -- works on POSTGRES, MySQL, and SQLite (need to change to BEGIN TRANSACTION on MSSQL)
 
@@ -692,11 +692,12 @@ function SQL(o) {
         throw connectionClosedError();
       }
       let callback = fn;
-      if ($isCallable(options)) {
-        callback = options as unknown as TransactionCallback;
+      let options: string | undefined = options_or_fn as unknown as string;
+      if ($isCallable(options_or_fn)) {
+        callback = options_or_fn as unknown as TransactionCallback;
         options = undefined;
-      } else if (typeof options !== "string") {
-        throw $ERR_INVALID_ARG_VALUE("options", options, "must be a string");
+      } else if (typeof options_or_fn !== "string") {
+        throw $ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string");
       }
       if (!$isCallable(callback)) {
         throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");

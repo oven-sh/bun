@@ -4521,7 +4521,7 @@ pub const Package = extern struct {
 
                                 summary.satisfied_versions += diff.satisfied_versions;
 
-                                break :update_mapping !diff.hasDiffs();
+                                break :update_mapping true;
                             }
                         };
 

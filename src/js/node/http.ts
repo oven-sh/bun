@@ -112,11 +112,11 @@ const kfakeSocket = Symbol("kfakeSocket");
 const kEmptyBuffer = Buffer.alloc(0);
 
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
+      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !$inheritsBlob(item))
         return false;
     }
     return true;

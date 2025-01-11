@@ -115,6 +115,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \

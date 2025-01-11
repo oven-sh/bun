@@ -433,7 +433,7 @@ function normalizePath(path) {
       // This is mostly for import.meta.resolve()
       // https://github.com/oven-sh/bun/issues/10304
       path = Bun.fileURLToPath(path as URL);
-    } else if (path instanceof Blob) {
+    } else if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
       path = path.name;

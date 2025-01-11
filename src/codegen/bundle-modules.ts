@@ -19,6 +19,7 @@ import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -462,6 +463,10 @@ writeIfNotChanged(
  */
 declare function $${code}(msg: string, ...args: any[]): ${name};
 `;
+    }
+
+    for (const name of jsclasses) {
+      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
     }
 
     return dts;

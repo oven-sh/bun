@@ -31,6 +31,7 @@
 #include <JavaScriptCore/PropertySlot.h>
 #include <type_traits>
 #include "ErrorCode.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
@@ -228,7 +229,7 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        JSC::call(&lexicalGlobalObject, callback, callData, thisValue, arguments);
+        JSC::profiledCall(&lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
         if (UNLIKELY(scope.exception()))
             break;
     }

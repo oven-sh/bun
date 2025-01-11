@@ -89,8 +89,8 @@ export function validateAndNormalizeQueuingStrategy(size, highWaterMark) {
 
 $linkTimeConstant;
 export function createFIFO() {
-  const Denqueue = require("internal/fifo");
-  return new Denqueue();
+  const Dequeue = require("internal/fifo");
+  return new Dequeue();
 }
 
 export function newQueue() {

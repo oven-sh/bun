@@ -342,7 +342,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1631,7 +1631,7 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,
@@ -2978,6 +2978,8 @@ pub const Api = struct {
         concurrent_scripts: ?u32 = null,
 
         cafile: ?[]const u8 = null,
+
+        save_text_lockfile: ?bool = null,
 
         ca: ?union(enum) {
             str: []const u8,

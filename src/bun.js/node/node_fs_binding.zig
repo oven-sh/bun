@@ -50,8 +50,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             );
             switch (result) {
                 .err => |err| {
-                    globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
-                    return .zero;
+                    return globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                 },
                 .result => |*res| {
                     return globalObject.toJS(res, .temporary);
@@ -239,8 +238,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     }
 
     if (comptime !bun.Environment.isLinux) {
-        globalObject.throw("memfd_create is not implemented on this platform", .{});
-        return .zero;
+        return globalObject.throw("memfd_create is not implemented on this platform", .{});
     }
 
     const size = arguments.ptr[0].toInt64();
@@ -250,8 +248,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
             return JSC.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            globalObject.throwValue(err.toJSC(globalObject));
-            return .zero;
+            return globalObject.throwValue(err.toJSC(globalObject));
         },
     }
 }

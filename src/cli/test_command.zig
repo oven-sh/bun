@@ -764,7 +764,7 @@ pub const CommandLineReporter = struct {
             @compileError("No reporters enabled");
         }
 
-        const relative_dir = vm.bundler.fs.top_level_dir;
+        const relative_dir = vm.transpiler.fs.top_level_dir;
 
         // --- Text ---
         const max_filepath_length: usize = if (reporters.text) brk: {
@@ -1051,7 +1051,7 @@ const Scanner = struct {
         }
 
         const ext = std.fs.path.extension(slice);
-        const loader_by_ext = JSC.VirtualMachine.get().bundler.options.loader(ext);
+        const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
 
         // allow file loader just incase they use a custom loader with a non-standard extension
         if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
@@ -1200,6 +1200,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -1220,6 +1221,7 @@ pub const TestCommand = struct {
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,
+                    .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
             },
             .callback = undefined,
@@ -1259,12 +1261,13 @@ pub const TestCommand = struct {
                 .store_fd = true,
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
+                .is_main_thread = true,
             },
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
-        vm.bundler.options.rewrite_jest_for_tests = true;
-        vm.bundler.options.env.behavior = .load_all_without_inlining;
+        vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.transpiler.options.env.behavior = .load_all_without_inlining;
 
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
@@ -1275,18 +1278,18 @@ pub const TestCommand = struct {
             };
         }
 
-        try vm.bundler.configureDefines();
+        try vm.transpiler.configureDefines();
 
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         if (ctx.test_options.coverage.enabled) {
-            vm.bundler.options.code_coverage = true;
-            vm.bundler.options.minify_syntax = false;
-            vm.bundler.options.minify_identifiers = false;
-            vm.bundler.options.minify_whitespace = false;
-            vm.bundler.options.dead_code_elimination = false;
+            vm.transpiler.options.code_coverage = true;
+            vm.transpiler.options.minify_syntax = false;
+            vm.transpiler.options.minify_identifiers = false;
+            vm.transpiler.options.minify_whitespace = false;
+            vm.transpiler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 
@@ -1296,7 +1299,7 @@ pub const TestCommand = struct {
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             "Etc/UTC";
 
-        if (vm.bundler.env.get("TZ")) |tz| {
+        if (vm.transpiler.env.get("TZ")) |tz| {
             TZ_NAME = tz;
         }
 
@@ -1349,8 +1352,8 @@ pub const TestCommand = struct {
 
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-                .options = &vm.bundler.options,
-                .fs = vm.bundler.fs,
+                .options = &vm.transpiler.options,
+                .fs = vm.transpiler.fs,
                 .filter_names = filter_names_normalized,
                 .results = &results,
             };
@@ -1377,10 +1380,11 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
+            // vm.transpiler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
+        const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage = ctx.test_options.coverage;
 
@@ -1567,22 +1571,26 @@ pub const TestCommand = struct {
         }
 
         if (vm.hot_reload == .watch) {
-            vm.eventLoop().tickPossiblyForever();
-
-            while (true) {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
-                }
-
-                vm.eventLoop().tickPossiblyForever();
-            }
+            vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
+        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        }
+    }
+
+    fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
+        vm.eventLoop().tickPossiblyForever();
+
+        while (true) {
+            while (vm.isEventLoopAlive()) {
+                vm.tick();
+                vm.eventLoop().autoTickActive();
+            }
+
+            vm.eventLoop().tickPossiblyForever();
         }
     }
 
@@ -1651,7 +1659,7 @@ pub const TestCommand = struct {
         defer reporter.jest.only = prev_only;
 
         const file_start = reporter.jest.files.len;
-        const resolution = try vm.bundler.resolveEntryPoint(file_name);
+        const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
         const file_path = resolution.path_pair.primary.text;

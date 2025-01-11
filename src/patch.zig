@@ -915,7 +915,7 @@ const PatchLinesParser = struct {
     fn parseHunkHeaderLineImpl(text_: []const u8) ParseErr!struct { line_nr: u32, line_count: u32, rest: []const u8 } {
         var text = text_;
         const DIGITS = brk: {
-            var set = std.bit_set.IntegerBitSet(256).initEmpty();
+            var set = bun.bit_set.IntegerBitSet(256).initEmpty();
             for ('0'..'9' + 1) |c| set.set(c);
             break :brk set;
         };
@@ -1026,8 +1026,8 @@ const PatchLinesParser = struct {
 
         const delimiter_start = std.mem.indexOf(u8, line, "..") orelse return null;
 
-        const VALID_CHARS: std.bit_set.IntegerBitSet(256) = comptime brk: {
-            var bitset = std.bit_set.IntegerBitSet(256).initEmpty();
+        const VALID_CHARS: bun.bit_set.IntegerBitSet(256) = comptime brk: {
+            var bitset = bun.bit_set.IntegerBitSet(256).initEmpty();
             // TODO: the regex uses \w which is [a-zA-Z0-9_]
             for ('0'..'9' + 1) |c| bitset.set(c);
             for ('a'..'z' + 1) |c| bitset.set(c);
@@ -1099,15 +1099,13 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
-            globalThis.throw("expected 2 strings", .{});
-            return .zero;
+            return globalThis.throw("expected 2 strings", .{});
         };
         const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
-            globalThis.throw("expected 2 strings", .{});
-            return .zero;
+            return globalThis.throw("expected 2 strings", .{});
         };
         const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
@@ -1127,8 +1125,7 @@ pub const TestingAPIs = struct {
             },
             .err => |e| {
                 defer e.deinit();
-                globalThis.throw("failed to make diff: {s}", .{e.items});
-                return .zero;
+                return globalThis.throw("failed to make diff: {s}", .{e.items});
             },
         };
     }
@@ -1153,8 +1150,7 @@ pub const TestingAPIs = struct {
         defer args.deinit();
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
-            globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
 
         return .true;
@@ -1165,8 +1161,7 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
-            globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
-            return .zero;
+            return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
         };
         const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
@@ -1190,7 +1185,7 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
-            globalThis.throw("apply: expected at least 1 argument, got 0", .{});
+            globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
             return .{ .err = .undefined };
         };
 
@@ -1202,7 +1197,7 @@ pub const TestingAPIs = struct {
 
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
-                    globalThis.throwValue(e.withPath(path).toJSC(globalThis));
+                    globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
                     return .{ .err = .undefined };
                 },
                 .result => |fd| fd,

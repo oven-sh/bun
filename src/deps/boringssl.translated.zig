@@ -30,6 +30,17 @@ const timercmp = C.timercmp;
 const doesnt_exist = C.doesnt_exist;
 const struct_tm = C.struct_tm;
 const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+/// `isize` alias. Kept for clarity.
+///
+/// Docs from OpenSSL:
+/// > ossl_ssize_t is a signed type which is large enough to fit the size of any
+/// > valid memory allocation. We prefer using |size_t|, but sometimes we need a
+/// > signed type for OpenSSL API compatibility. This type can be used in such
+/// > cases to avoid overflow.
+/// >
+/// > Not all |size_t| values fit in |ossl_ssize_t|, but all |size_t| values that
+/// > are sizes of or indices into C objects, can be converted without overflow.
+const ossl_ssize_t = isize;
 
 pub const CRYPTO_THREADID = c_int;
 pub const struct_asn1_null_st = opaque {};
@@ -1105,7 +1116,15 @@ pub extern fn BIO_hexdump(bio: [*c]BIO, data: [*c]const u8, len: usize, indent: 
 pub extern fn ERR_print_errors(bio: [*c]BIO) void;
 pub extern fn BIO_read_asn1(bio: [*c]BIO, out: [*c][*c]u8, out_len: [*c]usize, max_len: usize) c_int;
 pub extern fn BIO_s_mem() ?*const BIO_METHOD;
-// pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
+
+/// BIO_new_mem_buf creates read-only BIO that reads from |len| bytes at |buf|.
+/// It returns the BIO or NULL on error. This function does not copy or take
+/// ownership of |buf|. The caller must ensure the memory pointed to by |buf|
+/// outlives the |BIO|.
+///
+/// If |len| is negative, then |buf| is treated as a NUL-terminated string, but
+/// don't depend on this in new code.
+pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
 // pub extern fn BIO_mem_contents(bio: [*c]const BIO, out_contents: [*c][*c]const u8, out_len: [*c]usize) c_int;
 pub extern fn BIO_get_mem_data(bio: [*c]BIO, contents: [*c][*c]u8) c_long;
 pub extern fn BIO_get_mem_ptr(bio: [*c]BIO, out: [*c][*c]BUF_MEM) c_int;
@@ -18776,6 +18795,22 @@ pub const struct_bio_st = extern struct {
 
     pub fn init() !*struct_bio_st {
         return BIO_new(BIO_s_mem()) orelse error.OutOfMemory;
+    }
+
+    /// Create a read-only `BIO` using an existing buffer. `buffer` is not
+    /// copied, and ownership is not transfered.
+    ///
+    /// `buffer` must outlive the returned `BIO`.
+    ///
+    /// Returns an error if
+    /// - the buffer is empty
+    /// - BIO initialization fails (same as `.init()`).
+    pub fn initReadonlyView(buffer: []const u8) !*struct_bio_st {
+        // NOTE: not exposing len parameter. If we want to ignore their
+        // suggestion and pass a negative value to make it treat `buffer` as a
+        // null-terminated string, create a separate `initReadonlyViewZ`
+        // constructor.
+        return BIO_new_mem_buf(buffer.ptr, buffer.len);
     }
 
     pub fn deinit(this: *struct_bio_st) void {

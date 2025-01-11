@@ -20,7 +20,6 @@ const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
 
 const import_record = @import("./import_record.zig");
 
@@ -47,9 +46,23 @@ pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
         fd: StoredFileDescriptorType = bun.invalid_fd,
+        external: External = .{},
+
+        pub const External = struct {
+            ctx: ?*anyopaque = null,
+            function: ?*const fn (?*anyopaque) callconv(.C) void = null,
+
+            pub fn call(this: *const @This()) void {
+                if (this.function) |func| {
+                    func(this.ctx);
+                }
+            }
+        };
 
         pub fn deinit(entry: *Entry, allocator: std.mem.Allocator) void {
-            if (entry.contents.len > 0) {
+            if (entry.external.function) |func| {
+                func(entry.external.ctx);
+            } else if (entry.contents.len > 0) {
                 allocator.free(entry.contents);
                 entry.contents = "";
             }

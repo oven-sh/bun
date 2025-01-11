@@ -234,7 +234,7 @@ To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful 
 ```ts
 import { dns } from "bun";
 
-dns.prefetch("bun.sh", 443);
+dns.prefetch("bun.sh");
 ```
 
 #### DNS caching

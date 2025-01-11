@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const Fs = @import("../fs.zig");
 const js_ast = bun.JSAst;
-const Bundler = bun.Bundler;
+const Transpiler = bun.Transpiler;
 const strings = bun.strings;
 
 pub const FallbackEntryPoint = struct {
@@ -16,8 +16,8 @@ pub const FallbackEntryPoint = struct {
     pub fn generate(
         entry: *FallbackEntryPoint,
         input_path: string,
-        comptime BundlerType: type,
-        bundler: *BundlerType,
+        comptime TranspilerType: type,
+        transpiler: *TranspilerType,
     ) !void {
         // This is *extremely* naive.
         // The basic idea here is this:
@@ -29,7 +29,7 @@ pub const FallbackEntryPoint = struct {
         // We go through the steps of printing the code -- only to then parse/transpile it because
         // we want it to go through the linker and the rest of the transpilation process
 
-        const disable_css_imports = bundler.options.framework.?.client_css_in_js != .auto_onimportcss;
+        const disable_css_imports = transpiler.options.framework.?.client_css_in_js != .auto_onimportcss;
 
         var code: string = undefined;
 
@@ -48,7 +48,7 @@ pub const FallbackEntryPoint = struct {
             if (count < entry.code_buffer.len) {
                 code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
             } else {
-                code = try std.fmt.allocPrint(bundler.allocator, fmt, args);
+                code = try std.fmt.allocPrint(transpiler.allocator, fmt, args);
             }
         } else {
             const fmt =
@@ -64,7 +64,7 @@ pub const FallbackEntryPoint = struct {
             if (count < entry.code_buffer.len) {
                 code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
             } else {
-                code = try std.fmt.allocPrint(bundler.allocator, fmt, args);
+                code = try std.fmt.allocPrint(transpiler.allocator, fmt, args);
             }
         }
 
@@ -105,7 +105,7 @@ pub const ClientEntryPoint = struct {
         return outbuffer[0 .. generated_path.len + original_ext.len];
     }
 
-    pub fn generate(entry: *ClientEntryPoint, comptime BundlerType: type, bundler: *BundlerType, original_path: Fs.PathName, client: string) !void {
+    pub fn generate(entry: *ClientEntryPoint, comptime TranspilerType: type, transpiler: *TranspilerType, original_path: Fs.PathName, client: string) !void {
 
         // This is *extremely* naive.
         // The basic idea here is this:
@@ -118,7 +118,7 @@ pub const ClientEntryPoint = struct {
         // we want it to go through the linker and the rest of the transpilation process
 
         const dir_to_use: string = original_path.dirWithTrailingSlash();
-        const disable_css_imports = bundler.options.framework.?.client_css_in_js != .auto_onimportcss;
+        const disable_css_imports = transpiler.options.framework.?.client_css_in_js != .auto_onimportcss;
 
         var code: string = undefined;
 
@@ -266,7 +266,7 @@ pub const MacroEntryPoint = struct {
 
     pub fn generate(
         entry: *MacroEntryPoint,
-        _: *Bundler,
+        _: *Transpiler,
         import_path: Fs.PathName,
         function_name: string,
         macro_id: i32,

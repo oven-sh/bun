@@ -75,9 +75,17 @@ extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider*
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
-    JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
+
+    JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
+    if (resolvedSource.isCommonJSModule) {
+        ASSERT(resolvedSource.module_info == nullptr, "isCommonJSModule should not have module_info");
+        sourceType = JSC::SourceProviderSourceType::Program;
+    } else if (resolvedSource.module_info == nullptr) {
+        sourceType = JSC::SourceProviderSourceType::Module;
+    }
+
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
@@ -163,10 +171,10 @@ static JSC::VM& getVMForBytecodeCache()
     static thread_local JSC::VM* vmForBytecodeCache = nullptr;
     if (!vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
-        auto& vm = JSC::VM::create(heapSize).leakRef();
-        vm.ref();
-        vmForBytecodeCache = &vm;
-        vm.heap.acquireAccess();
+        auto vmPtr = JSC::VM::tryCreate(heapSize);
+        vmPtr->refSuppressingSaferCPPChecking();
+        vmForBytecodeCache = vmPtr.get();
+        vmPtr->heap.acquireAccess();
     }
     return *vmForBytecodeCache;
 }

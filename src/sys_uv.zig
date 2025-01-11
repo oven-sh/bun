@@ -54,7 +54,7 @@ pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(b
     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
     log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .open } }
+        .{ .err = .{ .errno = errno, .syscall = .open, .path = file_path } }
     else
         .{ .result = bun.toFD(@as(i32, @intCast(req.result.int()))) };
 }
@@ -67,7 +67,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv mkdir({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        .{ .err = .{ .errno = errno, .syscall = .mkdir, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -81,7 +81,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv chmod({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chmod } }
+        .{ .err = .{ .errno = errno, .syscall = .chmod, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -94,7 +94,7 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
 
     log("uv fchmod({}, {d}) = {d}", .{ uv_fd, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchmod } }
+        .{ .err = .{ .errno = errno, .syscall = .fchmod, .fd = fd } }
     else
         .{ .result = {} };
 }
@@ -107,7 +107,7 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
 
     log("uv chown({s}, {d}, {d}) = {d}", .{ file_path, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chown } }
+        .{ .err = .{ .errno = errno, .syscall = .chown, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -121,7 +121,7 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
 
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchown } }
+        .{ .err = .{ .errno = errno, .syscall = .fchown, .fd = fd } }
     else
         .{ .result = {} };
 }
@@ -134,7 +134,7 @@ pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .access } }
+        .{ .err = .{ .errno = errno, .syscall = .access, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -147,7 +147,7 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
 
     log("uv rmdir({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .rmdir } }
+        .{ .err = .{ .errno = errno, .syscall = .rmdir, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -160,7 +160,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
 
     log("uv unlink({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .unlink } }
+        .{ .err = .{ .errno = errno, .syscall = .unlink, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -174,14 +174,14 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
 
     if (rc.errno()) |errno| {
         log("uv readlink({s}) = {d}, [err]", .{ file_path, rc.int() });
-        return .{ .err = .{ .errno = errno, .syscall = .readlink } };
+        return .{ .err = .{ .errno = errno, .syscall = .readlink, .path = file_path } };
     } else {
         // Seems like `rc` does not contain the size?
         bun.assert(rc.int() == 0);
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink } };
+            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink, .path = file_path } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);
@@ -199,6 +199,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv rename({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
+        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .rename } }
     else
         .{ .result = {} };
@@ -213,6 +214,7 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv link({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
+        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .link } }
     else
         .{ .result = {} };
@@ -227,6 +229,7 @@ pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void)
 
     log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
+        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
         .{ .result = {} };
@@ -292,7 +295,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv stat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .stat } }
+        .{ .err = .{ .errno = errno, .syscall = .stat, .path = path } }
     else
         .{ .result = req.statbuf };
 }
@@ -305,7 +308,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv lstat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .lstat } }
+        .{ .err = .{ .errno = errno, .syscall = .lstat, .path = path } }
     else
         .{ .result = req.statbuf };
 }

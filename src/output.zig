@@ -88,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {
@@ -309,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -468,16 +468,16 @@ pub fn isVerbose() bool {
     return false;
 }
 
-var _source_for_test: if (Environment.isTest) Source else void = undefined;
-var _source_for_test_set = false;
-pub fn initTest() void {
-    if (_source_for_test_set) return;
-    _source_for_test_set = true;
-    const in = std.io.getStdErr();
-    const out = std.io.getStdOut();
-    _source_for_test = Source.init(File.from(out), File.from(in));
-    Source.set(&_source_for_test);
-}
+// var _source_for_test: if (Environment.isTest) Source else void = undefined;
+// var _source_for_test_set = false;
+// pub fn initTest() void {
+//     if (_source_for_test_set) return;
+//     _source_for_test_set = true;
+//     const in = std.io.getStdErr();
+//     const out = std.io.getStdOut();
+//     _source_for_test = Source.init(File.from(out), File.from(in));
+//     Source.set(&_source_for_test);
+// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -674,7 +674,7 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isRelease) return;
+    if (!Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -745,7 +745,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {

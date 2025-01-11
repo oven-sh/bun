@@ -67,8 +67,7 @@ fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (!data.run(output.slice())) {
         const err = Crypto.createCryptoError(globalThis, BoringSSL.ERR_get_error());
         BoringSSL.ERR_clear_error();
-        globalThis.throwValue(err);
-        return .zero;
+        return globalThis.throwValue(err);
     }
 
     return out_arraybuffer;

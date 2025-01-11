@@ -96,10 +96,10 @@ template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto:
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr std::pair<ComparableASCIILiteral, SubtleCrypto::KeyFormat> mappings[] = {
-        { "jwk", SubtleCrypto::KeyFormat::Jwk },
-        { "pkcs8", SubtleCrypto::KeyFormat::Pkcs8 },
-        { "raw", SubtleCrypto::KeyFormat::Raw },
-        { "spki", SubtleCrypto::KeyFormat::Spki },
+        { "jwk"_s, SubtleCrypto::KeyFormat::Jwk },
+        { "pkcs8"_s, SubtleCrypto::KeyFormat::Pkcs8 },
+        { "raw"_s, SubtleCrypto::KeyFormat::Raw },
+        { "spki"_s, SubtleCrypto::KeyFormat::Spki },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))

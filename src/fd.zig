@@ -263,7 +263,7 @@ pub const FDImpl = packed struct {
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
-                            .{ .errno = errno, .syscall = .close, .fd = this.encode() }
+                            .{ .errno = errno, .syscall = .close, .fd = this.encode(), .from_libuv = true }
                         else
                             null;
                     },
@@ -343,11 +343,10 @@ pub const FDImpl = packed struct {
     pub fn toJS(value: FDImpl, global: *JSC.JSGlobalObject) JSValue {
         const fd = value.makeLibUVOwned() catch {
             _ = value.close();
-            global.throwValue((JSC.SystemError{
+            return global.throwValue((JSC.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global));
-            return .zero;
+            }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(fd.uv());
     }

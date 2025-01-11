@@ -44,6 +44,7 @@ str = str.replaceAll(/^#include.*$/gm, "");
 str = str.replaceAll(`namespace JSC {`, "");
 str = str.replaceAll(`} // namespace JSC`, "");
 str = str.replaceAll(/NativeFunctionType,\s([a-zA-Z0-99_]+)/gm, "NativeFunctionType, &$1");
+str = str.replaceAll('&Generated::', 'Generated::');
 str = "#pragma once" + "\n" + "// File generated via `create-hash-table.ts`\n" + str.trim() + "\n";
 
 writeIfNotChanged(output, str);

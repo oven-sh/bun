@@ -291,7 +291,7 @@ function(find_command)
       set_property(GLOBAL PROPERTY ${FIND_NAME} "${exe}: ${reason}" APPEND)
 
       if(version)
-        satisfies_range(${version} ${${FIND_VERSION_VARIABLE}} ${variable})
+        satisfies_range(${version} ${FIND_VERSION} ${variable})
         set(${variable} ${${variable}} PARENT_SCOPE)
       endif()
     endfunction()

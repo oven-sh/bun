@@ -231,14 +231,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn getErrno(this: @This()) posix.E {
+        pub fn getErrno(this: @This()) posix.E {
             return switch (this) {
                 .result => posix.E.SUCCESS,
                 .err => |e| @enumFromInt(e.errno),
             };
         }
 
-        pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+        pub fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -256,7 +256,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+        pub fn errno(err: anytype, syscall: Syscall.Tag) @This() {
             return @This(){
                 // always truncate
                 .err = .{
@@ -266,7 +266,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
+        pub fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -285,7 +285,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
+        pub fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
             if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
@@ -302,6 +302,49 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .errno = translateToErrInt(e),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
+        pub fn errnoSysFP(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor, path: anytype) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .fd = fd,
+                        .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
+        pub fn errnoSysPD(rc: anytype, syscall: Syscall.Tag, path: anytype, dest: anytype) ?@This() {
+            if (bun.meta.Item(@TypeOf(path)) == u16) {
+                @compileError("Do not pass WString path to errnoSysPD, it needs the path encoded as utf8");
+            }
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .path = bun.asByteSlice(path),
+                        .dest = bun.asByteSlice(dest),
                     },
                 },
             };
@@ -699,13 +742,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError {
-        globalObject.ERR_INVALID_ARG_VALUE(
-            "encoding '{}' is an invalid encoding",
-            .{
-                value.fmtString(globalObject),
-            },
-        ).throw();
-        return error.JSError;
+        return globalObject.ERR_INVALID_ARG_VALUE("encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
@@ -733,8 +770,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.Encoder.toString(input.ptr, size, globalObject, enc);
                 if (res.isError()) {
-                    globalObject.throwValue(res);
-                    return .zero;
+                    return globalObject.throwValue(res) catch .zero;
                 }
 
                 return res;
@@ -770,8 +806,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.Encoder.toString(input.ptr, input.len, globalObject, enc);
                 if (res.isError()) {
-                    globalObject.throwValue(res);
-                    return .zero;
+                    return globalObject.throwValue(res) catch .zero;
                 }
 
                 return res;
@@ -1047,8 +1082,7 @@ pub const Valid = struct {
                 // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
         unreachable;
@@ -1061,8 +1095,7 @@ pub const Valid = struct {
                 // TODO: should this be an EINVAL?
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
         }
         unreachable;
@@ -1081,8 +1114,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                ctx.throwValue(system_error.toErrorInstance(ctx));
-                return error.JSError;
+                return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
             1...bun.MAX_PATH_BYTES => return,
         }
@@ -1134,7 +1166,7 @@ pub const ArgumentsSlice = struct {
     arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
-    protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
     will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
@@ -1143,7 +1175,7 @@ pub const ArgumentsSlice = struct {
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
-        this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
+        this.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
     }
 
     pub fn deinit(this: *ArgumentsSlice) void {
@@ -1285,8 +1317,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-            ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
-            return error.JSError;
+            return ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -1458,8 +1489,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
-                ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
-                return error.JSError;
+                return ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
@@ -1739,7 +1769,7 @@ pub fn StatType(comptime Big: bool) type {
             }
 
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
-            var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
+            var args = callFrame.arguments();
 
             const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
             const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
@@ -1839,7 +1869,7 @@ pub const Dirent = struct {
     pub usingnamespace bun.New(@This());
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Dirent {
-        return globalObject.throw2("Dirent is not a constructor", .{});
+        return globalObject.throw("Dirent is not a constructor", .{});
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -2082,7 +2112,7 @@ pub const Process = struct {
         switch (Path.getCwd(&buf)) {
             .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
             .err => |e| {
-                return globalObject.throwValue2(e.toJSC(globalObject));
+                return globalObject.throwValue(e.toJSC(globalObject));
             },
         }
     }
@@ -2094,44 +2124,41 @@ pub const Process = struct {
         if (to.len == 0) {
             return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
         }
+        const vm = globalObject.bunVM();
+        const fs = vm.transpiler.fs;
 
         var buf: bun.PathBuffer = undefined;
-        const slice = to.sliceZBuf(&buf) catch {
-            globalObject.throw("Invalid path", .{});
-            return .zero;
-        };
+        const slice = to.sliceZBuf(&buf) catch return globalObject.throw("Invalid path", .{});
 
-        switch (Syscall.chdir(slice)) {
+        switch (Syscall.chdir(fs.top_level_dir, slice)) {
             .result => {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                const fs = JSC.VirtualMachine.get().bundler.fs;
                 const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
                     .err => |err| {
-                        _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
-                        globalObject.throwValue(err.toJSC(globalObject));
-                        return .zero;
+                        _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
+                        return globalObject.throwValue(err.toJSC(globalObject));
                     },
                 };
                 @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
-                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
+                fs.top_level_dir_buf[into_cwd_buf.len] = 0;
+                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len :0];
 
                 const len = fs.top_level_dir.len;
                 // Ensure the path ends with a slash
                 if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
                     fs.top_level_dir_buf[len] = std.fs.path.sep;
                     fs.top_level_dir_buf[len + 1] = 0;
-                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1 :0];
                 }
                 const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
                 var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
                 return str.transferToJS(globalObject);
             },
             .err => |e| {
-                globalObject.throwValue(e.toJSC(globalObject));
-                return .zero;
+                return globalObject.throwValue(e.toJSC(globalObject));
             },
         }
     }
@@ -2147,6 +2174,46 @@ pub const Process = struct {
         vm.exit_handler.exit_code = code;
         vm.onExit();
         vm.globalExit();
+    }
+
+    // TODO: switch this to using *bun.wtf.String when it is added
+    pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+        if (k.tag == .Empty) return;
+        const wtf1 = k.value.WTFStringImpl;
+        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
+        const allocator = fixed_stack_allocator.get();
+        var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf1);
+        var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        const len1: usize = switch (wtf1.is8Bit()) {
+            true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,
+            false => b: {
+                @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
+                break :b wtf1.length();
+            },
+        };
+        buf1[len1] = 0;
+        const str2: ?[*:0]const u16 = if (v.tag != .Dead) str: {
+            if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
+            const wtf2 = v.value.WTFStringImpl;
+            const len2: usize = switch (wtf2.is8Bit()) {
+                true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, []const u8, wtf2.latin1Slice()).written,
+                false => b: {
+                    @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
+                    break :b wtf2.length();
+                },
+            };
+            buf2[len2] = 0;
+            break :str buf2[0..len2 :0].ptr;
+        } else null;
+        _ = bun.windows.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
+    }
+
+    comptime {
+        if (Environment.export_cpp_apis and Environment.isWindows) {
+            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+        }
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
@@ -2167,6 +2234,31 @@ pub const Process = struct {
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
     pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
+};
+
+pub const PathOrBlob = union(enum) {
+    path: JSC.Node.PathOrFileDescriptor,
+    blob: Blob,
+
+    const Blob = JSC.WebCore.Blob;
+
+    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
+            return PathOrBlob{
+                .path = path,
+            };
+        }
+
+        const arg = args.nextEat() orelse {
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+        };
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.*,
+            };
+        }
+        return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
+    }
 };
 
 comptime {

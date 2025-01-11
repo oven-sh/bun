@@ -178,8 +178,7 @@ pub const HTMLRewriter = struct {
 
             if (out != .zero) {
                 if (out.toError()) |err| {
-                    global.throwValue(err);
-                    return .zero;
+                    return global.throwValue(err);
                 }
             }
 
@@ -1158,6 +1157,26 @@ pub const DocType = struct {
             return JSValue.jsNull();
         return ZigString.init(str).toJS(globalObject);
     }
+
+    pub fn remove(
+        this: *DocType,
+        _: *JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) bun.JSError!JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        this.doctype.?.remove();
+        return callFrame.this();
+    }
+
+    pub fn removed(
+        this: *DocType,
+        _: *JSGlobalObject,
+    ) JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        return JSValue.jsBoolean(this.doctype.?.isRemoved());
+    }
 };
 
 pub const DocEnd = struct {
@@ -1288,7 +1307,7 @@ pub const Comment = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.comment.?.setText(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1412,7 +1431,7 @@ pub const EndTag = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.end_tag.?.setName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1697,7 +1716,7 @@ pub const Element = struct {
         defer text.deinit();
 
         this.element.?.setTagName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 

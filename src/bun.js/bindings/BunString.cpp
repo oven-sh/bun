@@ -13,6 +13,7 @@
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
 
+#include <limits>
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -34,6 +35,7 @@
 
 #include "GCDefferalContext.h"
 #include "wtf/text/StringImpl.h"
+#include "wtf/text/StringToIntegerConversion.h"
 
 extern "C" void mi_free(void* ptr);
 
@@ -88,6 +90,22 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
     }
 
     return { BunStringTag::Dead, {} };
+}
+
+// int64_t max to say "not a number"
+extern "C" int64_t BunString__toInt32(BunString* bunString)
+{
+    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
+        return std::numeric_limits<int64_t>::max();
+    }
+
+    String str = bunString->toWTFString();
+    auto val = WTF::parseIntegerAllowingTrailingJunk<int32_t>(str);
+    if (val) {
+        return val.value();
+    }
+
+    return std::numeric_limits<int64_t>::max();
 }
 
 namespace Bun {
@@ -226,7 +244,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
 extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
-    UChar* ptr;
+    std::span<UChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
         return { .tag = BunStringTag::Dead };
@@ -237,7 +255,7 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
         return { .tag = BunStringTag::Dead };
@@ -250,12 +268,12 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     ASSERT(length > 0);
     if (simdutf::validate_utf8(bytes, length)) {
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
-        UChar* ptr;
+        std::span<UChar> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
         if (UNLIKELY(!impl)) {
             return { .tag = BunStringTag::Dead };
         }
-        RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr) == u16Length);
+        RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
         impl->ref();
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
@@ -271,12 +289,12 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
         return { .tag = BunStringTag::Dead };
     }
-    memcpy(ptr, bytes, length);
+    memcpy(ptr.data(), bytes, length);
 
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -286,13 +304,13 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     ASSERT(length > 0);
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
     size_t outLength = simdutf::latin1_length_from_utf16(length);
-    LChar* ptr = nullptr;
+    std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
     if (UNLIKELY(!impl)) {
         return { BunStringTag::Dead };
     }
 
-    size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr));
+    size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr.data()));
     ASSERT_WITH_MESSAGE(latin1_length == outLength, "Failed to convert UTF16 to Latin1");
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -300,12 +318,12 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
 extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
-    UChar* ptr;
+    std::span<UChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
         return { .tag = BunStringTag::Dead };
     }
-    memcpy(ptr, bytes, length * sizeof(char16_t));
+    memcpy(ptr.data(), bytes, length * sizeof(char16_t));
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 

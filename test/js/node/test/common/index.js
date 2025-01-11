@@ -107,7 +107,7 @@ function parseTestFlags(filename = process.argv[1]) {
 // `worker_threads`) and child processes.
 // If the binary was built without-ssl then the crypto flags are
 // invalid (bad option). The test itself should handle this case.
-if (process.argv.length === 2 &&
+if ((process.argv.length === 2 || process.argv.length === 3) &&
     !process.env.NODE_SKIP_FLAG_CHECK &&
     isMainThread &&
     hasCrypto &&
@@ -119,6 +119,10 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--expose-gc" && process.versions.bun) {
+        globalThis.gc ??= () => Bun.gc(true);
+        break;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),
@@ -128,7 +132,7 @@ if (process.argv.length === 2 &&
       const options = { encoding: 'utf8', stdio: 'inherit' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
-        process.kill(0, result.signal);
+        process.kill(process.pid, result.signal);
       } else {
         process.exit(result.status);
       }
@@ -141,7 +145,7 @@ const isSunOS = process.platform === 'sunos';
 const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
-const isOSX = process.platform === 'darwin';
+const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
 const isPi = (() => {
   try {
@@ -338,10 +342,9 @@ if (global.structuredClone) {
   knownGlobals.push(global.structuredClone);
 }
 
-// BUN:TODO: uncommenting this crashes bun
-// if (global.EventSource) {
-//   knownGlobals.push(EventSource);
-// }
+if (global.EventSource) {
+  knownGlobals.push(EventSource);
+}
 
 if (global.fetch) {
   knownGlobals.push(fetch);
@@ -382,6 +385,57 @@ if (global.Storage) {
     global.localStorage,
     global.sessionStorage,
     global.Storage,
+  );
+}
+
+if (global.Bun) {
+  knownGlobals.push(
+    global.addEventListener,
+    global.alert,
+    global.confirm,
+    global.dispatchEvent,
+    global.postMessage,
+    global.prompt,
+    global.removeEventListener,
+    global.reportError,
+    global.Bun,
+    global.File,
+    global.process,
+    global.Blob,
+    global.Buffer,
+    global.BuildError,
+    global.BuildMessage,
+    global.HTMLRewriter,
+    global.Request,
+    global.ResolveError,
+    global.ResolveMessage,
+    global.Response,
+    global.TextDecoder,
+    global.AbortSignal,
+    global.BroadcastChannel,
+    global.CloseEvent,
+    global.DOMException,
+    global.ErrorEvent,
+    global.Event,
+    global.EventTarget,
+    global.FormData,
+    global.Headers,
+    global.MessageChannel,
+    global.MessageEvent,
+    global.MessagePort,
+    global.PerformanceEntry,
+    global.PerformanceObserver,
+    global.PerformanceObserverEntryList,
+    global.PerformanceResourceTiming,
+    global.PerformanceServerTiming,
+    global.PerformanceTiming,
+    global.TextEncoder,
+    global.URL,
+    global.URLSearchParams,
+    global.WebSocket,
+    global.Worker,
+    global.onmessage,
+    global.onerror
   );
 }
 
@@ -844,6 +898,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 
@@ -967,13 +1022,18 @@ function getPrintedStackTrace(stderr) {
  * @param {object} mod result returned by require()
  * @param {object} expectation shape of expected namespace.
  */
-function expectRequiredModule(mod, expectation) {
+function expectRequiredModule(mod, expectation, checkESModule = true) {
+  const clone = { ...mod };
+  if (Object.hasOwn(mod, 'default') && checkESModule) {
+    assert.strictEqual(mod.__esModule, true);
+    delete clone.__esModule;
+  }
   assert(isModuleNamespaceObject(mod));
-  assert.deepStrictEqual({ ...mod }, { ...expectation });
+  assert.deepStrictEqual(clone, { ...expectation });
 }
 
 const common = {
-  allowGlobals: [],
+  allowGlobals,
   buildType,
   canCreateSymLink,
   childShouldThrowAndAbort,
@@ -1001,7 +1061,7 @@ const common = {
   isLinux,
   isMainThread,
   isOpenBSD,
-  isOSX,
+  isMacOS,
   isPi,
   isSunOS,
   isWindows,

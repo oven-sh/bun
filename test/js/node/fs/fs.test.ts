@@ -2425,9 +2425,9 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.path))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect([...new Set(node.map(v => v.parentPath))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.parentPath))]).toEqual([full]);
+    expect(bun.map(v => join(v.parentPath, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2695,7 +2695,7 @@ it("fstatSync(decimal)", () => {
   expect(() => fstatSync(eval("-1.0"))).toThrow();
   expect(() => fstatSync(eval("Infinity"))).toThrow();
   expect(() => fstatSync(eval("-Infinity"))).toThrow();
-  expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" })); // > max int32 is not valid in most C APIs still.
+  expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" })); // > max int32 is not valid in most C APIs still.
   expect(() => fstatSync(2147483647)).toThrow(expect.objectContaining({ code: "EBADF" })); // max int32 is a valid fd
 });
 
@@ -3297,7 +3297,7 @@ it("test syscall errno, issue#4198", () => {
     (
       {
         "darwin": "operation not permitted",
-        "linux": "is a directory",
+        "linux": "illegal operation on a directory",
         "win32": "operation not permitted",
       } as any
     )[process.platform],

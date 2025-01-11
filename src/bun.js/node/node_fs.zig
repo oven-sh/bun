@@ -2362,7 +2362,6 @@ pub const Arguments = struct {
     /// The kernel ignores the position argument and always appends the data to
     /// the end of the file.
     /// @since v0.0.2
-    ///
     pub const Write = struct {
         fd: FileDescriptor,
         buffer: StringOrBuffer,

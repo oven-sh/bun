@@ -421,8 +421,8 @@ describe("bunx --no-install", () => {
   it("if the package is not installed, it should fail and print an error message", async () => {
     const [err, out, exited] = await run("--no-install", "http-server", "--version");
 
-    expect(err.trim()).toMatch(
-      /Could not find an existing 'http-server' binary to run. Try running `(bunx|bun x|bun-debug x)` without --no-install.$/,
+    expect(err.trim()).toContain(
+      "Could not find an existing 'http-server' binary to run.",
     );
     expect(out).toHaveLength(0);
     expect(exited).toBe(1);

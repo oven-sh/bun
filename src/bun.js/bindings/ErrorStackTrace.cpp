@@ -268,18 +268,11 @@ JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globa
     bool belowCaller = false;
     int32_t skipFrames = 0;
 
-    WTF::String callerName {};
-    if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
-        callerName = callerFunction->name(vm);
-        if (!callerFunction->name(vm).isEmpty() || callerFunction->isHostOrBuiltinFunction()) {
-            callerName = callerFunction->name(vm);
-        } else {
-            callerName = callerFunction->jsExecutable()->name().string();
+    WTF::String callerName;
+    if (caller)
+        if (auto* object = caller.getObject()) {
+            callerName = Zig::functionName(vm, globalObject, object);
         }
-    }
-    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
-        callerName = callerFunctionInternal->name();
-    }
 
     if (!callerName.isEmpty()) {
         JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {

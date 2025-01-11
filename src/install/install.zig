@@ -15018,7 +15018,7 @@ pub const PackageManager = struct {
 
             try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
 
-            if (manager.options.do.summary) {
+            if (manager.options.do.summary and log_level != .silent) {
                 // TODO(dylan-conway): packages aren't installed but we can still print
                 // added/removed/updated direct dependencies.
                 Output.pretty(

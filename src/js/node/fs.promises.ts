@@ -303,7 +303,7 @@ function asyncWrap(fn: any) {
 
     async appendFile(data, options) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(writeFile, fd);
+      throwEBADFIfNecessary("writeFile", fd);
       let encoding = "utf8";
       let flush = false;
 
@@ -325,7 +325,7 @@ function asyncWrap(fn: any) {
 
     async chmod(mode) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fchmod, fd);
+      throwEBADFIfNecessary("fchmod", fd);
 
       try {
         this[kRef]();
@@ -337,7 +337,7 @@ function asyncWrap(fn: any) {
 
     async chown(uid, gid) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fchown, fd);
+      throwEBADFIfNecessary("fchown", fd);
 
       try {
         this[kRef]();
@@ -349,7 +349,7 @@ function asyncWrap(fn: any) {
 
     async datasync() {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fdatasync, fd);
+      throwEBADFIfNecessary("fdatasync", fd);
 
       try {
         this[kRef]();
@@ -361,7 +361,7 @@ function asyncWrap(fn: any) {
 
     async sync() {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fsync, fd);
+      throwEBADFIfNecessary("fsync", fd);
 
       try {
         this[kRef]();
@@ -373,7 +373,7 @@ function asyncWrap(fn: any) {
 
     async read(buffer, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(read, fd);
+      throwEBADFIfNecessary("read", fd);
 
       isArrayBufferView ??= require("node:util/types").isArrayBufferView;
       if (!isArrayBufferView(buffer)) {
@@ -399,7 +399,7 @@ function asyncWrap(fn: any) {
 
     async readv(buffers, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(readv, fd);
+      throwEBADFIfNecessary("readv", fd);
 
       try {
         this[kRef]();
@@ -411,7 +411,7 @@ function asyncWrap(fn: any) {
 
     async readFile(options) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(readFile, fd);
+      throwEBADFIfNecessary("readFile", fd);
 
       try {
         this[kRef]();
@@ -427,7 +427,7 @@ function asyncWrap(fn: any) {
 
     async stat(options) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fstat, fd);
+      throwEBADFIfNecessary("fstat", fd);
 
       try {
         this[kRef]();
@@ -439,7 +439,7 @@ function asyncWrap(fn: any) {
 
     async truncate(len = 0) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(ftruncate, fd);
+      throwEBADFIfNecessary("ftruncate", fd);
 
       try {
         this[kRef]();
@@ -451,7 +451,7 @@ function asyncWrap(fn: any) {
 
     async utimes(atime, mtime) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(futimes, fd);
+      throwEBADFIfNecessary("futimes", fd);
 
       try {
         this[kRef]();
@@ -463,7 +463,7 @@ function asyncWrap(fn: any) {
 
     async write(buffer, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(write, fd);
+      throwEBADFIfNecessary("write", fd);
 
       if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
 
@@ -490,7 +490,7 @@ function asyncWrap(fn: any) {
 
     async writev(buffers, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(writev, fd);
+      throwEBADFIfNecessary("writev", fd);
 
       try {
         this[kRef]();
@@ -502,7 +502,7 @@ function asyncWrap(fn: any) {
 
     async writeFile(data: string, options: any = "utf8") {
       const fd = this[kFd];
-      throwEBADFIfNecessary(writeFile, fd);
+      throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
 
       if (options == null || typeof options === "function") {
@@ -559,14 +559,14 @@ function asyncWrap(fn: any) {
 
     readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fs.createReadStream, fd);
+      throwEBADFIfNecessary("fs".createReadStream, fd);
 
       return Bun.file(fd).stream();
     }
 
     createReadStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fs.createReadStream, fd);
+      throwEBADFIfNecessary("fs".createReadStream, fd);
       return require("node:fs").createReadStream("", {
         fd: this,
         highWaterMark: 64 * 1024,
@@ -576,7 +576,7 @@ function asyncWrap(fn: any) {
 
     createWriteStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary(fs.createWriteStream, fd);
+      throwEBADFIfNecessary("fs".createWriteStream, fd);
       return require("node:fs").createWriteStream("", {
         fd: this,
         ...options,
@@ -608,13 +608,12 @@ function asyncWrap(fn: any) {
   });
 }
 
-function throwEBADFIfNecessary(fn, fd) {
+function throwEBADFIfNecessary(fn: string, fd) {
   if (fd === -1) {
     const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";
     err.name = "SystemError";
-    var { name } = fn;
-    err.syscall = name.startsWith("bound ") ? name.slice(6) : name;
+    err.syscall = fn;
     throw err;
   }
 }

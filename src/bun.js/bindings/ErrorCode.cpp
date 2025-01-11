@@ -656,75 +656,6 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(2);
-
-    auto actual = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto expected = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BROTLI_INVALID_PARAM, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(1);
-
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString(param, " is not a valid Brotli parameter"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BROTLI_INVALID_PARAM, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_TOO_LARGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(1);
-
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("Cannot create a Buffer larger than "_s, param, " bytes"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_TOO_LARGE, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto err = callFrame->argument(0);
-
-    if (err.isUndefined()) {
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, "Unhandled error."_s));
-    }
-    if (err.isString()) {
-        auto err_str = err.getString(globalObject);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
-    }
-    if (err.isCell()) {
-        auto cell = err.asCell();
-        if (cell->inherits<JSC::Exception>()) {
-            return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
-        }
-    }
-    auto err_str = err.toWTFString(globalObject);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
-}
-
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
@@ -904,6 +835,57 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid state: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_PROTOCOL: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Protocol \""_s, str0, "\" not supported. Expected \""_s, str1, "\""_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_BROTLI_INVALID_PARAM: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid Brotli parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_BUFFER_TOO_LARGE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Cannot create a Buffer larger than "_s, str0, " bytes"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
+    case Bun::ErrorCode::ERR_UNHANDLED_ERROR: {
+        auto arg0 = callFrame->argument(1);
+
+        if (arg0.isUndefined()) {
+            auto message = "Unhandled error."_s;
+            return JSC::JSValue::encode(createError(globalObject, error, message));
+        }
+        if (arg0.isString()) {
+            auto str0 = arg0.getString(globalObject);
+            auto message = makeString("Unhandled error. ("_s, str0, ")"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, message));
+        }
+        if (arg0.isCell()) {
+            auto cell = arg0.asCell();
+            if (cell->inherits<JSC::Exception>()) {
+                return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
+            }
+        }
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unhandled error. ("_s, str0, ")"_s);
         return JSC::JSValue::encode(createError(globalObject, error, message));
     }
 

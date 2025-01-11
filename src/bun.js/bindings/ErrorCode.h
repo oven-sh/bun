@@ -55,11 +55,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BROTLI_INVALID_PARAM);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BUFFER_TOO_LARGE);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR);
 
 enum Bound {
     LOWER,

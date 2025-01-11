@@ -24,7 +24,6 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const { AbortError } = require("internal/errors");
-const { ERR_UNHANDLED_ERROR } = require("internal/errors");
 const {
   validateObject,
   validateInteger,
@@ -119,7 +118,7 @@ function emitError(emitter, args) {
   }
 
   // At least give some kind of context to the user
-  const err = ERR_UNHANDLED_ERROR(stringifiedEr);
+  const err = $ERR_UNHANDLED_ERROR(stringifiedEr);
   err.context = er;
   throw err; // Unhandled 'error' event
 }

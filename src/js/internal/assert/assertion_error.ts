@@ -1,25 +1,20 @@
 "use strict";
 
-const {
-  ArrayPrototypeJoin,
-  ArrayPrototypePop,
-  ArrayPrototypeSlice,
-  Error,
-  ErrorCaptureStackTrace,
-  ObjectAssign,
-  ObjectDefineProperty,
-  ObjectGetPrototypeOf,
-  ObjectPrototypeHasOwnProperty,
-  String,
-  StringPrototypeRepeat,
-  StringPrototypeSlice,
-  StringPrototypeSplit,
-} = require("internal/primordials");
-
-
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
+
+const ErrorCaptureStackTrace = Error.captureStackTrace;
+const ObjectAssign = Object.assign;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePop = Array.prototype.pop;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const StringPrototypeRepeat = String.prototype.repeat;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
 
 declare namespace Internal {
   const enum Operation {
@@ -63,7 +58,7 @@ function copyError(source) {
     __proto__: null,
     value: source.message,
   });
-  if (ObjectPrototypeHasOwnProperty(source, "cause")) {
+  if (ObjectPrototypeHasOwnProperty.$call(source, "cause")) {
     let { cause } = source;
 
     if (Error.isError(cause)) {
@@ -115,7 +110,7 @@ function getColoredMyersDiff(actual, expected) {
   const header = `${colors.green}actual${colors.white} ${colors.red}expected${colors.white}`;
   const skipped = false;
 
-  // const diff = myersDiff(StringPrototypeSplit(actual, ""), StringPrototypeSplit(expected, ""));
+  // const diff = myersDiff(StringPrototypeSplit.$call(actual, ""), StringPrototypeSplit.$call(expected, ""));
   const diff = myersDiff(actual, expected, false, false);
   let message = printSimpleMyersDiff(diff);
 
@@ -149,7 +144,7 @@ function getStackedDiff(actual, expected) {
     }
 
     if (indicatorIdx !== -1) {
-      message += `\n${StringPrototypeRepeat(" ", indicatorIdx + 2)}^`;
+      message += `\n${StringPrototypeRepeat.$call(" ", indicatorIdx + 2)}^`;
     }
   }
 
@@ -193,8 +188,8 @@ function createErrDiff(actual, expected, operator, customMessage) {
   let message = "";
   const inspectedActual = inspectValue(actual);
   const inspectedExpected = inspectValue(expected);
-  const inspectedSplitActual = StringPrototypeSplit(inspectedActual, "\n");
-  const inspectedSplitExpected = StringPrototypeSplit(inspectedExpected, "\n");
+  const inspectedSplitActual = StringPrototypeSplit.$call(inspectedActual, "\n");
+  const inspectedSplitExpected = StringPrototypeSplit.$call(inspectedExpected, "\n");
   const showSimpleDiff = isSimpleDiff(actual, inspectedSplitActual, expected, inspectedSplitExpected);
   let header = `${colors.green}+ actual${colors.white} ${colors.red}- expected${colors.white}`;
 
@@ -211,10 +206,10 @@ function createErrDiff(actual, expected, operator, customMessage) {
     // Handles the case where the objects are structurally the same but different references
     operator = "notIdentical";
     if (inspectedSplitActual.length > 50) {
-      message = `${ArrayPrototypeJoin(ArrayPrototypeSlice(inspectedSplitActual, 0, 50), "\n")}\n...}`;
+      message = `${ArrayPrototypeJoin.$call(ArrayPrototypeSlice.$call(inspectedSplitActual, 0, 50), "\n")}\n...}`;
       skipped = true;
     } else {
-      message = ArrayPrototypeJoin(inspectedSplitActual, "\n");
+      message = ArrayPrototypeJoin.$call(inspectedSplitActual, "\n");
     }
     header = "";
   } else {
@@ -236,12 +231,12 @@ function createErrDiff(actual, expected, operator, customMessage) {
 }
 
 function addEllipsis(string) {
-  const lines = StringPrototypeSplit(string, "\n", 11);
+  const lines = StringPrototypeSplit.$call(string, "\n", 11);
   if (lines.length > 10) {
     lines.length = 10;
-    return `${ArrayPrototypeJoin(lines, "\n")}\n...`;
+    return `${ArrayPrototypeJoin.$call(lines, "\n")}\n...`;
   } else if (string.length > kMaxLongStringLength) {
-    return `${StringPrototypeSlice(string, kMaxLongStringLength)}...`;
+    return `${StringPrototypeSlice.$call(string, kMaxLongStringLength)}...`;
   }
   return string;
 }
@@ -296,7 +291,7 @@ class AssertionError extends Error {
         // In case the objects are equal but the operator requires unequal, show
         // the first object and say A equals B
         let base = kReadableOperator[operator];
-        const res = StringPrototypeSplit(inspectValue(actual), "\n");
+        const res = StringPrototypeSplit.$call(inspectValue(actual), "\n");
 
         // In case "actual" is an object or a function, it should not be
         // reference equal.
@@ -312,7 +307,7 @@ class AssertionError extends Error {
         if (res.length > 50) {
           res[46] = `${colors.blue}...${colors.white}`;
           while (res.length > 47) {
-            ArrayPrototypePop(res);
+            ArrayPrototypePop.$call(res);
           }
         }
 
@@ -320,7 +315,7 @@ class AssertionError extends Error {
         if (res.length === 1) {
           super(`${base}${res[0].length > 5 ? "\n\n" : " "}${res[0]}`);
         } else {
-          super(`${base}\n\n${ArrayPrototypeJoin(res, "\n")}\n`);
+          super(`${base}\n\n${ArrayPrototypeJoin.$call(res, "\n")}\n`);
         }
       } else {
         let res = inspectValue(actual);
@@ -329,15 +324,15 @@ class AssertionError extends Error {
         if (operator === "notDeepEqual" && res === other) {
           res = `${knownOperator}\n\n${res}`;
           if (res.length > 1024) {
-            res = `${StringPrototypeSlice(res, 0, 1021)}...`;
+            res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
           }
           super(res);
         } else {
           if (res.length > kMaxLongStringLength) {
-            res = `${StringPrototypeSlice(res, 0, 509)}...`;
+            res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
           }
           if (other.length > kMaxLongStringLength) {
-            other = `${StringPrototypeSlice(other, 0, 509)}...`;
+            other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
           }
           if (operator === "deepEqual") {
             res = `${knownOperator}\n\n${res}\n\nshould loosely deep-equal\n\n`;

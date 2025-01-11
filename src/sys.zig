@@ -477,6 +477,7 @@ pub const Error = struct {
         var label: ?[]const u8 = null;
         if (this.getErrorCodeTagName()) |resolved_errno| {
             code, const system_errno = resolved_errno;
+            err.code = bun.String.static(code.?);
             label = libuv_error_map.get(system_errno);
         }
 

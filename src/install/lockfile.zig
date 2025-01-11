@@ -422,6 +422,7 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.workspace_versions = .{};
     this.overrides = .{};
     this.patched_dependencies = .{};
+    this.folder_resolutions = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
         return LoadResult{ .err = .{ .step = .parse_file, .value = err, .lockfile_path = "bun.lockb", .format = .binary } };
@@ -2593,6 +2594,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .meta_hash = zero_hash,
+        .folder_resolutions = .{},
     };
 }
 
@@ -4663,7 +4665,7 @@ pub const Package = extern struct {
                         };
                         break :brk String.Builder.stringHash(input[0..at]);
                     }
-                    workspace_range = Semver.Query.parse(allocator, sliced) catch |err| {
+                    workspace_range = Semver.Query.parse(allocator, sliced.sub(input)) catch |err| {
                         switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                         }

@@ -14516,6 +14516,8 @@ pub const PackageManager = struct {
                         const new_pkgs = lockfile.packages.slice();
                         const new_pkg_dependencies = new_pkgs.items(.dependencies);
                         const new_pkg_scripts = new_pkgs.items(.scripts);
+                        const new_pkg_names: []String = new_pkgs.items(.name);
+                        const new_pkg_name_hashes = new_pkgs.items(.name_hash);
 
                         var deps_off: DependencyID = @truncate(manager.lockfile.buffers.dependencies.items.len);
                         for (new_pkg_dependencies, 0..) |new_pkg_deps, _new_pkg_id| {
@@ -14526,6 +14528,7 @@ pub const PackageManager = struct {
                             }
 
                             new_pkg_scripts[new_pkg_id].count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            builder.count(new_pkg_names[new_pkg_id].slice(lockfile.buffers.string_bytes.items));
 
                             const existing_pkg_id = pkg_map.items[new_pkg_id];
 
@@ -14613,6 +14616,14 @@ pub const PackageManager = struct {
                                     *Lockfile.StringBuilder,
                                     builder,
                                 );
+
+                                packages.items(.name)[existing_pkg_id] = builder.appendWithHash(
+                                    String,
+                                    new_pkg_names[new_pkg_id].slice(lockfile.buffers.string_bytes.items),
+                                    new_pkg_name_hashes[new_pkg_id],
+                                );
+
+                                packages.items(.name_hash)[existing_pkg_id] = new_pkg_name_hashes[new_pkg_id];
                             }
                         }
 

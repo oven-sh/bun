@@ -2,6 +2,7 @@ import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -18,6 +19,14 @@ for (let i = 0; i < NodeErrors.length; i++) {
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
     to: `$makeErrorWithCode(${i}, `,
+  });
+}
+
+for (let id = 0; id < jsclasses.length; id++) {
+  const name = jsclasses[id][0];
+  replacements.push({
+    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    to: `$inherits(${id}, `,
   });
 }
 

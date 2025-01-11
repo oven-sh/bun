@@ -123,7 +123,7 @@ function duplexify(body, name?) {
     throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name, value);
   }
 
-  if ($isBlob(body)) {
+  if ($inheritsBlob(body)) {
     return duplexify(body.arrayBuffer());
   }
 

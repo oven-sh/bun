@@ -780,7 +780,7 @@ Writable.prototype.end = function (chunk, encoding, cb) {
 
   if (chunk != null) {
     const ret = _write(this, chunk, encoding);
-    if (ret instanceof Error) {
+    if (Error.isError(ret)) {
       err = ret;
     }
   }

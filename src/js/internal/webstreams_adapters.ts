@@ -179,7 +179,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
  * @returns {Writable}
  */
 function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
-  if (!$isWritableStream(writableStream)) {
+  if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
   }
 
@@ -426,7 +426,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
  * @returns {Readable}
  */
 function newStreamReadableFromReadableStream(readableStream, options = kEmptyObject) {
-  if (!$isReadableStream(readableStream)) {
+  if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
   }
 
@@ -555,10 +555,10 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
   validateObject(pair, "pair");
   const { readable: readableStream, writable: writableStream } = pair;
 
-  if (!$isReadableStream(readableStream)) {
+  if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("pair.readable", "ReadableStream", readableStream);
   }
-  if (!$isWritableStream(writableStream)) {
+  if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("pair.writable", "WritableStream", writableStream);
   }
 

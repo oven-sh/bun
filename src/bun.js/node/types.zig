@@ -813,6 +813,12 @@ pub const Encoding = enum(u8) {
             },
         }
     }
+
+    pub fn toJS(encoding: Encoding, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (encoding) {
+            inline else => |enc| bun.String.static(@tagName(enc)).toJS(globalObject),
+        };
+    }
 };
 
 const PathOrBuffer = union(Tag) {

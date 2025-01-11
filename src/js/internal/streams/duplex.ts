@@ -129,11 +129,10 @@ ObjectDefineProperties(Duplex.prototype, {
   },
 });
 
-let webStreamsAdapters;
-
 // Lazy to avoid circular references
+let webStreamsAdapters;
 function lazyWebStreams() {
-  // if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams/adapters");
+  if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams_adapters");
   return webStreamsAdapters;
 }
 

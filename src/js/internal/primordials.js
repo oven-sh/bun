@@ -82,6 +82,22 @@ function ErrorCaptureStackTrace(targetObject) {
   targetObject.stack = stack.replace(/.*\n.*/, "$1");
 }
 
+const ArrayPrototypeMap = Array.prototype.map;
+const PromisePrototypeThen = Promise.prototype.then;
+const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
+
+const arrayToSafePromiseIterable = (promises, mapFn) =>
+  new SafeArrayIterator(
+    ArrayPrototypeMap.$call(
+      promises,
+      (promise, i) =>
+        new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
+    ),
+  );
+
+const PromiseAll = Promise.all;
+const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
+
 const arrayProtoPush = Array.prototype.push;
 const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
 const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
@@ -90,7 +106,7 @@ export default {
   Array,
   ArrayFrom: Array.from,
   ArrayIsArray: Array.isArray,
-  SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
+  SafeArrayIterator,
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,
@@ -165,6 +181,7 @@ export default {
       }
     },
   ),
+  SafePromiseAll,
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {
@@ -209,6 +226,9 @@ export default {
   SymbolAsyncIterator: Symbol.asyncIterator,
   SymbolFor: Symbol.for,
   SymbolToStringTag: Symbol.toStringTag,
+  TypedArrayPrototypeGetBuffer: getGetter(Uint8Array, "buffer"),
+  TypedArrayPrototypeGetByteOffset: getGetter(Uint8Array, "byteOffset"),
+  TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,

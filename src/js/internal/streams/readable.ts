@@ -1622,11 +1622,10 @@ Readable.from = function (iterable, opts) {
   return from(Readable, iterable, opts);
 };
 
-let webStreamsAdapters;
-
 // Lazy to avoid circular references
+let webStreamsAdapters;
 function lazyWebStreams() {
-  // if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams/adapters");
+  if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams_adapters");
   return webStreamsAdapters;
 }
 

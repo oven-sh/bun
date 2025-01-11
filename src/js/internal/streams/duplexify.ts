@@ -19,7 +19,7 @@ const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const from = require("internal/streams/from");
 
-const PromiseWithResolvers = Promise.withResolvers.bind(Promise); // bind prevents jsc crash
+const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 class Duplexify extends Duplex {
   constructor(options) {

@@ -251,6 +251,7 @@ pub const TOML = struct {
     pub fn parseAssignment(p: *TOML, obj: *E.Object, allocator: std.mem.Allocator) anyerror!void {
         p.lexer.allow_double_bracket = false;
         const rope = try p.parseKey(allocator);
+        const rope_end = p.lexer.start;
 
         const is_array = p.lexer.token == .t_empty_array;
         if (is_array) {
@@ -262,7 +263,11 @@ pub const TOML = struct {
             obj.setRope(rope, p.allocator, try p.parseValue()) catch |err| {
                 switch (err) {
                     error.Clobber => {
-                        try p.lexer.addDefaultError("Cannot redefine key");
+                        const loc = rope.head.loc;
+                        assert(loc.start > 0);
+                        const start: u32 = @intCast(loc.start);
+                        const key_name = std.mem.trimRight(u8, p.source().contents[start..rope_end], &std.ascii.whitespace);
+                        p.lexer.addError(start, "Cannot redefine key '{s}'", .{key_name});
                         return error.SyntaxError;
                     },
                     else => return err,

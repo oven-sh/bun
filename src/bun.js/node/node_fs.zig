@@ -3571,7 +3571,7 @@ pub const NodeFS = struct {
 
         if (comptime Environment.isWindows) {
             if (args.mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo();
+                // return Maybe(Return.CopyFile).todo();
             }
 
             const src_buf = bun.OSPathBufferPool.get();

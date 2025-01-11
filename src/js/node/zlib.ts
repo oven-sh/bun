@@ -24,7 +24,7 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const { ERR_BROTLI_INVALID_PARAM, ERR_BUFFER_TOO_LARGE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { ERR_BROTLI_INVALID_PARAM, ERR_BUFFER_TOO_LARGE } = require("internal/errors");
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
 const {
@@ -165,7 +165,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
     if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
-      throw ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+      throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
     }
 
     // prettier-ignore

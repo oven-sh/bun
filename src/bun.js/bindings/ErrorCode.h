@@ -55,7 +55,6 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BROTLI_INVALID_PARAM);

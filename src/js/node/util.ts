@@ -2,7 +2,6 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
 const { validateString, validateOneOf } = require("internal/validators");
 
@@ -230,7 +229,7 @@ function styleText(format, text) {
 
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
 

@@ -21,7 +21,7 @@ const {
   kErrored,
   kConstructed,
 } = require("internal/streams/utils");
-const { AbortError, aggregateTwoErrors, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { AbortError, aggregateTwoErrors } = require("internal/errors");
 
 // const { AbortError, aggregateTwoErrors } = require("internal/errors");
 const { validateObject } = require("internal/validators");
@@ -543,7 +543,7 @@ Readable.prototype.setEncoding = function (enc) {
 const MAX_HWM = 0x40000000;
 function computeNewHighWaterMark(n) {
   if (n > MAX_HWM) {
-    throw ERR_OUT_OF_RANGE("size", "<= 1GiB", n);
+    throw $ERR_OUT_OF_RANGE("size", "<= 1GiB", n);
   } else {
     // Get the next highest power of 2 to prevent increasing hwm excessively in
     // tiny amounts.

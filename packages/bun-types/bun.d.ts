@@ -1035,6 +1035,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {
@@ -1226,6 +1230,16 @@ declare module "bun" {
      * Deletes the file.
      */
     unlink(): Promise<void>;
+
+    /**
+     * Deletes the file. ( same as unlink )
+    */
+    delete(): Promise<void>
+
+    /**
+     *  Provides useful information about the file.
+    */
+    stat(): Promise<Stats>
   }
   interface NetworkSink extends FileSink {
     /**

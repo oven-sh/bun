@@ -21,7 +21,6 @@ const Environment = bun.Environment;
 const ScriptArguments = opaque {};
 const JSPromise = JSC.JSPromise;
 const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
@@ -30,6 +29,18 @@ const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+
+pub const Exception = opaque {
+    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
+    extern fn JSC__Exception__asJSValue(this: *Exception) JSValue;
+    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void {
+        JSC__Exception__getStackTrace(this, global, stack);
+    }
+
+    pub fn value(this: *Exception) JSValue {
+        return JSC__Exception__asJSValue(this);
+    }
+};
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -194,6 +205,7 @@ pub fn Errorable(comptime Type: type) type {
     };
 }
 
+/// must be kept in sync with `ResolvedSource` in `headers-handwritten.h`
 pub const ResolvedSource = extern struct {
     pub const shim = Shimmer("Zig", "ResolvedSource", @This());
     pub const name = "ResolvedSource";
@@ -222,6 +234,14 @@ pub const ResolvedSource = extern struct {
     already_bundled: bool = false,
     bytecode_cache: ?[*]u8 = null,
     bytecode_cache_size: usize = 0,
+
+    /// - for esm: null means to use jsc's regular parsing step. more info: https://github.com/oven-sh/bun/pull/15758
+    /// - for cjs: must be null
+    module_info: ?*@import("../../analyze_transpiled_module.zig").ModuleInfoDeserialized,
+
+    pub const unfilled = ResolvedSource{
+        .module_info = null,
+    };
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -362,7 +382,7 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
-    var title_mutex = std.Thread.Mutex{};
+    var title_mutex = bun.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
         title_mutex.lock();
@@ -676,9 +696,17 @@ pub const ZigStackFrame = extern struct {
 
             switch (this.code_type) {
                 .Eval => {
-                    try writer.writeAll("(eval)");
+                    if (this.enable_color) {
+                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                    } else {
+                        try writer.writeAll("eval");
+                    }
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                        } else {
+                            try std.fmt.format(writer, " {}", .{name});
+                        }
                     }
                 },
                 .Function => {
@@ -688,15 +716,15 @@ pub const ZigStackFrame = extern struct {
                         } else {
                             try std.fmt.format(writer, "{}", .{name});
                         }
-                    }
-                },
-                .Global => {
-                    if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
-                        try writer.writeAll("globalThis");
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                        } else {
+                            try writer.writeAll("<anonymous>");
+                        }
                     }
                 },
+                .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
                         try std.fmt.format(writer, "{}", .{name});

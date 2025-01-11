@@ -151,3 +151,4 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");

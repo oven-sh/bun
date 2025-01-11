@@ -1,7 +1,8 @@
 //! A nullable allocator the same size as `std.mem.Allocator`.
 const std = @import("std");
-const NullableAllocator = @This();
 const bun = @import("root").bun;
+
+const NullableAllocator = @This();
 
 ptr: *anyopaque = undefined,
 // Utilize the null pointer optimization on the vtable instead of

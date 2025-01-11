@@ -2,9 +2,9 @@ const mem = @import("std").mem;
 const builtin = @import("std").builtin;
 const std = @import("std");
 
-const mimalloc = @import("./allocators/mimalloc.zig");
-const Environment = @import("./env.zig");
-const FeatureFlags = @import("./feature_flags.zig");
+const mimalloc = @import("./mimalloc.zig");
+const Environment = @import("../env.zig");
+const FeatureFlags = @import("../feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = bun.assert;
 const bun = @import("root").bun;
@@ -76,7 +76,7 @@ pub const GlobalArena = struct {
 
 const ArenaRegistry = struct {
     arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.default_allocator),
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
 
     var registry = ArenaRegistry{};
 

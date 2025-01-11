@@ -106,6 +106,14 @@ export default {
       }
     },
   ),
+  SafeWeakSet: makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SetPrototypeGetSize: getGetter(Set, "size"),
   String,
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),

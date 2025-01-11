@@ -484,9 +484,14 @@ pub const PostgresSQLQuery = struct {
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(4).slice();
-        const query = arguments[0];
-        const values = arguments[1];
-        const columns = arguments[3];
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        defer args.deinit();
+        const query = args.nextEat() orelse {
+            return globalThis.throw("query must be a string", .{});
+        };
+        const values = args.nextEat() orelse {
+            return globalThis.throw("values must be an array", .{});
+        };
 
         if (!query.isString()) {
             return globalThis.throw("query must be a string", .{});
@@ -496,7 +501,9 @@ pub const PostgresSQLQuery = struct {
             return globalThis.throw("values must be an array", .{});
         }
 
-        const pending_value = arguments[2];
+        const pending_value = args.nextEat() orelse .undefined;
+        const columns = args.nextEat() orelse .undefined;
+
         if (!pending_value.jsType().isArrayLike()) {
             return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
         }

@@ -886,7 +886,7 @@ function snapshotCallerLocation(): string {
 }
 
 function stackTraceFileName(line: string): string {
-  const match = /(?:at\s+|\()((?:.|[a-z]:)[^:\n(\)]*)[^(]*$/i.exec(line);
+  const match = /(?:at\s+|\()(.:?[^:\n(\)]*)[^(\n]*$/i.exec(line);
   assert(match, `Couldn't extract filename from stack trace line: ${line}`);
   return match[1].replaceAll("\\", "/");
 }

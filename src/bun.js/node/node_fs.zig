@@ -1509,7 +1509,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(u32)));
             };
 
             const gid: gid_t = brk: {
@@ -1517,7 +1517,7 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(u32)));
             };
 
             return Chown{ .path = path, .uid = uid, .gid = gid };
@@ -1545,7 +1545,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(uid_t)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(u32)));
             };
 
             const gid: gid_t = brk: {
@@ -1553,7 +1553,7 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(gid_t)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(u32)));
             };
 
             return Fchown{ .fd = fd, .uid = uid, .gid = gid };

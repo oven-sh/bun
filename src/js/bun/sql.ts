@@ -662,7 +662,7 @@ function SQL(o) {
     return pendingSQL(strings, values);
   }
 
-  sql.begin = async (fn: TransactionCallback) => {
+  sql.begin = async (options?: string, fn: TransactionCallback) => {
     /*
     BEGIN; -- works on POSTGRES, MySQL, and SQLite (need to change to BEGIN TRANSACTION on MSSQL)
 
@@ -691,11 +691,24 @@ function SQL(o) {
       if (closed) {
         throw connectionClosedError();
       }
-      if (!$isCallable(fn)) {
-        throw $ERR_INVALID_ARG_VALUE("fn", fn, "must be a function");
+      let callback = fn;
+      if ($isCallable(options)) {
+        callback = options as unknown as TransactionCallback;
+        options = undefined;
+      } else if (typeof options !== "string") {
+        throw $ERR_INVALID_ARG_VALUE("options", options, "must be a string");
       }
-      //@ts-ignore
-      await sql("BEGIN");
+      if (!$isCallable(callback)) {
+        throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
+      }
+
+      if (options) {
+        //@ts-ignore
+        await sql(`BEGIN ${options}`);
+      } else {
+        //@ts-ignore
+        await sql("BEGIN");
+      }
       // keep track of the connection that is being used
       current_connection = connection;
 
@@ -709,16 +722,16 @@ function SQL(o) {
       }
       // this version accepts savepoints
       sql_with_savepoint.savepoint = async (fn: TransactionCallback, name?: string) => {
-        let callback = fn;
+        let savepoint_callback = fn;
 
         if (closed || current_connection !== connection) {
           throw connectionClosedError();
         }
         if ($isCallable(name)) {
-          callback = name as unknown as TransactionCallback;
+          savepoint_callback = name as unknown as TransactionCallback;
           name = "";
         }
-        if (!$isCallable(callback)) {
+        if (!$isCallable(savepoint_callback)) {
           throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
         }
         // matchs the format of the savepoint name in postgres package
@@ -726,7 +739,7 @@ function SQL(o) {
 
         try {
           await sql_with_savepoint`SAVEPOINT ${save_point_name}`;
-          const result = await callback(sql_with_savepoint);
+          const result = await savepoint_callback(sql_with_savepoint);
           if (!closed && current_connection === connection) {
             await sql_with_savepoint(`RELEASE SAVEPOINT ${save_point_name}`);
           } else {
@@ -741,7 +754,7 @@ function SQL(o) {
         }
       };
 
-      const transaction_result = await fn(sql_with_savepoint);
+      const transaction_result = await callback(sql_with_savepoint);
       if (!closed && current_connection === connection) {
         await sql("COMMIT");
       } else {

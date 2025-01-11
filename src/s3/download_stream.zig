@@ -27,7 +27,7 @@ pub const S3HttpDownloadStreamingTask = struct {
             .capacity = 0,
         },
     },
-    mutex: bun.Lock = .{},
+    mutex: bun.Mutex = .{},
     reported_response_buffer: bun.MutableString = .{
         .allocator = bun.default_allocator,
         .list = .{

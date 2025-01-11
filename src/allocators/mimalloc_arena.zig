@@ -76,7 +76,7 @@ pub const GlobalArena = struct {
 
 const ArenaRegistry = struct {
     arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.default_allocator),
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
 
     var registry = ArenaRegistry{};
 

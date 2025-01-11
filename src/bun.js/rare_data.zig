@@ -44,7 +44,7 @@ mime_types: ?bun.http.MimeType.Map = null,
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
-listening_sockets_for_watch_mode_lock: bun.Lock = .{},
+listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
@@ -55,7 +55,7 @@ const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
-    lock: bun.Lock = .{},
+    lock: bun.Mutex = .{},
 
     pub fn clean(this: *@This()) void {
         for (this.cache.keys()) |cached_key| {
@@ -422,6 +422,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
         rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data.?.resolver.ref(); // live forever
     }
 
     return &rare.global_dns_data.?.resolver;

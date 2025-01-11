@@ -1970,6 +1970,25 @@ test("--lockfile-only", async () => {
   expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
     firstLockfile,
   );
+
+  // --silent works
+  const {
+    stdout,
+    stderr,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only", "--silent"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited2).toBe(0);
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  expect(out).toBe("");
+  expect(err).toBe("");
 });
 
 describe("bundledDependencies", () => {

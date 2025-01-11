@@ -1233,13 +1233,13 @@ declare module "bun" {
 
     /**
      * Deletes the file. ( same as unlink )
-    */
-    delete(): Promise<void>
+     */
+    delete(): Promise<void>;
 
     /**
      *  Provides useful information about the file.
-    */
-    stat(): Promise<Stats>
+     */
+    stat(): Promise<Stats>;
   }
   interface NetworkSink extends FileSink {
     /**
@@ -6438,15 +6438,7 @@ declare module "bun" {
   type BunLockFile = {
     lockfileVersion: 0;
     workspaces: {
-      [workspace: string]: {
-        name?: string;
-        version?: string;
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-        optionalDependencies?: Record<string, string>;
-        peerDependencies?: Record<string, string>;
-        optionalPeers?: string[]
-      };
+      [workspace: string]: BunLockFileWorkspacePackage;
     };
     overrides?: Record<string, string>;
     patchedDependencies?: Record<string, string>;
@@ -6467,30 +6459,41 @@ declare module "bun" {
      * ```
      * */
     packages: {
-      [pkg: string]: /**/
-      /** npm */
-      | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
-        /** symlink, folder, tarball, workspace */
-        | [pkg: string, info: BunLockFilePackageInfo]
-        /** git, github */
-        | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
-        /** root */
-        | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
+      [pkg: string]: BunLockFilePackageArray;
     };
   };
 
-  type BunLockFilePackageInfo = {
+  type BunLockFileBasePackageInfo = {
     dependencies?: Record<string, string>;
-    optionalDependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
     bin?: Record<string, string>;
     binDir?: string;
     bundled?: true;
   };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball, workspace */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
 }
 
 // extends lib.dom.d.ts

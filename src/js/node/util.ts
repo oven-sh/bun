@@ -31,10 +31,12 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
+const codesWarned = new Set();
 function deprecate(fn, msg, code) {
   if (process.noDeprecation === true) {
     return fn;
   }
+  if (code !== undefined) validateString(code, "code");
 
   var warned = false;
   function deprecated() {
@@ -46,7 +48,15 @@ function deprecate(fn, msg, code) {
       } else if (process.traceDeprecation) {
         console.trace(msg);
       } else {
-        console.error(msg);
+        if (code !== undefined) {
+          // only warn for each code once
+          if (codesWarned.has(code)) {
+            process.emitWarning(msg, "DeprecationWarning", code);
+          }
+          codesWarned.add(code);
+        } else {
+          process.emitWarning(msg, "DeprecationWarning");
+        }
       }
       warned = true;
     }
@@ -149,7 +159,13 @@ var inherits = function inherits(ctor, superCtor) {
   if (superCtor.prototype === undefined) {
     throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
   }
-  ctor.super_ = superCtor;
+  Object.defineProperty(ctor, "super_", {
+    // @ts-ignore
+    __proto__: null,
+    value: superCtor,
+    writable: true,
+    configurable: true,
+  });
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {
@@ -172,30 +188,40 @@ function callbackifyOnRejected(reason, cb) {
   return cb(reason);
 }
 function callbackify(original) {
-  if (typeof original !== "function") {
-    throw new TypeError('The "original" argument must be of type Function');
-  }
-  function callbackified() {
-    var args = Array.prototype.slice.$call(arguments);
-    var maybeCb = args.pop();
-    if (typeof maybeCb !== "function") {
-      throw new TypeError("The last argument must be of type Function");
-    }
-    var self = this;
-    var cb = function () {
-      return maybeCb.$apply(self, arguments);
-    };
+  const { validateFunction } = require("internal/validators");
+  validateFunction(original, "original");
+
+  // We DO NOT return the promise as it gives the user a false sense that
+  // the promise is actually somehow related to the callback's execution
+  // and that the callback throwing will reject the promise.
+  function callbackified(...args) {
+    const maybeCb = Array.prototype.pop.$call(args);
+    validateFunction(maybeCb, "last argument");
+    const cb = Function.prototype.bind.$call(maybeCb, this);
+    // In true node style we process the callback on `nextTick` with all the
+    // implications (stack, `uncaughtException`, `async_hooks`)
     original.$apply(this, args).then(
-      function (ret) {
-        process.nextTick(cb, null, ret);
-      },
-      function (rej) {
-        process.nextTick(callbackifyOnRejected, rej, cb);
-      },
+      ret => process.nextTick(cb, null, ret),
+      rej => process.nextTick(callbackifyOnRejected, rej, cb),
     );
   }
-  Object.setPrototypeOf(callbackified, Object.getPrototypeOf(original));
-  Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
+
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  // It is possible to manipulate a functions `length` or `name` property. This
+  // guards against the manipulation.
+  if (typeof descriptors.length.value === "number") {
+    descriptors.length.value++;
+  }
+  if (typeof descriptors.name.value === "string") {
+    descriptors.name.value += "Callbackified";
+  }
+  const propertiesValues = Object.values(descriptors);
+  for (let i = 0; i < propertiesValues.length; i++) {
+    // We want to use null-prototype objects to not rely on globally mutable
+    // %Object.prototype%.
+    Object.setPrototypeOf(propertiesValues[i], null);
+  }
+  Object.defineProperties(callbackified, descriptors);
   return callbackified;
 }
 var toUSVString = input => {

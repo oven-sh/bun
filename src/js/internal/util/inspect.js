@@ -2607,14 +2607,18 @@ function getStringWidth(str, removeControlChars = true) {
 }
 
 // Regex used for ansi escape code splitting
-// Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
-// License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
+// Ref: https://github.com/chalk/ansi-regex/blob/f338e1814144efb950276aac84135ff86b72dc8e/index.js
+// License: MIT by Sindre Sorhus <sindresorhus@gmail.com>
 // Matches all ansi escape code sequences in a string
-const ansiPattern =
+const ansiPattern = new RegExp(
   "[\\u001B\\u009B][[\\]()#;?]*" +
-  "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
-  "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
-  "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
+    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+    "[\\dA-PR-TZcf-nq-uy=><~]))",
+  "g",
+);
 const ansi = new RegExp(ansiPattern, "g");
 /** Remove all VT control characters. Use to estimate displayed string width. */
 function stripVTControlCharacters(str) {

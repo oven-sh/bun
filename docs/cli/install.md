@@ -15,10 +15,10 @@ If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wik
 
 ```bash
 # If this returns a version >= 5.6, you don't need to do anything
-uname -r
+$ uname -r
 
 # Install the official Ubuntu hardware enablement kernel
-sudo apt install --install-recommends linux-generic-hwe-20.04
+$ sudo apt install --install-recommends linux-generic-hwe-20.04
 ```
 
 {% /details %}
@@ -229,7 +229,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
       - name: Install bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install
       - name: Build app

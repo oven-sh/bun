@@ -2,10 +2,15 @@
 name: Delete a file
 ---
 
-To delete a file in Bun, use the `delete` method.
+The `Bun.file()` function accepts a path and returns a `BunFile` instance. Use the `.delete()` method to delete the file.
 
 ```ts
-import { file } from "bun";
+const path = "/path/to/file.txt";
+const file = Bun.file(path);
 
-await file("./path-to-file.txt").delete();
+await file.delete();
 ```
+
+---
+
+See [Docs > API > File I/O](https://bun.sh/docs/api/file-io#reading-files-bun-file) for complete documentation of `Bun.file()`.

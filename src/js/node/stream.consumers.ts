@@ -18,6 +18,12 @@ async function arrayBuffer(stream): Promise<ArrayBuffer> {
   return ret.arrayBuffer();
 }
 
+async function bytes(stream): Promise<Uint8Array> {
+  if ($isReadableStream(stream)) return Bun.readableStreamToBytes(stream);
+  const ret = await blob(stream);
+  return ret.bytes();
+}
+
 async function buffer(stream): Promise<Buffer> {
   return Buffer.from(await arrayBuffer(stream));
 }
@@ -44,6 +50,7 @@ async function json(stream): Promise<any> {
 
 export default {
   arrayBuffer,
+  bytes,
   text,
   json,
   buffer,

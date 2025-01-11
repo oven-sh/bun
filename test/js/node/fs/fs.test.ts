@@ -3292,13 +3292,13 @@ it("test syscall errno, issue#4198", () => {
   expect(() => closeSync(2147483640)).toThrow("bad file descriptor");
 
   mkdirSync(path);
-  expect(() => mkdirSync(path)).toThrow("file or folder exists");
+  expect(() => mkdirSync(path)).toThrow("file already exists");
   expect(() => unlinkSync(path)).toThrow(
     (
       {
-        "darwin": "Operation not permitted",
-        "linux": "Is a directory",
-        "win32": "Operation not permitted",
+        "darwin": "operation not permitted",
+        "linux": "is a directory",
+        "win32": "operation not permitted",
       } as any
     )[process.platform],
   );

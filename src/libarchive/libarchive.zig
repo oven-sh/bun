@@ -358,11 +358,12 @@ pub const Archiver = struct {
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
-                                const list = std.ArrayList(u8).init(default_allocator);
-                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
+                                var list = std.ArrayList(u8).init(default_allocator);
+                                defer list.deinit();
+                                try strings.toUTF8ListWithType(&list, []const u16, pathname[0..pathname.len]);
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                defer result.deinit();
-                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
+
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(list.items));
                             } else {
                                 appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
                             }

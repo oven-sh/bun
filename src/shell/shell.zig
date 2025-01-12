@@ -3061,26 +3061,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
             const start = self.strpool.items.len;
-            if (bunstr.isUTF16()) {
-                const utf16 = bunstr.utf16();
-                const additional = bun.simdutf.simdutf__utf8_length_from_utf16le(utf16.ptr, utf16.len);
-                try self.strpool.ensureUnusedCapacity(additional);
-                try bun.strings.convertUTF16ToUTF8Append(&self.strpool, bunstr.utf16());
-            } else if (bunstr.isUTF8()) {
-                try self.strpool.appendSlice(bunstr.byteSlice());
-            } else if (bunstr.is8Bit()) {
-                if (isAllAscii(bunstr.byteSlice())) {
-                    try self.strpool.appendSlice(bunstr.byteSlice());
-                } else {
-                    const bytes = bunstr.byteSlice();
-                    const non_ascii_idx = bun.strings.firstNonASCII(bytes) orelse 0;
-
-                    if (non_ascii_idx > 0) {
-                        try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
-                    }
-                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
-                }
-            }
+            try bunstr.writeUTF8Into(&self.strpool);
             const end = self.strpool.items.len;
             self.j += @intCast(end - start);
         }
@@ -3926,15 +3907,8 @@ pub const ShellSrcBuilder = struct {
                 return true;
             }
         }
-        if (bunstr.isUTF16()) {
-            try this.appendUTF16Impl(bunstr.utf16());
-            return true;
-        }
-        if (bunstr.isUTF8() or bun.strings.isAllASCII(bunstr.byteSlice())) {
-            try this.appendUTF8Impl(bunstr.byteSlice());
-            return true;
-        }
-        try this.appendLatin1Impl(bunstr.byteSlice());
+
+        try bunstr.writeUTF8Into(this.outbuf);
         return true;
     }
 
@@ -3971,7 +3945,7 @@ pub const ShellSrcBuilder = struct {
             try this.appendUTF8Impl(latin1[0..non_ascii_idx]);
         }
 
-        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, []const u8, latin1);
+        try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf, this.outbuf.items.len, []const u8, latin1);
     }
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {

@@ -161,7 +161,7 @@ const advanced = struct {
         return payload_length;
     }
 
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serializeInternal(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue) !usize {
         const serialized = value.serialize(global) orelse
             return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
@@ -246,48 +246,33 @@ const json = struct {
         return IPCDecodeError.NotEnoughBytes;
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serialize(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue) !usize {
         var out: bun.String = undefined;
         value.jsonStringify(global, 0, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
 
-        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
-        defer str.deinit();
+        const initial = writer.list.items.len;
+        try writer.write(&.{1});
+        try writer.writeString(out);
+        try writer.write("\n");
 
-        const slice = str.slice();
-
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
-
-        writer.writeAssumeCapacity(&.{1});
-        writer.writeAssumeCapacity(slice);
-        writer.writeAssumeCapacity("\n");
-
-        return 1 + slice.len + 1;
+        return writer.list.items.len - initial;
     }
 
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serializeInternal(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue) !usize {
         var out: bun.String = undefined;
         value.jsonStringify(global, 0, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
+        const initial = writer.list.items.len;
+        try writer.write(&.{2});
+        try writer.writeString(out);
+        try writer.write("\n");
 
-        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
-        defer str.deinit();
-
-        const slice = str.slice();
-
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
-
-        writer.writeAssumeCapacity(&.{2});
-        writer.writeAssumeCapacity(slice);
-        writer.writeAssumeCapacity("\n");
-
-        return 1 + slice.len + 1;
+        return writer.list.items.len - initial;
     }
 };
 
@@ -307,7 +292,7 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+pub fn serialize(data: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue) !usize {
     return switch (data.mode) {
         inline else => |t| @field(@This(), @tagName(t)).serialize(data, writer, global, value),
     };
@@ -315,7 +300,7 @@ pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, v
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serializeInternal(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+pub fn serializeInternal(data: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue) !usize {
     return switch (data.mode) {
         inline else => |t| @field(@This(), @tagName(t)).serializeInternal(data, writer, global, value),
     };

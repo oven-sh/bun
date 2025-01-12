@@ -1053,6 +1053,10 @@ pub const StreamBuffer = struct {
         return this.size() > 0;
     }
 
+    pub fn writeString(this: *StreamBuffer, str: bun.String) !void {
+        try str.writeUTF8Into(&this.list);
+    }
+
     pub fn write(this: *StreamBuffer, buffer: []const u8) !void {
         _ = try this.list.appendSlice(buffer);
     }

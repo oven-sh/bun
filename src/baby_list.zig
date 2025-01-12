@@ -338,9 +338,13 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
-            const old = this.listManaged(allocator);
-            const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, []const u8, str);
-            this.update(new);
+            var list_ = this.listManaged(allocator);
+
+            {
+                defer this.update(list_);
+                try strings.allocateLatin1IntoUTF8WithList(&list_, list_.items.len, []const u8, str);
+            }
+
             return this.len - initial;
         }
 

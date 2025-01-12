@@ -484,10 +484,12 @@ pub const ZigString = extern struct {
             return try allocator.dupeZ(u8, this.slice());
 
         var list = std.ArrayList(u8).init(allocator);
-        list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+        errdefer list.deinit();
+
+        if (this.is16Bit())
+            try strings.toUTF8ListWithType(&list, []const u16, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(&list, 0, []const u8, this.slice());
 
         if (list.capacity > list.items.len) {
             list.items.ptr[list.items.len] = 0;
@@ -501,10 +503,12 @@ pub const ZigString = extern struct {
             return allocator.dupeZ(u8, this.slice());
 
         var list = std.ArrayList(u8).init(allocator);
-        list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+        errdefer list.deinit();
+
+        if (this.is16Bit())
+            try strings.toUTF8ListWithType(&list, []const u16, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(&list, 0, []const u8, this.slice());
 
         try list.append(0);
         return list.items[0 .. list.items.len - 1 :0];

@@ -961,6 +961,23 @@ pub const String = extern struct {
         }
     }
 
+    pub fn writeUTF8Into(this: String, out: *std.ArrayList(u8)) !void {
+        if (this.isEmpty())
+            return;
+
+        if (this.isUTF8()) {
+            try out.appendSlice(this.utf8());
+            return;
+        }
+
+        if (this.is8Bit()) {
+            try bun.strings.allocateLatin1IntoUTF8WithList(out, out.items.len, []const u8, this.latin1());
+            return;
+        }
+
+        try bun.strings.toUTF8AppendToList(out, this.utf16());
+    }
+
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8(allocator);

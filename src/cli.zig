@@ -2614,7 +2614,7 @@ pub const Command = struct {
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
                         \\
                     ;
-                    // Output.pretty("\n", .{});
+
                     Output.pretty(intro_text, .{});
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});

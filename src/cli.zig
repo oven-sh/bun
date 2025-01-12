@@ -34,15 +34,15 @@ const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const RunCommand_ = @import("./cli/command/run.zig").RunCommand;
+const CreateCommand_ = @import("./cli/command/create.zig").CreateCommand;
 const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const TestCommand = @import("./cli/command/test.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
@@ -115,30 +115,29 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     std.process.exit(1);
 }
 
-pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
-pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
-pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
-pub const ShellCompletions = @import("./cli/shell_completions.zig");
-pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
-pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
-pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
-pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
-pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
-pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
-pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
+pub const BuildCommand = @import("./cli/command/build.zig").BuildCommand;
+pub const AddCommand = @import("./cli/command/add.zig").AddCommand;
+pub const CreateCommand = @import("./cli/command/create.zig").CreateCommand;
+pub const CreateCommandExample = @import("./cli/command/create.zig").Example;
+pub const CreateListExamplesCommand = @import("./cli/command/create.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./cli/command/discord.zig").DiscordCommand;
+pub const InstallCommand = @import("./cli/command/install.zig").InstallCommand;
+pub const LinkCommand = @import("./cli/command/link.zig").LinkCommand;
+pub const UnlinkCommand = @import("./cli/command/unlink.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./cli/command/completions.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./cli/command/pm.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./cli/command/remove.zig").RemoveCommand;
+pub const RunCommand = @import("./cli/command/run.zig").RunCommand;
+pub const ShellCompletions = @import("./cli/completions/shell_completions.zig");
+pub const UpdateCommand = @import("./cli/command/update.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./cli/command/upgrade.zig").UpgradeCommand;
+pub const BunxCommand = @import("./cli/command/bunx.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/command/exec.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/command/patch.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/command/patch_commit.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/command/outdated.zig").OutdatedCommand;
+pub const PublishCommand = @import("./cli/command/publish.zig").PublishCommand;
+pub const InitCommand = @import("./cli/command/init.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1421,7 +1420,7 @@ pub const ReservedCommand = struct {
     }
 };
 
-const AddCompletions = @import("./cli/add_completions.zig");
+const AddCompletions = @import("./cli/completions/add_completions.zig");
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.

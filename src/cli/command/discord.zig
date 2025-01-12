@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const open = @import("../open.zig");
+const open = @import("../../open.zig");
 
 pub const DiscordCommand = struct {
     const discord_url = "https://bun.sh/discord";

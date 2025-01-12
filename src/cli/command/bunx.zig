@@ -9,9 +9,9 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const cli = @import("../cli.zig");
+const cli = @import("../../cli.zig");
 const Command = cli.Command;
-const Run = @import("./run_command.zig").RunCommand;
+const Run = @import("./run.zig").RunCommand;
 const Allocator = std.mem.Allocator;
 
 const debug = Output.scoped(.bunx, false);

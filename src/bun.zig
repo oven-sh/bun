@@ -1328,7 +1328,7 @@ pub const CLI = @import("./cli.zig");
 
 pub const install = @import("./install/install.zig");
 pub const PackageManager = install.PackageManager;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const RunCommand = @import("./cli/command/run.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
 pub const Transpiler = transpiler.Transpiler;
@@ -1626,7 +1626,7 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 comptime {
     if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
         _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
-        _ = @import("./cli/upgrade_command.zig").Version;
+        _ = @import("./cli/command/upgrade.zig").Version;
     }
 }
 

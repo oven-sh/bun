@@ -22,22 +22,22 @@ const CLI = bun.CLI;
 const Arguments = CLI.Arguments;
 const Command = CLI.Command;
 
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
+const linker = @import("../../linker.zig");
 
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
+const sync = @import("../../sync.zig");
+const Api = @import("../../api/schema.zig").Api;
+const resolve_path = @import("../../resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("../../bun.js/config.zig").configureTransformOptionsForBun;
 const transpiler = bun.transpiler;
 
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const Run = @import("../bun_js.zig").Run;
+const DotEnv = @import("../../env_loader.zig");
+const which = @import("../../which.zig").which;
+const Run = @import("../../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const NpmArgs = struct {
@@ -45,14 +45,14 @@ const NpmArgs = struct {
     pub const package_name: string = "npm_package_name";
     pub const package_version: string = "npm_package_version";
 };
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+const yarn_commands = @import("../list-of-yarn-commands.zig").all_yarn_commands;
 
-const ShellCompletions = @import("./shell_completions.zig");
+const ShellCompletions = @import("../completions/shell_completions.zig");
 const PosixSpawn = bun.posix.spawn;
 
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
+const PackageManager = @import("../../install/install.zig").PackageManager;
+const Lockfile = @import("../../install/lockfile.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
@@ -801,7 +801,7 @@ pub const RunCommand = struct {
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
-    const DirInfo = @import("../resolver/dir_info.zig");
+    const DirInfo = @import("../../resolver/dir_info.zig");
     pub fn configureEnvForRun(
         ctx: Command.Context,
         this_transpiler: *transpiler.Transpiler,
@@ -1636,7 +1636,7 @@ pub const RunCommand = struct {
 };
 
 pub const BunXFastPath = struct {
-    const shim_impl = @import("../install/windows-shim/bun_shim_impl.zig");
+    const shim_impl = @import("../../install/windows-shim/bun_shim_impl.zig");
     const debug = Output.scoped(.BunXFastPath, false);
 
     var direct_launch_buffer: bun.WPathBuffer = undefined;

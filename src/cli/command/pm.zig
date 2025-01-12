@@ -7,24 +7,24 @@ const string = bun.string;
 const strings = bun.strings;
 const log = bun.log;
 const logger = bun.logger;
-const Command = @import("../cli.zig").Command;
-const Fs = @import("../fs.zig");
-const Dependency = @import("../install/dependency.zig");
-const Install = @import("../install/install.zig");
+const Command = @import("../../cli.zig").Command;
+const Fs = @import("../../fs.zig");
+const Dependency = @import("../../install/dependency.zig");
+const Install = @import("../../install/install.zig");
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
+const Lockfile = @import("../../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
-const Path = @import("../resolver/resolve_path.zig");
-const String = @import("../install/semver.zig").String;
+const Path = @import("../../resolver/resolve_path.zig");
+const String = @import("../../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
-const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
-const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
-const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
+const UntrustedCommand = @import("../pm_trusted.zig").UntrustedCommand;
+const TrustCommand = @import("../pm_trusted.zig").TrustCommand;
+const DefaultTrustedCommand = @import("../pm_trusted.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
-pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const PackCommand = @import("../pack.zig").PackCommand;
 const Npm = Install.Npm;
 const File = bun.sys.File;
 
@@ -390,7 +390,7 @@ pub const PackageManagerCommand = struct {
                     Global.exit(1);
                 }
             }
-            const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
+            const load_lockfile = @import("../../install/migration.zig").detectAndLoadOtherLockfile(
                 pm.lockfile,
                 bun.FD.cwd(),
                 pm,

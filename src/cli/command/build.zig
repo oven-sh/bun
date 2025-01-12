@@ -1,5 +1,5 @@
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const Command = @import("../../cli.zig").Command;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -14,23 +14,23 @@ const C = bun.C;
 const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
+const linker = @import("../../linker.zig");
 
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
+const sync = @import("../../sync.zig");
+const Api = @import("../../api/schema.zig").Api;
+const resolve_path = @import("../../resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("../../bun.js/config.zig").configureTransformOptionsForBun;
 const transpiler = bun.transpiler;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../../env_loader.zig");
 
-const fs = @import("../fs.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
+const fs = @import("../../fs.zig");
+const BundleV2 = @import("../../bundler/bundle_v2.zig").BundleV2;
 
 pub const BuildCommand = struct {
     const compile_define_keys = &.{

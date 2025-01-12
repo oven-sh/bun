@@ -59,8 +59,8 @@ pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
-const RunCommand = @import("../cli/run_command.zig").RunCommand;
-const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
+const RunCommand = @import("../cli/command/run.zig").RunCommand;
+const PackageManagerCommand = @import("../cli/command/pm.zig").PackageManagerCommand;
 threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 

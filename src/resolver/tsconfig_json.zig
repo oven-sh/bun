@@ -264,8 +264,18 @@ pub const TSConfigJSON = struct {
             }
 
             if (compiler_opts.expr.asProperty("moduleSuffixes")) |prefixes| {
-                if (!source.path.isNodeModule()) {
-                    log.addWarning(&source, prefixes.expr.loc, "moduleSuffixes is not supported yet") catch {};
+                if (!source.path.isNodeModule()) handle_module_prefixes: {
+                    var array = prefixes.expr.asArray() orelse break :handle_module_prefixes;
+                    while (array.next()) |*element| {
+                        if (element.asString(allocator)) |str| {
+                            if (str.len > 0) {
+                                // Only warn when there is actually content
+                                // Sometimes, people do "moduleSuffixes": [""]
+                                log.addWarning(&source, prefixes.loc, "moduleSuffixes is not supported yet") catch {};
+                                break :handle_module_prefixes;
+                            }
+                        }
+                    }
                 }
             }
 

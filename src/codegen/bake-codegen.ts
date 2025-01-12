@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { existsSync, writeIfNotChanged, rmSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { argParse, writeIfNotChanged } from "./helpers";
 

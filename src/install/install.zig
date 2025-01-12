@@ -252,6 +252,8 @@ pub const Aligner = struct {
     }
 };
 
+threadlocal var EnqueuedGitDependencies = std.ArrayList(DependencyID).init(bun.default_allocator);
+
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
@@ -5490,6 +5492,12 @@ pub const PackageManager = struct {
                 // First: see if we already loaded the git package in-memory
                 if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
+
+                    // TODO? correct package ID
+                    while (EnqueuedGitDependencies.popOrNull()) |dep_id| {
+                        successFn(this, dep_id, pkg_id);
+                    }
+
                     return;
                 }
 
@@ -5539,7 +5547,10 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
+                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) {
+                        try EnqueuedGitDependencies.append(id);
+                        return;
+                    }
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
                         checkout_id,
@@ -5562,7 +5573,10 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
+                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) {
+                        try EnqueuedGitDependencies.append(id);
+                        return;
+                    }
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, id, dependency, &res, null)));
                 }
@@ -5579,6 +5593,12 @@ pub const PackageManager = struct {
                 // First: see if we already loaded the github package in-memory
                 if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
+
+                    // TODO? correct package ID
+                    while (EnqueuedGitDependencies.popOrNull()) |dep_id| {
+                        successFn(this, dep_id, pkg_id);
+                    }
+
                     return;
                 }
 

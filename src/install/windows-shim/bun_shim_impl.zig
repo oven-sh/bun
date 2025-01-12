@@ -906,7 +906,7 @@ pub const FromBunRunContext = struct {
     environment: ?[*]const u16,
 };
 
-/// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW
+/// This is called from run.zig in bun.exe which allows us to skip the CreateProcessW
 /// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.

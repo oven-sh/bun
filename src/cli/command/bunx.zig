@@ -469,7 +469,7 @@ pub const BunxCommand = struct {
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
         //
-        // If this format changes, please update cache clearing code in package_manager_command.zig
+        // If this format changes, please update cache clearing code in pm.zig
         const uid = if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(

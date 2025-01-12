@@ -859,14 +859,16 @@ IncomingMessage.prototype = {
       this.complete = true;
       this.push(null);
     } else if (this[bodyStreamSymbol] == null) {
-      const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
-      if (!reader) {
+      const body = this[reqSymbol].body;
+      if (!body) {
         this.complete = true;
         this.push(null);
         return;
       }
-      this[bodyStreamSymbol] = reader;
-      consumeStream(this, reader);
+      const Readable = require("node:stream").Readable;
+      const readable = Readable.fromWeb(body);
+      this[bodyStreamSymbol] = readable;
+      consumeStream(this, readable);
     }
   },
   _destroy(err, cb) {
@@ -884,10 +886,8 @@ IncomingMessage.prototype = {
 
     const stream = this[bodyStreamSymbol];
     this[bodyStreamSymbol] = undefined;
-    const streamState = stream?.$state;
-
-    if (streamState === $streamReadable || streamState === $streamWaiting || streamState === $streamWritable) {
-      stream?.cancel?.().catch(nop);
+    if (stream?.destroy) {
+      stream.destroy(err);
     }
 
     const socket = this[fakeSocketSymbol];
@@ -969,40 +969,19 @@ IncomingMessage.prototype = {
 $setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);
 $setPrototypeDirect.$call(IncomingMessage, Readable);
 
-async function consumeStream(self, reader: ReadableStreamDefaultReader) {
-  var done = false,
-    value,
-    aborted = false;
-  try {
-    while (true) {
-      const result = reader.readMany();
-      if ($isPromise(result)) {
-        ({ done, value } = await result);
-      } else {
-        ({ done, value } = result);
-      }
-      if (self.destroyed || (aborted = self[abortedSymbol])) {
-        break;
-      }
-      for (var v of value) {
-        self.push(v);
-      }
-
-      if (self.destroyed || (aborted = self[abortedSymbol]) || done) {
-        break;
-      }
-    }
-  } catch (err) {
-    if (aborted || self.destroyed) return;
-    self.destroy(err);
-  } finally {
-    reader?.cancel?.().catch?.(nop);
-  }
-
-  if (!self.complete) {
+async function consumeStream(self, readable: import("node:stream").Readable) {
+  readable.on("data", chunk => {
+    self.push(chunk);
+  });
+  readable.once("close", () => {
     self.complete = true;
     self.push(null);
-  }
+  });
+  readable.once("error", err => {
+    if (!self.destroyed) {
+      self.destroy(err);
+    }
+  });
 }
 
 const headersSymbol = Symbol("headers");

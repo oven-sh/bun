@@ -2249,7 +2249,9 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
     errdefer list.deinit();
     try allocateLatin1IntoUTF8WithList(&list, 0, Type, latin1_);
-    if (list.items.len + 64 < list.capacity) {
+
+    // Large reallocations are expensive and may cause more heap fragmentation.
+    if (list.items.len > 64 and list.items.len + 64 > list.capacity) {
         return list.items;
     }
 

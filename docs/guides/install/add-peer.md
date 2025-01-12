@@ -16,7 +16,7 @@ This will add the package to `peerDependencies` in `package.json`.
 ```json-diff
 {
   "peerDependencies": {
-+   "@types/bun": "^1.0.0"
++   "@types/bun": "^$BUN_LATEST_VERSION"
   }
 }
 ```
@@ -28,7 +28,7 @@ Running `bun install` will install peer dependencies by default, unless marked o
 ```json-diff
 {
   "peerDependencies": {
-    "@types/bun": "^1.0.0"
+    "@types/bun": "^$BUN_LATEST_VERSION"
   },
   "peerDependenciesMeta": {
 +   "@types/bun": {

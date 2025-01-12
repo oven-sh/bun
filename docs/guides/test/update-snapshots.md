@@ -29,7 +29,7 @@ To regenerate snapshots, use the `--update-snapshots` flag.
 
 ```sh
 $ bun test --update-snapshots
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [0.86ms]

@@ -13,7 +13,7 @@ const Output = bun.Output;
 const Watcher = bun.Watcher;
 
 const FSWatcher = bun.JSC.Node.FSWatcher;
-const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
+const EventType = @import("path_watcher.zig").PathWatcher.EventType;
 const Event = FSWatcher.Event;
 
 var default_manager: ?*PathWatcherManager = null;

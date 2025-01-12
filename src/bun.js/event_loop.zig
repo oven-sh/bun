@@ -408,7 +408,7 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
-const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
+const ServerAllConnectionsClosedTask = @import("api/server.zig").ServerAllConnectionsClosedTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -497,7 +497,7 @@ pub const Task = TaggedPointerUnion(.{
     WriteFileTask,
     Writev,
 });
-const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
+const UnboundedQueue = @import("unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
     task: if (JSC.is_bindgen) void else Task = undefined,
     next: ?*ConcurrentTask = null,

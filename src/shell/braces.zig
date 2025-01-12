@@ -402,7 +402,7 @@ pub const Parser = struct {
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
         _ = self;
-        return @import("./shell.zig").hasEqSign(str);
+        return @import("shell.zig").hasEqSign(str);
     }
 
     fn advance(self: *Parser) Token {
@@ -590,8 +590,8 @@ pub fn buildExpansionTable(
     }
 }
 
-const Encoding = @import("./shell.zig").StringEncoding;
-const NewChars = @import("./shell.zig").ShellCharIter;
+const Encoding = @import("shell.zig").StringEncoding;
+const NewChars = @import("shell.zig").ShellCharIter;
 
 pub const Lexer = NewLexer(.ascii);
 

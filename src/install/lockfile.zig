@@ -13,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSAst = bun.JSAst;
-const TextLockfile = @import("./bun.lock.zig");
+const TextLockfile = @import("bun.lock.zig");
 const OOM = bun.OOM;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 
@@ -26,7 +26,7 @@ const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
-const migration = @import("./migration.zig");
+const migration = @import("migration.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -46,27 +46,27 @@ const URL = @import("../url.zig").URL;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const HTTPChannel = bun.http.HTTPChannel;
 
-const Integrity = @import("./integrity.zig").Integrity;
+const Integrity = @import("integrity.zig").Integrity;
 const clap = bun.clap;
-const ExtractTarball = @import("./extract_tarball.zig");
-const Npm = @import("./npm.zig");
+const ExtractTarball = @import("extract_tarball.zig");
+const Npm = @import("npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const Semver = @import("./semver.zig");
+const Semver = @import("semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
-const Repository = @import("./repository.zig").Repository;
-const Bin = @import("./bin.zig").Bin;
-const Dependency = @import("./dependency.zig");
+const Repository = @import("repository.zig").Repository;
+const Bin = @import("bin.zig").Bin;
+const Dependency = @import("dependency.zig");
 const Behavior = Dependency.Behavior;
-const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
-const Install = @import("./install.zig");
+const FolderResolution = @import("resolvers/folder_resolver.zig").FolderResolution;
+const Install = @import("install.zig");
 const Aligner = Install.Aligner;
 const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
 const PackageManager = Install.PackageManager;
@@ -85,7 +85,7 @@ const PackageInstall = Install.PackageInstall;
 const PackageNameHash = Install.PackageNameHash;
 const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const Resolution = @import("./resolution.zig").Resolution;
+const Resolution = @import("resolution.zig").Resolution;
 const Crypto = @import("../sha.zig").Hashers;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
@@ -113,7 +113,7 @@ pub const PatchedDep = extern struct {
     }
 };
 const File = bun.sys.File;
-const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
+const assertNoUninitializedPadding = @import("padding_checker.zig").assertNoUninitializedPadding;
 
 const IGNORED_PATHS: []const []const u8 = &.{
     "node_modules",

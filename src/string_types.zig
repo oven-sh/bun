@@ -1,5 +1,5 @@
 const std = @import("std");
-const BabyList = @import("./baby_list.zig").BabyList;
+const BabyList = @import("baby_list.zig").BabyList;
 pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;

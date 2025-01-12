@@ -11,10 +11,10 @@ const bun = @import("root").bun;
 const FDImpl = bun.FDImpl;
 const Environment = bun.Environment;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
-const UUID = @import("./uuid.zig");
+const UUID = @import("uuid.zig");
 const Async = bun.Async;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
-const IPC = @import("./ipc.zig");
+const StatWatcherScheduler = @import("node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const IPC = @import("ipc.zig");
 const uws = bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
@@ -405,7 +405,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     };
 }
 
-const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
+const Subprocess = @import("api/bun/subprocess.zig").Subprocess;
 
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {

@@ -116,8 +116,8 @@ pub const Data = union(enum) {
         };
     }
 };
-pub const protocol = @import("./postgres/postgres_protocol.zig");
-pub const types = @import("./postgres/postgres_types.zig");
+pub const protocol = @import("postgres/postgres_protocol.zig");
+pub const types = @import("postgres/postgres_types.zig");
 
 const Socket = uws.AnySocket;
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, bun.IdentityContext(u64), 80);

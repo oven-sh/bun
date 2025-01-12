@@ -38,7 +38,7 @@ const clap = bun.clap;
 const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
-const ShellCompletions = @import("./shell_completions.zig");
+const ShellCompletions = @import("shell_completions.zig");
 
 pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}

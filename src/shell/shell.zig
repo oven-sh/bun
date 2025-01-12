@@ -9,7 +9,7 @@ const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const Which = @import("../which.zig");
-const Braces = @import("./braces.zig");
+const Braces = @import("braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
@@ -18,8 +18,8 @@ const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIter
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
-pub const interpret = @import("./interpreter.zig");
-pub const subproc = @import("./subproc.zig");
+pub const interpret = @import("interpreter.zig");
+pub const subproc = @import("subproc.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;

@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 
 const BoringSSL = bun.BoringSSL;
-const X509 = @import("./x509.zig");
+const X509 = @import("x509.zig");
 const JSC = bun.JSC;
 const uws = bun.uws;
 

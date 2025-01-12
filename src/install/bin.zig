@@ -1,5 +1,5 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Semver = @import("./semver.zig");
+const ExternalStringList = @import("install.zig").ExternalStringList;
+const Semver = @import("semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const Output = bun.Output;
@@ -10,13 +10,13 @@ const Environment = @import("../env.zig");
 const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = bun.stringZ;
-const Resolution = @import("./resolution.zig").Resolution;
+const Resolution = @import("resolution.zig").Resolution;
 const bun = @import("root").bun;
 const path = bun.path;
 const string = bun.string;
-const Install = @import("./install.zig");
+const Install = @import("install.zig");
 const PackageInstall = Install.PackageInstall;
-const Dependency = @import("./dependency.zig");
+const Dependency = @import("dependency.zig");
 const OOM = bun.OOM;
 const JSON = bun.JSON;
 const Lockfile = Install.Lockfile;
@@ -674,7 +674,7 @@ pub const Bin = extern struct {
         }
 
         fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
-            const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+            const WinBinLinkingShim = @import("windows-shim/BinLinkingShim.zig");
 
             var shim_buf: [65536]u8 = undefined;
             var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;

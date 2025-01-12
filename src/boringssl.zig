@@ -1,11 +1,11 @@
-const boring = @import("./deps/boringssl.translated.zig");
+const boring = @import("deps/boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
 const bun = @import("root").bun;
-const c_ares = @import("./deps/c_ares.zig");
+const c_ares = @import("deps/c_ares.zig");
 const strings = bun.strings;
 const builtin = @import("builtin");
-const X509 = @import("./bun.js/api/bun/x509.zig");
+const X509 = @import("bun.js/api/bun/x509.zig");
 
 var loaded = false;
 pub fn load() void {

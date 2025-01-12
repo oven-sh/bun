@@ -19,12 +19,12 @@ pub const PackageID = bun.install.PackageID;
 pub const DependencyID = bun.install.DependencyID;
 
 const Task = bun.install.Task;
-pub const Lockfile = @import("./lockfile.zig");
+pub const Lockfile = @import("lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 
 const ThreadPool = bun.ThreadPool;
 
-pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Resolution = @import("resolution.zig").Resolution;
 
 pub const PackageInstall = bun.install.PackageInstall;
 pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;

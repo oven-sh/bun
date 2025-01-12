@@ -2441,7 +2441,7 @@ pub const Subprocess = struct {
         return globalThis.throwValue(err);
     }
 
-    const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");
+    const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 
     pub fn handleIPCMessage(
         this: *Subprocess,

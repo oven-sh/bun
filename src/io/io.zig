@@ -3,7 +3,7 @@ const std = @import("std");
 const sys = bun.sys;
 const linux = std.os.linux;
 const Environment = bun.Environment;
-pub const heap = @import("./heap.zig");
+pub const heap = @import("heap.zig");
 const JSC = bun.JSC;
 
 const log = bun.Output.scoped(.loop, false);
@@ -11,7 +11,7 @@ const log = bun.Output.scoped(.loop, false);
 const posix = std.posix;
 const assert = bun.assert;
 
-pub const Source = @import("./source.zig").Source;
+pub const Source = @import("source.zig").Source;
 
 pub const Loop = struct {
     pending: Request.Queue = .{},
@@ -684,12 +684,12 @@ pub const Poll = struct {
 
 pub const retry = bun.C.E.AGAIN;
 
-pub const ReadState = @import("./pipes.zig").ReadState;
-pub const PipeReader = @import("./PipeReader.zig").PipeReader;
-pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
-pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
-pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
-pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
-pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
-pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
-pub const FileType = @import("./pipes.zig").FileType;
+pub const ReadState = @import("pipes.zig").ReadState;
+pub const PipeReader = @import("PipeReader.zig").PipeReader;
+pub const BufferedReader = @import("PipeReader.zig").BufferedReader;
+pub const BufferedWriter = @import("PipeWriter.zig").BufferedWriter;
+pub const WriteResult = @import("PipeWriter.zig").WriteResult;
+pub const WriteStatus = @import("PipeWriter.zig").WriteStatus;
+pub const StreamingWriter = @import("PipeWriter.zig").StreamingWriter;
+pub const StreamBuffer = @import("PipeWriter.zig").StreamBuffer;
+pub const FileType = @import("pipes.zig").FileType;

@@ -1755,8 +1755,8 @@ const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
 
-const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
-const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
+const PropertyImpl = @import("properties_impl.zig").PropertyImpl;
+const PropertyIdImpl = @import("properties_impl.zig").PropertyIdImpl;
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

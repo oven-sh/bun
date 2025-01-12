@@ -5,7 +5,7 @@ const string = bun.string;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const logger = bun.logger;
-const jest = @import("./jest.zig");
+const jest = @import("jest.zig");
 const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
 const js_parser = bun.js_parser;
@@ -13,7 +13,7 @@ const js_ast = bun.JSAst;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
-const Expect = @import("./expect.zig").Expect;
+const Expect = @import("expect.zig").Expect;
 
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";

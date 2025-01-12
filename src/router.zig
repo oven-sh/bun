@@ -5,7 +5,7 @@
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 const Router = @This();
 
-const Api = @import("./api/schema.zig").Api;
+const Api = @import("api/schema.zig").Api;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -20,13 +20,13 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const DirInfo = @import("./resolver/dir_info.zig");
-const Fs = @import("./fs.zig");
-const Options = @import("./options.zig");
-const allocators = @import("./allocators.zig");
-const URLPath = @import("./http/url_path.zig");
-const PathnameScanner = @import("./url.zig").PathnameScanner;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+const DirInfo = @import("resolver/dir_info.zig");
+const Fs = @import("fs.zig");
+const Options = @import("options.zig");
+const allocators = @import("allocators.zig");
+const URLPath = @import("http/url_path.zig");
+const PathnameScanner = @import("url.zig").PathnameScanner;
+const CodepointIterator = @import("string_immutable.zig").CodepointIterator;
 
 const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));
 const arbitrary_max_route = 4096;
@@ -990,7 +990,7 @@ pub const Test = struct {
             .extensions = &.{"js"},
         });
 
-        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        const Resolver = @import("resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
             logger.print(Output.errorWriter()) catch {};
@@ -1027,7 +1027,7 @@ pub const Test = struct {
     }
 
     pub fn make(comptime testName: string, data: anytype) !Router {
-        std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
+        std.testing.refAllDecls(@import("bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
@@ -1046,7 +1046,7 @@ pub const Test = struct {
             .extensions = &.{"js"},
         });
 
-        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        const Resolver = @import("resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
             logger.print(Output.errorWriter()) catch {};
@@ -1604,7 +1604,7 @@ test "Github API Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("./test/fixtures.zig");
+    const fixtures = @import("test/fixtures.zig");
     var router = try Test.make("routes-github-api", fixtures.github_api_routes_list);
 
     {
@@ -1713,7 +1713,7 @@ test "Sample Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("./test/fixtures.zig");
+    const fixtures = @import("test/fixtures.zig");
     var router = try Test.make("routes-sample", fixtures.sample_route_list);
 
     {

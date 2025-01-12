@@ -6,7 +6,7 @@
 /// ************************************
 const bun = @import("root").bun;
 const std = @import("std");
-const cpp = @import("./bindings/bindings.zig");
+const cpp = @import("bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
         return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));

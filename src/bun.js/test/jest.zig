@@ -8,12 +8,12 @@ const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const Environment = bun.Environment;
 
-const Snapshots = @import("./snapshot.zig").Snapshots;
-const expect = @import("./expect.zig");
+const Snapshots = @import("snapshot.zig").Snapshots;
+const expect = @import("expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
 
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("diff_format.zig").DiffFormatter;
 
 const JSC = bun.JSC;
 const js = JSC.C;

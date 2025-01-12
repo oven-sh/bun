@@ -1,6 +1,6 @@
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
+const Api = @import("api/schema.zig").Api;
+const resolve_path = @import("resolver/resolve_path.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -1262,7 +1262,7 @@ pub const FormData = struct {
     }
 };
 
-const ParamsList = @import("./router.zig").Param.List;
+const ParamsList = @import("router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
     pathname: PathnameScanner,

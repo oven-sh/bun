@@ -1,13 +1,13 @@
 const std = @import("std");
 const expect = std.testing.expect;
-const Environment = @import("./env.zig");
+const Environment = @import("env.zig");
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
 const log = bun.Output.scoped(.STR, true);
-const js_lexer = @import("./js_lexer.zig");
-const grapheme = @import("./grapheme.zig");
+const js_lexer = @import("js_lexer.zig");
+const grapheme = @import("grapheme.zig");
 const JSC = bun.JSC;
 const OOM = bun.OOM;
 

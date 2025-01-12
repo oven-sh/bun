@@ -4,7 +4,7 @@ const logger = bun.logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
 const Index = @import("ast/base.zig").Index;
-const Api = @import("./api/schema.zig").Api;
+const Api = @import("api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
     /// An entry point provided to `bun run` or `bun`

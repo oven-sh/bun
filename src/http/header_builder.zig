@@ -1,6 +1,6 @@
 const HeaderBuilder = @This();
 const StringBuilder = @import("../string_builder.zig");
-const Headers = @import("./headers.zig");
+const Headers = @import("headers.zig");
 const string = bun.string;
 const HTTPClient = @import("../http.zig");
 const Api = @import("../api/schema.zig").Api;

@@ -4,8 +4,8 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const Log = logger.Log;
 
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
+pub const css = @import("css_parser.zig");
+pub const css_values = @import("values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
 const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
@@ -14,7 +14,7 @@ const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
-const sourcemap = @import("./sourcemap.zig");
+const sourcemap = @import("sourcemap.zig");
 
 /// Options that control how CSS is serialized to a string.
 pub const PrinterOptions = struct {

@@ -2,7 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Allocator = std.mem.Allocator;
 
-pub const css = @import("./css_parser.zig");
+pub const css = @import("css_parser.zig");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;

@@ -16,10 +16,10 @@ const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
-const X509 = @import("./x509.zig");
+const X509 = @import("x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
-const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
+const H2FrameParser = @import("h2_frame_parser.zig").H2FrameParser;
 const NodePath = @import("../../node/path.zig");
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");

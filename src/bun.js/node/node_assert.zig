@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const MyersDiff = @import("./assert/myers_diff.zig");
+const MyersDiff = @import("assert/myers_diff.zig");
 
 const Allocator = std.mem.Allocator;
 const BunString = bun.String;

@@ -21,14 +21,14 @@ const AbortSignal = JSC.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const Constants = @import("./node_fs_constant.zig").Constants;
+const Constants = @import("node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const posix = std.posix;
 const darwin = std.os.darwin;
 const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const DirIterator = @import("./dir_iterator.zig");
+const DirIterator = @import("dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;

@@ -8,7 +8,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 
-const validators = @import("./validators.zig");
+const validators = @import("validators.zig");
 const validateArray = validators.validateArray;
 const validateBoolean = validators.validateBoolean;
 const validateBooleanArray = validators.validateBooleanArray;
@@ -17,7 +17,7 @@ const validateString = validators.validateString;
 const validateStringArray = validators.validateStringArray;
 const validateStringEnum = validators.validateStringEnum;
 
-const utils = @import("./parse_args_utils.zig");
+const utils = @import("parse_args_utils.zig");
 const OptionValueType = utils.OptionValueType;
 const OptionDefinition = utils.OptionDefinition;
 const findOptionByShortName = utils.findOptionByShortName;

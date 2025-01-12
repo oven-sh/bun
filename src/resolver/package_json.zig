@@ -17,9 +17,9 @@ const logger = bun.logger;
 const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
-const resolver = @import("./resolver.zig");
+const resolver = @import("resolver.zig");
 const js_lexer = bun.js_lexer;
-const resolve_path = @import("./resolve_path.zig");
+const resolve_path = @import("resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = bun.StringMap;

@@ -11,7 +11,7 @@ const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
-const validators = @import("./util/validators.zig");
+const validators = @import("util/validators.zig");
 
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();

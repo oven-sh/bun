@@ -535,7 +535,7 @@ const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
-const StaticRoute = @import("./StaticRoute.zig");
+const StaticRoute = @import("StaticRoute.zig");
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

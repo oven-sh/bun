@@ -13,7 +13,7 @@ const C = bun.C;
 const cli = @import("../cli.zig");
 
 const Command = cli.Command;
-const Run = @import("./run_command.zig").RunCommand;
+const Run = @import("run_command.zig").RunCommand;
 const UpdateRequest = bun.PackageManager.UpdateRequest;
 
 const debug = Output.scoped(.bunx, false);

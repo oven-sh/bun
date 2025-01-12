@@ -5,7 +5,7 @@ const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
-const validators = @import("./util/validators.zig");
+const validators = @import("util/validators.zig");
 const debug = bun.Output.scoped(.zlib, true);
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

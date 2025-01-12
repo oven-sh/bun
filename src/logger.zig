@@ -1,7 +1,7 @@
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
+const Api = @import("api/schema.zig").Api;
 const js = bun.JSC;
-const ImportKind = @import("./import_record.zig").ImportKind;
+const ImportKind = @import("import_record.zig").ImportKind;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -15,11 +15,11 @@ const C = bun.C;
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
-const Ref = @import("./ast/base.zig").Ref;
+const Ref = @import("ast/base.zig").Ref;
 const expect = std.testing.expect;
 const assert = bun.assert;
-const StringBuilder = @import("./string_builder.zig");
-const Index = @import("./ast/base.zig").Index;
+const StringBuilder = @import("string_builder.zig");
+const Index = @import("ast/base.zig").Index;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
 
@@ -1358,7 +1358,7 @@ pub const Source = struct {
     }
 
     pub fn rangeOfIdentifier(this: *const Source, loc: Loc) Range {
-        const js_lexer = @import("./js_lexer.zig");
+        const js_lexer = @import("js_lexer.zig");
         return js_lexer.rangeOfIdentifier(this, loc);
     }
 

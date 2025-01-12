@@ -20,11 +20,11 @@ const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
-const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
-const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
-const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
+const UntrustedCommand = @import("pm_trusted_command.zig").UntrustedCommand;
+const TrustCommand = @import("pm_trusted_command.zig").TrustCommand;
+const DefaultTrustedCommand = @import("pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
-pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const PackCommand = @import("pack_command.zig").PackCommand;
 const Npm = Install.Npm;
 const File = bun.sys.File;
 

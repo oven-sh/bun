@@ -121,13 +121,13 @@ pub const max_eviction_count = 8096;
 
 const log = bun.Output.scoped(.watcher, false);
 
-const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
+const WindowsWatcher = @import("watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
 const Platform = switch (Environment.os) {
-    .linux => @import("./watcher/INotifyWatcher.zig"),
-    .mac => @import("./watcher/KEventWatcher.zig"),
+    .linux => @import("watcher/INotifyWatcher.zig"),
+    .mac => @import("watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
     else => @compileError("Unsupported platform"),
 };
@@ -664,7 +664,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
-const options = @import("./options.zig");
+const options = @import("options.zig");
 const Mutex = bun.Mutex;
-const Futex = @import("./futex.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const Futex = @import("futex.zig");
+const PackageJSON = @import("resolver/package_json.zig").PackageJSON;

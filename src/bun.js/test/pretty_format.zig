@@ -15,7 +15,7 @@ const JSPrinter = bun.js_printer;
 const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
 const JS = @import("../javascript.zig");
 const JSPromise = JSC.JSPromise;
-const expect = @import("./expect.zig");
+const expect = @import("expect.zig");
 
 pub const EventType = enum(u8) {
     Event,

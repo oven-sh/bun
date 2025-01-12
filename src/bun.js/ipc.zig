@@ -12,7 +12,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
-const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+const node_cluster_binding = @import("node/node_cluster_binding.zig");
 
 pub const log = Output.scoped(.IPC, false);
 

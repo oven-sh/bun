@@ -2982,7 +2982,7 @@ pub const Win32Error = enum(u16) {
     }
 };
 
-pub const libuv = @import("./deps/libuv.zig");
+pub const libuv = @import("deps/libuv.zig");
 
 pub extern fn GetProcAddress(
     ptr: ?*anyopaque,

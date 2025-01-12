@@ -25,26 +25,26 @@ const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
-const sync = @import("./sync.zig");
+const sync = @import("sync.zig");
 const Api = @import("api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
+const resolve_path = @import("resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("bun.js/config.zig").configureTransformOptionsForBun;
 const clap = bun.clap;
-const BunJS = @import("./bun_js.zig");
-const Install = @import("./install/install.zig");
+const BunJS = @import("bun_js.zig");
+const Install = @import("install/install.zig");
 const transpiler = bun.transpiler;
-const DotEnv = @import("./env_loader.zig");
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
-const FilterRun = @import("./cli/filter_run.zig");
+const DotEnv = @import("env_loader.zig");
+const RunCommand_ = @import("cli/run_command.zig").RunCommand;
+const CreateCommand_ = @import("cli/create_command.zig").CreateCommand;
+const FilterRun = @import("cli/filter_run.zig");
 
 const fs = @import("fs.zig");
-const Router = @import("./router.zig");
+const Router = @import("router.zig");
 
-const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const MacroMap = @import("resolver/package_json.zig").MacroMap;
+const TestCommand = @import("cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
-const Bunfig = @import("./bunfig.zig").Bunfig;
+const Bunfig = @import("bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
 export var Bun__Node__ProcessNoDeprecation = false;
@@ -53,7 +53,7 @@ export var Bun__Node__ProcessThrowDeprecation = false;
 pub var Bun__Node__ProcessTitle: ?string = null;
 
 pub const Cli = struct {
-    pub const CompileTarget = @import("./compile_target.zig");
+    pub const CompileTarget = @import("compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
@@ -104,7 +104,7 @@ pub const debug_flags = if (Environment.isDebug) struct {
 } else @compileError("Do not access this namespace in a release build");
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
-const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
+const ColonListType = @import("cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
@@ -115,30 +115,30 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     std.process.exit(1);
 }
 
-pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
-pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
-pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
-pub const ShellCompletions = @import("./cli/shell_completions.zig");
-pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
-pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
-pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
-pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
-pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
-pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
-pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
+pub const BuildCommand = @import("cli/build_command.zig").BuildCommand;
+pub const AddCommand = @import("cli/add_command.zig").AddCommand;
+pub const CreateCommand = @import("cli/create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("cli/create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("cli/create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("cli/discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("cli/install_command.zig").InstallCommand;
+pub const LinkCommand = @import("cli/link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("cli/unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("cli/install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("cli/package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("cli/remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("cli/run_command.zig").RunCommand;
+pub const ShellCompletions = @import("cli/shell_completions.zig");
+pub const UpdateCommand = @import("cli/update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("cli/upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("cli/outdated_command.zig").OutdatedCommand;
+pub const PublishCommand = @import("cli/publish_command.zig").PublishCommand;
+pub const PackCommand = @import("cli/pack_command.zig").PackCommand;
+pub const InitCommand = @import("cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1411,7 +1411,7 @@ pub const ReservedCommand = struct {
     }
 };
 
-const AddCompletions = @import("./cli/add_completions.zig");
+const AddCompletions = @import("cli/add_completions.zig");
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -1643,7 +1643,7 @@ pub const Command = struct {
         }
 
         if (isNode(argv0)) {
-            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            @import("deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
         }
@@ -1777,7 +1777,7 @@ pub const Command = struct {
                 ctx.passthrough = &[_]string{};
             }
 
-            try @import("./bun_js.zig").Run.bootStandalone(
+            try @import("bun_js.zig").Run.bootStandalone(
                 ctx,
                 graph.entryPoint().name,
                 graph,

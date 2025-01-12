@@ -6,30 +6,30 @@ pub const std = @import("std");
 const bun = @import("root").bun;
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
-pub const importRecord = @import("./import_record.zig");
+pub const importRecord = @import("import_record.zig");
 pub const js_ast = bun.JSAst;
-pub const options = @import("./options.zig");
+pub const options = @import("options.zig");
 pub const js_printer = bun.js_printer;
-pub const renamer = @import("./renamer.zig");
-const _runtime = @import("./runtime.zig");
+pub const renamer = @import("renamer.zig");
+const _runtime = @import("runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
-pub const fs = @import("./fs.zig");
+pub const fs = @import("fs.zig");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = @import("./string_mutable.zig").MutableString;
+const MutableString = @import("string_mutable.zig").MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const G = js_ast.G;
-const Define = @import("./defines.zig").Define;
-const DefineData = @import("./defines.zig").DefineData;
-const FeatureFlags = @import("./feature_flags.zig");
-pub const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
+const Define = @import("defines.zig").Define;
+const DefineData = @import("defines.zig").DefineData;
+const FeatureFlags = @import("feature_flags.zig");
+pub const isPackagePath = @import("resolver/resolver.zig").isPackagePath;
 pub const ImportKind = importRecord.ImportKind;
 pub const BindingNodeIndex = js_ast.BindingNodeIndex;
 const Decl = G.Decl;
@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const JSC = bun.JSC;
-const Index = @import("./ast/base.zig").Index;
+const Index = @import("ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileError("assert is missing an if (Environment.allow_assert)");
@@ -69,14 +69,14 @@ pub const Level = js_ast.Op.Level;
 pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
-const Ref = @import("./ast/base.zig").Ref;
-const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
+const Ref = @import("ast/base.zig").Ref;
+const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
-const ObjectPool = @import("./pool.zig").ObjectPool;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
+const ObjectPool = @import("pool.zig").ObjectPool;
+const NodeFallbackModules = @import("node_fallbacks.zig");
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -2652,12 +2652,12 @@ pub const StringVoidMap = struct {
     pub const Pool = ObjectPool(StringVoidMap, init, true, 32);
     pub const Node = Pool.Node;
 };
-const RefCtx = @import("./ast/base.zig").RefCtx;
+const RefCtx = @import("ast/base.zig").RefCtx;
 const SymbolUseMap = js_ast.Part.SymbolUseMap;
 const SymbolPropertyUseMap = js_ast.Part.SymbolPropertyUseMap;
 const StringBoolMap = bun.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
-const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("./ast/base.zig").RefHashCtx, false);
+const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("ast/base.zig").RefHashCtx, false);
 
 const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;

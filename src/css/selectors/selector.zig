@@ -45,7 +45,7 @@ pub const impl = struct {
     };
 };
 
-pub const parser = @import("./parser.zig");
+pub const parser = @import("parser.zig");
 
 /// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
 pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {

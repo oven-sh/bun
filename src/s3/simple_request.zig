@@ -2,12 +2,12 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const strings = bun.strings;
-const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
-const S3Error = @import("./error.zig").S3Error;
-const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
+const SignResult = @import("credentials.zig").S3Credentials.SignResult;
+const S3Error = @import("error.zig").S3Error;
+const getSignErrorCodeAndMessage = @import("error.zig").getSignErrorCodeAndMessage;
+const S3Credentials = @import("credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
-const ACL = @import("./acl.zig").ACL;
+const ACL = @import("acl.zig").ACL;
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,

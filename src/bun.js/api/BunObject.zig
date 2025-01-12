@@ -202,7 +202,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./filesystem_router.zig");
+const Router = @import("filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.transpiler.ParseResult;
@@ -3611,7 +3611,7 @@ const TOMLObject = struct {
 
 const Debugger = JSC.Debugger;
 
-pub const Timer = @import("./Timer.zig");
+pub const Timer = @import("Timer.zig");
 
 pub const FFIObject = struct {
     const fields = .{
@@ -4597,7 +4597,7 @@ pub const JSZlib = struct {
     }
 };
 
-pub usingnamespace @import("./bun/subprocess.zig");
+pub usingnamespace @import("bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

@@ -16,7 +16,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
-const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
+const PathWatcher = if (Environment.isWindows) @import("win_watcher.zig") else @import("path_watcher.zig");
 
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,

@@ -16,8 +16,8 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
 
-const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
-const table = @import("./defines-table.zig");
+const GlobalDefinesKey = @import("defines-table.zig").GlobalDefinesKey;
+const table = @import("defines-table.zig");
 
 const Globals = struct {
     pub const Undefined = js_ast.E.Undefined{};

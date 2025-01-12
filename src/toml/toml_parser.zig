@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = bun.logger;
-const toml_lexer = @import("./toml_lexer.zig");
+const toml_lexer = @import("toml_lexer.zig");
 const Lexer = toml_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
 const js_ast = bun.JSAst;

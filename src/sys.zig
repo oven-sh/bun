@@ -25,7 +25,7 @@ const SystemError = JSC.SystemError;
 
 const linux = syscall;
 
-pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
+pub const sys_uv = if (Environment.isWindows) @import("sys_uv.zig") else Syscall;
 
 pub const F_OK = 0;
 pub const X_OK = 1;
@@ -4033,7 +4033,7 @@ pub inline fn toLibUVOwnedFD(
     };
 }
 
-pub const Dir = @import("./dir.zig");
+pub const Dir = @import("dir.zig");
 const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;
 
 /// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.

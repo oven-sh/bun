@@ -15,8 +15,8 @@ const FeatureFlags = bun.FeatureFlags;
 const allocators = @import("../allocators.zig");
 const DirInfo = @This();
 const Fs = @import("../fs.zig");
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
+const TSConfigJSON = @import("tsconfig_json.zig").TSConfigJSON;
+const PackageJSON = @import("package_json.zig").PackageJSON;
 
 pub const Index = allocators.IndexType;
 

@@ -2392,6 +2392,10 @@ pub const ModuleLoader = struct {
             }
         }
 
+        if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+            loader = .json;
+        }
+
         // We only run the transpiler concurrently when we can.
         // Today, that's:
         //

@@ -94,6 +94,10 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 // HEAD requests have no body.
 pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: HTTPResponse) void {
     req.setYield(false);
+    this.onHEAD(resp);
+}
+
+pub fn onHEAD(this: *StaticRoute, resp: HTTPResponse) void {
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -111,6 +115,10 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: HTTPResponse) void {
 
 pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: HTTPResponse) void {
     req.setYield(false);
+    this.on(resp);
+}
+
+pub fn on(this: *StaticRoute, resp: HTTPResponse) void {
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();

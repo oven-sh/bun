@@ -1583,18 +1583,17 @@ pub const BundleV2 = struct {
 
     pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
 
-    pub fn generateFromJavaScript(
+    pub fn createAndScheduleCompletionTask(
         config: bun.JSC.API.JSBundler.Config,
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
-    ) OOM!bun.JSC.JSValue {
+    ) OOM!*JSBundleCompletionTask {
         var completion = try allocator.create(JSBundleCompletionTask);
         completion.* = JSBundleCompletionTask{
             .config = config,
             .jsc_event_loop = event_loop,
-            .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
             .poll_ref = Async.KeepAlive.init(),
             .env = globalThis.bunVM().transpiler.env,
@@ -1615,6 +1614,18 @@ pub const BundleV2 = struct {
 
         completion.poll_ref.ref(globalThis.bunVM());
 
+        return completion;
+    }
+
+    pub fn generateFromJavaScript(
+        config: bun.JSC.API.JSBundler.Config,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin,
+        globalThis: *JSC.JSGlobalObject,
+        event_loop: *bun.JSC.EventLoop,
+        allocator: std.mem.Allocator,
+    ) OOM!bun.JSC.JSValue {
+        const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, allocator);
+        completion.promise = JSC.JSPromise.Strong.init(globalThis);
         return completion.promise.value();
     }
 
@@ -1633,10 +1644,12 @@ pub const BundleV2 = struct {
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
-        promise: JSC.JSPromise.Strong,
+        promise: JSC.JSPromise.Strong = .{},
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
+
+        html_build_task: ?*JSC.API.HTMLBundle.HTMLBundleRoute = null,
 
         result: Result = .{ .pending = {} },
 
@@ -1740,6 +1753,11 @@ pub const BundleV2 = struct {
             defer this.deref();
 
             this.poll_ref.unref(globalThis.bunVM());
+            if (this.html_build_task) |html_build_task| {
+                html_build_task.onComplete(this);
+                return;
+            }
+
             const promise = this.promise.swap();
 
             switch (this.result) {

@@ -410,6 +410,55 @@ pub fn toJS(
     };
 }
 
+pub fn toBlob(
+    this: *OutputFile,
+    allocator: std.mem.Allocator,
+) !JSC.WebCore.Blob {
+    return switch (this.value) {
+        .move, .pending => @panic("Unexpected pending output file"),
+        .noop => @panic("Cannot convert noop output file to blob"),
+        .copy => |copy| brk: {
+            const file_blob = try JSC.WebCore.Blob.Store.initFile(
+                if (copy.fd != .zero)
+                    JSC.Node.PathOrFileDescriptor{
+                        .fd = copy.fd,
+                    }
+                else
+                    JSC.Node.PathOrFileDescriptor{
+                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, copy.pathname) catch unreachable) },
+                    },
+                this.loader.toMimeType(),
+                allocator,
+            );
+
+            break :brk JSC.WebCore.Blob.initWithStore(file_blob, null);
+        },
+        .saved => brk: {
+            const file_blob = try JSC.WebCore.Blob.Store.initFile(
+                JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, this.src_path.text) catch unreachable) },
+                },
+                this.loader.toMimeType(),
+                allocator,
+            );
+
+            break :brk JSC.WebCore.Blob.initWithStore(file_blob, null);
+        },
+        .buffer => |buffer| brk: {
+            var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, null);
+            if (blob.store) |store| {
+                store.mime_type = this.loader.toMimeType();
+                blob.content_type = store.mime_type.value;
+            } else {
+                blob.content_type = this.loader.toMimeType().value;
+            }
+
+            blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
+            break :brk blob;
+        },
+    };
+}
+
 const OutputFile = @This();
 const string = []const u8;
 const FileDescriptorType = bun.FileDescriptor;

@@ -236,26 +236,43 @@ pub const ServerConfig = struct {
         }
     };
 
-    pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) void {
-        for (this.static_routes.items) |entry| {
-            entry.route.server = server;
-            const handler_wrap = struct {
-                pub fn handler(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
-                    route.onRequest(req, switch (comptime ssl) {
-                        true => .{ .SSL = resp },
-                        false => .{ .TCP = resp },
-                    });
-                }
+    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: *StaticRoute) !void {
+        if (this.static_routes.items.len > 0) {
+            for (this.static_routes.items) |*entry| {
+                if (strings.eqlLong(entry.path, path, true)) {}
+            }
+        }
+        try this.static_routes.append(StaticRouteEntry{
+            .path = try bun.default_allocator.dupe(u8, path),
+            .route = route,
+        });
+    }
 
-                pub fn HEAD(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
-                    route.onHEADRequest(req, switch (comptime ssl) {
-                        true => .{ .SSL = resp },
-                        false => .{ .TCP = resp },
-                    });
-                }
-            };
-            app.head(entry.path, *StaticRoute, entry.route, handler_wrap.HEAD);
-            app.any(entry.path, *StaticRoute, entry.route, handler_wrap.handler);
+    pub fn applyStaticRoute(this: *ServerConfig, server: AnyServer, comptime ssl: bool, app: *uws.NewApp(ssl), entry: *const StaticRouteEntry) void {
+        _ = this; // autofix
+        entry.route.server = server;
+        const handler_wrap = struct {
+            pub fn handler(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
+                route.onRequest(req, switch (comptime ssl) {
+                    true => .{ .SSL = resp },
+                    false => .{ .TCP = resp },
+                });
+            }
+
+            pub fn HEAD(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
+                route.onHEADRequest(req, switch (comptime ssl) {
+                    true => .{ .SSL = resp },
+                    false => .{ .TCP = resp },
+                });
+            }
+        };
+        app.head(entry.path, *StaticRoute, entry.route, handler_wrap.HEAD);
+        app.any(entry.path, *StaticRoute, entry.route, handler_wrap.handler);
+    }
+
+    pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) void {
+        for (this.static_routes.items) |*entry| {
+            this.applyStaticRoute(server, ssl, app, entry);
         }
     }
 
@@ -7274,6 +7291,12 @@ pub const AnyServer = union(enum) {
     HTTPSServer: *HTTPSServer,
     DebugHTTPServer: *DebugHTTPServer,
     DebugHTTPSServer: *DebugHTTPSServer,
+
+    pub fn globalThis(this: AnyServer) *JSC.JSGlobalObject {
+        return switch (this) {
+            inline else => |server| server.globalThis,
+        };
+    }
 
     pub fn config(this: AnyServer) *const ServerConfig {
         return switch (this) {

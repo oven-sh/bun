@@ -1,4 +1,4 @@
-HTMLRewriter lets you use CSS selectors to transform HTML documents. Bun's implementation is based on Cloudflare's [lol-html](https://github.com/cloudflare/lol-html).
+HTMLRewriter lets you use CSS selectors to transform HTML documents. It works with `Request`, `Response`, as well as `string`. Bun's implementation is based on Cloudflare's [lol-html](https://github.com/cloudflare/lol-html).
 
 ## Usage
 
@@ -63,6 +63,29 @@ This replaces all images with a thumbnail of Rick Astley and wraps each `<img>` 
 ```
 
 Now every image on the page will be replaced with a thumbnail of Rick Astley, and clicking any image will lead to [a very famous video](https://www.youtube.com/watch?v=dQw4w9WgXcQ).
+
+### Input types
+
+HTMLRewriter can transform HTML from various sources. The input is automatically handled based on its type:
+
+```ts
+// From Response
+rewriter.transform(new Response("<div>content</div>"));
+
+// From string
+rewriter.transform("<div>content</div>");
+
+// From ArrayBuffer
+rewriter.transform(new TextEncoder().encode("<div>content</div>").buffer);
+
+// From Blob
+rewriter.transform(new Blob(["<div>content</div>"]));
+
+// From File
+rewriter.transform(Bun.file("index.html"));
+```
+
+Note that Cloudflare Workers implementation of HTMLRewriter only supports `Response` objects.
 
 ## Features
 
@@ -274,27 +297,6 @@ rewriter.onDocument({
     end.append("<!-- Footer -->", { html: true });
   },
 });
-```
-
-## Input Types
-
-HTMLRewriter can transform HTML from various sources. The input is automatically handled based on its type:
-
-```ts
-// From Response
-rewriter.transform(new Response("<div>content</div>"));
-
-// From string
-rewriter.transform("<div>content</div>");
-
-// From ArrayBuffer
-rewriter.transform(new TextEncoder().encode("<div>content</div>").buffer);
-
-// From Blob
-rewriter.transform(new Blob(["<div>content</div>"]));
-
-// From File
-rewriter.transform(Bun.file("index.html"));
 ```
 
 ### Response Handling

@@ -2496,7 +2496,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.source_code),
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),

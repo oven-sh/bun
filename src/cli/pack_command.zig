@@ -875,7 +875,7 @@ pub const PackCommand = struct {
             return deps;
         }
 
-        Output.errGeneric("expected `{s}` to be an boolean or array of strings", .{field});
+        Output.errGeneric("expected `{s}` to be a boolean or an array of strings", .{field});
         Global.crash();
     }
 

@@ -10,8 +10,6 @@ headers: Headers = .{
 },
 ref_count: u32 = 1,
 
-const HTTPResponse = uws.AnyResponse;
-
 pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
 fn deinit(this: *StaticRoute) void {
@@ -247,3 +245,4 @@ const Headers = JSC.WebCore.Headers;
 const AnyServer = JSC.API.AnyServer;
 const AnyBlob = JSC.WebCore.AnyBlob;
 const writeStatus = @import("../server.zig").writeStatus;
+const HTTPResponse = uws.AnyResponse;

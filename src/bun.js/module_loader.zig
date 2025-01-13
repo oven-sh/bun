@@ -2392,6 +2392,10 @@ pub const ModuleLoader = struct {
             }
         }
 
+        if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+            loader = .json;
+        }
+
         // We only run the transpiler concurrently when we can.
         // Today, that's:
         //
@@ -2496,7 +2500,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.source_code),
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),

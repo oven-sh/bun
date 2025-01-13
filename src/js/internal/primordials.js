@@ -2,6 +2,9 @@
 // Do not use this file for new code, many things here will be slow especailly when intrinsics for these operations is available.
 // It is primarily used for `internal/util`
 
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectFreeze = Object.freeze;
+
 const createSafeIterator = (factory, next) => {
   class SafeIterator {
     constructor(iterable) {
@@ -14,9 +17,9 @@ const createSafeIterator = (factory, next) => {
       return this;
     }
   }
-  Object.setPrototypeOf(SafeIterator.prototype, null);
-  Object.freeze(SafeIterator.prototype);
-  Object.freeze(SafeIterator);
+  ObjectSetPrototypeOf(SafeIterator.prototype, null);
+  ObjectFreeze(SafeIterator.prototype);
+  ObjectFreeze(SafeIterator);
   return SafeIterator;
 };
 
@@ -76,85 +79,16 @@ const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
 const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
 const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
 
-function ErrorCaptureStackTrace(targetObject) {
-  const stack = new Error().stack;
-  // Remove the second line, which is this function
-  targetObject.stack = stack.replace(/.*\n.*/, "$1");
-}
-
-const arrayProtoPush = Array.prototype.push;
 const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
 const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
+
 export default {
-  makeSafe, // exported for testing
   Array,
-  ArrayFrom: Array.from,
-  ArrayIsArray: Array.isArray,
   SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
-  ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
-  ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
-  ArrayPrototypeForEach,
-  ArrayPrototypeIncludes: uncurryThis(Array.prototype.includes),
-  ArrayPrototypeIndexOf: uncurryThis(Array.prototype.indexOf),
-  ArrayPrototypeJoin: uncurryThis(Array.prototype.join),
-  ArrayPrototypeMap: uncurryThis(Array.prototype.map),
-  ArrayPrototypePop: uncurryThis(Array.prototype.pop),
-  ArrayPrototypePush: uncurryThis(arrayProtoPush),
-  ArrayPrototypePushApply: (a, b) => arrayProtoPush.$apply(a, b),
-  ArrayPrototypeSlice: uncurryThis(Array.prototype.slice),
-  ArrayPrototypeSort: uncurryThis(Array.prototype.sort),
-  ArrayPrototypeSplice: uncurryThis(Array.prototype.splice),
-  ArrayPrototypeUnshift: uncurryThis(Array.prototype.unshift),
-  BigIntPrototypeValueOf: uncurryThis(BigInt.prototype.valueOf),
-  BooleanPrototypeValueOf: uncurryThis(Boolean.prototype.valueOf),
-  DatePrototypeGetTime: uncurryThis(Date.prototype.getTime),
-  DatePrototypeToISOString: uncurryThis(Date.prototype.toISOString),
-  DatePrototypeToString: uncurryThis(Date.prototype.toString),
-  ErrorCaptureStackTrace,
-  ErrorPrototypeToString: uncurryThis(Error.prototype.toString),
-  JSONStringify: JSON.stringify,
   MapPrototypeGetSize: getGetter(Map, "size"),
-  MapPrototypeEntries: uncurryThis(Map.prototype.entries),
-  MapPrototypeValues: uncurryThis(Map.prototype.values),
-  MapPrototypeKeys: uncurryThis(Map.prototype.keys),
-  MathFloor: Math.floor,
-  MathMax: Math.max,
-  MathMin: Math.min,
-  MathRound: Math.round,
-  MathSqrt: Math.sqrt,
-  MathTrunc: Math.trunc,
-  MathAbs: Math.abs,
   Number,
-  NumberIsFinite: Number.isFinite,
-  NumberIsNaN: Number.isNaN,
-  NumberParseFloat: Number.parseFloat,
-  NumberParseInt: Number.parseInt,
-  NumberPrototypeToString: uncurryThis(Number.prototype.toString),
-  NumberPrototypeValueOf: uncurryThis(Number.prototype.valueOf),
   Object,
-  ObjectAssign: Object.assign,
-  ObjectCreate: Object.create,
-  ObjectDefineProperty: Object.defineProperty,
-  ObjectEntries: Object.entries,
-  ObjectGetOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
-  ObjectGetOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
-  ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
-  ObjectGetOwnPropertySymbols: Object.getOwnPropertySymbols,
-  ObjectGetPrototypeOf: Object.getPrototypeOf,
-  ObjectIs: Object.is,
-  ObjectKeys: Object.keys,
-  ObjectPrototypeHasOwnProperty: uncurryThis(Object.prototype.hasOwnProperty),
-  ObjectPrototypePropertyIsEnumerable: uncurryThis(Object.prototype.propertyIsEnumerable),
-  ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
-  ObjectSeal: Object.seal,
-  ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
-  RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),
-  RegExpPrototypeSymbolReplace: uncurryThis(RegExp.prototype[Symbol.replace]),
-  RegExpPrototypeSymbolSplit: uncurryThis(RegExp.prototype[Symbol.split]),
-  RegExpPrototypeTest: uncurryThis(RegExp.prototype.test),
-  RegExpPrototypeToString: uncurryThis(RegExp.prototype.toString),
   SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
   SafeMap: makeSafe(
     Map,
@@ -172,42 +106,16 @@ export default {
       }
     },
   ),
-  DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
-  DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
+  SafeWeakSet: makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SetPrototypeGetSize: getGetter(Set, "size"),
-  SetPrototypeEntries: uncurryThis(Set.prototype.entries),
-  SetPrototypeValues: uncurryThis(Set.prototype.values),
   String,
-  StringPrototypeCharCodeAt: uncurryThis(String.prototype.charCodeAt),
-  StringPrototypeCodePointAt: uncurryThis(String.prototype.codePointAt),
-  StringPrototypeEndsWith: uncurryThis(String.prototype.endsWith),
-  StringPrototypeIncludes: uncurryThis(String.prototype.includes),
-  StringPrototypeIndexOf: uncurryThis(String.prototype.indexOf),
-  StringPrototypeLastIndexOf: uncurryThis(String.prototype.lastIndexOf),
-  StringPrototypeMatch: uncurryThis(String.prototype.match),
-  StringPrototypeNormalize: uncurryThis(String.prototype.normalize),
-  StringPrototypePadEnd: uncurryThis(String.prototype.padEnd),
-  StringPrototypePadStart: uncurryThis(String.prototype.padStart),
-  StringPrototypeRepeat: uncurryThis(String.prototype.repeat),
-  StringPrototypeReplace: uncurryThis(String.prototype.replace),
-  StringPrototypeReplaceAll: uncurryThis(String.prototype.replaceAll),
-  StringPrototypeSlice: uncurryThis(String.prototype.slice),
-  StringPrototypeSplit: uncurryThis(String.prototype.split),
-  StringPrototypeStartsWith: uncurryThis(String.prototype.startsWith),
-  StringPrototypeToLowerCase: uncurryThis(String.prototype.toLowerCase),
-  StringPrototypeToUpperCase: uncurryThis(String.prototype.toUpperCase),
-  StringPrototypeTrim: uncurryThis(String.prototype.trim),
-  StringPrototypeValueOf: uncurryThis(String.prototype.valueOf),
-  SymbolPrototypeToString: uncurryThis(Symbol.prototype.toString),
-  SymbolPrototypeValueOf: uncurryThis(Symbol.prototype.valueOf),
-  FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
-  FunctionPrototypeBind: uncurryThis(Function.prototype.bind),
-  SymbolDispose: Symbol.dispose,
-  SymbolAsyncDispose: Symbol.asyncDispose,
-  SymbolIterator: Symbol.iterator,
-  SymbolAsyncIterator: Symbol.asyncIterator,
-  SymbolFor: Symbol.for,
-  SymbolToStringTag: Symbol.toStringTag,
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,

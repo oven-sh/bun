@@ -1,8 +1,6 @@
 // Hardcoded module "node:http2"
 
 const { isTypedArray } = require("node:util/types");
-
-// This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const tls = require("node:tls");
@@ -24,22 +22,20 @@ const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 
-const {
-  FunctionPrototypeBind,
-  StringPrototypeTrim,
-  ArrayPrototypePush,
-  ObjectAssign,
-  ArrayIsArray,
-  SafeArrayIterator,
-  StringPrototypeToLowerCase,
-  StringPrototypeIncludes,
-  ObjectKeys,
-  ObjectPrototypeHasOwnProperty,
-  SafeSet,
-  DatePrototypeToUTCString,
-  DatePrototypeGetMilliseconds,
-} = require("internal/primordials");
+const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const ObjectAssign = Object.assign;
+const ArrayIsArray = Array.isArray;
+const ObjectKeys = Object.keys;
+const FunctionPrototypeBind = Function.prototype.bind;
+const StringPrototypeTrim = String.prototype.trim;
+const ArrayPrototypePush = Array.prototype.push;
+const StringPrototypeToLowerCase = String.prototype.toLocaleLowerCase;
+const StringPrototypeIncludes = String.prototype.includes;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const DatePrototypeToUTCString = Date.prototype.toUTCString;
+const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = $zig(
   "h2_frame_parser.zig",
@@ -91,8 +87,8 @@ function utcDate() {
 
 function cache() {
   const d = new Date();
-  utcCache = DatePrototypeToUTCString(d);
-  setTimeout(resetCache, 1000 - DatePrototypeGetMilliseconds(d)).unref();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
 }
 
 function resetCache() {
@@ -116,7 +112,7 @@ function onStreamTrailers(trailers, flags, rawTrailers) {
   const request = this[kRequest];
   if (request !== undefined) {
     ObjectAssign(request[kTrailers], trailers);
-    ArrayPrototypePush(request[kRawTrailers], ...new SafeArrayIterator(rawTrailers));
+    ArrayPrototypePush.$call(request[kRawTrailers], ...new SafeArrayIterator(rawTrailers));
   }
 }
 
@@ -240,7 +236,7 @@ function connectionHeaderMessageWarn() {
 }
 
 function assertValidHeader(name, value) {
-  if (name === "" || typeof name !== "string" || StringPrototypeIncludes(name, " ")) {
+  if (name === "" || typeof name !== "string" || StringPrototypeIncludes.$call(name, " ")) {
     throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
   if (isPseudoHeader(name)) {
@@ -349,8 +345,7 @@ class Http2ServerRequest extends Readable {
 
   set method(method) {
     validateString(method, "method");
-    if (StringPrototypeTrim(method) === "") throw $ERR_INVALID_ARG_VALUE("method", method);
-
+    if (StringPrototypeTrim.$call(method) === "") throw $ERR_INVALID_ARG_VALUE("method", method);
     this[kHeaders][HTTP2_HEADER_METHOD] = method;
   }
 
@@ -473,7 +468,7 @@ class Http2ServerResponse extends Stream {
 
   setTrailer(name, value) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
     this[kTrailers][name] = value;
   }
@@ -489,7 +484,7 @@ class Http2ServerResponse extends Stream {
 
   getHeader(name) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     return this[kHeaders][name];
   }
 
@@ -504,15 +499,15 @@ class Http2ServerResponse extends Stream {
 
   hasHeader(name) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
-    return ObjectPrototypeHasOwnProperty(this[kHeaders], name);
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
+    return ObjectPrototypeHasOwnProperty.$call(this[kHeaders], name);
   }
 
   removeHeader(name) {
     validateString(name, "name");
     if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
 
     if (name === "date") {
       this[kState].sendDate = false;
@@ -531,7 +526,7 @@ class Http2ServerResponse extends Stream {
   }
 
   [kSetHeader](name, value) {
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
     if (!isConnectionHeaderAllowed(name, value)) {
@@ -553,7 +548,7 @@ class Http2ServerResponse extends Stream {
   }
 
   [kAppendHeader](name, value) {
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
     if (!isConnectionHeaderAllowed(name, value)) {
@@ -851,7 +846,7 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind(session[prop], session);
+        return FunctionPrototypeBind.$call(session[prop], session);
       case "destroy":
       case "emit":
       case "end":
@@ -871,7 +866,7 @@ const proxySocketHandler = {
           throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
         }
         const value = socket[prop];
-        return typeof value === "function" ? FunctionPrototypeBind(value, socket) : value;
+        return typeof value === "function" ? FunctionPrototypeBind.$call(value, socket) : value;
       }
     }
   },
@@ -2072,7 +2067,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this[kInfoHeaders]) {
       this[kInfoHeaders] = [headers];
     } else {
-      ArrayPrototypePush(this[kInfoHeaders], headers);
+      ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
 
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
@@ -2190,7 +2185,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
           // fields with the same name.  Since it cannot be combined into a
           // single field-value, recipients ought to handle "Set-Cookie" as a
           // special case while processing header fields."
-          ArrayPrototypePush(existing, value);
+          ArrayPrototypePush.$call(existing, value);
           break;
         default:
           // https://tools.ietf.org/html/rfc7230#section-3.2.2
@@ -3170,7 +3165,7 @@ function setupCompat(ev) {
     const options = this[bunSocketServerOptions];
     const ServerRequest = options?.Http2ServerRequest || Http2ServerRequest;
     const ServerResponse = options?.Http2ServerResponse || Http2ServerResponse;
-    this.on("stream", FunctionPrototypeBind(onServerStream, this, ServerRequest, ServerResponse));
+    this.on("stream", FunctionPrototypeBind.$call(onServerStream, this, ServerRequest, ServerResponse));
   }
 }
 

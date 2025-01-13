@@ -27,6 +27,15 @@ $ bun create next-app --example with-supabase
 
 ---
 
+To build a project with Bun, run `bun run build` from the project root.
+
+```sh
+$ cd my-app
+$ bun run build
+```
+
+---
+
 To start the dev server with Bun, run `bun --bun run dev` from the project root.
 
 ```sh

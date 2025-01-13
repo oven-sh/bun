@@ -87,8 +87,8 @@ function utcDate() {
 
 function cache() {
   const d = new Date();
-  utcCache = DatePrototypeToUTCString.$call(d);
-  setTimeout(resetCache, 1000 - DatePrototypeGetMilliseconds.call(d)).unref();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
 }
 
 function resetCache() {

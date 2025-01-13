@@ -149,12 +149,15 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const source_code = @embedFile("runtime.out.js");
-    pub const hash = brk: {
-        @setEvalBranchQuota(source_code.len * 50);
-        break :brk bun.Wyhash11.hash(0, source_code);
-    };
+    pub fn sourceCode() string {
+        return if (Environment.codegen_embed)
+            @embedFile("runtime.out.js")
+        else
+            bun.runtimeEmbedFile(.src_eager, "runtime.out.js");
+    }
+
     pub fn versionHash() u32 {
+        const hash = bun.Wyhash11.hash(0, sourceCode());
         return @truncate(hash);
     }
 

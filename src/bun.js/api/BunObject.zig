@@ -1,6 +1,5 @@
 const conv = std.builtin.CallingConvention.Unspecified;
 const S3File = @import("../webcore/S3File.zig");
-const S3Bucket = @import("../webcore/S3Bucket.zig");
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -72,6 +71,7 @@ pub const BunObject = struct {
     pub const stdin = toJSGetter(Bun.getStdin);
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
+    pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -132,6 +132,7 @@ pub const BunObject = struct {
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
         @export(BunObject.semver, .{ .name = getterName("semver") });
         @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
+        @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
         // --- Getters --
 
         // -- Callbacks --
@@ -233,7 +234,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -829,6 +829,9 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
+}
+export fn Bun__gc(vm: *JSC.VirtualMachine, sync: bool) callconv(.C) usize {
+    return @call(.always_inline, gc, .{ vm, sync });
 }
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3397,7 +3400,9 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
-
+pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.WebCore.S3Client.getConstructor(globalThis);
+}
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);

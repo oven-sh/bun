@@ -124,11 +124,11 @@ await fetch("https://example.com", {
 This prints the `fetch` request as a single-line `curl` command to let you copy-paste into your terminal to replicate the request.
 
 ```sh
-[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.1.14" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
+[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/$BUN_LATEST_VERSION" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.1.14
+[fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br
@@ -170,7 +170,7 @@ This prints the following to the console:
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.1.14
+[fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br

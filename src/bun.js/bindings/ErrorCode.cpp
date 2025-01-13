@@ -351,10 +351,10 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
+            if (i > 0) result.append(", "_s);
             result.append(expected_type.toWTFString(globalObject));
-            result.append(", "_s);
         }
-        result.append("or "_s);
+        result.append(" or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 
@@ -740,6 +740,15 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_IP_ADDRESS: {
+        JSValue arg0 = callFrame->argument(1);
+
+        auto param = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {

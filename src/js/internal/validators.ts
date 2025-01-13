@@ -1,10 +1,10 @@
 const { hideFromStack } = require("internal/shared");
-const { ArrayIsArray } = require("internal/primordials");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeMap = Array.prototype.map;
+const ArrayIsArray = Array.isArray;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -28,7 +28,9 @@ const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
 function validateLinkHeaderFormat(value, name) {
   if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
     throw $ERR_INVALID_ARG_VALUE(
-      `The arguments ${name} is invalid must be an array or string of format "</styles.css>; rel=preload; as=style"`,
+      name,
+      value,
+      `must be an array or string of format "</styles.css>; rel=preload; as=style"`,
     );
   }
 }
@@ -59,7 +61,9 @@ function validateLinkHeaderValue(hints) {
   }
 
   throw $ERR_INVALID_ARG_VALUE(
-    `The arguments hints is invalid must be an array or string of format "</styles.css>; rel=preload; as=style"`,
+    "hints",
+    hints,
+    `must be an array or string of format "</styles.css>; rel=preload; as=style"`,
   );
 }
 hideFromStack(validateLinkHeaderValue);

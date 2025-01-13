@@ -643,7 +643,7 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
-  test(`basic should throw`, async () => {
+  test(`invalid bundledDependencies value should throw`, async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -666,7 +666,7 @@ describe("bundledDependnecies", () => {
 
     const err = await Bun.readableStreamToText(stderr);
     expect(err).toContain("error:");
-    expect(err).toContain("to be an array of strings or boolean");
+    expect(err).toContain("to be a boolean or an array of strings");
     expect(err).not.toContain("warning:");
     expect(err).not.toContain("failed");
     expect(err).not.toContain("panic:");

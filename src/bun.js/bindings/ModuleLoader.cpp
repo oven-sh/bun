@@ -745,7 +745,7 @@ static JSValue fetchESMSourceCode(
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, true);
+            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
             return rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
 
@@ -764,7 +764,7 @@ static JSValue fetchESMSourceCode(
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             } else {
-                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, true);
+                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
                 return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
             }
         }

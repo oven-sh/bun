@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const open = @import("../open.zig");
+const open = @import("../../open.zig");
 const Command = bun.CLI.Command;
 
 pub const ExecCommand = struct {
@@ -19,7 +19,7 @@ pub const ExecCommand = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("../../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
         try bundle.runEnvLoader(false);

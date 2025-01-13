@@ -42,7 +42,7 @@ pub fn main() void {
     Output.Source.Stdio.init();
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
-        bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
+        bun_warn_avx_missing(@import("./cli/command/upgrade.zig").Version.Bun__githubBaselineURL.ptr);
     }
     bun.StackCheck.configureThread();
     bun.CLI.Cli.start(bun.default_allocator);

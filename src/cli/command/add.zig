@@ -1,5 +1,5 @@
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
+const Command = @import("../../cli.zig").Command;
+const PackageManager = @import("../../install/install.zig").PackageManager;
 const bun = @import("root").bun;
 
 pub const AddCommand = struct {

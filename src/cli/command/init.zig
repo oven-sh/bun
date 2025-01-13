@@ -9,15 +9,15 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const open = @import("../open.zig");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
+const open = @import("../../open.zig");
+const CLI = @import("../../cli.zig");
+const Fs = @import("../../fs.zig");
 const JSON = bun.JSON;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
+const linker = @import("../../linker.zig");
+const options = @import("../../options.zig");
+const initializeStore = @import("./create.zig").initializeStore;
 const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
@@ -62,9 +62,9 @@ pub const InitCommand = struct {
 
     const Assets = struct {
         // "known" assets
-        const @".gitignore" = @embedFile("init/gitignore.default");
-        const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
-        const @"README.md" = @embedFile("init/README.default.md");
+        const @".gitignore" = @embedFile("../init/gitignore.default");
+        const @"tsconfig.json" = @embedFile("../init/tsconfig.default.json");
+        const @"README.md" = @embedFile("../init/README.default.md");
 
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.

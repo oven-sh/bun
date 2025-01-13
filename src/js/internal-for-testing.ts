@@ -67,7 +67,7 @@ export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") a
   raiseIgnoringPanicHandler: () => void;
 };
 
-export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {
+export const upgrade_test_helpers = $zig("upgrade.zig", "upgrade_js_bindings.generate") as {
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
 };
@@ -116,7 +116,7 @@ export const npmTag: (
 ) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
   $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);
 
-export const readTarball: (tarball: string) => any = $newZigFunction("pack_command.zig", "bindings.jsReadTarball", 1);
+export const readTarball: (tarball: string) => any = $newZigFunction("pack.zig", "bindings.jsReadTarball", 1);
 
 export const isArchitectureMatch: (architecture: string[]) => boolean = $newZigFunction(
   "npm.zig",

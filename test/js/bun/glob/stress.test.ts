@@ -36,7 +36,7 @@ test("Glob.scan stress test", async () => {
 
 test("Glob.match stress test", () => {
   for (let i = 0; i < 10000; i++) {
-    if (!new Glob("src/**/*.zig").match("src/cli/package_manager_command.zig")) {
+    if (!new Glob("src/**/*.zig").match("src/cli/command/pm.zig")) {
       throw new Error("test failed on run " + i);
     }
   }

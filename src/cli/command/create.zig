@@ -14,35 +14,35 @@ const Progress = bun.Progress;
 const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
+const linker = @import("../../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = @import("../cli.zig").Command;
+const allocators = @import("../../allocators.zig");
+const sync = @import("../../sync.zig");
+const Api = @import("../../api/schema.zig").Api;
+const resolve_path = @import("../../resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("../../bun.js/config.zig").configureTransformOptionsForBun;
+const Command = @import("../../cli.zig").Command;
 
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
+const fs = @import("../../fs.zig");
+const URL = @import("../../url.zig").URL;
 const HTTP = bun.http;
 
 const JSON = bun.JSON;
 const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
+const Zlib = @import("../../zlib.zig");
 const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const which = @import("../which.zig").which;
+const DotEnv = @import("../../env_loader.zig");
+const NPMClient = @import("../../which_npm_client.zig").NPMClient;
+const which = @import("../../which.zig").which;
 const clap = bun.clap;
 const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
+const CopyFile = @import("../../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = @import("../futex.zig");
+const Futex = @import("../../futex.zig");
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -493,7 +493,7 @@ pub const CreateCommand = struct {
                 }
 
                 const destination_dir = destination_dir__;
-                const Walker = @import("../walker_skippable.zig");
+                const Walker = @import("../../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
 
@@ -1660,7 +1660,7 @@ pub const CreateCommand = struct {
                 child.stdout_behavior = .Inherit;
                 child.stderr_behavior = .Inherit;
 
-                const open = @import("../open.zig");
+                const open = @import("../../open.zig");
                 open.openURL("http://localhost:3000/");
 
                 try child.spawn();

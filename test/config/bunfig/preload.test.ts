@@ -63,7 +63,7 @@ describe("Given a bunfig.toml with both universal and test-only preloads", () =>
   });
 }); // </given a bunfig.toml with both universal and test-only preloads>
 
-describe("given a `bunfig.toml` with a list of preloads", () => {
+describe("Given a `bunfig.toml` with a list of preloads", () => {
   const dir = fixturePath("multi");
 
   it("When `bun run` is run, preloads are run", async () => {
@@ -74,6 +74,17 @@ describe("given a `bunfig.toml` with a list of preloads", () => {
   });
   it("when passed `--config=bunfig.empty.toml`, preloads are not run", async () => {
     const [out, err, code] = await run("empty.ts", { args: ["--config=bunfig.empty.toml"], cwd: dir });
+    expect(err).toEqual("");
+    expect(out).toEqual("");
+    expect(code).toBe(0);
+  });
+});
+
+describe("Given a `bunfig.toml` with a plugin preload", () => {
+  const dir = fixturePath("plugin");
+
+  it("When `bun run` is run, preloads are run", async () => {
+    const [out, err, code] = await run("index.ts", { cwd: dir });
     expect(err).toEqual("");
     expect(out).toEqual("");
     expect(code).toBe(0);

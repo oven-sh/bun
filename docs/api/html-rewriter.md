@@ -26,7 +26,7 @@ const rewriter = new HTMLRewriter().on("img", {
   },
 });
 
-// Example usage
+// An example HTML document
 const html = `
 <html>
 <body>
@@ -86,8 +86,6 @@ rewriter.transform(Bun.file("index.html"));
 ```
 
 Note that Cloudflare Workers implementation of HTMLRewriter only supports `Response` objects.
-
-## Features
 
 ### Element Handlers
 

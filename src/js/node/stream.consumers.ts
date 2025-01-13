@@ -6,20 +6,20 @@ const { Buffer } = require("node:buffer");
 const JSONParse = JSON.parse;
 
 async function blob(stream): Promise<Blob> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToBlob(stream).then(JSON.parse);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToBlob(stream).then(JSONParse);
   const chunks: (Blob | ArrayBuffer | string | NodeJS.ArrayBufferView)[] = [];
   for await (const chunk of stream) chunks.push(chunk);
   return new Blob(chunks);
 }
 
 async function arrayBuffer(stream): Promise<ArrayBuffer> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToArrayBuffer(stream);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToArrayBuffer(stream);
   const ret = await blob(stream);
   return ret.arrayBuffer();
 }
 
 async function bytes(stream): Promise<Uint8Array> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToBytes(stream);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToBytes(stream);
   const ret = await blob(stream);
   return ret.bytes();
 }
@@ -29,7 +29,7 @@ async function buffer(stream): Promise<Buffer> {
 }
 
 async function text(stream): Promise<string> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToText(stream);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToText(stream);
   const dec = new TextDecoder();
   let str = "";
   for await (const chunk of stream) {
@@ -43,7 +43,7 @@ async function text(stream): Promise<string> {
 }
 
 async function json(stream): Promise<any> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToJSON(stream).then(JSON.parse);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToJSON(stream).then(JSONParse);
   const str = await text(stream);
   return JSONParse(str);
 }

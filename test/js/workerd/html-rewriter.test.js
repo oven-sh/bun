@@ -31,7 +31,7 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  it("error inside element handler", () => {
+  it("error inside element handler (string)", () => {
     expect(() =>
       new HTMLRewriter()
         .on("div", {
@@ -39,7 +39,7 @@ describe("HTMLRewriter", () => {
             throw new Error("test");
           },
         })
-        .transform(new Response("<div>hello</div>")),
+        .transform("<div>hello</div>"),
     ).toThrow("test");
   });
 

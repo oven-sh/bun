@@ -643,6 +643,38 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
+  test(`basic should throw`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled",
+          version: "4.4.4",
+          bundledDependencies: "a",
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("error:");
+    expect(err).toContain("to be an array of strings or boolean");
+    expect(err).not.toContain("warning:");
+    expect(err).not.toContain("failed");
+    expect(err).not.toContain("panic:");
+
+    const exitCode = await exited;
+    expect(exitCode).toBe(1);
+  });
+
   test("resolve dep of bundled dep", async () => {
     // Test that a bundled dep can have it's dependencies resolved without
     // needing to add them to `bundledDependencies`. Also test that only

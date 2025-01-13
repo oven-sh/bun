@@ -167,6 +167,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],
 
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],

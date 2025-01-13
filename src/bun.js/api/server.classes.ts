@@ -205,4 +205,21 @@ export default [
     construct: true,
     klass: {},
   }),
+
+  define({
+    name: "HTMLBundle",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      write: {
+        fn: "write",
+        length: 1,
+      },
+      path: {
+        getter: "getPath",
+        cache: true,
+      },
+    },
+    klass: {},
+  }),
 ];

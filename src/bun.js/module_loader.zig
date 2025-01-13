@@ -2091,6 +2091,35 @@ pub const ModuleLoader = struct {
                 };
             },
 
+            .html => {
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
+
+                if (globalObject == null) {
+                    return error.NotSupported;
+                }
+
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                const obj = JSValue.createEmptyObject(globalObject.?, 1);
+                obj.put(globalObject.?, JSC.ZigString.static("default"), html_bundle.toJS(globalObject.?));
+                return ResolvedSource{
+                    .allocator = &jsc_vm.allocator,
+                    .jsvalue_for_export = obj,
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                    .tag = .exports_object,
+                };
+            },
+
             else => {
                 if (virtual_source == null) {
                     if (comptime !disable_transpilying) {
@@ -2326,11 +2355,16 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (attribute.eqlComptime("html")) {
+                loader = .html;
             }
         }
 
-        if (strings.eqlComptime(path.name.filename, "bun.lock")) {
-            loader = .json;
+        // If we were going to choose file loader, see if it's a bun.lock
+        if (loader == null) {
+            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+                loader = .json;
+            }
         }
 
         // We only run the transpiler concurrently when we can.

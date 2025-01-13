@@ -1287,7 +1287,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext_bun = [_]string{ ".node", ".html" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",

@@ -90,3 +90,14 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
     expect(code).toBe(0);
   });
 });
+
+describe("Given a `bunfit.toml` file with a relative path to a preload in a parent directory", () => {
+  const dir = fixturePath("parent", "foo");
+
+  it("When `bun run` is run, preloads are run", async () => {
+    const [out, err, code] = await run("index.ts", { cwd: dir });
+    expect(err).toEqual("");
+    expect(out).toEqual("");
+    expect(code).toBe(0);
+  });
+});

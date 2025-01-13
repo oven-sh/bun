@@ -758,6 +758,7 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
+        .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
@@ -783,6 +784,7 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
+        .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
@@ -908,6 +910,7 @@ const default_loaders_posix = .{
     .{ ".txt", .text },
     .{ ".text", .text },
     .{ ".html", .html },
+    .{ ".jsonc", .json },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1286,16 +1289,18 @@ pub fn definesFromTransformOptions(
 
 const default_loader_ext_bun = [_]string{".node"};
 const default_loader_ext = [_]string{
-    ".jsx",  ".json",
-    ".js",   ".mjs",
-    ".cjs",  ".css",
+    ".jsx",   ".json",
+    ".js",    ".mjs",
+    ".cjs",   ".css",
 
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-    ".ts",   ".tsx",
-    ".mts",  ".cts",
+    ".ts",    ".tsx",
+    ".mts",   ".cts",
 
-    ".toml", ".wasm",
-    ".txt",  ".text",
+    ".toml",  ".wasm",
+    ".txt",   ".text",
+
+    ".jsonc",
 };
 
 // Only set it for browsers by default.
@@ -1314,6 +1319,7 @@ const node_modules_default_loader_ext = [_]string{
     ".toml",
     ".txt",
     ".json",
+    ".jsonc",
     ".css",
     ".tsx",
     ".cts",

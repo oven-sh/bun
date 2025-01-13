@@ -75,17 +75,9 @@ extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider*
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
+    JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
-
-    JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
-    if (resolvedSource.isCommonJSModule) {
-        ASSERT(resolvedSource.module_info == nullptr, "isCommonJSModule should not have module_info");
-        sourceType = JSC::SourceProviderSourceType::Program;
-    } else if (resolvedSource.module_info == nullptr) {
-        sourceType = JSC::SourceProviderSourceType::Module;
-    }
-
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 

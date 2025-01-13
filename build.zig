@@ -473,11 +473,6 @@ pub fn addInstallObjectFile(
     name: []const u8,
     out_mode: ObjectFormat,
 ) *Step {
-    if (@import("builtin").os.tag != .windows and std.posix.getenvZ("COMPILE_ERRORS_ONLY") != null) {
-        const failstep = b.addSystemCommand(&.{"COMPILE_ERRORS_ONLY set but there were no compile errors"});
-        failstep.step.dependOn(&compile.step);
-        return &failstep.step;
-    }
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
     return &b.addInstallFile(switch (out_mode) {

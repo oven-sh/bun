@@ -1,5 +1,7 @@
+const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
+const Allocator = std.mem.Allocator;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
@@ -8,11 +10,11 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const std = @import("std");
 const cli = @import("../cli.zig");
+
 const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
-const Allocator = std.mem.Allocator;
+const UpdateRequest = bun.PackageManager.UpdateRequest;
 
 const debug = Output.scoped(.bunx, false);
 
@@ -30,6 +32,9 @@ pub const BunxCommand = struct {
         // purposes.
         verbose_install: bool = false,
         silent_install: bool = false,
+        /// Skip installing the package, only running the target command if its
+        /// already downloaded. If its not, `bunx` exits with an error.
+        no_install: bool = false,
         allocator: Allocator,
 
         /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
@@ -65,6 +70,8 @@ pub const BunxCommand = struct {
                         opts.silent_install = true;
                     } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
                         ctx.debug.run_in_bun = true;
+                    } else if (strings.eqlComptime(positional, "--no-install")) {
+                        opts.no_install = true;
                     }
                 } else {
                     if (!found_subcommand_name) {
@@ -298,9 +305,9 @@ pub const BunxCommand = struct {
         var opts = try Options.parse(ctx, argv);
         defer opts.deinit();
 
-        var requests_buf = bun.PackageManager.UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
+        var requests_buf = UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
         defer requests_buf.deinit(ctx.allocator);
-        const update_requests = bun.PackageManager.UpdateRequest.parse(
+        const update_requests = UpdateRequest.parse(
             ctx.allocator,
             null,
             ctx.log,
@@ -335,6 +342,7 @@ pub const BunxCommand = struct {
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
+        // SAFETY: initialized by Run.configureEnvForRun
         var this_transpiler: bun.Transpiler = undefined;
         var ORIGINAL_PATH: string = "";
 
@@ -384,7 +392,7 @@ pub const BunxCommand = struct {
                 else => ":",
             };
 
-            const has_banned_char = bun.strings.indexAnyComptime(update_request.name, banned_path_chars) != null or bun.strings.indexAnyComptime(display_version, banned_path_chars) != null;
+            const has_banned_char = strings.indexAnyComptime(update_request.name, banned_path_chars) != null or strings.indexAnyComptime(display_version, banned_path_chars) != null;
 
             break :brk try if (has_banned_char)
                 // This branch gets hit usually when a URL is requested as the package
@@ -503,8 +511,10 @@ pub const BunxCommand = struct {
         const passthrough = opts.passthrough_list.items;
 
         var do_cache_bust = update_request.version.tag == .dist_tag;
+        const look_for_existing_bin = update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag;
 
-        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) try_run_existing: {
+        debug("try run existing? {}", .{look_for_existing_bin});
+        if (look_for_existing_bin) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
 
             // Only use the system-installed version if there is no version specified
@@ -563,11 +573,17 @@ pub const BunxCommand = struct {
                     };
 
                     if (is_stale) {
+                        debug("found stale binary: {s}", .{out});
                         do_cache_bust = true;
-                        break :try_run_existing;
+                        if (opts.no_install) {
+                            Output.warn("Using a stale installation of <b>{s}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.", .{update_request.name});
+                        } else {
+                            break :try_run_existing;
+                        }
                     }
                 }
 
+                debug("running existing binary: {s}", .{destination});
                 try Run.runBinary(
                     ctx,
                     try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
@@ -626,6 +642,24 @@ pub const BunxCommand = struct {
                 }
             }
         }
+        // If we've reached this point, it means we couldn't find an existing binary to run.
+        // Next step is to install, then run it.
+
+        // NOTE: npx prints errors like this:
+        //
+        //     npm error npx canceled due to missing packages and no YES option: ["foo@1.2.3"]
+        //     npm error A complete log of this run can be found in: [folder]/debug.log
+        //
+        // Which is not very helpful.
+
+        if (opts.no_install) {
+            Output.errGeneric(
+                "Could not find an existing '{s}' binary to run. Stopping because --no-install was passed.",
+                .{initial_bin_name},
+            );
+            Global.exit(1);
+        }
+
         const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
 
         create_package_json: {

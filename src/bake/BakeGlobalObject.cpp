@@ -11,6 +11,7 @@
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 
 namespace Bake {
+using namespace JSC;
 
 JSC::JSInternalPromise*
 bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
@@ -151,13 +152,14 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
     INHERIT_HOOK_METHOD(codeForEval),
     INHERIT_HOOK_METHOD(canCompileStrings),
+    INHERIT_HOOK_METHOD(trustedScriptStructure),
 };
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
     const JSC::GlobalObjectMethodTable* methodTable)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm))
-        GlobalObject(vm, structure, methodTable);
+    Bake::GlobalObject* ptr = new (NotNull, JSC::allocateCell<Bake::GlobalObject>(vm))
+        Bake::GlobalObject(vm, structure, methodTable);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -166,6 +168,13 @@ void GlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+}
+
+JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
+{
+    auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
+    structure->setTransitionWatchpointIsLikelyToBeFired(true);
+    return structure;
 }
 
 struct BunVirtualMachine;
@@ -181,9 +190,9 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     BunVirtualMachine* bunVM = Bun__getVM();
     WebCore::JSVMClientData::create(&vm, bunVM);
 
-    JSC::Structure* structure = GlobalObject::createStructure(vm);
-    GlobalObject* global = GlobalObject::create(
-        vm, structure, &GlobalObject::s_globalObjectMethodTable);
+    JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
+    Bake::GlobalObject* global = Bake::GlobalObject::create(
+        vm, structure, &Bake::GlobalObject::s_globalObjectMethodTable);
     if (!global)
         BUN_PANIC("Failed to create BakeGlobalObject");
 
@@ -193,6 +202,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 
     global->setConsole(console);
     global->setStackTraceLimit(10); // Node.js defaults to 10
+    global->isThreadLocalDefaultGlobalObject = true;
 
     // TODO: it segfaults! process.nextTick is scoped out for now i guess!
     // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
@@ -213,5 +223,8 @@ extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, Prod
 {
     global->m_perThreadData = perThreadData;
 }
+
+const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
+    CREATE_METHOD_TABLE(Bake::GlobalObject) };
 
 }; // namespace Bake

@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
-import { afterEach, expect, test } from "bun:test";
 import { noInline } from "bun:jsc";
+import { afterEach, expect, mock, test } from "bun:test";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -696,4 +696,31 @@ test("Error.prepareStackTrace propagates exceptions", () => {
       },
     ]),
   ).toThrow("hi");
+});
+
+test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const prepare = mock((e, s) => {
+    expect(s[0].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[1].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[2].getScriptNameOrSourceURL()).toBe("[native code]");
+    expect(s[3].getScriptNameOrSourceURL()).toBe(import.meta.path);
+    expect(s[4].getScriptNameOrSourceURL()).toBe(import.meta.path);
+  });
+  Error.prepareStackTrace = prepare;
+  let evalScript = `(function() {
+    throw new Error("bad error!");
+  })() //# sourceURL=https://zombo.com/welcome-to-zombo.js`;
+
+  try {
+    function insideAFunction() {
+      eval(evalScript);
+    }
+    insideAFunction();
+  } catch (e) {
+    e.stack;
+  }
+  Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(prepare).toHaveBeenCalledTimes(1);
 });

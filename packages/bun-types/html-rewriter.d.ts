@@ -26,6 +26,8 @@ declare namespace HTMLRewriterTypes {
     readonly name: string | null;
     readonly publicId: string | null;
     readonly systemId: string | null;
+    readonly removed: boolean;
+    remove(): Doctype;
   }
 
   interface DocumentEnd {
@@ -48,7 +50,7 @@ declare namespace HTMLRewriterTypes {
 
   interface Element {
     tagName: string;
-    readonly attributes: IterableIterator<string[]>;
+    readonly attributes: IterableIterator<[string, string]>;
     readonly removed: boolean;
     /** Whether the element is explicitly self-closing, e.g. `<foo />` */
     readonly selfClosing: boolean;

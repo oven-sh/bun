@@ -51,7 +51,7 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = Behavior.uninitialized,
+behavior: Behavior = .{},
 
 /// Sorting order for dependencies is:
 /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
@@ -1301,36 +1301,32 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 pub const Behavior = packed struct(u8) {
-    pub const uninitialized: Behavior = .{};
-
-    // these padding fields are to have compatibility
-    // with older versions of lockfile v2
     _unused_1: u1 = 0,
-
-    normal: bool = false,
+    prod: bool = false,
     optional: bool = false,
     dev: bool = false,
     peer: bool = false,
     workspace: bool = false,
+    /// Is not set for transitive bundled dependencies
+    bundled: bool = false,
+    _unused_2: u1 = 0,
 
-    _unused_2: u2 = 0,
-
-    pub const normal = Behavior{ .normal = true };
+    pub const prod = Behavior{ .prod = true };
     pub const optional = Behavior{ .optional = true };
     pub const dev = Behavior{ .dev = true };
     pub const peer = Behavior{ .peer = true };
     pub const workspace = Behavior{ .workspace = true };
 
-    pub inline fn isNormal(this: Behavior) bool {
-        return this.normal;
+    pub inline fn isProd(this: Behavior) bool {
+        return this.prod;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return this.optional and !this.isPeer();
+        return this.optional and !this.peer;
     }
 
     pub inline fn isOptionalPeer(this: Behavior) bool {
-        return this.optional and this.isPeer();
+        return this.optional and this.peer;
     }
 
     pub inline fn isDev(this: Behavior) bool {
@@ -1345,38 +1341,12 @@ pub const Behavior = packed struct(u8) {
         return this.workspace;
     }
 
+    pub inline fn isBundled(this: Behavior) bool {
+        return this.bundled;
+    }
+
     pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
-    }
-
-    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.normal = value;
-        return b;
-    }
-
-    pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.optional = value;
-        return b;
-    }
-
-    pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.dev = value;
-        return b;
-    }
-
-    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.peer = value;
-        return b;
-    }
-
-    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.workspace = value;
-        return b;
+        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
     }
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
@@ -1387,13 +1357,25 @@ pub const Behavior = packed struct(u8) {
         return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
     }
 
+    pub inline fn add(this: Behavior, kind: @Type(.EnumLiteral)) Behavior {
+        var new = this;
+        @field(new, @tagName(kind)) = true;
+        return new;
+    }
+
+    pub inline fn set(this: Behavior, kind: @Type(.EnumLiteral), value: bool) Behavior {
+        var new = this;
+        @field(new, @tagName(kind)) = value;
+        return new;
+    }
+
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (eq(lhs, rhs)) {
             return .eq;
         }
 
-        if (lhs.isNormal() != rhs.isNormal()) {
-            return if (lhs.isNormal())
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
                 .gt
             else
                 .lt;
@@ -1435,40 +1417,15 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
-        return this.isNormal() or
+        return this.isProd() or
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
             (features.workspaces and this.isWorkspaceOnly());
     }
 
-    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const fields = .{
-            "normal",
-            "optional",
-            "dev",
-            "peer",
-            "workspace",
-        };
-
-        var first = true;
-        inline for (fields) |field| {
-            if (@field(self, field)) {
-                if (!first) {
-                    try writer.writeAll(" | ");
-                }
-                try writer.writeAll(field);
-                first = false;
-            }
-        }
-
-        if (first) {
-            try writer.writeAll("-");
-        }
-    }
-
     comptime {
-        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.prod)) == (1 << 1));
         bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
         bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
         bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));

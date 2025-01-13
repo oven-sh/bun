@@ -277,6 +277,7 @@ CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObj
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
+CPP_DECL void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject);
 CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
@@ -402,7 +403,6 @@ CPP_DECL void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, 
 #pragma mark - JSC::Exception
 
 CPP_DECL JSC__Exception* JSC__Exception__create(JSC__JSGlobalObject* arg0, JSC__JSObject* arg1, unsigned char StackCaptureAction2);
-CPP_DECL void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* arg1);
 CPP_DECL JSC__JSValue JSC__Exception__value(JSC__Exception* arg0);
 
 #pragma mark - JSC::VM
@@ -686,24 +686,24 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
-CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-CPP_DECL void FetchTaskletChunkedRequestSink__detachPtr(JSC__JSValue JSValue0);
-CPP_DECL void* FetchTaskletChunkedRequestSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void FetchTaskletChunkedRequestSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
-CPP_DECL void FetchTaskletChunkedRequestSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+CPP_DECL JSC__JSValue NetworkSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue NetworkSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void NetworkSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* NetworkSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue FetchTaskletChunkedRequestSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__construct);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__end);
-ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI FetchTaskletChunkedRequestSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
-ZIG_DECL void FetchTaskletChunkedRequestSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__flush);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__start);
-ZIG_DECL void FetchTaskletChunkedRequestSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__write);
+ZIG_DECL JSC__JSValue NetworkSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__construct);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI NetworkSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void NetworkSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__flush);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__start);
+ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #endif
 
 #ifdef __cplusplus
@@ -868,5 +868,12 @@ BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectRequestStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
+
 
 #endif

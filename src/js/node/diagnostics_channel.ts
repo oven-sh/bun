@@ -2,7 +2,6 @@
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
 
 const { validateFunction } = require("internal/validators");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
@@ -212,7 +211,7 @@ function channel(name) {
   if (channel) return channel;
 
   if (typeof name !== "string" && typeof name !== "symbol") {
-    throw ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
+    throw $ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
   }
 
   return new Channel(name);
@@ -237,7 +236,7 @@ const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 function assertChannel(value, name) {
   if (!(value instanceof Channel)) {
-    throw ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
+    throw $ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
   }
 }
 
@@ -264,7 +263,7 @@ class TracingChannel {
       this.asyncEnd = asyncEnd;
       this.error = error;
     } else {
-      throw ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
+      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
     }
   }
 

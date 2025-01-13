@@ -2899,14 +2899,14 @@ pub const H2FrameParser = struct {
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
         var encoded_size: usize = 0;
 
-        var iter = JSC.JSPropertyIterator(.{
+        var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalObject, headers_arg);
         defer iter.deinit();
 
         // TODO: support CONTINUE for more headers if headers are too big
-        while (iter.next()) |header_name| {
+        while (try iter.next()) |header_name| {
             if (header_name.length() == 0) continue;
 
             const name_slice = header_name.toUTF8(bun.default_allocator);
@@ -3231,7 +3231,7 @@ pub const H2FrameParser = struct {
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
-        var iter = JSC.JSPropertyIterator(.{
+        var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalObject, headers_arg);
@@ -3240,7 +3240,7 @@ pub const H2FrameParser = struct {
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();
 
-            while (iter.next()) |header_name| {
+            while (try iter.next()) |header_name| {
                 if (header_name.length() == 0) continue;
 
                 const name_slice = header_name.toUTF8(bun.default_allocator);

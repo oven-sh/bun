@@ -26,10 +26,10 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
-
+const Loader = bun.options.Loader;
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
 /// getters on an exports object for ES6 export statements, and is both for
@@ -132,7 +132,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
-            store.debug_lock.assertUnlocked();
             log("reset", .{});
 
             if (Environment.isDebug) {
@@ -152,8 +151,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             comptime if (!supportsType(T)) {
                 @compileError("Store does not know about type: " ++ @typeName(T));
             };
-
-            store.debug_lock.assertUnlocked();
 
             if (store.current.tryAlloc(T)) |ptr|
                 return ptr;
@@ -324,10 +321,6 @@ pub const Binding = struct {
         value: B,
         loc: logger.Loc,
     };
-
-    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc });
-    }
 
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
         const ExprType = expr_type;
@@ -2857,6 +2850,89 @@ pub const Stmt = struct {
         loc: logger.Loc,
     };
 
+    pub fn print(self: *const Stmt, tree: Ast, writer: std.io.AnyWriter) !void {
+        _ = tree;
+        switch (self.data) {
+            .s_import => |simport| {
+                // const record = &tree.import_records.slice()[simport.import_record_index];
+                try writer.print(".s_import{{\n", .{});
+                try writer.print("    import_records[import_record_index = {d}] = ,\n", .{simport.import_record_index});
+                // simport.default_name
+                // simport.is_single_line
+                // simport.items
+                // simport.namespace_ref
+
+                // === record: ===
+                // range: logger.Range,
+                // path: fs.Path,
+                // kind: ImportKind,
+                // tag: Tag = .none,
+                // source_index: Index = Index.invalid,
+                // print_mode: PrintMode = .normal,
+                // handles_import_errors: bool = false,
+                // is_internal: bool = false,
+                // is_unused: bool = false,
+                // contains_import_star: bool = false,
+                // contains_default_alias: bool = false,
+                // contains_es_module_alias: bool = false,
+                // calls_runtime_re_export_fn: bool = false,
+                // is_inside_try_body: bool = false,
+                // was_originally_bare_import: bool = false,
+                // was_originally_require: bool = false,
+                // was_injected_by_macro: bool = false,
+                // is_external_without_side_effects: bool = false,
+                // print_namespace_in_path: bool = false,
+                // wrap_with_to_esm: bool = false,
+                // wrap_with_to_commonjs: bool = false,
+
+                try writer.print("    ", .{});
+                try writer.print("}}", .{});
+            },
+            .s_expr => |expr| {
+                try writer.print(".s_expr{{ .does_not_affect_tree_shaking = {}, .value = ", .{expr.does_not_affect_tree_shaking});
+                try expr.value.print(writer, 0);
+                try writer.print("}}", .{});
+            },
+            .s_local => |local| {
+                try writer.print(".s_local{{ .kind = .{s}, .is_export = {}, .was_ts_import_equals = {}, .was_commonjs_export = {}, .decls = .{{\n", .{ @tagName(local.kind), local.is_export, local.was_ts_import_equals, local.was_commonjs_export });
+                for (local.decls.slice()) |m| {
+                    try writer.print("    .{{\n        .binding = ", .{});
+                    switch (m.binding.data) {
+                        .b_array => |v| {
+                            try writer.print(".b_array{{ .has_spread = {}, .is_single_line = {}, .items = .{{", .{ v.has_spread, v.is_single_line });
+                            for (v.items, 0..) |item, i| {
+                                if (i != 0) try writer.print(", ", .{});
+                                try writer.print("(TODO)", .{});
+                                _ = item;
+                            }
+                            try writer.print("}}}}", .{});
+                        },
+                        .b_identifier => |v| {
+                            try writer.print(".b_identifier{{ .ref = {} }}", .{v.ref});
+                        },
+                        .b_object => {
+                            try writer.print(".b_object", .{});
+                        },
+                        .b_missing => {
+                            try writer.print(".b_missing", .{});
+                        },
+                    }
+                    try writer.print(",\n        .value = ", .{});
+                    if (m.value == null) {
+                        try writer.print("null", .{});
+                    } else {
+                        try m.value.?.print(writer, 2);
+                    }
+                    try writer.print(",\n    }},\n", .{});
+                }
+                try writer.print("}} }}", .{});
+            },
+            else => {
+                try writer.print(".{s}._todo_print_stmt", .{@tagName(self.data)});
+            },
+        }
+    }
+
     pub fn jsonStringify(self: *const Stmt, writer: anytype) !void {
         return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc });
     }
@@ -3044,7 +3120,7 @@ pub const Stmt = struct {
         return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         s_block,
         s_break,
         s_class,
@@ -3126,7 +3202,13 @@ pub const Stmt = struct {
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
 
-        s_lazy_export: Expr.Data,
+        s_lazy_export: *Expr.Data,
+
+        comptime {
+            if (@sizeOf(Stmt) > 24) {
+                @compileLog("Expected Stmt to be <= 24 bytes, but it is", @sizeOf(Stmt), " bytes");
+            }
+        }
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
@@ -3229,6 +3311,18 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub fn print(self: *const Expr, writer: std.io.AnyWriter, depth: u32) !void {
+        _ = depth;
+        switch (self.data) {
+            .e_string => |str| {
+                try writer.print("(string: \"{s}\")", .{bun.strings.formatEscapes(str.data, .{ .str_encoding = .utf8, .quote_char = '"' })});
+            },
+            else => {
+                try writer.print("(expr: {s})", .{@tagName(self.data)});
+            },
+        }
+    }
 
     pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
 
@@ -4564,7 +4658,7 @@ pub const Expr = struct {
         };
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         e_array,
         e_unary,
         e_binary,
@@ -6911,8 +7005,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    prepend_part: ?Part = null,
-
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
@@ -7008,7 +7100,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: ?[]const u8 = null,
+    url_for_css: []const u8 = "",
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7125,7 +7217,6 @@ pub const BundledAst = struct {
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = ast.symbols,
@@ -7173,12 +7264,12 @@ pub const BundledAst = struct {
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        css_enabled: bool,
+        experimental: Loader.Experimental,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (css_enabled) {
+        if (experimental.css) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
@@ -8124,7 +8215,7 @@ pub const Macro = struct {
 
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
-        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError;
+        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
         pub const Run = struct {
             caller: Expr,
@@ -8339,7 +8430,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var object_iter = JSC.JSPropertyIterator(.{
+                        var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
                         }).init(this.global, value);
@@ -8356,7 +8447,7 @@ pub const Macro = struct {
                         );
                         _entry.value_ptr.* = out;
 
-                        while (object_iter.next()) |prop| {
+                        while (try object_iter.next()) |prop| {
                             properties[object_iter.i] = G.Property{
                                 .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                 .value = try this.run(object_iter.value),

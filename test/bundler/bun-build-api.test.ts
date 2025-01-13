@@ -567,4 +567,78 @@ describe("Bun.build", () => {
 
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
+
+  test("you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints", async () => {
+    const fixture = tempDirWithFiles("build-html-plugins", {
+      "index.html": `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./style.css">
+            <script src="./script.js"></script>
+          </head>
+        </html>
+      `,
+      "style.css": ".foo { color: red; }",
+
+      // Check we actually do bundle the script
+      "script.js": "console.log(1 + 2)",
+    });
+
+    let onLoadCalled = false;
+    let onResolveCalled = false;
+
+    const build = await Bun.build({
+      entrypoints: [join(fixture, "index.html")],
+      html: true,
+      experimentalCss: true,
+      minify: {
+        syntax: true,
+      },
+      plugins: [
+        {
+          name: "test-plugin",
+          setup(build) {
+            build.onLoad({ filter: /\.html$/ }, async args => {
+              onLoadCalled = true;
+              const contents = await Bun.file(args.path).text();
+              return {
+                contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
+                loader: "html",
+              };
+            });
+
+            build.onResolve({ filter: /\.(js|css)$/ }, args => {
+              onResolveCalled = true;
+              return {
+                path: join(fixture, args.path),
+                namespace: "file",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(build.success).toBe(true);
+    expect(onLoadCalled).toBe(true);
+    expect(onResolveCalled).toBe(true);
+
+    // Should have 3 outputs - HTML, JS and CSS
+    expect(build.outputs).toHaveLength(3);
+
+    // Verify we have one of each type
+    const types = build.outputs.map(o => o.type);
+    expect(types).toContain("text/html;charset=utf-8");
+    expect(types).toContain("text/javascript;charset=utf-8");
+    expect(types).toContain("text/css;charset=utf-8");
+
+    // Verify the JS output contains the __dirname
+    const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
+    expect(await js?.text()).toContain("console.log(3)");
+
+    // Verify our plugin modified the HTML
+    const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
+    expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+  });
 });

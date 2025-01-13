@@ -19,7 +19,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.chunkSize" property must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 
@@ -39,7 +39,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "options.chunkSize" is out of range. It must ' +
-             'be >= 64. Received: 0'
+             'be >= 64. Received 0'
   }
 );
 
@@ -53,7 +53,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.windowBits" property must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 
@@ -94,7 +94,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.level" property must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 
@@ -135,7 +135,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "level" argument must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 
@@ -176,7 +176,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.memLevel" property must be of type number. ' +
-              'Received "test"'
+              'Received type string ("test")'
   }
 );
 
@@ -224,7 +224,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.strategy" property must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 
@@ -265,7 +265,7 @@ assert.throws(
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "strategy" argument must be of type number. ' +
-             'Received "test"'
+             'Received type string ("test")'
   }
 );
 

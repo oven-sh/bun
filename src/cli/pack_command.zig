@@ -510,8 +510,8 @@ pub const PackCommand = struct {
 
         const dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
             switch (err) {
-                // ignore node_modules if it isn't a directory
-                error.NotDir => return bundled_pack_queue,
+                // ignore node_modules if it isn't a directory, or doesn't exist
+                error.NotDir, error.FileNotFound => return bundled_pack_queue,
 
                 else => {
                     Output.err(err, "failed to open \"node_modules\" to pack bundled dependencies", .{});

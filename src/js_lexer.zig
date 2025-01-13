@@ -2143,7 +2143,7 @@ fn NewLexer_(
                         const flag_characters = "dgimsuvy";
                         const min_flag = comptime std.mem.min(u8, flag_characters);
                         const max_flag = comptime std.mem.max(u8, flag_characters);
-                        const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
+                        const RegexpFlags = bun.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
                         var flags = RegexpFlags.initEmpty();
                         while (isIdentifierContinue(lexer.code_point)) {
                             switch (lexer.code_point) {
@@ -3043,18 +3043,10 @@ pub const Lexer = NewLexer(.{});
 
 const JSIdentifier = @import("./js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
-    if (comptime Environment.isWasm) {
-        return JSIdentifier.JumpTable.isIdentifierStart(codepoint);
-    }
-
-    return JSIdentifier.Bitset.isIdentifierStart(codepoint);
+    return JSIdentifier.isIdentifierStart(codepoint);
 }
 pub inline fn isIdentifierContinue(codepoint: i32) bool {
-    if (comptime Environment.isWasm) {
-        return JSIdentifier.JumpTable.isIdentifierPart(codepoint);
-    }
-
-    return JSIdentifier.Bitset.isIdentifierPart(codepoint);
+    return JSIdentifier.isIdentifierPart(codepoint);
 }
 
 pub fn isWhitespace(codepoint: CodePoint) bool {

@@ -69,7 +69,7 @@ await Bun.build({
 
 ### Namespaces
 
-`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespaace?
+`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespace?
 
 Every module has a namespace. Namespaces are used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
 
@@ -239,7 +239,7 @@ One of the arguments passed to the `onLoad` callback is a `defer` function. This
 
 This allows you to delay execution of the `onLoad` callback until all other modules have been loaded.
 
-This is useful for returning contens of a module that depends on other modules.
+This is useful for returning contents of a module that depends on other modules.
 
 ##### Example: tracking and reporting unused exports
 

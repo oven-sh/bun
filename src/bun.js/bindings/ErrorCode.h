@@ -55,18 +55,12 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BROTLI_INVALID_PARAM);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BUFFER_TOO_LARGE);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_ZLIB_INITIALIZATION_FAILED);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR);
 
 enum Bound {
     LOWER,
@@ -83,13 +77,17 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, const WTF::String& msg, JSC::JSValue actual);
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name_val, const WTF::String& msg, JSC::JSValue actual);
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
+JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& encoding);
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView encoding);
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg);
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase = false);
 JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue port, bool allowZero);
+JSC::EncodedJSValue UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue msg);
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral msg);
 
 }
 

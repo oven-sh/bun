@@ -1,0 +1,45 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`should escape names 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "quote-in-dependency-name",
+    },
+    "packages/\\"": {
+      "name": "\\"",
+    },
+    "packages/pkg1": {
+      "name": "pkg1",
+      "dependencies": {
+        "\\"": "*",
+      },
+    },
+  },
+  "packages": {
+    "\\"": ["\\"@workspace:packages/\\"", {}],
+
+    "pkg1": ["pkg1@workspace:packages/pkg1", { "dependencies": { "\\"": "*" } }],
+  }
+}
+"
+`;
+
+exports[`should write plaintext lockfiles 1`] = `
+"{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "test-package",
+      "dependencies": {
+        "dummy-package": "file:./bar-0.0.2.tgz",
+      },
+    },
+  },
+  "packages": {
+    "dummy-package": ["bar@./bar-0.0.2.tgz", {}],
+  }
+}
+"
+`;

@@ -181,6 +181,18 @@ pub fn valid_glob_indices(glob: []const u8, indices: std.ArrayList(BraceIndex)) 
     }
 }
 
+pub const MatchResult = enum {
+    no_match,
+    match,
+
+    negate_no_match,
+    negate_match,
+
+    pub fn matches(this: MatchResult) bool {
+        return this == .match or this == .negate_match;
+    }
+};
+
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -208,7 +220,7 @@ pub fn valid_glob_indices(glob: []const u8, indices: std.ArrayList(BraceIndex)) 
 ///     Multiple "!" characters negate the pattern multiple times.
 /// "\"
 ///     Used to escape any of the special characters above.
-pub fn match(glob: []const u8, path: []const u8) bool {
+pub fn match(glob: []const u8, path: []const u8) MatchResult {
     // This algorithm is based on https://research.swtch.com/glob
     var state = State{};
     // Store the state when we see an opening '{' brace in a stack.
@@ -290,7 +302,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                         (glob[state.glob_index] == ',' or glob[state.glob_index] == '}'))
                     {
                         if (state.skipBraces(glob, false) == .Invalid)
-                            return false; // invalid pattern!
+                            return .no_match; // invalid pattern!
                     }
 
                     continue;
@@ -321,7 +333,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                     while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
                         var low = glob[state.glob_index];
                         if (!unescape(&low, glob, &state.glob_index))
-                            return false; // Invalid pattern
+                            return .no_match; // Invalid pattern
                         state.glob_index += 1;
 
                         // If there is a - and the following character is not ],
@@ -332,7 +344,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                             state.glob_index += 1;
                             var h = glob[state.glob_index];
                             if (!unescape(&h, glob, &state.glob_index))
-                                return false; // Invalid pattern!
+                                return .no_match; // Invalid pattern!
                             state.glob_index += 1;
                             break :blk h;
                         } else low;
@@ -342,7 +354,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                         first = false;
                     }
                     if (state.glob_index >= glob.len)
-                        return false; // Invalid pattern!
+                        return .no_match; // Invalid pattern!
                     state.glob_index += 1;
                     if (is_match != class_negated) {
                         state.path_index += 1;
@@ -351,7 +363,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                 },
                 '{' => if (state.path_index < path.len) {
                     if (brace_stack.len >= brace_stack.stack.len)
-                        return false; // Invalid pattern! Too many nested braces.
+                        return .no_match; // Invalid pattern! Too many nested braces.
 
                     // Push old state to the stack, and reset current state.
                     state = brace_stack.push(&state);
@@ -380,7 +392,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                     var cc = c;
                     // Match escaped characters as literals.
                     if (!unescape(&cc, glob, &state.glob_index))
-                        return false; // Invalid pattern;
+                        return .no_match; // Invalid pattern;
 
                     const is_match = if (cc == '/')
                         isSeparator(path[state.path_index])
@@ -416,7 +428,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
         if (brace_stack.len > 0) {
             // If in braces, find next option and reset path to index where we saw the '{'
             switch (state.skipBraces(glob, true)) {
-                .Invalid => return false,
+                .Invalid => return .no_match,
                 .Comma => {
                     state.path_index = brace_stack.last().path_index;
                     continue;
@@ -440,10 +452,10 @@ pub fn match(glob: []const u8, path: []const u8) bool {
             }
         }
 
-        return negated;
+        return if (negated) .negate_match else .no_match;
     }
 
-    return !negated;
+    return if (!negated) .match else .negate_no_match;
 }
 
 inline fn isSeparator(c: u8) bool {

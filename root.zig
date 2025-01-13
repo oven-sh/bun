@@ -10,4 +10,3 @@ pub const completions = struct {
 };
 
 pub const JavaScriptCore = @import("./src/jsc.zig");
-pub const C = @import("./src/c.zig");

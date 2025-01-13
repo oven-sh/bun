@@ -6473,7 +6473,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         data: []const u8,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, flags.ascii_only, flags.json, flags.str_encoding);
+            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
         }
     };
 }

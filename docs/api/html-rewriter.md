@@ -331,22 +331,6 @@ try {
 }
 ```
 
-## Performance
-
-Bun's HTMLRewriter is built on [lol-html](https://github.com/cloudflare/lol-html), a low-level HTML rewriting library written in Rust. This provides excellent performance characteristics:
-
-- Streaming processing of HTML content
-- Minimal memory overhead
-- No DOM construction unless necessary
-- Efficient CSS selector matching
-- Configurable parsing buffer sizes (defaults to max(input_size, 1024) bytes)
-
-The implementation uses efficient memory management and streaming techniques:
-
-- Content is processed in chunks
-- Backpressure is handled automatically
-- Memory is released as soon as possible
-- Large files are handled efficiently
-- Automatic handling of compressed content (gzip)
+## See also
 
 You can also read the [Cloudflare documentation](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/), which this API is intended to be compatible with.

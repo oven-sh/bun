@@ -97,7 +97,7 @@ $ bun update
 $ bun update @types/bun --latest
 
 # Update a dependency to a specific version
-$ bun update @types/bun@1.1.10
+$ bun update @types/bun@$BUN_LATEST_VERSION
 
 # Update all dependencies to the latest versions
 $ bun update --latest

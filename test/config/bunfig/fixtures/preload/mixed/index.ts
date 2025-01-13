@@ -1,2 +1,2 @@
 import assert from "node:assert";
-assert.strictEqual(globalThis.preload, ["mixed/preload-all.ts"]);
+assert.deepStrictEqual(globalThis.preload, ["mixed/preload-run.ts"]);

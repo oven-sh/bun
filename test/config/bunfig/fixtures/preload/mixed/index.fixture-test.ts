@@ -1,7 +1,5 @@
 it("the correct file was preloaded", () => {
-  expect(globalThis.preload).toBe([
-    // order is important b/c it shows what was loaded first
-    "mixed/preload-all.ts",
-    "mixed/preload-test.ts",
-  ]);
+  expect(globalThis.preload).toBeDefined();
+  expect(globalThis.preload).toBeArrayOfSize(1);
+  expect(globalThis.preload[0]).toEqual("mixed/preload-test.ts");
 });

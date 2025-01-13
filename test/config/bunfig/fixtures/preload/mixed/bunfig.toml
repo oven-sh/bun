@@ -1,1 +1,4 @@
-preload = "./preload.ts"
+preload = "./preload-run.ts"
+
+[test]
+preload = "./preload-test.ts"

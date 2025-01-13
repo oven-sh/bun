@@ -38,7 +38,10 @@ describe("Given a single universal preload", () => {
 
   it("When `bun run` is run from a different directory  but bunfig.toml is explicitly used, preloads are run", async () => {
     // `bun run index.ts`
-    const [out, err, code] = await run(join(dir, "index.ts"), { args: ["--config=bunfig.toml"], cwd: process.cwd() });
+    const [out, err, code] = await run(join(dir, "index.ts"), {
+      args: [`--config=${join(dir, "bunfig.toml")}`],
+      cwd: process.cwd(),
+    });
     expect(err).toEqual("");
     expect(out).toEqual("");
     expect(code).toBe(0);
@@ -55,10 +58,10 @@ describe("Given a bunfig.toml with both universal and test-only preloads", () =>
     expect(code).toBe(0);
   });
 
-  it("`bun test` loads both the universal and test-only preloads", async () => {
+  it("`bun test` only loads test-only preloads, clobbering the universal ones", async () => {
     const [out, err, code] = await run("./index.fixture-test.ts", { subcommand: "test", cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    // note: err has test report, out has "bun test <version>"
+
     expect(code).toBe(0);
   });
 }); // </given a bunfig.toml with both universal and test-only preloads>
@@ -78,7 +81,7 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     expect(out).toEqual("");
     expect(code).toBe(0);
   });
-});
+}); // </given a `bunfig.toml` with a list of preloads>
 
 describe("Given a `bunfig.toml` with a plugin preload", () => {
   const dir = fixturePath("plugin");
@@ -89,7 +92,7 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
     expect(out).toEqual("");
     expect(code).toBe(0);
   });
-});
+}); // </given a `bunfig.toml` with a plugin preload>
 
 describe("Given a `bunfit.toml` file with a relative path to a preload in a parent directory", () => {
   const dir = fixturePath("parent", "foo");
@@ -100,4 +103,4 @@ describe("Given a `bunfit.toml` file with a relative path to a preload in a pare
     expect(out).toEqual("");
     expect(code).toBe(0);
   });
-});
+}); // </given a `bunfit.toml` file with a relative path to a preload in a parent directory>

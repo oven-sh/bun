@@ -1046,7 +1046,9 @@ fn createLOLHTMLError(global: *JSGlobalObject) JSValue {
     }
 
     var err = createLOLHTMLStringError();
-    return err.toErrorInstance(global);
+    const value = err.toErrorInstance(global);
+    value.put(global, "name", ZigString.init("HTMLRewriterError").toJS(global));
+    return value;
 }
 fn createLOLHTMLStringError() bun.String {
     // We must clone this string.

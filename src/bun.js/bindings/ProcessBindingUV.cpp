@@ -228,9 +228,11 @@
 #if !defined(UNKNOWN)
 #define UNKNOWN 4094
 #endif
-#if !defined(EOF)
-#define EOF 4095
+// this is intentionally always overridden
+#if defined(EOF)
+#undef EOF
 #endif
+#define EOF 4095
 #if !defined(ENXIO)
 #define ENXIO 6
 #endif
@@ -387,7 +389,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         map->set(globalObject, JSC::jsNumber(value), arr);
     };
 
-#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, name, desc##_s);
+#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, -name, desc##_s);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

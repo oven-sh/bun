@@ -712,7 +712,7 @@ function loadOptions(o) {
   password ||= o.password || o.pass || env.PGPASSWORD || "";
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
-  max ||= o.max || 10;
+  max = o.max;
 
   idleTimeout ??= o.idleTimeout;
   idleTimeout ??= o.idle_timeout;
@@ -770,8 +770,8 @@ function loadOptions(o) {
 
   if (max != null) {
     max = Number(max);
-    if (max > 2 ** 31 || max < 0 || max !== max) {
-      throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer less than 2^31");
+    if (max > 2 ** 31 || max < 1 || max !== max) {
+      throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
     }
   }
 

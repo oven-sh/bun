@@ -204,17 +204,18 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 return null;
 
             comptime var i: usize = precomputed.min_len;
+            var shared_lowercased_buf: [precomputed.max_len]u8 = undefined;
+
             inline while (i <= precomputed.max_len) : (i += 1) {
                 if (length == i) {
-                    const lowerbuf: [i]u8 = brk: {
-                        var buf: [i]u8 = undefined;
-                        for (input, &buf) |c, *j| {
+                    const lowerbuf: *const [i]u8 = brk: {
+                        for (input, shared_lowercased_buf[0..i]) |c, *j| {
                             j.* = std.ascii.toLower(c);
                         }
-                        break :brk buf;
+                        break :brk shared_lowercased_buf[0..i];
                     };
 
-                    return getWithLengthAndEql(&lowerbuf, i, eql);
+                    return getWithLengthAndEql(lowerbuf, i, eql);
                 }
             }
 

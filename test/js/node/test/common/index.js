@@ -30,7 +30,7 @@ const net = require('net');
 // Do not require 'os' until needed so that test-os-checked-function can
 // monkey patch it. If 'os' is required here, that test will fail.
 const path = require('path');
-const { inspect } = require('util');
+const { inspect, getCallSites } = require('util');
 const { isMainThread } = require('worker_threads');
 const { isModuleNamespaceObject } = require('util/types');
 
@@ -147,6 +147,8 @@ const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
+const isRiscv64 = process.arch === 'riscv64';
+const isDebug = process.features.debug;
 const isPi = (() => {
   try {
     // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
@@ -283,7 +285,7 @@ function platformTimeout(ms) {
   const multipliers = typeof ms === 'bigint' ?
     { two: 2n, four: 4n, seven: 7n } : { two: 2, four: 4, seven: 7 };
 
-  if (process.features.debug)
+  if (isDebug)
     ms = multipliers.two * ms;
 
   if (exports.isAIX || exports.isIBMi)
@@ -291,6 +293,10 @@ function platformTimeout(ms) {
 
   if (isPi)
     return multipliers.two * ms;  // Raspberry Pi devices
+
+  if (isRiscv64) {
+    return multipliers.four * ms;
+  }
 
   return ms;
 }
@@ -974,6 +980,32 @@ function spawnPromisified(...args) {
   });
 }
 
+/**
+ * Escape values in a string template literal. On Windows, this function
+ * does not escape anything (which is fine for paths, as `"` is not a valid char
+ * in a path on Windows), so you should use it only to escape paths – or other
+ * values on tests which are skipped on Windows.
+ * This function is meant to be used for tagged template strings.
+ * @returns {[string, object | undefined]} An array that can be passed as
+ *                                         arguments to `exec` or `execSync`.
+ */
+function escapePOSIXShell(cmdParts, ...args) {
+  if (common.isWindows) {
+    // On Windows, paths cannot contain `"`, so we can return the string unchanged.
+    return [String.raw({ raw: cmdParts }, ...args)];
+  }
+  // On POSIX shells, we can pass values via the env, as there's a standard way for referencing a variable.
+  const env = { ...process.env };
+  let cmd = cmdParts[0];
+  for (let i = 0; i < args.length; i++) {
+    const envVarName = `ESCAPED_${i}`;
+    env[envVarName] = args[i];
+    cmd += '${' + envVarName + '}' + cmdParts[i + 1];
+  }
+
+  return [cmd, { env }];
+};
+
 function getPrintedStackTrace(stderr) {
   const lines = stderr.split('\n');
 
@@ -1037,6 +1069,7 @@ const common = {
   childShouldThrowAndAbort,
   createZeroFilledFile,
   defaultAutoSelectFamilyAttemptTimeout,
+  escapePOSIXShell,
   expectsError,
   expectRequiredModule,
   expectWarning,
@@ -1054,6 +1087,7 @@ const common = {
   invalidArgTypeHelper,
   isAlive,
   isASan,
+  isDebug,
   isDumbTerminal,
   isFreeBSD,
   isLinux,
@@ -1204,6 +1238,15 @@ const common = {
    */
   get checkoutEOL() {
     return fs.readFileSync(__filename).includes('\r\n') ? '\r\n' : '\n';
+  },
+
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
   },
 };
 

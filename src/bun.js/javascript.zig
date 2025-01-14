@@ -3962,14 +3962,14 @@ pub const VirtualMachine = struct {
                 const Iterator = JSC.JSPropertyIterator(.{
                     .include_value = true,
                     .skip_empty_name = true,
-                    .own_properties_only = true,
-                    .observable = false,
+                    .own_properties_only = false,
+                    .observable = true,
                     .only_non_index_properties = true,
                 });
                 var iterator = try Iterator.init(this.global, error_instance);
                 defer iterator.deinit();
                 const longest_name = @min(iterator.getLongestPropertyName(), 10);
-                var is_first_property = true;
+                var prop_count: usize = 0;
                 while ((try iterator.next()) orelse iterator.getCodeProperty()) |field| {
                     const value = iterator.value;
                     if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
@@ -4009,7 +4009,7 @@ pub const VirtualMachine = struct {
                         formatter.disable_inspect_custom = true;
 
                         const pad_left = longest_name -| field.length();
-                        is_first_property = false;
+                        prop_count += 1;
                         try writer.writeByteNTimes(' ', pad_left);
 
                         try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
@@ -4047,7 +4047,7 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                if (!is_first_property) {
+                if (prop_count == 0) {
                     try writer.writeAll("\n");
                 }
             } else {

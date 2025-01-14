@@ -2126,4 +2126,15 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+/// Like `std.path.isAbsolute`, but allows posix paths on Windows.
+pub fn isAbsoluteCrossPlatform(
+    path: []const u8,
+) bool {
+    const os = bun.Environment.os;
+    if (comptime os == .windows) {
+        return std.fs.path.isAbsoluteWindows(path) or std.fs.path.isAbsolutePosix(path);
+    }
+    return std.fs.path.isAbsolutePosix(path);
+}
+
 const assert = bun.assert;

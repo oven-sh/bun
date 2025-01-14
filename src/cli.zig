@@ -666,8 +666,6 @@ pub const Arguments = struct {
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-            const preloads = args.options("--preload");
-
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
                 if (args.flag("--no-clear-screen")) {
@@ -746,13 +744,12 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and preloads.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
-                all.appendSliceAssumeCapacity(ctx.preloads);
-                all.appendSliceAssumeCapacity(preloads);
-                ctx.preloads = all.items;
-            } else if (preloads.len > 0) {
-                ctx.preloads = preloads;
+            const preloads: []const string = args.options("--preload");
+            if (preloads.len > 0) {
+                try ctx.preloads.ensureUnusedCapacity(ctx.allocator, preloads.len);
+                for (preloads) |preload| {
+                    ctx.preloads.appendAssumeCapacity(Command.Preload.fromCwd(preload));
+                }
             }
 
             if (args.option("--print")) |script| {
@@ -1530,7 +1527,7 @@ pub const Command = struct {
 
         filters: []const []const u8 = &.{},
 
-        preloads: []const string = &.{},
+        preloads: std.ArrayListUnmanaged(Preload) = .{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
@@ -1601,6 +1598,57 @@ pub const Command = struct {
         }
     };
     pub const Context = *ContextData;
+
+    /// Preloads are files or plugins that should be run before the main script.
+    /// Used by run, test, and build.
+    ///
+    /// Preloads have the semantics to `import(target)` from a JS/TS file in
+    /// `root_dir`. TODO: allow relative paths that do not have a leading `./`.
+    pub const Preload = struct {
+        /// Directory to resolve preload files from. `null` means the CWD (
+        /// **NOT** the project root). May also be `null` when `target` is an
+        /// absolute path.
+        root_dir: ?string,
+        /// The filepath/package being preloaded. May be relative. Think of t
+        target: string,
+
+        pub fn absolute(target: string) Preload {
+            if (comptime Environment.isDebug) {
+                bun.assertWithLocation(
+                    // allow posix paths on windows
+                    std.fs.path.isAbsolute(target) or (Environment.isWindows and std.fs.path.isAbsolutePosix(target)),
+                    @src(),
+                );
+            }
+
+            return .{ .root_dir = null, .target = target };
+        }
+
+        /// `--preload <target>`
+        pub fn fromCwd(target: string) Preload {
+            return .{ .root_dir = null, .target = target };
+        }
+        /// Create a Preload relative to a known directory.
+        pub fn fromDir(root_dir: string, target: string) Preload {
+            return .{ .root_dir = root_dir, .target = target };
+        }
+
+        /// A preload that may be relative to some file declaring it.
+        /// `from_file` is a path to a file. It may be relative or absolute.
+        pub fn relativeTo(from_file: string, target: string) Preload {
+            // Its safe to assume that file extensions are less than 16 characters.
+            // This lets us halt our search early, saving time on long paths.
+            const section_to_search = if (from_file.len > 16) from_file[from_file.len - 16 ..] else from_file;
+            // in case they pass us a file with no extension or, accidentally, a directory.
+            // NOTE: lastIndexOfScalar uses SIMD on available targets.
+            const dirname = if (std.mem.lastIndexOfScalar(u8, section_to_search, '.')) |dot|
+                section_to_search[0..dot]
+            else
+                section_to_search;
+
+            return .{ .root_dir = dirname, .target = target };
+        }
+    };
 
     // std.process.args allocates!
     const ArgsIterator = struct {
@@ -2263,7 +2311,7 @@ pub const Command = struct {
                             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                         }
 
-                        if (ctx.preloads.len > 0)
+                        if (ctx.preloads.items.len > 0)
                             break :brk options.Loader.js;
                     }
 

@@ -1354,7 +1354,7 @@ pub const RunCommand = struct {
                                 try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                             }
 
-                            if (ctx.preloads.len == 0)
+                            if (ctx.preloads.items.len == 0)
                                 break :possibly_open_with_bun_js;
                         }
 

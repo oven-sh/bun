@@ -1039,8 +1039,10 @@ function SQL(o) {
       pool.release(pooledConnection);
       return Promise.resolve(undefined);
     };
+    // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
     reserved_sql[Symbol.asyncDispose] = () => reserved_sql.release();
-    reserved_sql.then = reserved_sql.connect;
+    reserved_sql[Symbol.dispose] = () => reserved_sql.release();
+
     reserved_sql.options = sql.options;
     resolve(reserved_sql);
   }
@@ -1097,7 +1099,6 @@ function SQL(o) {
       state.closed = true;
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
-    transaction_sql.then = transaction_sql.connect;
     transaction_sql.options = sql.options;
 
     transaction_sql.savepoint = async (fn: TransactionCallback, name?: string) => {
@@ -1262,11 +1263,6 @@ function SQL(o) {
 
   sql.flush = () => pool.flush();
   sql.options = connectionInfo;
-
-  sql.then = () => {
-    // should this wait queries to finish or just return if is connected?
-    return sql.connect();
-  };
 
   return sql;
 }

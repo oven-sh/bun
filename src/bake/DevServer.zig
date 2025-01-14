@@ -13,7 +13,7 @@ pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
-    root: []const u8,
+    root: [:0]const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
@@ -4446,7 +4446,7 @@ pub const EntryPointList = struct {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Mutex = std.Thread.Mutex;
+const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
@@ -4485,5 +4485,5 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
-const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Chunk = bun.bundle_v2.Chunk;

@@ -26,6 +26,7 @@ class GlobalObject;
 #pragma clang diagnostic ignored "-Wunused-function"
 
 extern "C" size_t Bun__stringSyntheticAllocationLimit;
+extern "C" const char* Bun__errnoName(int);
 
 namespace Zig {
 

@@ -1631,7 +1631,7 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,

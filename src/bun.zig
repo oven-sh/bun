@@ -16,23 +16,23 @@ pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").c_allocator;
+    @import("./allocators/memory_allocator.zig").c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").z_allocator;
+    @import("./allocators/memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").huge_allocator;
+    @import("./allocators/memory_allocator.zig").huge_allocator;
 
 pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").auto_allocator;
+    @import("./allocators/memory_allocator.zig").auto_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
@@ -556,7 +556,7 @@ pub const StringBuilder = @import("./string_builder.zig");
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
-    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
 };
 
 /// hash a string
@@ -887,7 +887,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
@@ -1399,10 +1399,10 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 pub const getcwd = std.posix.getcwd;
 
-pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
-    return allocator.dupe(u8, temp_slice);
+    return allocator.dupeZ(u8, temp_slice);
 }
 
 /// Get the absolute path to a file descriptor.
@@ -1607,12 +1607,13 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
 pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
+/// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
         []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
@@ -1963,7 +1964,8 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @import("./lock.zig").Lock;
+pub const Lock = @compileError("Use bun.Mutex instead");
+pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2044,7 +2046,7 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     };
 }
 
-pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;
+pub const MaxHeapAllocator = @import("./allocators/max_heap_allocator.zig").MaxHeapAllocator;
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
@@ -3439,7 +3441,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock: Lock = .{};
+        var lock: Mutex = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -4075,7 +4077,7 @@ pub fn Once(comptime f: anytype) type {
 
         done: bool = false,
         payload: Return = undefined,
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the

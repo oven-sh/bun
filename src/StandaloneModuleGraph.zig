@@ -168,7 +168,7 @@ pub const StandaloneModuleGraph = struct {
         none,
 
         /// It probably is not possible to run two decoding jobs on the same file
-        var init_lock: bun.Lock = .{};
+        var init_lock: bun.Mutex = .{};
 
         pub fn load(this: *LazySourceMap) ?*SourceMap.ParsedSourceMap {
             init_lock.lock();

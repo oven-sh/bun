@@ -289,8 +289,9 @@ class PooledConnection {
     const onFinish = this.onFinish;
     if (onFinish) {
       onFinish(err);
-      return;
     }
+
+    this.pool.release(this);
   }
   constructor(connectionInfo, pool: ConnectionPool) {
     //TODO: maxLifetime, idleTimeout, connectionTimeout
@@ -360,18 +361,7 @@ class ConnectionPool {
   closed: boolean = false;
   constructor(connectionInfo) {
     this.connectionInfo = connectionInfo;
-
-    let max = connectionInfo.max;
-    if (max && typeof max !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("max", "number", max);
-    } else {
-      max = 10; // same default as postgres.js
-    }
-    if (max < 1) {
-      throw $ERR_INVALID_ARG_VALUE("max", max, "must be greater than 0");
-    }
-
-    this.connections = new Array(max);
+    this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
   }
 
@@ -659,7 +649,8 @@ function loadOptions(o) {
     connectionTimeout,
     maxLifetime,
     onconnect,
-    onclose;
+    onclose,
+    max;
   const env = Bun.env;
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -721,6 +712,7 @@ function loadOptions(o) {
   password ||= o.password || o.pass || env.PGPASSWORD || "";
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
+  max ||= o.max || 10;
 
   idleTimeout ??= o.idleTimeout;
   idleTimeout ??= o.idle_timeout;
@@ -776,6 +768,13 @@ function loadOptions(o) {
     }
   }
 
+  if (max != null) {
+    max = Number(max);
+    if (max > 2 ** 31 || max < 0 || max !== max) {
+      throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer less than 2^31");
+    }
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = {
@@ -815,6 +814,8 @@ function loadOptions(o) {
   if (onclose !== undefined) {
     ret.onclose = onclose;
   }
+  ret.max = max || 10;
+
   return ret;
 }
 

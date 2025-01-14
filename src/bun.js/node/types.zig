@@ -1568,10 +1568,10 @@ pub const FileSystemFlags = enum(Mode) {
 };
 
 /// Stats and BigIntStats classes from node:fs
-pub fn StatType(comptime Big: bool) type {
-    const Int = if (Big) i64 else i32;
-    const Float = if (Big) i64 else f64;
-    const Timestamp = if (Big) u64 else u0;
+pub fn StatType(comptime big: bool) type {
+    const Int = if (big) i64 else i32;
+    const Float = if (big) i64 else f64;
+    const Timestamp = if (big) u64 else u0;
 
     const Date = packed struct {
         value: Float,
@@ -1583,7 +1583,7 @@ pub fn StatType(comptime Big: bool) type {
     };
 
     return extern struct {
-        pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
+        pub usingnamespace if (big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
         pub usingnamespace bun.New(@This());
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
@@ -1624,12 +1624,21 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         fn toTimeMS(ts: StatTimespec) Float {
-            if (Big) {
-                const tv_sec: i64 = @intCast(ts.tv_sec);
-                const tv_nsec: i64 = @intCast(ts.tv_nsec);
-                return @as(i64, @intCast(tv_sec * std.time.ms_per_s)) + @as(i64, @intCast(@divTrunc(tv_nsec, std.time.ns_per_ms)));
+            // On windows, Node.js purposefully mis-interprets time values
+            // > On win32, time is stored in uint64_t and starts from 1601-01-01.
+            // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
+            // > which causes Y2038 overflow. On the other platforms it is safe to treat
+            // > negative values as pre-epoch time.
+            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_sec)) else ts.tv_sec;
+            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_nsec)) else ts.tv_nsec;
+            if (big) {
+                const sec: i64 = @intCast(tv_sec);
+                const nsec: i64 = @intCast(tv_nsec);
+                return @as(i64, @intCast(sec * std.time.ms_per_s)) +
+                    @as(i64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
             } else {
-                return (@as(f64, @floatFromInt(@max(ts.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ts.tv_nsec, 0))))) / std.time.ns_per_ms);
+                return (@as(f64, @floatFromInt(tv_sec)) * std.time.ms_per_s) +
+                    (@as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms);
             }
         }
 
@@ -1640,7 +1649,7 @@ pub fn StatType(comptime Big: bool) type {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     const Type = @TypeOf(value);
-                    if (comptime Big and @typeInfo(Type) == .Int) {
+                    if (comptime big and @typeInfo(Type) == .Int) {
                         if (Type == u64) {
                             return JSC.JSValue.fromUInt64NoTruncate(globalObject, value);
                         }
@@ -1782,19 +1791,19 @@ pub fn StatType(comptime Big: bool) type {
                 .atime_ms = toTimeMS(aTime),
                 .mtime_ms = toTimeMS(mTime),
                 .ctime_ms = toTimeMS(cTime),
-                .atime_ns = if (Big) toNanoseconds(aTime) else 0,
-                .mtime_ns = if (Big) toNanoseconds(mTime) else 0,
-                .ctime_ns = if (Big) toNanoseconds(cTime) else 0,
+                .atime_ns = if (big) toNanoseconds(aTime) else 0,
+                .mtime_ns = if (big) toNanoseconds(mTime) else 0,
+                .ctime_ns = if (big) toNanoseconds(cTime) else 0,
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
                 .birthtime_ms = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime()),
-                .birthtime_ns = if (Big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0,
+                .birthtime_ns = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0,
             };
         }
 
         pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*This {
-            if (Big) {
+            if (big) {
                 return globalObject.throwInvalidArguments("BigIntStats is not a constructor", .{});
             }
 

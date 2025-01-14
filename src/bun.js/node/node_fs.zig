@@ -1604,7 +1604,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            return Lutimes{ .path = path, .atime = atime, .mtime = mtime };
+            return .{ .path = path, .atime = atime, .mtime = mtime };
         }
     };
 

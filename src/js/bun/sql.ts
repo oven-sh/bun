@@ -365,6 +365,20 @@ class ConnectionPool {
 
   release(connection: PooledConnection) {
     if (this.waitingQueue.length > 0) {
+      if (connection.storedError) {
+        // this connection got a error but maybe we can wait for another
+
+        if (this.hasConnectionsAvailable()) {
+          return;
+        }
+
+        // we have no connections available so lets fails
+        let pending;
+        while ((pending = this.waitingQueue.shift())) {
+          pending(connection.storedError, connection);
+        }
+        return;
+      }
       // we have some pending connections, lets connect them with the released connection
       const pending = this.waitingQueue.shift();
       pending?.(connection.storedError, connection);
@@ -378,12 +392,28 @@ class ConnectionPool {
     }
   }
 
+  hasConnectionsAvailable() {
+    if (this.readyConnections.size > 0) return true;
+    if (this.poolStarted) {
+      const pollSize = this.connections.length;
+      for (let i = 0; i < pollSize; i++) {
+        const connection = this.connections[i];
+        if (connection.state !== "closed") {
+          // some connection is connecting or connected
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   isConnected() {
     if (this.readyConnections.size > 0) {
       return true;
     }
     if (this.poolStarted) {
-      for (let i = 0; i < this.connections.length; i++) {
+      const pollSize = this.connections.length;
+      for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         if (connection.state === "connected") {
           return true;
@@ -397,8 +427,8 @@ class ConnectionPool {
       return;
     }
     if (this.poolStarted) {
-      this.poolStarted = false;
-      for (let i = 0; i < this.connections.length; i++) {
+      const pollSize = this.connections.length;
+      for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         if (connection.state === "connected") {
           connection.connection.flush();
@@ -418,7 +448,8 @@ class ConnectionPool {
     const promises: Array<Promise<any>> = [];
     if (this.poolStarted) {
       this.poolStarted = false;
-      for (let i = 0; i < this.connections.length; i++) {
+      const pollSize = this.connections.length;
+      for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         switch (connection.state) {
           case "pending":

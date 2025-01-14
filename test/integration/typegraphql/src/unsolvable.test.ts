@@ -13,8 +13,8 @@ class M {
   myval2: Demo;
 }
 test("basic metadata works", () => {
-  expect(Reflect.getMetadata("design:type", M, "myval")).toBe(Number);
+  expect(Reflect.getMetadata("design:type", M.prototype, "myval")).toBe(Number);
 });
 test.todo("bun can't support complex metadata", () => {
-  expect(Reflect.getMetadata("design:type", M, "myval2")).toBe(Number);
+  expect(Reflect.getMetadata("design:type", M.prototype, "myval2")).toBe(Number);
 });

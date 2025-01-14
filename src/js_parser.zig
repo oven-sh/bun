@@ -21060,47 +21060,70 @@ fn NewParser_(
                             var array = prop.ts_decorators.listManaged(p.allocator);
 
                             if (p.options.features.emit_decorator_metadata) {
-                                {
-                                    // design:type
-                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                    args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
-                                    args[1] = p.serializeMetadata(prop.ts_metadata) catch unreachable;
-                                    array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
-                                }
-                                {
-                                    // design:paramtypes and design:returntype if method
-                                    if (prop.flags.contains(.is_method)) {
+                                switch (prop.kind) {
+                                    .normal, .abstract => {
+                                        {
+                                            // design:type
+                                            var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                            args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                            args[1] = p.serializeMetadata(prop.ts_metadata) catch unreachable;
+                                            array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                        }
+                                        // design:paramtypes and design:returntype if method
+                                        if (prop.flags.contains(.is_method)) {
+                                            if (prop.value) |prop_value| {
+                                                {
+                                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                    args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+
+                                                    const method_args = prop_value.data.e_function.func.args;
+
+                                                    if (method_args.len > 0) {
+                                                        var args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
+
+                                                        for (method_args, 0..) |method_arg, i| {
+                                                            args_array[i] = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
+                                                        }
+
+                                                        args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                    } else {
+                                                        args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                                    }
+
+                                                    array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                                }
+                                                {
+                                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                    args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
+                                                    args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
+                                                    array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    .get => if (prop.flags.contains(.is_method)) {
+                                        // typescript sets design:type to the return value & design:paramtypes to [].
                                         if (prop.value) |prop_value| {
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
-
-                                                const method_args = prop_value.data.e_function.func.args;
-
-                                                if (method_args.len > 0) {
-                                                    var args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
-
-                                                    for (method_args, 0..) |method_arg, i| {
-                                                        args_array[i] = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
-                                                    }
-
-                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
-                                                } else {
-                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
-                                                }
-
+                                                args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                                args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
-
-                                                args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
-
+                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                         }
-                                    }
+                                    },
+                                    .set => {
+                                        // typescript sets design:type to the arg type & design:paramtypes to [arg type]. a set overwrites the values for the get for the same property name.
+                                        // we instead ignore set so it doesn't with a get of the same name
+                                    },
+                                    .spread, .declare => {}, // not allowed in a class
+                                    .class_static_block => {}, // not allowed to decorate this
                                 }
                             }
 

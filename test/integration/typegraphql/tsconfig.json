@@ -4,6 +4,5 @@
     "module": "ESNext",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
-  },
-  "files": ["src/**/*.ts"]
+  }
 }

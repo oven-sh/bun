@@ -10,256 +10,256 @@
 // clang-format off
 
 #if !defined(E2BIG)
-#define E2BIG -7
+#define E2BIG 7
 #endif
 #if !defined(EACCES)
-#define EACCES -13
+#define EACCES 13
 #endif
 #if !defined(EADDRINUSE)
-#define EADDRINUSE -48
+#define EADDRINUSE 48
 #endif
 #if !defined(EADDRNOTAVAIL)
-#define EADDRNOTAVAIL -49
+#define EADDRNOTAVAIL 49
 #endif
 #if !defined(EAFNOSUPPORT)
-#define EAFNOSUPPORT -47
+#define EAFNOSUPPORT 47
 #endif
 #if !defined(EAGAIN)
-#define EAGAIN -35
+#define EAGAIN 35
 #endif
 #if !defined(EAI_ADDRFAMILY)
-#define EAI_ADDRFAMILY -3000
+#define EAI_ADDRFAMILY 3000
 #endif
 #if !defined(EAI_AGAIN)
-#define EAI_AGAIN -3001
+#define EAI_AGAIN 3001
 #endif
 #if !defined(EAI_BADFLAGS)
-#define EAI_BADFLAGS -3002
+#define EAI_BADFLAGS 3002
 #endif
 #if !defined(EAI_BADHINTS)
-#define EAI_BADHINTS -3013
+#define EAI_BADHINTS 3013
 #endif
 #if !defined(EAI_CANCELED)
-#define EAI_CANCELED -3003
+#define EAI_CANCELED 3003
 #endif
 #if !defined(EAI_FAIL)
-#define EAI_FAIL -3004
+#define EAI_FAIL 3004
 #endif
 #if !defined(EAI_FAMILY)
-#define EAI_FAMILY -3005
+#define EAI_FAMILY 3005
 #endif
 #if !defined(EAI_MEMORY)
-#define EAI_MEMORY -3006
+#define EAI_MEMORY 3006
 #endif
 #if !defined(EAI_NODATA)
-#define EAI_NODATA -3007
+#define EAI_NODATA 3007
 #endif
 #if !defined(EAI_NONAME)
-#define EAI_NONAME -3008
+#define EAI_NONAME 3008
 #endif
 #if !defined(EAI_OVERFLOW)
-#define EAI_OVERFLOW -3009
+#define EAI_OVERFLOW 3009
 #endif
 #if !defined(EAI_PROTOCOL)
-#define EAI_PROTOCOL -3014
+#define EAI_PROTOCOL 3014
 #endif
 #if !defined(EAI_SERVICE)
-#define EAI_SERVICE -3010
+#define EAI_SERVICE 3010
 #endif
 #if !defined(EAI_SOCKTYPE)
-#define EAI_SOCKTYPE -3011
+#define EAI_SOCKTYPE 3011
 #endif
 #if !defined(EALREADY)
-#define EALREADY -37
+#define EALREADY 37
 #endif
 #if !defined(EBADF)
-#define EBADF -9
+#define EBADF 9
 #endif
 #if !defined(EBUSY)
-#define EBUSY -16
+#define EBUSY 16
 #endif
 #if !defined(ECANCELED)
-#define ECANCELED -89
+#define ECANCELED 89
 #endif
 #if !defined(ECHARSET)
-#define ECHARSET -4080
+#define ECHARSET 4080
 #endif
 #if !defined(ECONNABORTED)
-#define ECONNABORTED -53
+#define ECONNABORTED 53
 #endif
 #if !defined(ECONNREFUSED)
-#define ECONNREFUSED -61
+#define ECONNREFUSED 61
 #endif
 #if !defined(ECONNRESET)
-#define ECONNRESET -54
+#define ECONNRESET 54
 #endif
 #if !defined(EDESTADDRREQ)
-#define EDESTADDRREQ -39
+#define EDESTADDRREQ 39
 #endif
 #if !defined(EEXIST)
-#define EEXIST -17
+#define EEXIST 17
 #endif
 #if !defined(EFAULT)
-#define EFAULT -14
+#define EFAULT 14
 #endif
 #if !defined(EFBIG)
-#define EFBIG -27
+#define EFBIG 27
 #endif
 #if !defined(EHOSTUNREACH)
-#define EHOSTUNREACH -65
+#define EHOSTUNREACH 65
 #endif
 #if !defined(EINTR)
-#define EINTR -4
+#define EINTR 4
 #endif
 #if !defined(EINVAL)
-#define EINVAL -22
+#define EINVAL 22
 #endif
 #if !defined(EIO)
-#define EIO -5
+#define EIO 5
 #endif
 #if !defined(EISCONN)
-#define EISCONN -56
+#define EISCONN 56
 #endif
 #if !defined(EISDIR)
-#define EISDIR -21
+#define EISDIR 21
 #endif
 #if !defined(ELOOP)
-#define ELOOP -62
+#define ELOOP 62
 #endif
 #if !defined(EMFILE)
-#define EMFILE -24
+#define EMFILE 24
 #endif
 #if !defined(EMSGSIZE)
-#define EMSGSIZE -40
+#define EMSGSIZE 40
 #endif
 #if !defined(ENAMETOOLONG)
-#define ENAMETOOLONG -63
+#define ENAMETOOLONG 63
 #endif
 #if !defined(ENETDOWN)
-#define ENETDOWN -50
+#define ENETDOWN 50
 #endif
 #if !defined(ENETUNREACH)
-#define ENETUNREACH -51
+#define ENETUNREACH 51
 #endif
 #if !defined(ENFILE)
-#define ENFILE -23
+#define ENFILE 23
 #endif
 #if !defined(ENOBUFS)
-#define ENOBUFS -55
+#define ENOBUFS 55
 #endif
 #if !defined(ENODEV)
-#define ENODEV -19
+#define ENODEV 19
 #endif
 #if !defined(ENOENT)
-#define ENOENT -2
+#define ENOENT 2
 #endif
 #if !defined(ENOMEM)
-#define ENOMEM -12
+#define ENOMEM 12
 #endif
 #if !defined(ENONET)
-#define ENONET -4056
+#define ENONET 4056
 #endif
 #if !defined(ENOPROTOOPT)
-#define ENOPROTOOPT -42
+#define ENOPROTOOPT 42
 #endif
 #if !defined(ENOSPC)
-#define ENOSPC -28
+#define ENOSPC 28
 #endif
 #if !defined(ENOSYS)
-#define ENOSYS -78
+#define ENOSYS 78
 #endif
 #if !defined(ENOTCONN)
-#define ENOTCONN -57
+#define ENOTCONN 57
 #endif
 #if !defined(ENOTDIR)
-#define ENOTDIR -20
+#define ENOTDIR 20
 #endif
 #if !defined(ENOTEMPTY)
-#define ENOTEMPTY -66
+#define ENOTEMPTY 66
 #endif
 #if !defined(ENOTSOCK)
-#define ENOTSOCK -38
+#define ENOTSOCK 38
 #endif
 #if !defined(ENOTSUP)
-#define ENOTSUP -45
+#define ENOTSUP 45
 #endif
 #if !defined(EOVERFLOW)
-#define EOVERFLOW -84
+#define EOVERFLOW 84
 #endif
 #if !defined(EPERM)
-#define EPERM -1
+#define EPERM 1
 #endif
 #if !defined(EPIPE)
-#define EPIPE -32
+#define EPIPE 32
 #endif
 #if !defined(EPROTO)
-#define EPROTO -100
+#define EPROTO 100
 #endif
 #if !defined(EPROTONOSUPPORT)
-#define EPROTONOSUPPORT -43
+#define EPROTONOSUPPORT 43
 #endif
 #if !defined(EPROTOTYPE)
-#define EPROTOTYPE -41
+#define EPROTOTYPE 41
 #endif
 #if !defined(ERANGE)
-#define ERANGE -34
+#define ERANGE 34
 #endif
 #if !defined(EROFS)
-#define EROFS -30
+#define EROFS 30
 #endif
 #if !defined(ESHUTDOWN)
-#define ESHUTDOWN -58
+#define ESHUTDOWN 58
 #endif
 #if !defined(ESPIPE)
-#define ESPIPE -29
+#define ESPIPE 29
 #endif
 #if !defined(ESRCH)
-#define ESRCH -3
+#define ESRCH 3
 #endif
 #if !defined(ETIMEDOUT)
-#define ETIMEDOUT -60
+#define ETIMEDOUT 60
 #endif
 #if !defined(ETXTBSY)
-#define ETXTBSY -26
+#define ETXTBSY 26
 #endif
 #if !defined(EXDEV)
-#define EXDEV -18
+#define EXDEV 18
 #endif
 #if !defined(UNKNOWN)
-#define UNKNOWN -4094
+#define UNKNOWN 4094
 #endif
 #if !defined(EOF)
-#define EOF -4095
+#define EOF 4095
 #endif
 #if !defined(ENXIO)
-#define ENXIO -6
+#define ENXIO 6
 #endif
 #if !defined(EMLINK)
-#define EMLINK -31
+#define EMLINK 31
 #endif
 #if !defined(EHOSTDOWN)
-#define EHOSTDOWN -64
+#define EHOSTDOWN 64
 #endif
 #if !defined(EREMOTEIO)
-#define EREMOTEIO -4030
+#define EREMOTEIO 4030
 #endif
 #if !defined(ENOTTY)
-#define ENOTTY -25
+#define ENOTTY 25
 #endif
 #if !defined(EFTYPE)
-#define EFTYPE -79
+#define EFTYPE 79
 #endif
 #if !defined(EILSEQ)
-#define EILSEQ -92
+#define EILSEQ 92
 #endif
 #if !defined(ESOCKTNOSUPPORT)
-#define ESOCKTNOSUPPORT -44
+#define ESOCKTNOSUPPORT 44
 #endif
 #if !defined(ENODATA)
-#define ENODATA -96
+#define ENODATA 96
 #endif
 #if !defined(EUNATCH)
-#define EUNATCH -4023
+#define EUNATCH 4023
 #endif
 
 #define BUN_UV_ERRNO_MAP(macro) \
@@ -410,11 +410,11 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // Before: 96305608
     // After:  95973832
     const auto putNamedProperty = [](JSC::VM& vm, JSObject* bindingObject, const ASCIILiteral name, int value) -> void {
-        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, name)), JSC::jsNumber(value));
+        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::jsNumber(value));
     };
 
 #define PUT_PROPERTY(name, desc) \
-    putNamedProperty(vm, bindingObject, #name##_s, name);
+    putNamedProperty(vm, bindingObject, "UV_" #name##_s, -name);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

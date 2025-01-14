@@ -266,11 +266,11 @@ var access = function access(path, mode, callback) {
 
     fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
-  lchmod = function lchmod(path, mode, callback) {
+  lchmod = constants.O_SYMLINK !== undefined ? function lchmod(path, mode, callback) {
     ensureCallback(callback);
 
     fs.lchmod(path, mode).then(nullcallback(callback), callback);
-  },
+  } : undefined, // lchmod is only available on macOS
   lchown = function lchown(path, uid, gid, callback) {
     ensureCallback(callback);
 
@@ -520,7 +520,7 @@ var access = function access(path, mode, callback) {
   fsyncSync = fs.fsyncSync.bind(fs),
   ftruncateSync = fs.ftruncateSync.bind(fs),
   futimesSync = fs.futimesSync.bind(fs),
-  lchmodSync = fs.lchmodSync.bind(fs),
+  lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
   lchownSync = fs.lchownSync.bind(fs),
   linkSync = fs.linkSync.bind(fs),
   lstatSync = fs.lstatSync.bind(fs),
@@ -1594,8 +1594,8 @@ setName(ftruncate, "ftruncate");
 setName(ftruncateSync, "ftruncateSync");
 setName(futimes, "futimes");
 setName(futimesSync, "futimesSync");
-setName(lchmod, "lchmod");
-setName(lchmodSync, "lchmodSync");
+if (lchmod) setName(lchmod, "lchmod");
+if (lchmodSync) setName(lchmodSync, "lchmodSync");
 setName(lchown, "lchown");
 setName(lchownSync, "lchownSync");
 setName(link, "link");

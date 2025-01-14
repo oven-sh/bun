@@ -1301,7 +1301,7 @@ pub const Arguments = struct {
     pub const Truncate = struct {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         path: PathOrFileDescriptor,
-        len: JSC.WebCore.Blob.SizeType = 0,
+        len: JSC.WebCore.Blob.SizeType,
         flags: i32 = 0,
 
         pub fn deinit(this: @This()) void {
@@ -1463,8 +1463,6 @@ pub const Arguments = struct {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
-
-            arguments.eat();
 
             const len: JSC.WebCore.Blob.SizeType = brk: {
                 const len_value = arguments.next() orelse break :brk 0;
@@ -3660,12 +3658,8 @@ pub const NodeFS = struct {
             Maybe(Return.Fsync).success;
     }
 
-    pub fn ftruncateSync(args: Arguments.FTruncate) Maybe(Return.Ftruncate) {
-        return Syscall.ftruncate(args.fd, args.len orelse 0);
-    }
-
     pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, _: Flavor) Maybe(Return.Ftruncate) {
-        return ftruncateSync(args);
+        return Syscall.ftruncate(args.fd, args.len orelse 0);
     }
 
     pub fn futimes(_: *NodeFS, args: Arguments.Futimes, _: Flavor) Maybe(Return.Futimes) {
@@ -3700,7 +3694,6 @@ pub const NodeFS = struct {
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
-
         return Maybe(Return.Lchmod).errnoSysP(C.lchmod(path, args.mode), .lchmod, path) orelse
             Maybe(Return.Lchmod).success;
     }
@@ -5164,7 +5157,7 @@ pub const NodeFS = struct {
             if (Environment.isWindows) {
                 _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             } else {
-                _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
+                _ = Syscall.ftruncate(fd, @intCast(@as(u63, @truncate(written))));
             }
         }
 
@@ -5549,7 +5542,7 @@ pub const NodeFS = struct {
 
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, _: Flavor) Maybe(Return.Truncate) {
         return switch (args.path) {
-            .fd => |fd| this.ftruncate(Arguments.FTruncate{ .fd = fd, .len = args.len }, .sync),
+            .fd => |fd| Syscall.ftruncate(fd, args.len),
             .path => this.truncateInner(
                 args.path.path,
                 args.len,

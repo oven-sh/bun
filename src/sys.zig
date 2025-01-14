@@ -130,6 +130,8 @@ pub const O = switch (Environment.os) {
             pub const TMPFILE = 0o20040000;
             pub const NDELAY = NONBLOCK;
 
+            pub const SYMLINK = bun.C.translated.O_SYMLINK;
+
             pub const toPacked = toPackedO;
         },
     },
@@ -468,7 +470,7 @@ pub const Error = struct {
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
-            .errno = @as(c_int, this.errno) * -1,
+            .errno = -%@as(c_int, this.errno),
             .syscall = bun.String.static(@tagName(this.syscall)),
         };
 

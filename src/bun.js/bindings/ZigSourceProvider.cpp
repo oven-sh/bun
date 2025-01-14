@@ -163,10 +163,10 @@ static JSC::VM& getVMForBytecodeCache()
     static thread_local JSC::VM* vmForBytecodeCache = nullptr;
     if (!vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
-        auto& vm = JSC::VM::create(heapSize).leakRef();
-        vm.ref();
-        vmForBytecodeCache = &vm;
-        vm.heap.acquireAccess();
+        auto vmPtr = JSC::VM::tryCreate(heapSize);
+        vmPtr->refSuppressingSaferCPPChecking();
+        vmForBytecodeCache = vmPtr.get();
+        vmPtr->heap.acquireAccess();
     }
     return *vmForBytecodeCache;
 }

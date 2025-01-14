@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { spawn, stderr } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
@@ -450,7 +450,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -530,7 +530,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {

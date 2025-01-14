@@ -26,7 +26,7 @@ pub const PrinterOptions = struct {
     /// An optional project root path, used to generate relative paths for sources used in CSS module hashes.
     project_root: ?[]const u8 = null,
     /// Targets to output the CSS for.
-    targets: Targets = .{},
+    targets: Targets,
     /// Whether to analyze dependencies (i.e. `@import` and `url()`).
     /// If true, the dependencies are returned as part of the
     /// [ToCssResult](super::stylesheet::ToCssResult).
@@ -39,6 +39,23 @@ pub const PrinterOptions = struct {
     /// from JavaScript. Useful for polyfills, for example.
     pseudo_classes: ?PseudoClasses = null,
     public_path: []const u8 = "",
+
+    pub fn default() PrinterOptions {
+        return .{
+            .targets = Targets{
+                .browsers = null,
+            },
+        };
+    }
+
+    pub fn defaultWithMinify(minify: bool) PrinterOptions {
+        return .{
+            .targets = Targets{
+                .browsers = null,
+            },
+            .minify = minify,
+        };
+    }
 };
 
 /// A mapping of user action pseudo classes to replace with class names.

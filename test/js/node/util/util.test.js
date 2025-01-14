@@ -341,7 +341,13 @@ describe("util", () => {
   });
 
   it("styleText", () => {
-    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}, []].forEach(invalidOption => {
+    it("multiplecolors", () => {
+      expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+      expect(util.styleText("bold"), "test").toBe("\u001b[1mtest\u001b[22m");
+      expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+    });
+
+    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}].forEach(invalidOption => {
       assert.throws(
         () => {
           util.styleText(invalidOption, "test");

@@ -1,14 +1,15 @@
 /**
  * @note this file patches `node:test` via the require cache.
  */
-import {AnyFunction} from "bun";
-import {hideFromStackTrace} from "harness";
+import { AnyFunction } from "bun";
+import os from "node:os";
+import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
 type DoneCb = (err?: Error) => any;
 function noop() {}
 export function createTest(path: string) {
-  const {expect, test, it, describe, beforeAll, afterAll, beforeEach, afterEach, mock} = Bun.jest(path);
+  const { expect, test, it, describe, beforeAll, afterAll, beforeEach, afterEach, mock } = Bun.jest(path);
 
   hideFromStackTrace(expect);
 
@@ -204,11 +205,11 @@ export function createTest(path: string) {
     let completed = 0;
     const globalTimer = globalTimeout
       ? (timers.push(
-        setTimeout(() => {
-          console.log("Global Timeout");
-          done(new Error("Timed out!"));
-        }, globalTimeout),
-      ),
+          setTimeout(() => {
+            console.log("Global Timeout");
+            done(new Error("Timed out!"));
+          }, globalTimeout),
+        ),
         timers[timers.length - 1])
       : undefined;
     function createDoneCb(timeout?: number) {
@@ -216,11 +217,11 @@ export function createTest(path: string) {
       const timer =
         timeout !== undefined
           ? (timers.push(
-            setTimeout(() => {
-              console.log("Timeout");
-              done(new Error("Timed out!"));
-            }, timeout),
-          ),
+              setTimeout(() => {
+                console.log("Timeout");
+                done(new Error("Timed out!"));
+              }, timeout),
+            ),
             timers[timers.length - 1])
           : timeout;
       return (result?: Error) => {
@@ -266,9 +267,9 @@ declare namespace Bun {
   function jest(path: string): typeof import("bun:test");
 }
 
-if (Bun.main.includes("node/test/parallel")) {
+const normalized = os.platform() === "win32" ? Bun.main.replaceAll("\\", "/") : Bun.main;
+if (normalized.includes("node/test/parallel")) {
   function createMockNodeTestModule() {
-
     interface TestError extends Error {
       testStack: string[];
     }
@@ -279,8 +280,8 @@ if (Bun.main.includes("node/test/parallel")) {
       successes: number;
       addFailure(err: unknown): TestError;
       recordSuccess(): void;
-    }
-    const contexts: Record</* requiring file */ string, Context> = {}
+    };
+    const contexts: Record</* requiring file */ string, Context> = {};
 
     // @ts-ignore
     let activeSuite: Context = undefined;
@@ -305,13 +306,13 @@ if (Bun.main.includes("node/test/parallel")) {
           const fullname = this.testStack.join(" > ");
           console.log("✅ Test passed:", fullname);
           this.successes++;
-        }
-      }
+        },
+      };
     }
 
     function getContext() {
-      const key: string = Bun.main;// module.parent?.filename ?? require.main?.filename ?? __filename;
-      return activeSuite = (contexts[key] ??= createContext(key));
+      const key: string = Bun.main; // module.parent?.filename ?? require.main?.filename ?? __filename;
+      return (activeSuite = contexts[key] ??= createContext(key));
     }
 
     async function test(label: string | Function, fn?: Function | undefined) {
@@ -333,7 +334,7 @@ if (Bun.main.includes("node/test/parallel")) {
     }
 
     function describe(labelOrFn: string | Function, maybeFn?: Function) {
-      const [label, fn] = (typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn]);
+      const [label, fn] = typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn];
       if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
 
       getContext().testStack.push(label);
@@ -341,7 +342,7 @@ if (Bun.main.includes("node/test/parallel")) {
         fn();
       } catch (e) {
         getContext().addFailure(e);
-        throw e
+        throw e;
       } finally {
         getContext().testStack.pop();
       }
@@ -352,14 +353,12 @@ if (Bun.main.includes("node/test/parallel")) {
       if (failures > 0) {
         throw new Error(`${failures} tests failed.`);
       }
-
     }
 
     return {
       test,
       describe,
-    }
-
+    };
   }
 
   require.cache["node:test"] ??= {

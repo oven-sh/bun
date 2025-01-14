@@ -31,6 +31,10 @@
 #include "config.h"
 #include "PerformanceEntry.h"
 
+#include "PerformanceMark.h"
+#include "PerformanceMeasure.h"
+#include "PerformanceResourceTiming.h"
+
 // #include "DeprecatedGlobalSettings.h"
 
 namespace WebCore {
@@ -45,6 +49,28 @@ PerformanceEntry::PerformanceEntry(const String& name, double startTime, double 
 }
 
 PerformanceEntry::~PerformanceEntry() = default;
+
+size_t PerformanceEntry::memoryCost() const
+{
+    size_t baseCost = this->m_name.sizeInBytes();
+    switch (performanceEntryType()) {
+    case Type::Mark: {
+        const PerformanceMark* mark = static_cast<const PerformanceMark*>(this);
+        return mark->memoryCost() + baseCost;
+    }
+    case Type::Measure: {
+        const PerformanceMeasure* measure = static_cast<const PerformanceMeasure*>(this);
+        return measure->memoryCost() + baseCost;
+    }
+    case Type::Resource: {
+        const PerformanceResourceTiming* resource = static_cast<const PerformanceResourceTiming*>(this);
+        return resource->memoryCost() + baseCost;
+    }
+    default: {
+        return sizeof(PerformanceEntry) + baseCost;
+    }
+    }
+}
 
 std::optional<PerformanceEntry::Type> PerformanceEntry::parseEntryTypeString(const String& entryType)
 {

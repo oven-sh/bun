@@ -238,6 +238,17 @@ By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1
 exact = false
 ```
 
+### `install.saveTextLockfile`
+
+Generate `bun.lock`, a human-readable text-based lockfile. Once generated, Bun will use this file instead of `bun.lockb`, choosing it over the binary lockfile if both are present.
+
+Default `false`. In Bun v1.2.0 the default lockfile format will change to `bun.lock`.
+
+```toml
+[install]
+saveTextLockfile = true
+```
+
 <!--
 ### `install.prefer`
 

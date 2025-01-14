@@ -17,7 +17,24 @@ comptime {
 pub const FallbackModule = struct {
     path: Fs.Path,
     package_json: *const PackageJSON,
-    code: string,
+    code: *const fn () string,
+
+    // This workaround exists to allow bun.runtimeEmbedFile to work.
+    // Using `@embedFile` forces you to wait for the Zig build to finish in
+    // debug builds, even when you only changed JS builtins.
+    fn createSourceCodeGetter(comptime code_path: string) *const fn () string {
+        const Getter = struct {
+            fn get() string {
+                if (bun.Environment.codegen_embed) {
+                    return @embedFile(code_path);
+                }
+
+                return bun.runtimeEmbedFile(.codegen_eager, code_path);
+            }
+        };
+
+        return Getter.get;
+    }
 
     pub fn init(comptime name: string) FallbackModule {
         @setEvalBranchQuota(99999);
@@ -35,7 +52,7 @@ pub const FallbackModule = struct {
                 .source = logger.Source.initPathString(import_path ++ name ++ "/package.json", ""),
                 .side_effects = .false,
             },
-            .code = @embedFile(code_path),
+            .code = createSourceCodeGetter(code_path),
         };
     }
 };
@@ -74,7 +91,7 @@ pub fn contentsFromPath(path: string) ?string {
     module_name = module_name[0 .. std.mem.indexOfScalar(u8, module_name, '/') orelse module_name.len];
 
     if (Map.get(module_name)) |mod| {
-        return mod.code;
+        return mod.code();
     }
 
     return null;

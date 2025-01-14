@@ -28,6 +28,7 @@ export const enum Loader {
   dataurl = 12,
   text = 13,
   sqlite = 14,
+  html = 15,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -58,6 +59,8 @@ export const LoaderKeys: {
   text: "text";
   14: "sqlite";
   sqlite: "sqlite";
+  15: "html";
+  "html": "html";
 };
 export const enum FrameworkEntryPointType {
   client = 1,

@@ -8,6 +8,28 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
+// Windows doesn't have memmem, so we need to implement it
+pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]const u8, needlelen: usize) ?[*]const u8 {
+    // Handle null pointers
+    if (haystack == null or needle == null) return null;
+
+    // Handle empty needle case
+    if (needlelen == 0) return haystack;
+
+    // Handle case where needle is longer than haystack
+    if (needlelen > haystacklen) return null;
+
+    const hay = haystack.?[0..haystacklen];
+    const nee = needle.?[0..needlelen];
+
+    const i = std.mem.indexOf(u8, hay, nee) orelse return null;
+    return hay.ptr + i;
+}
+
+comptime {
+    @export(memmem, .{ .name = "zig_memmem" });
+}
+
 pub const lstat = blk: {
     const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
     break :blk @extern(T, .{ .name = "lstat64" });

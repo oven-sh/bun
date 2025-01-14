@@ -1209,12 +1209,15 @@ describe("fetch() with streaming", () => {
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
             if (compression === "br") {
-              expect((err as Error).name).toBe("BrotliDecompressionError");
+              expect((err as Error).name).toBe("Error");
+              expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
               // Since the compressed data is different, the error ends up different.
-              expect((err as Error).name).toBe("ShortRead");
+              expect((err as Error).name).toBe("Error");
+              expect((err as Error).code).toBe("ShortRead");
             } else {
-              expect((err as Error).name).toBe("ZlibError");
+              expect((err as Error).name).toBe("Error");
+              expect((err as Error).code).toBe("ZlibError");
             }
           }
         }
@@ -1306,7 +1309,8 @@ describe("fetch() with streaming", () => {
           gcTick(false);
           expect(buffer.toString("utf8")).toBe("unreachable");
         } catch (err) {
-          expect((err as Error).name).toBe("ConnectionClosed");
+          expect((err as Error).name).toBe("Error");
+          expect((err as Error).code).toBe("ConnectionClosed");
         }
       }
     });

@@ -16,7 +16,7 @@ const ast = @import("../import_record.zig");
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = bun.bundler.ServeBundler;
+const Transpiler = bun.transpiler.ServeBundler;
 const js_printer = bun.js_printer;
 
 pub const DefaultBunDefines = struct {

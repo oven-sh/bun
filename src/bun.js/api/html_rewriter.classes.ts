@@ -81,6 +81,13 @@ export default [
         getter: "publicId",
         cache: true,
       },
+      remove: {
+        fn: "remove",
+        length: 0,
+      },
+      removed: {
+        getter: "removed",
+      },
     },
   }),
   define({

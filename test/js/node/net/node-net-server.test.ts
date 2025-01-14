@@ -285,7 +285,8 @@ describe("net.createServer listen", () => {
 
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
-        expect(err!.name).toBe("ECONNREFUSED");
+        expect(err!.name).toBe("Error");
+        expect(err!.code).toBe("ECONNREFUSED");
 
         server.close();
         done();

@@ -571,9 +571,10 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
-            WTF::String encodingString = jsEncoding.toWTFString(lexicalGlobalObject);
+            auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
-            return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, encodingString);
+            const auto& view = encodingString->view(lexicalGlobalObject);
+            return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
         }
     }
     JSValue thisValue = callFrame->newTarget();

@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -18,6 +18,10 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
+const S3 = bun.S3;
+const S3HttpSimpleTask = S3.S3HttpSimpleTask;
+const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -407,6 +411,8 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    S3HttpSimpleTask,
+    S3HttpDownloadStreamingTask,
     PosixSignalTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
@@ -556,7 +562,7 @@ pub const GarbageCollectionController = struct {
         }
 
         var gc_timer_interval: i32 = 1000;
-        if (vm.bundler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+        if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
@@ -565,7 +571,7 @@ pub const GarbageCollectionController = struct {
         }
         this.gc_timer_interval = gc_timer_interval;
 
-        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+        this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
         if (!this.disabled)
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
@@ -787,11 +793,12 @@ pub const EventLoop = struct {
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
-            const vm = JSC.VirtualMachine.getMainThreadVM();
-            const this = vm.eventLoop();
-            if (this.signal_handler == null) {
-                this.signal_handler = PosixSignalHandle.new(.{});
-                @memset(&this.signal_handler.?.signals, 0);
+            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+                const this = vm.eventLoop();
+                if (this.signal_handler == null) {
+                    this.signal_handler = PosixSignalHandle.new(.{});
+                    @memset(&this.signal_handler.?.signals, 0);
+                }
             }
         }
     }
@@ -1005,6 +1012,15 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
                 },
+                .S3HttpSimpleTask => {
+                    var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
+                },
+                .S3HttpDownloadStreamingTask => {
+                    var s3_task: *S3HttpDownloadStreamingTask = task.get(S3HttpDownloadStreamingTask).?;
+                    s3_task.onResponse();
+                },
+
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                     globWalkTask.*.runFromJS();
@@ -2050,6 +2066,13 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
+    pub fn iterationNumber(this: *const AnyEventLoop) u64 {
+        return switch (this.*) {
+            .js => this.js.usocketsLoop().iterationNumber(),
+            .mini => this.mini.loop.iterationNumber(),
+        };
+    }
+
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }
@@ -2265,7 +2288,7 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
         };
     }
@@ -2279,14 +2302,14 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .js => this.js.virtual_machine.transpiler.fs.top_level_dir,
             .mini => this.mini.top_level_dir,
         };
     }
 
     pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env,
+            .js => this.js.virtual_machine.transpiler.env,
             .mini => this.mini.env.?,
         };
     }
@@ -2356,7 +2379,7 @@ pub const PosixSignalHandle = struct {
         // Publish the new tail (Release so that the consumer sees the updated tail).
         this.tail.store(old_tail +% 1, .release);
 
-        JSC.VirtualMachine.getMainThreadVM().eventLoop().wakeup();
+        JSC.VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
 
         return true;
     }
@@ -2364,7 +2387,7 @@ pub const PosixSignalHandle = struct {
     /// This is the signal handler entry point. Calls enqueue on the ring buffer.
     /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
     export fn Bun__onPosixSignal(number: i32) void {
-        const vm = JSC.VirtualMachine.getMainThreadVM();
+        const vm = JSC.VirtualMachine.getMainThreadVM().?;
         _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
     }
 

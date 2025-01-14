@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows, isMusl, isBroken, nodeExe } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { join, basename } from "path";
@@ -38,7 +38,7 @@ const directories = {
 };
 
 async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promise<void> {
-  await fs.cp(srcDir, tmpDir, { recursive: true });
+  await fs.cp(srcDir, tmpDir, { recursive: true, force: true });
   const install = spawn({
     cmd: [bunExe(), "install", "--ignore-scripts"],
     cwd: tmpDir,
@@ -47,9 +47,9 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
     stdout: "inherit",
     stderr: "inherit",
   });
-  await install.exited;
-  if (install.exitCode != 0) {
-    throw new Error("build failed");
+  const exitCode = await install.exited;
+  if (exitCode !== 0) {
+    throw new Error(`install failed: ${exitCode}`);
   }
 }
 
@@ -63,20 +63,24 @@ async function build(
     cmd:
       runtime == Runtime.bun
         ? [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"]
-        : ["npx", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
+        : [bunExe(), "x", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
     stdout: "pipe",
     stderr: "pipe",
   });
-  await build.exited;
-  const out = await new Response(build.stdout).text();
-  const err = await new Response(build.stderr).text();
-  if (build.exitCode != 0) {
+  const [exitCode, out, err] = await Promise.all([
+    build.exited,
+    new Response(build.stdout).text(),
+    new Response(build.stderr).text(),
+  ]);
+  if (exitCode !== 0) {
     console.error(err);
-    throw new Error("build failed");
+    console.log(out);
+    throw new Error(`build failed: ${exitCode}`);
   }
+
   return {
     out,
     err,
@@ -84,171 +88,185 @@ async function build(
   };
 }
 
-beforeAll(async () => {
-  // set up clean directories for our 4 builds
-  directories.bunRelease = tmpdirSync();
-  directories.bunDebug = tmpdirSync();
-  directories.node = tmpdirSync();
-  directories.badModules = tmpdirSync();
+describe.todoIf(isBroken && isMusl)("node:v8", () => {
+  beforeAll(async () => {
+    // set up clean directories for our 4 builds
+    directories.bunRelease = tmpdirSync();
+    directories.bunDebug = tmpdirSync();
+    directories.node = tmpdirSync();
+    directories.badModules = tmpdirSync();
 
-  await install(srcDir, directories.bunRelease, Runtime.bun);
-  await install(srcDir, directories.bunDebug, Runtime.bun);
-  await install(srcDir, directories.node, Runtime.node);
-  await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
+    await install(srcDir, directories.bunRelease, Runtime.bun);
+    await install(srcDir, directories.bunDebug, Runtime.bun);
+    await install(srcDir, directories.node, Runtime.node);
+    await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-  const results = await Promise.all([
-    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-    build(srcDir, directories.node, Runtime.node, BuildMode.release),
-    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-  ]);
-  for (const r of results) {
-    console.log(r.description, "stdout:");
-    console.log(r.out);
-    console.log(r.description, "stderr:");
-    console.log(r.err);
-  }
-});
+    const results = await Promise.all([
+      build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+      build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+      build(srcDir, directories.node, Runtime.node, BuildMode.release),
+      build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+    ]);
+    for (const r of results) {
+      console.log(r.description, "stdout:");
+      console.log(r.out);
+      console.log(r.description, "stderr:");
+      console.log(r.err);
+    }
+  });
 
-describe("module lifecycle", () => {
-  it("can call a basic native function", () => {
-    checkSameOutput("test_v8_native_call", []);
+  describe("module lifecycle", () => {
+    it("can call a basic native function", async () => {
+      await checkSameOutput("test_v8_native_call", []);
+    });
   });
-});
 
-describe("primitives", () => {
-  it("can create and distinguish between null, undefined, true, and false", () => {
-    checkSameOutput("test_v8_primitives", []);
+  describe("primitives", () => {
+    it("can create and distinguish between null, undefined, true, and false", async () => {
+      await checkSameOutput("test_v8_primitives", []);
+    });
   });
-});
 
-describe("Number", () => {
-  it("can create small integer", () => {
-    checkSameOutput("test_v8_number_int", []);
+  describe("Number", () => {
+    it("can create small integer", async () => {
+      await checkSameOutput("test_v8_number_int", []);
+    });
+    // non-i32 v8::Number is not implemented yet
+    it("can create large integer", async () => {
+      await checkSameOutput("test_v8_number_large_int", []);
+    });
+    it("can create fraction", async () => {
+      await checkSameOutput("test_v8_number_fraction", []);
+    });
   });
-  // non-i32 v8::Number is not implemented yet
-  it("can create large integer", () => {
-    checkSameOutput("test_v8_number_large_int", []);
-  });
-  it("can create fraction", () => {
-    checkSameOutput("test_v8_number_fraction", []);
-  });
-});
 
-describe("String", () => {
-  it("can create and read back strings with only ASCII characters", () => {
-    checkSameOutput("test_v8_string_ascii", []);
+  describe("String", () => {
+    it("can create and read back strings with only ASCII characters", async () => {
+      await checkSameOutput("test_v8_string_ascii", []);
+    });
+    // non-ASCII strings are not implemented yet
+    it("can create and read back strings with UTF-8 characters", async () => {
+      await checkSameOutput("test_v8_string_utf8", []);
+    });
+    it("handles replacement correctly in strings with invalid UTF-8 sequences", async () => {
+      await checkSameOutput("test_v8_string_invalid_utf8", []);
+    });
+    it("can create strings from null-terminated Latin-1 data", async () => {
+      await checkSameOutput("test_v8_string_latin1", []);
+    });
+    describe("WriteUtf8", () => {
+      it("truncates the string correctly", async () => {
+        await checkSameOutput("test_v8_string_write_utf8", []);
+      });
+    });
   });
-  // non-ASCII strings are not implemented yet
-  it("can create and read back strings with UTF-8 characters", () => {
-    checkSameOutput("test_v8_string_utf8", []);
+
+  describe("External", () => {
+    it("can create an external and read back the correct value", async () => {
+      await checkSameOutput("test_v8_external", []);
+    });
   });
-  it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
-    checkSameOutput("test_v8_string_invalid_utf8", []);
+
+  describe("Object", () => {
+    it("can create an object and set properties", async () => {
+      await checkSameOutput("test_v8_object", []);
+    });
   });
-  it("can create strings from null-terminated Latin-1 data", () => {
-    checkSameOutput("test_v8_string_latin1", []);
+  describe("Array", () => {
+    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
+    it.skip("can create an array from a C array of Locals", async () => {
+      await checkSameOutput("test_v8_array_new", []);
+    });
   });
-  describe("WriteUtf8", () => {
-    it("truncates the string correctly", () => {
-      checkSameOutput("test_v8_string_write_utf8", []);
+
+  describe("ObjectTemplate", () => {
+    it("creates objects with internal fields", async () => {
+      await checkSameOutput("test_v8_object_template", []);
+    });
+  });
+
+  describe("FunctionTemplate", () => {
+    it("keeps the data parameter alive", async () => {
+      await checkSameOutput("test_v8_function_template", []);
+    });
+  });
+
+  describe("Function", () => {
+    it("correctly receives all its arguments from JS", async () => {
+      await checkSameOutput("print_values_from_js", [5.0, true, null, false, "async meow", {}]);
+      await checkSameOutput("print_native_function", []);
+    });
+
+    it("correctly receives the this value from JS", async () => {
+      await checkSameOutput("call_function_with_weird_this_values", []);
+    });
+  });
+
+  describe("error handling", () => {
+    it("throws an error for modules built using the wrong ABI version", () => {
+      expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
+        "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
+      );
+    });
+
+    it("throws an error for modules with no entrypoint", () => {
+      expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
+        "The module 'no_entrypoint' has no declared entry point.",
+      );
+    });
+  });
+
+  describe("Global", () => {
+    it("can create, modify, and read the value from global handles", async () => {
+      await checkSameOutput("test_v8_global", []);
+    });
+  });
+
+  describe("HandleScope", () => {
+    it("can hold a lot of locals", async () => {
+      await checkSameOutput("test_many_v8_locals", []);
+    });
+    it("keeps GC objects alive", async () => {
+      await checkSameOutput("test_handle_scope_gc", []);
+    }, 10000);
+  });
+
+  describe("EscapableHandleScope", () => {
+    it("keeps handles alive in the outer scope", async () => {
+      await checkSameOutput("test_v8_escapable_handle_scope", []);
+    });
+  });
+
+  describe("uv_os_getpid", () => {
+    it.skipIf(isWindows)("returns the same result as getpid on POSIX", async () => {
+      await checkSameOutput("test_uv_os_getpid", []);
+    });
+  });
+
+  describe("uv_os_getppid", () => {
+    it.skipIf(isWindows)("returns the same result as getppid on POSIX", async () => {
+      await checkSameOutput("test_uv_os_getppid", []);
     });
   });
 });
 
-describe("External", () => {
-  it("can create an external and read back the correct value", () => {
-    checkSameOutput("test_v8_external", []);
-  });
-});
-
-describe("Object", () => {
-  it("can create an object and set properties", () => {
-    checkSameOutput("test_v8_object", []);
-  });
-});
-describe("Array", () => {
-  // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-  it.skip("can create an array from a C array of Locals", () => {
-    checkSameOutput("test_v8_array_new", []);
-  });
-});
-
-describe("ObjectTemplate", () => {
-  it("creates objects with internal fields", () => {
-    checkSameOutput("test_v8_object_template", []);
-  });
-});
-
-describe("FunctionTemplate", () => {
-  it("keeps the data parameter alive", () => {
-    checkSameOutput("test_v8_function_template", []);
-  });
-});
-
-describe("Function", () => {
-  it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
-    checkSameOutput("print_native_function", []);
-  });
-
-  it("correctly receives the this value from JS", () => {
-    checkSameOutput("call_function_with_weird_this_values", []);
-  });
-});
-
-describe("error handling", () => {
-  it("throws an error for modules built using the wrong ABI version", () => {
-    expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
-      "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
-    );
-  });
-
-  it("throws an error for modules with no entrypoint", () => {
-    expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
-      "The module 'no_entrypoint' has no declared entry point.",
-    );
-  });
-});
-
-describe("Global", () => {
-  it("can create, modify, and read the value from global handles", () => {
-    checkSameOutput("test_v8_global", []);
-  });
-});
-
-describe("HandleScope", () => {
-  it("can hold a lot of locals", () => {
-    checkSameOutput("test_many_v8_locals", []);
-  });
-  it("keeps GC objects alive", () => {
-    checkSameOutput("test_handle_scope_gc", []);
-  }, 10000);
-});
-
-describe("EscapableHandleScope", () => {
-  it("keeps handles alive in the outer scope", () => {
-    checkSameOutput("test_v8_escapable_handle_scope", []);
-  });
-});
-
-describe("uv_os_getpid", () => {
-  it.skipIf(isWindows)("returns the same result as getpid on POSIX", () => {
-    checkSameOutput("test_uv_os_getpid", []);
-  });
-});
-
-describe("uv_os_getppid", () => {
-  it.skipIf(isWindows)("returns the same result as getppid on POSIX", () => {
-    checkSameOutput("test_uv_os_getppid", []);
-  });
-});
-
-function checkSameOutput(testName: string, args: any[], thisValue?: any) {
-  const nodeResult = runOn(Runtime.node, BuildMode.release, testName, args, thisValue).trim();
-  let bunReleaseResult = runOn(Runtime.bun, BuildMode.release, testName, args, thisValue);
-  let bunDebugResult = runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue);
-
+async function checkSameOutput(testName: string, args: any[], thisValue?: any) {
+  const [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution] = await Promise.allSettled([
+    runOn(Runtime.node, BuildMode.release, testName, args, thisValue),
+    runOn(Runtime.bun, BuildMode.release, testName, args, thisValue),
+    runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue),
+  ]);
+  const errors = [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution]
+    .filter(r => r.status === "rejected")
+    .map(r => r.reason);
+  if (errors.length > 0) {
+    throw new AggregateError(errors);
+  }
+  let [nodeResult, bunReleaseResult, bunDebugResult] = [
+    nodeResultResolution,
+    bunReleaseResultResolution,
+    bunDebugResultResolution,
+  ].map(r => (r as any).value);
   // remove all debug logs
   bunReleaseResult = bunReleaseResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   bunDebugResult = bunDebugResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
@@ -260,7 +278,7 @@ function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   return nodeResult;
 }
 
-function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
+async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -270,7 +288,7 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
       : buildMode == BuildMode.debug
         ? directories.bunDebug
         : directories.bunRelease;
-  const exe = runtime == Runtime.node ? "node" : bunExe();
+  const exe = runtime == Runtime.node ? (nodeExe() ?? "node") : bunExe();
 
   const cmd = [
     exe,
@@ -284,16 +302,21 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
     cmd.push("debug");
   }
 
-  const exec = spawnSync({
+  const proc = spawn({
     cmd,
     cwd: baseDir,
     env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
   });
-  const errs = exec.stderr.toString();
+  const [exitCode, out, err] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
   const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
-  if (errs !== "") {
-    throw new Error(`${crashMsg}: ${errs}`);
+  if (exitCode !== 0) {
+    throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
   }
-  expect(exec.success, crashMsg).toBeTrue();
-  return exec.stdout.toString();
+  expect(exitCode, crashMsg).toBe(0);
+  return out.trim();
 }

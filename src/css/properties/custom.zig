@@ -1433,6 +1433,10 @@ pub const UnparsedProperty = struct {
     pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A CSS custom property, representing any unknown property.

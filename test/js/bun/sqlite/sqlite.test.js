@@ -1242,27 +1242,33 @@ it("should dispose", () => {
 
 it("can continue to use existing statements after database has been GC'd", async () => {
   let called = false;
-  const registry = new FinalizationRegistry(() => {
-    called = true;
-  });
-  function leakTheStatement() {
-    const db = new Database(":memory:");
-    console.log("---");
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-    db.exec("INSERT INTO foo (name) VALUES ('foo')");
-    const prepared = db.prepare("SELECT * FROM foo");
-    registry.register(db);
-    return prepared;
+  async function run() {
+    const registry = new FinalizationRegistry(() => {
+      called = true;
+    });
+    function leakTheStatement() {
+      const db = new Database(":memory:");
+      console.log("---");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      const prepared = db.prepare("SELECT * FROM foo");
+      registry.register(db);
+      return prepared;
+    }
+
+    const stmt = leakTheStatement();
+
+    Bun.gc(true);
+    await Bun.sleep(1);
+    Bun.gc(true);
+    expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
+    stmt.finalize();
+    expect(() => stmt.all()).toThrow();
   }
-
-  const stmt = leakTheStatement();
-
+  await run();
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);
-  expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
-  stmt.finalize();
-  expect(() => stmt.all()).toThrow();
   if (!isWindows) {
     // on Windows, FinalizationRegistry is more flaky than on POSIX.
     expect(called).toBe(true);

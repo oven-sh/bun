@@ -533,7 +533,7 @@ describe("inline snapshots", () => {
                 (\r
                   ${v("", bad, '`"12"`')})\r
                     ;
-          expect("13").toMatchInlineSnapshot(${v("", bad, '`"13"`')}); expect("14").toMatchInlineSnapshot(${v("", bad, '`"14"`')}); expect("15").toMatchInlineSnapshot(${v("", bad, '`"15"`')}); 
+          expect("13").toMatchInlineSnapshot(${v("", bad, '`"13"`')}); expect("14").toMatchInlineSnapshot(${v("", bad, '`"14"`')}); expect("15").toMatchInlineSnapshot(${v("", bad, '`"15"`')});
           expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
           expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v(",", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
           expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});

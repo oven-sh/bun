@@ -63,6 +63,13 @@ $ bun --watch test
 
 ![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
 
+{% callout %}
+
+The **`--no-clear-screen`** flag is useful in scenarios where you don’t want the terminal to clear, such as when running multiple `bun build --watch` commands simultaneously using tools like `concurrently`. Without this flag, the output of one instance could clear the output of others, potentially hiding errors from one instance beneath the output of another. The `--no-clear-screen` flag, similar to TypeScript’s `--preserveWatchOutput`, prevents this issue. It can be used in combination with `--watch`, for example: `bun build --watch --no-clear-screen`.
+
+{% /callout %}
+
+
 ## `--hot` mode
 
 Use `bun --hot` to enable hot reloading when executing code with Bun. This is distinct from `--watch` mode in that Bun does not hard-restart the entire process. Instead, it detects code changes and updates its internal module cache with the new code.

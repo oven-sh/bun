@@ -7,7 +7,7 @@ Use `bun publish` to publish a package to the npm registry.
 $ bun publish
 
 ## Output
-bun publish v1.1.30 (ca7428e9)
+bun publish v$BUN_LATEST_VERSION (ca7428e9)
 
 packed 203B package.json
 packed 224B README.md

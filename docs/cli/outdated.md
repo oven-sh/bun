@@ -59,3 +59,5 @@ If you want to do the same, but exclude the `./apps/api` workspace:
 ```sh
 $ bun outdated --filter './apps/*' --filter '!./apps/api'
 ```
+
+Refer to [Package Manager > Filtering](https://bun.sh/docs/cli/filter#bun-install-and-bun-outdated) for more information on `--filter`.

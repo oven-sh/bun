@@ -1,6 +1,6 @@
 const server = Bun.serve({
   port: 0,
-
+  idleTimeout: 0,
   error(err) {
     return new Response("Failed", { status: 555 });
   },

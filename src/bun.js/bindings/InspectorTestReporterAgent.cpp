@@ -132,30 +132,20 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         if (visitor->hasLineAndColumnInfo()) {
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = visitor->sourceURL();
+            String sourceURLForFrame = Zig::sourceURL(visitor);
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
             if (sourceURLForFrame.isEmpty()) {
+                auto* codeBlock = visitor->codeBlock();
+                ASSERT(codeBlock);
 
                 // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = visitor->codeBlock()->source();
+                const auto& source = codeBlock->source();
 
                 // source.isNull() is true when the SourceProvider is a null pointer.
                 if (!source.isNull()) {
                     auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-
                     sourceID = provider->asID();
                 }
             }

@@ -708,7 +708,7 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{}, dest.import_records);
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions.default(), dest.import_records);
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);
@@ -748,7 +748,7 @@ pub const serialize = struct {
                         try dest.writeStr(":not(");
                     },
                     .any => |v| {
-                        const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
+                        const vp = dest.vendor_prefix._or(v.vendor_prefix);
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
                             try dest.writeChar(':');
                             try vp.toCss(W, dest);
@@ -1039,6 +1039,7 @@ pub const serialize = struct {
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!d.vendor_prefix.isEmpty()) d.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
                 try vp.toCss(W, d);
+                debug("VENDOR PREFIX {d} OVERRIDE {d}", .{ vp.asBits(), d.vendor_prefix.asBits() });
                 return vp;
             }
 

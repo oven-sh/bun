@@ -307,7 +307,7 @@ await import("my-object-virtual-module"); // { baz: "quix" }
 Plugins can read and write to the [build config](https://bun.sh/docs/bundler#api) with `build.config`.
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -324,6 +324,7 @@ Bun.build({
       },
     },
   ],
+  throw: true,
 });
 ```
 
@@ -332,7 +333,7 @@ Bun.build({
 **NOTE**: Plugin lifcycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -350,6 +351,7 @@ Bun.build({
       },
     },
   ],
+  throw: true,
 });
 ```
 
@@ -553,150 +555,3 @@ plugin({
 ```
 
 This plugin will transform all imports of the form `import env from "env"` into a JavaScript module that exports the current environment variables.
-
-#### `.defer()`
-
-One of the arguments passed to the `onLoad` callback is a `defer` function. This function returns a `Promise` that is resolved when all _other_ modules have been loaded.
-
-This allows you to delay execution of the `onLoad` callback until all other modules have been loaded.
-
-This is useful for returning contens of a module that depends on other modules.
-
-##### Example: tracking and reporting unused exports
-
-```ts
-import { plugin } from "bun";
-
-plugin({
-  name: "track imports",
-  setup(build) {
-    const transpiler = new Bun.Transpiler();
-
-    let trackedImports: Record<string, number> = {};
-
-    // Each module that goes through this onLoad callback
-    // will record its imports in `trackedImports`
-    build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
-      const contents = await Bun.file(path).arrayBuffer();
-
-      const imports = transpiler.scanImports(contents);
-
-      for (const i of imports) {
-        trackedImports[i.path] = (trackedImports[i.path] || 0) + 1;
-      }
-
-      return undefined;
-    });
-
-    build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
-      // Wait for all files to be loaded, ensuring
-      // that every file goes through the above `onLoad()` function
-      // and their imports tracked
-      await defer();
-
-      // Emit JSON containing the stats of each import
-      return {
-        contents: `export default ${JSON.stringify(trackedImports)}`,
-        loader: "json",
-      };
-    });
-  },
-});
-```
-
-Note that the `.defer()` function currently has the limitation that it can only be called once per `onLoad` callback.
-
-## Native plugins
-
-{% callout %}
-**NOTE** — This is an advanced and experiemental API recommended for plugin developers who are familiar with systems programming and the C ABI. Use with caution.
-{% /callout %}
-
-One of the reasons why Bun's bundler is so fast is that it is written in native code and leverages multi-threading to load and parse modules in parallel.
-
-However, one limitation of plugins written in JavaScript is that JavaScript itself is single-threaded.
-
-Native plugins are written as [NAPI](/docs/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
-
-In addition, native plugins can skip unnecessary work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
-
-These are the following lifecycle hooks which are available to native plugins:
-
-- [`onBeforeParse()`](#onbeforeparse): Called on any thread before a file is parsed by Bun's bundler.
-
-### Creating a native plugin
-
-Native plugins are NAPI modules which expose lifecycle hooks as C ABI functions.
-
-To create a native plugin, you must export a C ABI function which matches the signature of the native lifecycle hook you want to implement.
-
-#### Example: Rust with napi-rs
-
-First initialize a napi project (see [here](https://napi.rs/docs/introduction/getting-started) for a more comprehensive guide).
-
-Then install Bun's official safe plugin wrapper crate:
-
-```bash
-cargo add bun-native-plugin
-```
-
-Now you can export an `extern "C" fn` which is the implementation of your plugin:
-
-```rust
-#[no_mangle]
-extern "C" fn on_before_parse_impl(
-  args: *const bun_native_plugin::sys::OnBeforeParseArguments,
-  result: *mut bun_native_plugin::sys::OnBeforeParseResult,
-) {
-  let args = unsafe { &*args };
-  let result = unsafe { &mut *result };
-
-  let mut handle = match bun_native_plugin::OnBeforeParse::from_raw(args, result) {
-    Ok(handle) => handle,
-    Err(_) => {
-      return;
-    }
-  };
-
-  let source_code = match handle.input_source_code() {
-    Ok(source_code) => source_code,
-    Err(_) => {
-      handle.log_error("Fetching source code failed!");
-      return;
-    }
-  };
-
-  let loader = handle.output_loader();
-  handle.set_output_source_code(source_code.replace("foo", "bar"), loader);
-```
-
-Use napi-rs to compile the plugin to a `.node` file, then you can `require()` it from JS and use it:
-
-```js
-await Bun.build({
-  entrypoints: ["index.ts"],
-  setup(build) {
-    const myNativePlugin = require("./path/to/plugin.node");
-
-    build.onBeforeParse(
-      { filter: /\.ts/ },
-      { napiModule: myNativePlugin, symbol: "on_before_parse_impl" },
-    );
-  },
-});
-```
-
-### `onBeforeParse`
-
-```ts
-onBeforeParse(
-  args: { filter: RegExp; namespace?: string },
-  callback: { napiModule: NapiModule; symbol: string; external?: unknown },
-): void;
-```
-
-This lifecycle callback is run immediately before a file is parsed by Bun's bundler.
-
-As input, it receives the file's contents and can optionally return new source code.
-
-This callback can be called from any thread and so the napi module implementation must be thread-safe.

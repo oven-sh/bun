@@ -125,6 +125,7 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
     void didConnect();
+    void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
     void didFailWithErrorCode(int32_t code);
@@ -151,6 +152,7 @@ public:
 
     void incPendingActivityCount()
     {
+        ASSERT(m_pendingActivityCount < std::numeric_limits<size_t>::max());
         m_pendingActivityCount++;
         ref();
         updateHasPendingActivity();
@@ -158,10 +160,13 @@ public:
 
     void decPendingActivityCount()
     {
+        ASSERT(m_pendingActivityCount > 0);
         m_pendingActivityCount--;
         deref();
         updateHasPendingActivity();
     }
+
+    size_t memoryCost() const;
 
 private:
     typedef union AnyWebSocket {

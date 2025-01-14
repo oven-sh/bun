@@ -35,6 +35,9 @@ us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
     goto end;
   }
+
+  // NOTE: PEM_read_bio_X509 allocates, so input BIO must be freed.
+  BIO_free(in);
   return x;
 end:
   X509_free(x);

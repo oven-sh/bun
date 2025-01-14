@@ -24,7 +24,6 @@ const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
-const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1122,7 +1121,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this._handle) {
         this.once("close", function close() {
-          callback(ERR_SERVER_NOT_RUNNING());
+          callback($ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);
@@ -1343,7 +1342,6 @@ class Server extends EventEmitter {
       });
     } else {
       this._handle = Bun.listen({
-        exclusive,
         port,
         hostname,
         tls,

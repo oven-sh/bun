@@ -453,3 +453,74 @@ resp.text().then((a) => {
     delete URL.prototype.ok;
   }
 });
+
+test("can get sourceURL from eval inside node:vm", () => {
+  try {
+    runInNewContext(
+      `
+throw new Error("hello");
+//# sourceURL=hellohello.js
+`,
+      {},
+    );
+  } catch (e: any) {
+    var err: Error = e;
+  }
+
+  expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"Error: hello
+    at hellohello.js:2:16
+    at runInNewContext (unknown)
+    at <anonymous> (<this-url>:459:5)"
+`);
+});
+
+test("can get sourceURL inside node:vm", () => {
+  const err = runInNewContext(
+    `
+
+function hello() {
+    return Bun.inspect(new Error("hello"));
+}
+
+hello();
+
+//# sourceURL=hellohello.js
+`,
+    { Bun },
+  );
+
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at hellohello.js:7:6
+      at <anonymous> (<this-url>:479:15)
+"
+`);
+});
+
+test("eval sourceURL is correct", () => {
+  const err = eval(
+    `
+
+function hello() {
+    return Bun.inspect(new Error("hello"));
+}
+
+hello();
+
+//# sourceURL=hellohello.js
+`,
+  );
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at eval (hellohello.js:7:6)
+      at <anonymous> (<this-url>:505:15)
+"
+`);
+});

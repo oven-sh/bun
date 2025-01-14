@@ -704,7 +704,7 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn fillEnvFromProcess(this: *SpawnArgs, globalThis: *JSGlobalObject) void {
-            var env_iter = EnvMapIter.init(globalThis.bunVM().bundler.env.map, this.arena.allocator());
+            var env_iter = EnvMapIter.init(globalThis.bunVM().transpiler.env.map, this.arena.allocator());
             return this.fillEnv(globalThis, &env_iter, false);
         }
 
@@ -782,7 +782,7 @@ pub const ShellSubprocess = struct {
         const is_sync = config.is_sync;
 
         if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
-            // spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
+            // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
             spawn_args.env_array.items = event_loop.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
             spawn_args.env_array.capacity = spawn_args.env_array.items.len;
         }

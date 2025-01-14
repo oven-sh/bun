@@ -15,7 +15,7 @@ This plugin can be used to support `.yaml` loaders in Bun's bundler by passing i
 ```ts
 import yamlPlugin from "bun-plugin-yaml";
 
-Bun.build({
+await Bun.build({
   entrypoints: ["./index.tsx"],
   // other config
 

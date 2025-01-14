@@ -1,7 +1,7 @@
 import assert from "node:assert";
-import { existsSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { argParse } from "./helpers";
+import { argParse, writeIfNotChanged } from "./helpers";
 
 // arg parsing
 let { "codegen-root": codegenRoot, debug, ...rest } = argParse(["codegen-root", "debug"]);
@@ -28,7 +28,7 @@ function convertZigEnum(zig: string) {
 
 async function run() {
   const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeFileSync(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
@@ -69,7 +69,7 @@ async function run() {
           `;
       const generated_entrypoint = join(base_dir, `.runtime-${file}.generated.ts`);
 
-      writeFileSync(generated_entrypoint, combined_source);
+      writeIfNotChanged(generated_entrypoint, combined_source);
 
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
@@ -124,7 +124,7 @@ async function run() {
         }
       }
 
-      writeFileSync(join(codegenRoot, `bake.${file}.js`), code);
+      writeIfNotChanged(join(codegenRoot, `bake.${file}.js`), code);
     }),
   );
 
@@ -169,7 +169,7 @@ async function run() {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 
     const empty_file = join(codegenRoot, "bake_empty_file");
-    if (!existsSync(empty_file)) writeFileSync(empty_file, "this is used to fulfill a cmake dependency");
+    if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a cmake dependency");
   }
 }
 

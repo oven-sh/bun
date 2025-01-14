@@ -1,10 +1,11 @@
 import { postgres, sql } from "bun:sql";
-import { expect, test } from "bun:test";
+import { expect, test, mock } from "bun:test";
 import { $ } from "bun";
 import { bunExe, isCI, withoutAggressiveGC } from "harness";
 import path from "path";
 
-if (!isCI) {
+const hasPsql = Bun.which("psql");
+if (!isCI && hasPsql) {
   require("./bootstrap.js");
 
   // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
@@ -13,18 +14,20 @@ if (!isCI) {
   // local all postgres trust
   // local all bun_sql_test_scram scram-sha-256
   // local all bun_sql_test trust
-  //
+  // local all bun_sql_test_md5 md5
+
   // # IPv4 local connections:
   // host all ${USERNAME} 127.0.0.1/32 trust
   // host all postgres 127.0.0.1/32 trust
   // host all bun_sql_test_scram 127.0.0.1/32 scram-sha-256
   // host all bun_sql_test 127.0.0.1/32 trust
+  // host all bun_sql_test_md5 127.0.0.1/32 md5
   // # IPv6 local connections:
   // host all ${USERNAME} ::1/128 trust
   // host all postgres ::1/128 trust
   // host all bun_sql_test ::1/128 trust
   // host all bun_sql_test_scram ::1/128 scram-sha-256
-  //
+  // host all bun_sql_test_md5 ::1/128 md5
   // # Allow replication connections from localhost, by a user with the
   // # replication privilege.
   // local replication all trust
@@ -32,9 +35,6 @@ if (!isCI) {
   // host replication all ::1/128 trust
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = "postgres://bun_sql_test@localhost:5432/bun_sql_test";
-
-  const delay = ms => Bun.sleep(ms);
-  const rel = x => new URL(x, import.meta.url);
 
   const login = {
     username: "bun_sql_test",
@@ -54,8 +54,8 @@ if (!isCI) {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
-    idle_timeout: 1,
-    connect_timeout: 1,
+    idle_timeout: 0,
+    connect_timeout: 0,
     max: 1,
   };
 
@@ -65,6 +65,153 @@ if (!isCI) {
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
     expect(result).toBe(1);
+  });
+
+  test("Connection timeout works", async () => {
+    const onclose = mock();
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      hostname: "unreachable_host",
+      connection_timeout: 1,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    try {
+      await sql`select pg_sleep(2)`;
+    } catch (e) {
+      error = e;
+    }
+    expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
+    expect(error.message).toContain("Connection timeout after 1ms");
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  test("Idle timeout works at start", async () => {
+    const onclose = mock();
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      idle_timeout: 1,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    try {
+      await sql`select pg_sleep(2)`;
+    } catch (e) {
+      error = e;
+    }
+    expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+    expect(onconnect).toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  test("Idle timeout is reset when a query is run", async () => {
+    const onClosePromise = Promise.withResolvers();
+    const onclose = mock(err => {
+      onClosePromise.resolve(err);
+    });
+    const onconnect = mock();
+    await using sql = postgres({
+      ...options,
+      idle_timeout: 100,
+      onconnect,
+      onclose,
+    });
+    expect(await sql`select 123 as x`).toEqual([{ x: 123 }]);
+    expect(onconnect).toHaveBeenCalledTimes(1);
+    expect(onclose).not.toHaveBeenCalled();
+    const err = await onClosePromise.promise;
+    expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+  });
+
+  test("Max lifetime works", async () => {
+    const onClosePromise = Promise.withResolvers();
+    const onclose = mock(err => {
+      onClosePromise.resolve(err);
+    });
+    const onconnect = mock();
+    const sql = postgres({
+      ...options,
+      max_lifetime: 64,
+      onconnect,
+      onclose,
+    });
+    let error: any;
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+    expect(onconnect).toHaveBeenCalledTimes(1);
+    try {
+      while (true) {
+        for (let i = 0; i < 100; i++) {
+          await sql`select pg_sleep(1)`;
+        }
+      }
+    } catch (e) {
+      error = e;
+    }
+
+    expect(onclose).toHaveBeenCalledTimes(1);
+
+    expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+  });
+
+  // Last one wins.
+  test("Handles duplicate string column names", async () => {
+    const result = await sql`select 1 as x, 2 as x, 3 as x`;
+    expect(result).toEqual([{ x: 3 }]);
+  });
+
+  test("Handles numeric column names", async () => {
+    // deliberately out of order
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;
+    expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, "0": 0 }]);
+
+    expect(Object.keys(result[0])).toEqual(["0", "1", "2", "3"]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  // Last one wins.
+  test("Handles duplicate numeric column names", async () => {
+    const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;
+    expect(result).toEqual([{ "1": 3 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
+    expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names with duplicates", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x`;
+    expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 2 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+
+    // Named columns are inserted first, but they appear from JS as last.
+    expect(Object.keys(result[0])).toEqual(["1", "2", "3", "x"]);
+  });
+
+  test("Handles mixed column names with duplicates at the end", async () => {
+    const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x, 3 as x, 4 as "y"`;
+    expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 3, y: 4 }]);
+
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
+  });
+
+  test("Handles mixed column names with duplicates at the start", async () => {
+    const result = await sql`select 1 as "1", 2 as "1", 3 as "2", 4 as "3", 1 as x, 2 as x, 3 as x`;
+    expect(result).toEqual([{ "1": 2, "2": 3, "3": 4, x: 3 }]);
+    // Sanity check: ensure iterating through the properties doesn't crash.
+    Bun.inspect(result);
   });
 
   test("Uses default database without slash", async () => {
@@ -145,10 +292,9 @@ if (!isCI) {
     expect(x).toEqual({ a: "hello", b: 42 });
   });
 
-  // It's treating as a string.
-  test.todo("implicit jsonb", async () => {
+  test("implicit jsonb", async () => {
     const x = (await sql`select ${{ a: "hello", b: 42 }}::jsonb as x`)[0].x;
-    expect([x.a, x.b].join(",")).toBe("hello,42");
+    expect(x).toEqual({ a: "hello", b: 42 });
   });
 
   test("bulk insert nested sql()", async () => {
@@ -428,9 +574,11 @@ if (!isCI) {
   test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
 
   // Add code property.
-  test.todo("Throw syntax error", async () => {
-    const code = await sql`wat 1`.catch(x => x);
-    console.log({ code });
+  test("Throw syntax error", async () => {
+    const err = await sql`wat 1`.catch(x => x);
+    expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
+    expect(err.errno).toBe(42601);
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   // t('Connect using uri', async() =>
@@ -502,13 +650,26 @@ if (!isCI) {
   //   return [1, (await sql`select 1 as x`)[0].x]
   // })
 
-  // t('Login without password', async() => {
-  //   return [true, (await postgres({ ...options, ...login })`select true as x`)[0].x]
-  // })
+  test("Login without password", async () => {
+    await using sql = postgres({ ...options, ...login });
+    expect((await sql`select true as x`)[0].x).toBe(true);
+  });
 
-  // t('Login using MD5', async() => {
-  //   return [true, (await postgres({ ...options, ...login_md5 })`select true as x`)[0].x]
-  // })
+  test("Login using MD5", async () => {
+    await using sql = postgres({ ...options, ...login_md5 });
+    expect(await sql`select true as x`).toEqual([{ x: true }]);
+  });
+
+  test("Login with bad credentials propagates error from server", async () => {
+    const sql = postgres({ ...options, ...login_md5, username: "bad_user", password: "bad_password" });
+    let err;
+    try {
+      await sql`select true as x`;
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
+  });
 
   test("Login using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });
@@ -1159,9 +1320,10 @@ if (!isCI) {
   //   ]
   // })
 
-  // t('dynamic column name', async() => {
-  //   return ['!not_valid', Object.keys((await sql`select 1 as ${ sql('!not_valid') }`)[0])[0]]
-  // })
+  test.todo("dynamic column name", async () => {
+    const result = await sql`select 1 as ${"\\!not_valid"}`;
+    expect(Object.keys(result[0])[0]).toBe("!not_valid");
+  });
 
   // t('dynamic select as', async() => {
   //   return ['2', (await sql`select ${ sql({ a: 1, b: 2 }) }`)[0].b]
@@ -1178,12 +1340,12 @@ if (!isCI) {
   //   return ['the answer', (await sql`insert into test ${ sql(x) } returning *`)[0].b, await sql`drop table test`]
   // })
 
-  // t('dynamic insert pluck', async() => {
-  //   await sql`create table test (a int, b text)`
-  //   const x = { a: 42, b: 'the answer' }
-
-  //   return [null, (await sql`insert into test ${ sql(x, 'a') } returning *`)[0].b, await sql`drop table test`]
-  // })
+  // test.todo("dynamic insert pluck", async () => {
+  //   await sql`create table test (a int, b text)`;
+  //   const x = { a: 42, b: "the answer" };
+  //   const [{ b }] = await sql`insert into test ${sql(x, "a")} returning *`;
+  //   expect(b).toBe("the answer");
+  // });
 
   // t('dynamic in with empty array', async() => {
   //   await sql`create table test (a int)`

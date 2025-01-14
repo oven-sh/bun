@@ -306,15 +306,15 @@ describe("readline.cursorTo()", () => {
     // Verify that cursorTo() throws if x or y is NaN.
     assert.throws(() => {
       readline.cursorTo(writable, NaN);
-    }, /ERR_INVALID_ARG_VALUE/);
+    }, "ERR_INVALID_ARG_VALUE");
 
     assert.throws(() => {
       readline.cursorTo(writable, 1, NaN);
-    }, /ERR_INVALID_ARG_VALUE/);
+    }, "ERR_INVALID_ARG_VALUE");
 
     assert.throws(() => {
       readline.cursorTo(writable, NaN, NaN);
-    }, /ERR_INVALID_ARG_VALUE/);
+    }, "ERR_INVALID_ARG_VALUE");
   });
 });
 

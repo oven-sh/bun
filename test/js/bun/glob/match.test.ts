@@ -634,6 +634,13 @@ describe("Glob.match", () => {
       expect(new Glob("[^a-c]*").match("BewAre")).toBeTrue();
     });
 
+    test("square braces", () => {
+      expect(new Glob("src/*.[tj]s").match("src/foo.js")).toBeTrue();
+      expect(new Glob("src/*.[tj]s").match("src/foo.ts")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/bar.md")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/baz.md")).toBeTrue();
+    });
+
     test("bash wildmatch", () => {
       expect(new Glob("a[]-]b").match("aab")).toBeFalse();
       expect(new Glob("[ten]").match("ten")).toBeFalse();

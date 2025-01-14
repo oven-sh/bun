@@ -256,7 +256,7 @@ private:
                     std::string segment = std::string(getUrlSegment(i).first);
                     Node *next = nullptr;
                     for (std::unique_ptr<Node> &child : n->children) {
-                        if (child->name == segment && child->isHighPriority == (priority == HIGH_PRIORITY)) {
+                        if (((segment.length() && child->name.length() && segment[0] == ':' && child->name[0] == ':') || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
                             next = child.get();
                             break;
                         }
@@ -304,12 +304,19 @@ public:
         for (auto &p : root.children) {
             if (p->name == method) {
                 /* Then route the url */
-                return executeHandlers(p.get(), 0, userData);
+                if (executeHandlers(p.get(), 0, userData)) {
+                    return true;
+                } else {
+                    break;
+                }
             }
         }
 
-        /* We did not find any handler for this method and url */
-        return false;
+        /* Always test any route last (this check should not be necessary if we always have at least one handler) */
+        if (root.children.empty()) [[unlikely]] {
+            return false;
+        }
+        return executeHandlers(root.children.back().get(), 0, userData);
     }
 
     /* Adds the corresponding entires in matching tree and handler list */
@@ -379,11 +386,11 @@ public:
     /* Removes ALL routes with the same handler as can be found with the given parameters.
      * Removing a wildcard is done by removing ONE OF the methods the wildcard would match with.
      * Example: If wildcard includes POST, GET, PUT, you can remove ALL THREE by removing GET. */
-    void remove(std::string method, std::string pattern, uint32_t priority) {
+    bool remove(std::string method, std::string pattern, uint32_t priority) {
         uint32_t handler = findHandler(method, pattern, priority);
         if (handler == UINT32_MAX) {
             /* Not found or already removed, do nothing */
-            return;
+            return false;
         }
 
         /* Cull the entire tree */
@@ -394,6 +401,8 @@ public:
 
         /* Now remove the actual handler */
         handlers.erase(handlers.begin() + (handler & HANDLER_MASK));
+
+        return true;
     }
 };
 

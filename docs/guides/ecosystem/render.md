@@ -16,17 +16,17 @@ As an example, let's deploy a simple Express HTTP server to Render.
 
 Create a new GitHub repo named `myapp`. Git clone it locally.
 
-```bash
-git clone git@github.com:my-github-username/myapp.git
-cd myapp
+```sh
+$ git clone git@github.com:my-github-username/myapp.git
+$ cd myapp
 ```
 
 ---
 
 Add the Express library.
 
-```bash
-bun add express
+```sh
+$ bun add express
 ```
 
 ---
@@ -52,10 +52,10 @@ app.listen(port, () => {
 
 Commit your changes and push to GitHub.
 
-```bash
-git add app.ts bun.lockb package.json
-git commit -m "Create simple Express app"
-git push origin main
+```sh
+$ git add app.ts bun.lockb package.json
+$ git commit -m "Create simple Express app"
+$ git push origin main
 ```
 
 ---

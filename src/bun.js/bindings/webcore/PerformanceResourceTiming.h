@@ -65,6 +65,8 @@ public:
     uint64_t encodedBodySize() const;
     uint64_t decodedBodySize() const;
 
+    size_t memoryCost() const;
+
     const Vector<Ref<PerformanceServerTiming>>& serverTiming() const { return m_serverTiming; }
 
     Type performanceEntryType() const override { return Type::Resource; }

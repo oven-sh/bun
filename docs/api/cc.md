@@ -179,16 +179,16 @@ type Flags = string | string[];
 
 These are flags like `-I` for include directories and `-D` for preprocessor definitions.
 
-#### `defines: Record<string, string>`
+#### `define: Record<string, string>`
 
-The `defines` is an optional object that should be passed to the TinyCC compiler.
+The `define` is an optional object that should be passed to the TinyCC compiler.
 
 ```ts
 type Defines = Record<string, string>;
 
 cc({
   source: "hello.c",
-  defines: {
+  define: {
     "NDEBUG": "1",
   },
 });

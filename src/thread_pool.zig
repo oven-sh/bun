@@ -132,7 +132,7 @@ pub const Batch = struct {
 };
 
 pub const WaitGroup = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
     counter: u32 = 0,
     event: std.Thread.ResetEvent = .{},
 
@@ -801,57 +801,6 @@ const Event = struct {
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
             Futex.wait(&self.state, WAITING, null) catch unreachable;
-            state = self.state.load(.monotonic);
-            acquire_with = WAITING;
-        }
-    }
-
-    /// Wait for and consume a notification
-    /// or wait for the event to be shutdown entirely
-    noinline fn waitFor(self: *Event, timeout: usize) void {
-        var acquire_with: u32 = EMPTY;
-        var state = self.state.load(.monotonic);
-
-        while (true) {
-            // If we're shutdown then exit early.
-            // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
-            // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
-            if (state == SHUTDOWN) {
-                @fence(.acquire);
-                return;
-            }
-
-            // Consume a notification when it pops up.
-            // Acquire barrier to ensure operations before the notify() appear after the wait().
-            if (state == NOTIFIED) {
-                state = self.state.cmpxchgWeak(
-                    state,
-                    acquire_with,
-                    .acquire,
-                    .monotonic,
-                ) orelse return;
-                continue;
-            }
-
-            // There is no notification to consume, we should wait on the event by ensuring its WAITING.
-            if (state != WAITING) blk: {
-                state = self.state.cmpxchgWeak(
-                    state,
-                    WAITING,
-                    .monotonic,
-                    .monotonic,
-                ) orelse break :blk;
-                continue;
-            }
-
-            // Wait on the event until a notify() or shutdown().
-            // If we wake up to a notification, we must acquire it with WAITING instead of EMPTY
-            // since there may be other threads sleeping on the Futex who haven't been woken up yet.
-            //
-            // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
-            // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
-            // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            Futex.wait(&self.state, WAITING, timeout) catch {};
             state = self.state.load(.monotonic);
             acquire_with = WAITING;
         }

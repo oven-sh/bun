@@ -656,14 +656,9 @@ test("no assertion failures 2", () => {
 
   // Prevent non-enumerable error properties from being printed.
   {
-    // TODO(bun): Make originalLine and originalColumn non-enumerable
     let err = new Error();
     err.message = "foobar";
-    let out = util
-      .inspect(err)
-      .replace(/\{\s*originalLine: .+\s*originalColumn: .+\s*\}/, "")
-      .trim()
-      .split("\n");
+    let out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Error: foobar");
     assert(out.at(-1).startsWith("    at "), 'Expected "' + out.at(-1) + '" to start with "    at "');
     // Reset the error, the stack is otherwise not recreated.
@@ -671,21 +666,13 @@ test("no assertion failures 2", () => {
     err.message = "foobar";
     err.name = "Unique";
     Object.defineProperty(err, "stack", { value: err.stack, enumerable: true });
-    out = util
-      .inspect(err)
-      .replace(/\{\s*originalLine: .+\s*originalColumn: .+\s*\}/, "")
-      .trim()
-      .split("\n");
+    out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Unique: foobar");
     assert(out.at(-1).startsWith("    at "), 'Expected "' + out.at(-1) + '" to start with "    at "');
     err.name = "Baz";
-    out = util
-      .inspect(err)
-      .replace(/\n\s*originalLine: .+\s*originalColumn: .+/, "")
-      .trim()
-      .split("\n");
+    out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Unique: foobar");
-    assert.strictEqual(out.at(-2), "  name: 'Baz',");
+    assert.strictEqual(out.at(-2), "  name: 'Baz'");
     assert.strictEqual(out.at(-1), "}");
   }
 

@@ -266,4 +266,9 @@ WebCoreOpaqueRoot root(AbortSignal* signal)
     return WebCoreOpaqueRoot { signal };
 }
 
+size_t AbortSignal::memoryCost() const
+{
+    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
+}
+
 } // namespace WebCore

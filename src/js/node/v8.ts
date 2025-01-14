@@ -1,4 +1,5 @@
 // Hardcoded module "node:v8"
+
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
@@ -28,8 +29,21 @@ class GCProfiler {
 function cachedDataVersionTag() {
   notimpl("cachedDataVersionTag");
 }
+var HeapSnapshotReadable_;
 function getHeapSnapshot() {
-  notimpl("getHeapSnapshot");
+  if (!HeapSnapshotReadable_) {
+    const Readable = require("node:stream").Readable;
+    class HeapSnapshotReadable extends Readable {
+      constructor() {
+        super();
+        this.push(Bun.generateHeapSnapshot("v8"));
+        this.push(null);
+      }
+    }
+    HeapSnapshotReadable_ = HeapSnapshotReadable;
+  }
+
+  return new HeapSnapshotReadable_();
 }
 
 let totalmem_ = -1;
@@ -92,8 +106,45 @@ function stopCoverage() {
 function serialize(arg1) {
   return jsc.serialize(arg1, { binaryType: "nodebuffer" });
 }
-function writeHeapSnapshot() {
-  notimpl("writeHeapSnapshot");
+
+function getDefaultHeapSnapshotPath() {
+  const date = new Date();
+
+  const worker_threads = require("node:worker_threads");
+  const thread_id = worker_threads.threadId;
+
+  const yyyy = date.getFullYear();
+  const mm = date.getMonth().toString().padStart(2, "0");
+  const dd = date.getDate().toString().padStart(2, "0");
+  const hh = date.getHours().toString().padStart(2, "0");
+  const MM = date.getMinutes().toString().padStart(2, "0");
+  const ss = date.getSeconds().toString().padStart(2, "0");
+
+  // 'Heap-${yyyymmdd}-${hhmmss}-${pid}-${thread_id}.heapsnapshot'
+  return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
+}
+
+let fs;
+
+function writeHeapSnapshot(path, options) {
+  if (path !== undefined) {
+    if (typeof path !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("path", "string", path);
+    }
+
+    if (!path) {
+      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
+    }
+  } else {
+    path = getDefaultHeapSnapshotPath();
+  }
+
+  if (!fs) {
+    fs = require("node:fs");
+  }
+  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
+
+  return path;
 }
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");

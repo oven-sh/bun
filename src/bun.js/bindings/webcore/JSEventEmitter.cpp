@@ -7,7 +7,7 @@
 #include "IDLTypes.h"
 #include "JSAddEventListenerOptions.h"
 #include "JSDOMBinding.h"
-#include "JSDOMConstructor.h"
+#include "JSDOMConstructorCallable.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertDictionary.h"
@@ -23,6 +23,7 @@
 #include "JSEvent.h"
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -94,7 +95,7 @@ public:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventEmitterPrototype, JSEventEmitterPrototype::Base);
 
-using JSEventEmitterDOMConstructor = JSDOMConstructor<JSEventEmitter>;
+using JSEventEmitterDOMConstructor = JSDOMConstructorCallable<JSEventEmitter>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
@@ -123,6 +124,38 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSEventEmitterDOMConstructorConstruct, JSEventEmitterDOMConstructor::construct);
+
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
+    ASSERT(castedThis);
+    auto* context = castedThis->scriptExecutionContext();
+    if (UNLIKELY(!context)) {
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "EventEmitter"_s);
+    }
+    const auto object = EventEmitter::create(*context);
+    if constexpr (IsExceptionOr<decltype(object)>) {
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (maxListeners && maxListeners.isUInt32()) {
+        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+    }
+    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
+    auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, object.copyRef());
+    if constexpr (IsExceptionOr<decltype(object)>) {
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    Structure* structure = JSEventEmitter::createStructure(vm, lexicalGlobalObject, jsValue);
+    JSEventEmitter* instance
+        = JSEventEmitter::create(structure, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), object.copyRef());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(instance));
+}
+JSC_ANNOTATE_HOST_FUNCTION(JSEventEmitterDOMConstructorCall, JSEventEmitterDOMConstructor::call);
 
 template<> const ClassInfo JSEventEmitterDOMConstructor::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterDOMConstructor) };
 

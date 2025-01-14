@@ -41,7 +41,7 @@ const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
@@ -55,6 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+const s3 = bun.S3;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -143,7 +144,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -156,7 +157,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+            try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -168,13 +169,13 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+            try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
             try writer.writeAll("\n");
 
@@ -512,6 +513,39 @@ pub const Response = struct {
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
         const arguments = callframe.argumentsAsArray(2);
 
+        if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
+            if (arguments[0].as(Blob)) |blob| {
+                if (blob.isS3()) {
+                    if (!arguments[1].isEmptyOrUndefinedOrNull()) {
+                        return globalThis.throwInvalidArguments("new Response(s3File) do not support ResponseInit options", .{});
+                    }
+                    var response: Response = .{
+                        .init = Response.Init{
+                            .status_code = 302,
+                        },
+                        .body = Body{
+                            .value = .{ .Empty = {} },
+                        },
+                        .url = bun.String.empty,
+                    };
+
+                    const credentials = blob.store.?.data.s3.getCredentials();
+
+                    const result = credentials.signRequest(.{
+                        .path = blob.store.?.data.s3.path(),
+                        .method = .GET,
+                    }, .{ .expires = 15 * 60 }) catch |sign_err| {
+                        return s3.throwSignError(sign_err, globalThis);
+                    };
+                    defer result.deinit();
+                    response.init.headers = response.getOrCreateHeaders(globalThis);
+                    response.redirected = true;
+                    var headers_ref = response.init.headers.?;
+                    headers_ref.put(.Location, result.url, globalThis);
+                    return bun.new(Response, response);
+                }
+            }
+        }
         var init: Init = (brk: {
             if (arguments[1].isUndefinedOrNull()) {
                 break :brk Init{
@@ -697,7 +731,14 @@ pub const Response = struct {
 };
 
 const null_fd = bun.invalid_fd;
+fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocator: std.mem.Allocator) void {
+    var old = headers.*;
+    headers.* = Headers.fromPicoHttpHeaders(new_headers, allocator) catch bun.outOfMemory();
 
+    if (old) |*headers_| {
+        headers_.deinit();
+    }
+}
 pub const Fetch = struct {
     const headers_string = "headers";
     const method_string = "method";
@@ -765,7 +806,7 @@ pub const Fetch = struct {
     };
 
     pub const FetchTasklet = struct {
-        pub const FetchTaskletStream = JSC.WebCore.FetchTaskletChunkedRequestSink;
+        pub const FetchTaskletStream = JSC.WebCore.NetworkSink;
 
         const log = Output.scoped(.FetchTasklet, false);
         sink: ?*FetchTaskletStream.JSSink = null,
@@ -907,6 +948,13 @@ pub const Fetch = struct {
             pub fn needsToReadFile(this: *HTTPRequestBody) bool {
                 return switch (this.*) {
                     .AnyBlob => |blob| blob.needsToReadFile(),
+                    else => false,
+                };
+            }
+
+            pub fn isS3(this: *const HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |*blob| blob.isS3(),
                     else => false,
                 };
             }
@@ -1092,7 +1140,7 @@ pub const Fetch = struct {
 
                 const globalThis = this.global_this;
                 var response_stream = FetchTaskletStream.new(.{
-                    .task = this,
+                    .task = .{ .fetch = this },
                     .buffer = .{},
                     .globalThis = globalThis,
                 }).toSink();
@@ -1127,8 +1175,6 @@ pub const Fetch = struct {
                 }
 
                 if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                    this.javascript_vm.drainMicrotasks();
-
                     assignment_result.ensureStillAlive();
                     // it returns a Promise when it goes through ReadableStreamDefaultReader
                     if (assignment_result.asAnyPromise()) |promise| {
@@ -1889,10 +1935,10 @@ pub const Fetch = struct {
             var proxy: ?ZigURL = null;
             if (fetch_options.proxy) |proxy_opt| {
                 if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                    proxy = fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                    proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
                 }
             } else {
-                proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+                proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -2182,7 +2228,7 @@ pub const Fetch = struct {
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
-        if (!url.isHTTP() and !url.isHTTPS()) {
+        if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
             bun.default_allocator.free(url.href);
             return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
@@ -2273,6 +2319,7 @@ pub const Fetch = struct {
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
+        var range: ?[]u8 = null;
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
         var url_proxy_buffer: []const u8 = "";
@@ -2310,6 +2357,10 @@ pub const Fetch = struct {
             if (hostname) |hn| {
                 bun.default_allocator.free(hn);
                 hostname = null;
+            }
+            if (range) |range_| {
+                bun.default_allocator.free(range_);
+                range = null;
             }
 
             if (ssl_config) |conf| {
@@ -2928,6 +2979,15 @@ pub const Fetch = struct {
                     }
                     hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                 }
+                if (url.isS3()) {
+                    if (headers_.fastGet(JSC.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                        if (range) |range_| {
+                            range = null;
+                            allocator.free(range_);
+                        }
+                        range = _range.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    }
+                }
 
                 break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch bun.outOfMemory();
             }
@@ -3008,7 +3068,7 @@ pub const Fetch = struct {
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         return globalThis.throwError(err, "Failed to resolve file url");
-                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                    }) else globalThis.bunVM().transpiler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
                         cwd,
@@ -3039,6 +3099,7 @@ pub const Fetch = struct {
                 break :blob Blob.findOrCreateFileFromPath(
                     &pathlike,
                     globalThis,
+                    true,
                 );
             };
 
@@ -3056,8 +3117,8 @@ pub const Fetch = struct {
         }
 
         if (url.protocol.len > 0) {
-            if (!(url.isHTTP() or url.isHTTPS())) {
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
+            if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
                 is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
@@ -3078,7 +3139,22 @@ pub const Fetch = struct {
         }
 
         var http_body = body;
+        if (body.isS3()) {
+            prepare_body: {
+                // is a S3 file we can use chunked here
 
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+                    var old = body;
+                    defer old.detach();
+                    body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                    break :prepare_body;
+                }
+                const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
+                body.detach();
+
+                return rejected_value;
+            }
+        }
         if (body.needsToReadFile()) {
             prepare_body: {
                 const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
@@ -3174,6 +3250,155 @@ pub const Fetch = struct {
             }
         }
 
+        if (url.isS3()) {
+            // get ENV config
+            var credentialsWithOptions: s3.S3CredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
+                .options = .{},
+                .acl = null,
+            };
+            defer {
+                credentialsWithOptions.deinit();
+            }
+
+            if (options_object) |options| {
+                if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
+                    if (s3_options.isObject()) {
+                        s3_options.ensureStillAlive();
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                    }
+                }
+            }
+
+            if (body == .ReadableStream) {
+                // we cannot direct stream to s3 we need to use multi part upload
+                defer body.ReadableStream.deinit();
+                const Wrapper = struct {
+                    promise: JSC.JSPromise.Strong,
+                    url: ZigURL,
+                    url_proxy_buffer: []const u8,
+                    pub usingnamespace bun.New(@This());
+
+                    pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
+                        if (self.promise.globalObject()) |global| {
+                            switch (result) {
+                                .success => {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{ .value = .Empty },
+                                        .redirected = false,
+                                        .init = .{ .method = .PUT, .status_code = 200 },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                                .failure => |err| {
+                                    const response = bun.new(Response, Response{
+                                        .body = .{
+                                            .value = .{
+                                                .InternalBlob = .{
+                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                                    .was_string = true,
+                                                },
+                                            },
+                                        },
+                                        .redirected = false,
+                                        .init = .{
+                                            .method = .PUT,
+                                            .status_code = 500,
+                                            .status_text = bun.String.createAtomIfPossible(err.code),
+                                        },
+                                        .url = bun.String.createAtomIfPossible(self.url.href),
+                                    });
+                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                    response_js.ensureStillAlive();
+                                    self.promise.resolve(global, response_js);
+                                },
+                            }
+                        }
+                        bun.default_allocator.free(self.url_proxy_buffer);
+                        self.destroy();
+                    }
+                };
+                if (method != .PUT and method != .POST) {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
+                }
+                const promise = JSC.JSPromise.Strong.init(globalThis);
+
+                const s3_stream = Wrapper.new(.{
+                    .url = url,
+                    .url_proxy_buffer = url_proxy_buffer,
+                    .promise = promise,
+                });
+
+                const promise_value = promise.value();
+                const proxy_url = if (proxy) |p| p.href else "";
+                _ = bun.S3.uploadStream(
+                    credentialsWithOptions.credentials.dupe(),
+                    url.s3Path(),
+                    body.ReadableStream.get().?,
+                    globalThis,
+                    credentialsWithOptions.options,
+                    credentialsWithOptions.acl,
+                    if (headers) |h| h.getContentType() else null,
+                    proxy_url,
+                    @ptrCast(&Wrapper.resolve),
+                    s3_stream,
+                );
+                url = .{};
+                url_proxy_buffer = "";
+                return promise_value;
+            }
+            if (method == .POST) {
+                method = .PUT;
+            }
+
+            var result = credentialsWithOptions.credentials.signRequest(.{
+                .path = url.s3Path(),
+                .method = method,
+            }, null) catch |sign_err| {
+                is_error = true;
+                return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
+            };
+            defer result.deinit();
+            if (proxy) |proxy_| {
+                // proxy and url are in the same buffer lets replace it
+                const old_buffer = url_proxy_buffer;
+                defer allocator.free(old_buffer);
+                var buffer = allocator.alloc(u8, result.url.len + proxy_.href.len) catch bun.outOfMemory();
+                bun.copy(u8, buffer[0..result.url.len], result.url);
+                bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
+                url_proxy_buffer = buffer;
+
+                url = ZigURL.parse(url_proxy_buffer[0..result.url.len]);
+                proxy = ZigURL.parse(url_proxy_buffer[result.url.len..]);
+            } else {
+                // replace headers and url of the request
+                allocator.free(url_proxy_buffer);
+                url_proxy_buffer = result.url;
+                url = ZigURL.parse(result.url);
+                result.url = ""; // fetch now owns this
+            }
+
+            const content_type = if (headers) |h| h.getContentType() else null;
+            var header_buffer: [10]picohttp.Header = undefined;
+
+            if (range) |range_| {
+                const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
+                setHeaders(&headers, _headers, allocator);
+            } else if (content_type) |ct| {
+                if (ct.len > 0) {
+                    const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = ct });
+                    setHeaders(&headers, _headers, allocator);
+                } else {
+                    setHeaders(&headers, result.headers(), allocator);
+                }
+            } else {
+                setHeaders(&headers, result.headers(), allocator);
+            }
+        }
+
         // Only create this after we have validated all the input.
         // or else we will leak it
         var promise = JSPromise.Strong.init(globalThis);
@@ -3262,7 +3487,21 @@ pub const Headers = struct {
         this.entries.deinit(this.allocator);
         this.buf.clearAndFree(this.allocator);
     }
+    pub fn getContentType(this: *const Headers) ?[]const u8 {
+        if (this.entries.len == 0 or this.buf.items.len == 0) {
+            return null;
+        }
+        const header_entries = this.entries.slice();
+        const header_names = header_entries.items(.name);
+        const header_values = header_entries.items(.value);
 
+        for (header_names, 0..header_names.len) |name, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+                return this.asStr(header_values[i]);
+            }
+        }
+        return null;
+    }
     pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
         return if (ptr.offset + ptr.length <= this.buf.items.len)
             this.buf.items[ptr.offset..][0..ptr.length]
@@ -3273,6 +3512,45 @@ pub const Headers = struct {
     pub const Options = struct {
         body: ?*const AnyBlob = null,
     };
+
+    pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.Allocator) !Headers {
+        const header_count = headers.len;
+        var result = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+
+        var buf_len: usize = 0;
+        for (headers) |header| {
+            buf_len += header.name.len + header.value.len;
+        }
+        result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        result.entries.len = headers.len;
+        result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        result.buf.items.len = buf_len;
+        var offset: u32 = 0;
+        for (headers, 0..headers.len) |header, i| {
+            const name_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.name.len], header.name);
+            offset += @truncate(header.name.len);
+            const value_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.value.len], header.value);
+            offset += @truncate(header.value.len);
+
+            result.entries.set(i, .{
+                .name = .{
+                    .offset = name_offset,
+                    .length = @truncate(header.name.len),
+                },
+                .value = .{
+                    .offset = value_offset,
+                    .length = @truncate(header.value.len),
+                },
+            });
+        }
+        return result;
+    }
 
     pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, options: Options) !Headers {
         var header_count: u32 = 0;

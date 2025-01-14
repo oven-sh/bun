@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
+const GlobWalker = Glob.BunGlobWalkerZ;
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -721,31 +721,24 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var env =
-            if (this.export_env) |*env|
-        brk: {
-            env.clearRetainingCapacity();
-            break :brk env.*;
-        } else EnvMap.init(bun.default_allocator);
-        defer this.export_env = env;
-
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
+        var env: EnvMap = EnvMap.init(bun.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while (object_iter.next()) |key| {
+        while (try object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
@@ -759,7 +752,10 @@ pub const ParsedShellScript = struct {
 
             env.insert(keyref, valueref);
         }
-
+        if (this.export_env) |*previous| {
+            previous.deinit();
+        }
+        this.export_env = env;
         return .undefined;
     }
 
@@ -1303,7 +1299,7 @@ pub const Interpreter = struct {
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
-                    break :env_loader event_loop.js.virtual_machine.bundler.env;
+                    break :env_loader event_loop.js.virtual_machine.transpiler.env;
                 }
 
                 break :env_loader event_loop.env();
@@ -1323,8 +1319,10 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+        // Avoid the large stack allocation on Windows.
+        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(pathbuf);
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
@@ -4883,8 +4881,9 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
+                const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         break :blk bun.selfExePath() catch break :blk2;
                     }
@@ -7158,12 +7157,13 @@ pub const Interpreter = struct {
                 }
 
                 if (this.bltn.stdout.needsIO() == null) {
-                    var path_buf: bun.PathBuffer = undefined;
+                    const path_buf = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(path_buf);
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -7198,10 +7198,11 @@ pub const Interpreter = struct {
                 const arg_raw = multiargs.args_slice[multiargs.arg_idx];
                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                var path_buf: bun.PathBuffer = undefined;
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (this.bltn.stdout.needsIO()) |safeguard| {
                         multiargs.state = .waiting_write;
@@ -8764,7 +8765,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -9242,7 +9243,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10745,7 +10746,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },

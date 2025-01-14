@@ -195,7 +195,7 @@ This will print the request and response headers to your terminal:
 ```sh
 [fetch] > HTTP/1.1 GET http://example.com/
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.1.21
+[fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br

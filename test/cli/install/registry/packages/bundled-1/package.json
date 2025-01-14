@@ -1,0 +1,47 @@
+{
+	"name": "bundled-1",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-1",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"bundleDependencies": [
+				"no-deps"
+			],
+			"_id": "bundled-1@1.0.0",
+			"_integrity": "sha512-YQ/maWZliKQyp1VIdYnPBH6qBHLCQ8Iy6G5vRZFXUHVXufiXT5aTjPVnLQ7xpVAgURFrzd/Fu1113ROLlaJBkQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-YQ/maWZliKQyp1VIdYnPBH6qBHLCQ8Iy6G5vRZFXUHVXufiXT5aTjPVnLQ7xpVAgURFrzd/Fu1113ROLlaJBkQ==",
+			"shasum": "b9052ebbae98de99bf628f65d9150bdcad3dba9d",
+			"dist": {
+				"integrity": "sha512-YQ/maWZliKQyp1VIdYnPBH6qBHLCQ8Iy6G5vRZFXUHVXufiXT5aTjPVnLQ7xpVAgURFrzd/Fu1113ROLlaJBkQ==",
+				"shasum": "b9052ebbae98de99bf628f65d9150bdcad3dba9d",
+				"tarball": "http://http://localhost:4873/bundled-1/-/bundled-1-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-30T18:14:22.143Z",
+		"created": "2024-12-30T18:14:22.143Z",
+		"1.0.0": "2024-12-30T18:14:22.143Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-1-1.0.0.tgz": {
+			"shasum": "b9052ebbae98de99bf628f65d9150bdcad3dba9d",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-1",
+	"readme": ""
+}

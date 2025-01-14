@@ -704,6 +704,10 @@ const PosixBufferedReader = struct {
         return this.flags.is_done or this.flags.received_eof or this.flags.closed_without_reporting;
     }
 
+    pub fn memoryCost(this: *const PosixBufferedReader) usize {
+        return @sizeOf(@This()) + this._buffer.capacity;
+    }
+
     pub fn from(to: *@This(), other: *PosixBufferedReader, parent_: *anyopaque) void {
         to.* = .{
             .handle = other.handle,
@@ -971,6 +975,10 @@ pub const WindowsBufferedReader = struct {
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     const WindowsOutputReader = @This();
+
+    pub fn memoryCost(this: *const WindowsOutputReader) usize {
+        return @sizeOf(@This()) + this._buffer.capacity;
+    }
 
     const Flags = packed struct {
         is_done: bool = false,

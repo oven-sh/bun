@@ -21,38 +21,30 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
+#include "wtf/Platform.h"
 
+#if ASSERT_ENABLED
+extern const size_t Bun__lock__size;
+extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
+#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
+#endif
 
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
+    // We allocate with calloc, so we only need to initialize the specific fields in use.
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
-    loop->data.ssl_data = 0;
-    loop->data.head = 0;
-    loop->data.iterator = 0;
-    loop->data.closed_udp_head = 0;
-    loop->data.closed_head = 0;
-    loop->data.low_prio_head = 0;
-    loop->data.low_prio_budget = 0;
-
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
-    loop->data.iteration_nr = 0;
-
-    loop->data.closed_connecting_head = 0;
-    loop->data.dns_ready_head = 0;
-    loop->data.mutex = 0;
-
-    loop->data.parent_ptr = 0;
-    loop->data.parent_tag = 0;
-
-    loop->data.closed_context_head = 0;
-    loop->data.jsc_vm = 0;
-
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
+#if ASSERT_ENABLED
+    if (Bun__lock__size != sizeof(loop->data.mutex)) {
+        BUN_PANIC("The size of the mutex must match the size of the lock");
+    }
+#endif
 }
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
@@ -438,6 +430,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
             if(eof && s) {
+                if (UNLIKELY(us_socket_is_closed(0, s))) {
+                    // Do not call on_end after the socket has been closed
+                    return;
+                }
                 if (us_socket_is_shut_down(0, s)) {
                     /* We got FIN back after sending it */
                     s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);

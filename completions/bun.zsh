@@ -35,6 +35,7 @@ _bun_add_completion() {
         '-D[]' \
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
+        '--peer[Add dependency to "peerDependencies]' \
         '--exact[Add the exact version instead of the ^range]' &&
         ret=0
 
@@ -339,6 +340,7 @@ _bun_install_completion() {
         '--development[]' \
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
+        '--peer[Add dependency to "peerDependencies]' \
         '--exact[Add the exact version instead of the ^range]' &&
         ret=0
 

@@ -93,6 +93,7 @@ export default [
   define({
     name: "ServerWebSocket",
     JSType: "0b11101110",
+    memoryCost: true,
     proto: {
       send: {
         fn: "send",

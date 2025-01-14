@@ -9,7 +9,7 @@ $ bunx nuxi init my-nuxt-app
 ✔ Which package manager would you like to use?
 bun
 ◐ Installing dependencies...
-bun install v1.x (16b4bf34)
+bun install v$BUN_LATEST_VERSION (16b4bf34)
  + @nuxt/devtools@0.8.2
  + nuxt@3.7.0
  785 packages installed [2.67s]

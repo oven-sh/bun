@@ -47,6 +47,7 @@ for (const [value, _method] of [
   [new DataView(new ArrayBuffer())],
   [new SharedArrayBuffer()],
   [new Proxy({}, {}), "isProxy"],
+  [new EventTarget()],
 ]) {
   const method = _method || `is${value.constructor.name}`;
   test(method, () => {

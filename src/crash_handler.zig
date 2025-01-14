@@ -44,7 +44,8 @@ var has_printed_message = false;
 var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Thread.Mutex{};
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var panic_mutex = bun.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
@@ -66,7 +67,9 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 pub threadlocal var current_action: ?Action = null;
 
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
-var before_crash_handlers_mutex: std.Thread.Mutex = .{};
+
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var before_crash_handlers_mutex: bun.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
@@ -971,7 +974,7 @@ fn waitForOtherThreadToFinishPanicking() void {
 
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -987,7 +990,7 @@ pub fn sleepForeverIfAnotherThreadIsCrashing() void {
     if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }

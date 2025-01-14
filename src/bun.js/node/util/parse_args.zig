@@ -300,13 +300,13 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = JSC.JSPropertyIterator(.{
+    var iter = try JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
     }).init(globalThis, options_obj);
     defer iter.deinit();
 
-    while (iter.next()) |long_option| {
+    while (try iter.next()) |long_option| {
         var option = OptionDefinition{
             .long_name = String.init(long_option),
         };

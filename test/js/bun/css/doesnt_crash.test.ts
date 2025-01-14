@@ -19,7 +19,14 @@ describe("doesnt_crash", async () => {
     absolute = absolute.replaceAll("\\", "/");
     const file = path.basename(absolute);
 
-    for (let minify of [false, true]) {
+    const configs: { target: string; minify: boolean }[] = [
+      { target: "bun", minify: false },
+      { target: "bun", minify: true },
+      { target: "browser", minify: false },
+      { target: "browser", minify: true },
+    ];
+
+    for (const { target, minify } of configs) {
       test(`${file} - ${minify ? "minify" : "not minify"}`, async () => {
         const timeLog = `Transpiled ${file} - ${minify ? "minify" : "not minify"}`;
         console.time(timeLog);
@@ -27,6 +34,8 @@ describe("doesnt_crash", async () => {
           entrypoints: [absolute],
           experimentalCss: true,
           minify: minify,
+          target,
+          throw: true,
         });
         console.timeEnd(timeLog);
 
@@ -42,10 +51,13 @@ describe("doesnt_crash", async () => {
         {
           const timeLog = `Re-transpiled ${file} - ${minify ? "minify" : "not minify"}`;
           console.time(timeLog);
+          console.log("  Transpiled file path:", outfile1);
           const { logs, outputs } = await Bun.build({
             entrypoints: [outfile1],
             experimentalCss: true,
+            target,
             minify: minify,
+            throw: true,
           });
 
           if (logs?.length) {

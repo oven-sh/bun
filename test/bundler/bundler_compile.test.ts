@@ -73,7 +73,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
         import {rmSync} from 'fs';
         // Verify we're not just importing from the filesystem
         rmSync("./worker.ts", {force: true});
-        
+
         console.log("Hello, world!");
         new Worker("./worker");
       `,

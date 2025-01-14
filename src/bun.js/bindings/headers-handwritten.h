@@ -1,6 +1,10 @@
 #pragma once
 #include "wtf/Compiler.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/ArgList.h"
+#include <set>
+
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
@@ -120,7 +124,9 @@ typedef struct SystemError {
     BunString message;
     BunString path;
     BunString syscall;
+    BunString hostname;
     int fd;
+    BunString dest;
 } SystemError;
 
 typedef void* ArrayBufferSink;
@@ -380,8 +386,49 @@ extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, si
 template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
+/**
+ * @brief `Bun.deepMatch(a, b)`
+ *
+ * `object` and `subset` must be objects. In the future we should change the
+ * signature of this function to only take `JSC::JSCell`. For now, panics
+ * if either `object` or `subset` are not `JSCCell`.
+ *
+ * @note
+ * The sets recording already visited properties (`seenObjProperties` and
+ * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
+ * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
+ * `nullptr`.
+ *
+ * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
+ * properties currently within those stacks. Likely unnecessary, but better to
+ * be safe tnan sorry
+ *
+ *
+ * @tparam enableAsymmetricMatchers
+ * @param objValue
+ * @param seenObjProperties already visited properties of `objValue`.
+ * @param subsetValue
+ * @param seenSubsetProperties already visited properties of `subsetValue`.
+ * @param globalObject
+ * @param Scope
+ * @param gcBuffer
+ * @param replacePropsWithAsymmetricMatchers
+ * @param isMatchingObjectContaining
+ *
+ * @return true
+ * @return false
+ */
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
+bool Bun__deepMatch(
+    JSC::JSValue object,
+    std::set<JSC::EncodedJSValue>* seenObjProperties,
+    JSC::JSValue subset,
+    std::set<JSC::EncodedJSValue>* seenSubsetProperties,
+    JSC::JSGlobalObject* globalObject,
+    JSC::ThrowScope* throwScope,
+    JSC::MarkedArgumentBuffer* gcBuffer,
+    bool replacePropsWithAsymmetricMatchers,
+    bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 

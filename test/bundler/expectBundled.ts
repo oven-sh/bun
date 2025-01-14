@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -194,6 +194,7 @@ export interface BundlerTestInput {
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
   experimentalCss?: boolean;
+  experimentalHtml?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -278,8 +279,6 @@ export interface BundlerTestInput {
 
   /** Multiplier for test timeout */
   timeoutScale?: number;
-  /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
-  debugTimeoutScale?: number;
 
   /* determines whether or not anything should be passed to outfile, outdir, etc. */
   generateOutput?: boolean;
@@ -450,6 +449,7 @@ function expectBundled(
     minifySyntax,
     minifyWhitespace,
     experimentalCss,
+    experimentalHtml,
     onAfterBundle,
     outdir,
     dotenv,
@@ -665,7 +665,7 @@ function expectBundled(
       }
     }
 
-    // Run bun build cli. In the future we can move to using `Bun.Bundler`
+    // Run bun build cli. In the future we can move to using `Bun.Transpiler.`
     let warningReference: Record<string, ErrorMeta[]> = {};
     const expectedErrors = bundleErrors
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
@@ -697,6 +697,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
               experimentalCss && "--experimental-css",
+              experimentalHtml && "--experimental-html",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -1035,7 +1036,9 @@ function expectBundled(
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           experimentalCss,
+          html: experimentalHtml ? true : undefined,
           drop,
+          define: define ?? {},
         } as BuildConfig;
 
         if (dotenv) {
@@ -1052,12 +1055,9 @@ function expectBundled(
             const debugFile = `import path from 'path';
 import assert from 'assert';
 const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
+const options = ${JSON.stringify({ ...buildConfig, throw: true, plugins: undefined }, null, 2)};
 options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
 const build = await Bun.build(options);
-if (build.logs) {
-  throw build.logs;
-}
 for (const [key, blob] of build.outputs) {
   await Bun.write(path.join(options.outdir, blob.path), blob.result);
 }
@@ -1558,7 +1558,7 @@ for (const [key, blob] of build.outputs) {
 
             if (run.errorLineMatch) {
               const stackTraceLine = stack.pop()!;
-              const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
+              const match = /at (?:<[^>]+> \()?([^)]+):(\d+):(\d+)\)?$/.exec(stackTraceLine);
               if (match) {
                 const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
                 if (!run.errorLineMatch.test(line)) {
@@ -1589,6 +1589,11 @@ for (const [key, blob] of build.outputs) {
 
           // no idea why this logs. ¯\_(ツ)_/¯
           result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
+          // when the inspector runs (can be due to VSCode extension), there is
+          // a bug that in debug modes the console logs extra stuff
+          if (name === "stderr" && process.env.BUN_INSPECT_CONNECT_TO) {
+            result = result.replace(/(?:^|\n)\/[^\n]*: CONSOLE LOG[^\n]*(\n|$)/g, "$1").trim();
+          }
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1663,8 +1668,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
@@ -1676,8 +1680,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
-      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
   );
 };
 

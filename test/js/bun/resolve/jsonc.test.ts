@@ -22,3 +22,19 @@ test("empty jsonc - tsconfig.json", async () => {
   });
   expect([join(dir, "index.ts")]).toRun();
 });
+
+test("import anything.jsonc as json", async () => {
+  const jsoncFile = `{
+    // comment
+    "trailingComma": 0,
+  }`;
+  const dir = tempDirWithFiles("jsonc", {
+    "anything.jsonc": jsoncFile,
+    "index.ts": `
+    import file from './anything.jsonc';
+    const _file = ${jsoncFile}
+    if (!Bun.deepEquals(file, _file)) throw new Error('anything.jsonc wasnt imported as jsonc');
+    `,
+  });
+  expect([join(dir, "index.ts")]).toRun();
+});

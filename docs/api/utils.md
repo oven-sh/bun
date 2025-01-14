@@ -121,7 +121,7 @@ const id = randomUUIDv7();
 
 A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the lowest 48 bits, and the random value and counter are encoded using the remaining bits.
 
-The `timestamp` parameter defaults to the current time in milliseconds. When the timestamp changes, the counter is reset to a psuedo-random integer wrapped to 4096. This counter is atomic and threadsafe, meaning that using `Bun.randomUUIDv7()` in many Workers within the same process running at the same timestamp will not have colliding counter values.
+The `timestamp` parameter defaults to the current time in milliseconds. When the timestamp changes, the counter is reset to a pseudo-random integer wrapped to 4096. This counter is atomic and threadsafe, meaning that using `Bun.randomUUIDv7()` in many Workers within the same process running at the same timestamp will not have colliding counter values.
 
 The final 8 bytes of the UUID are a cryptographically secure random value. It uses the same random number generator used by `crypto.randomUUID()` (which comes from BoringSSL, which in turn comes from the platform-specific system random number generator usually provided by the underlying hardware).
 
@@ -771,3 +771,28 @@ console.log(obj); // => { foo: "bar" }
 ```
 
 Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.
+
+## `estimateShallowMemoryUsageOf` in `bun:jsc`
+
+The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
+
+```js
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
+
+const obj = { foo: "bar" };
+const usage = estimateShallowMemoryUsageOf(obj);
+console.log(usage); // => 16
+
+const buffer = Buffer.alloc(1024 * 1024);
+estimateShallowMemoryUsageOf(buffer);
+// => 1048624
+
+const req = new Request("https://bun.sh");
+estimateShallowMemoryUsageOf(req);
+// => 167
+
+const array = Array(1024).fill({ a: 1 });
+// Arrays are usually not stored contiguously in memory, so this will not return a useful value (which isn't a bug).
+estimateShallowMemoryUsageOf(array);
+// => 16
+```

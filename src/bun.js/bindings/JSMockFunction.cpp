@@ -1122,7 +1122,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalOb
 
     // https://github.com/jestjs/jest/blob/bd1c6db7c15c23788ca3e09c919138e48dd3b28a/packages/jest-mock/src/index.ts#L849-L856
     if (callframe->argument(0).toBoolean(globalObject)) {
-        RETURN_IF_EXCEPTION(scope, {});
         WTF::String name = callframe->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->setName(name);

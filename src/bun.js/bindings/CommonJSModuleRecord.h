@@ -56,6 +56,8 @@ public:
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+
     void setSourceCode(JSC::SourceCode&& sourceCode);
 
     static void destroy(JSC::JSCell*);

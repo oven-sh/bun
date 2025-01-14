@@ -270,30 +270,6 @@ var NodeError = getNodeErrorByName("Error");
 var NodeTypeError = getNodeErrorByName("TypeError");
 var NodeRangeError = getNodeErrorByName("RangeError");
 
-class ERR_INVALID_ARG_VALUE extends NodeTypeError {
-  constructor(name, value, reason = "not specified") {
-    super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-  }
-}
-
-class ERR_INVALID_CURSOR_POS extends NodeTypeError {
-  constructor() {
-    super("Cannot set cursor row without setting its column", {
-      code: "ERR_INVALID_CURSOR_POS",
-    });
-  }
-}
-
-class ERR_OUT_OF_RANGE extends NodeRangeError {
-  constructor(name, range, received) {
-    super(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`, {
-      code: "ERR_OUT_OF_RANGE",
-    });
-  }
-}
-
 class ERR_USE_AFTER_CLOSE extends NodeError {
   constructor() {
     super("This socket has been ended by the other party", {
@@ -881,15 +857,15 @@ function cursorTo(stream, x, y, callback) {
     y = undefined;
   }
 
-  if (NumberIsNaN(x)) throw new ERR_INVALID_ARG_VALUE("x", x);
-  if (NumberIsNaN(y)) throw new ERR_INVALID_ARG_VALUE("y", y);
+  if (NumberIsNaN(x)) throw $ERR_INVALID_ARG_VALUE("x", x);
+  if (NumberIsNaN(y)) throw $ERR_INVALID_ARG_VALUE("y", y);
 
   if (stream == null || (typeof x !== "number" && typeof y !== "number")) {
     if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  if (typeof x !== "number") throw new ERR_INVALID_CURSOR_POS();
+  if (typeof x !== "number") throw $ERR_INVALID_CURSOR_POS();
 
   var data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
   return stream.write(data, callback);
@@ -1286,7 +1262,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
       if (NumberIsFinite(inputEscapeCodeTimeout)) {
         this.escapeCodeTimeout = inputEscapeCodeTimeout;
       } else {
-        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
+        throw $ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
       }
     }
 
@@ -1299,7 +1275,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   if (completer !== undefined && typeof completer !== "function") {
-    throw new ERR_INVALID_ARG_VALUE("completer", completer);
+    throw $ERR_INVALID_ARG_VALUE("completer", completer);
   }
 
   if (history === undefined) {
@@ -1313,7 +1289,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
+    throw $ERR_INVALID_ARG_VALUE("historySize", historySize);
   }
 
   // Backwards compat; check the isTTY prop of the output stream

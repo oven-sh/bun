@@ -9,7 +9,7 @@ it("successfully traverses pnpm-generated install directory", async () => {
   //
 
   let { exited } = Bun.spawn({
-    cmd: [bunExe(), "create", "vite", "my-vite-app", "--template", "solid-ts"],
+    cmd: [bunExe(), "create", "vite@5", "my-vite-app", "--template", "solid-ts"],
     cwd: package_dir,
     stdio: ["ignore", "inherit", "inherit"],
     env: bunEnv,

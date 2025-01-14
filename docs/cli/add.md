@@ -33,6 +33,14 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 $ bun add --optional lodash
 ```
 
+## `--peer`
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
+```
+
 ## `--exact`
 
 {% callout %}

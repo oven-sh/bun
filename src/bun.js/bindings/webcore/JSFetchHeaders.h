@@ -43,6 +43,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

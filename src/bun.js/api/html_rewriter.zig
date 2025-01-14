@@ -1157,6 +1157,26 @@ pub const DocType = struct {
             return JSValue.jsNull();
         return ZigString.init(str).toJS(globalObject);
     }
+
+    pub fn remove(
+        this: *DocType,
+        _: *JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) bun.JSError!JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        this.doctype.?.remove();
+        return callFrame.this();
+    }
+
+    pub fn removed(
+        this: *DocType,
+        _: *JSGlobalObject,
+    ) JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        return JSValue.jsBoolean(this.doctype.?.isRemoved());
+    }
 };
 
 pub const DocEnd = struct {

@@ -77,4 +77,8 @@ pub const Classes = struct {
     pub const NativeZlib = JSC.API.NativeZlib;
     pub const NativeBrotli = JSC.API.NativeBrotli;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
+    pub const DNSResolver = JSC.DNS.DNSResolver;
+
+    pub const S3Client = JSC.WebCore.S3Client;
+    pub const S3Stat = JSC.WebCore.S3Stat;
 };

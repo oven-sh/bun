@@ -120,8 +120,22 @@ async function checkIfCollectableByCounting(fn, ctor, count, waitTime = 20) {
   throw new Error(`${name} cannot be collected`);
 }
 
+var finalizationRegistry = new FinalizationRegistry(heldValue => {
+  heldValue.ongc();
+})
+
+function onGC(value, holder) {
+  if (holder?.ongc) {
+    
+    finalizationRegistry.register(value, { ongc: holder.ongc });
+  }
+}
+
 module.exports = {
   checkIfCollectable,
   runAndBreathe,
   checkIfCollectableByCounting,
+  onGC,
 };
+
+

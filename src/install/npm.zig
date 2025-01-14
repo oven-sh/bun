@@ -9,6 +9,8 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const PackageManager = @import("./install.zig").PackageManager;
 const ExternalStringMap = @import("./install.zig").ExternalStringMap;
+const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
+const PackageNameHash = bun.install.PackageNameHash;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
@@ -857,8 +859,6 @@ pub const Architecture = enum(u16) {
     }
 };
 
-const BigExternalString = Semver.BigExternalString;
-
 pub const PackageVersion = extern struct {
     /// `"integrity"` field || `"shasum"` field
     /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
@@ -879,6 +879,8 @@ pub const PackageVersion = extern struct {
     /// We deliberately choose not to populate this field.
     /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
     dev_dependencies: ExternalStringMap = ExternalStringMap{},
+
+    bundled_dependencies: ExternalPackageNameHashList = .{},
 
     /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
     bin: Bin = Bin{},
@@ -909,10 +911,14 @@ pub const PackageVersion = extern struct {
 
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
+
+    pub fn allDependenciesBundled(this: *const PackageVersion) bool {
+        return this.bundled_dependencies.isInvalid();
+    }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 224) {
+    if (@sizeOf(Npm.PackageVersion) != 232) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -934,7 +940,6 @@ pub const NpmPackage = extern struct {
 
     versions_buf: VersionSlice = VersionSlice{},
     string_lists_buf: ExternalStringList = ExternalStringList{},
-    string_buf: BigExternalString = BigExternalString{},
 };
 
 pub const PackageManifest = struct {
@@ -947,6 +952,7 @@ pub const PackageManifest = struct {
     external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
+    bundled_deps_buf: []const PackageNameHash = &.{},
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -961,9 +967,10 @@ pub const PackageManifest = struct {
     }
 
     pub const Serializer = struct {
-        // - version 3: added serialization of registry url. it's used to invalidate when it changes
-        // - version 4: fixed bug with cpu & os tag not being added correctly
-        pub const version = "bun-npm-manifest-cache-v0.0.4\n";
+        // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
+        // - v0.0.4: fixed bug with cpu & os tag not being added correctly
+        // - v0.0.5: added bundled dependencies
+        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -1581,6 +1588,12 @@ pub const PackageManifest = struct {
         var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
+        var bundled_deps_set = bun.StringSet.init(allocator);
+        defer bundled_deps_set.deinit();
+        var bundle_all_deps = false;
+
+        var bundled_deps_count: usize = 0;
+
         var string_builder = String.Builder{
             .string_pool = string_pool,
         };
@@ -1693,6 +1706,22 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    bundled_deps_set.map.clearRetainingCapacity();
+                    bundle_all_deps = false;
+                    if (prop.value.?.get("bundleDependencies") orelse prop.value.?.get("bundledDependencies")) |bundled_deps_expr| {
+                        switch (bundled_deps_expr.data) {
+                            .e_boolean => |boolean| {
+                                bundle_all_deps = boolean.value;
+                            },
+                            .e_array => |arr| {
+                                for (arr.slice()) |bundled_dep| {
+                                    try bundled_deps_set.insert(bundled_dep.asString(allocator) orelse continue);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(pair.prop)) |versioned_deps| {
                             if (versioned_deps.expr.data == .e_object) {
@@ -1700,6 +1729,11 @@ pub const PackageManifest = struct {
                                 const properties = versioned_deps.expr.data.e_object.properties.slice();
                                 for (properties) |property| {
                                     if (property.key.?.asString(allocator)) |key| {
+                                        if (!bundle_all_deps and bundled_deps_set.swapRemove(key)) {
+                                            // swap remove the dependency name because it could exist in
+                                            // multiple behavior groups.
+                                            bundled_deps_count += 1;
+                                        }
                                         string_builder.count(key);
                                         string_builder.count(property.value.?.asString(allocator) orelse "");
                                     }
@@ -1745,6 +1779,8 @@ pub const PackageManifest = struct {
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
         var all_tarball_url_strings = try allocator.alloc(ExternalString, tarball_urls_count);
         var tarball_url_strings = all_tarball_url_strings;
+        const bundled_deps_buf = try allocator.alloc(PackageNameHash, bundled_deps_count);
+        var bundled_deps_offset: usize = 0;
 
         if (versioned_packages.len > 0) {
             const versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
@@ -1828,6 +1864,22 @@ pub const PackageManifest = struct {
                         }
                     }
                     if (!parsed_version.valid) continue;
+
+                    bundled_deps_set.map.clearRetainingCapacity();
+                    bundle_all_deps = false;
+                    if (prop.value.?.get("bundleDependencies") orelse prop.value.?.get("bundledDependencies")) |bundled_deps_expr| {
+                        switch (bundled_deps_expr.data) {
+                            .e_boolean => |boolean| {
+                                bundle_all_deps = boolean.value;
+                            },
+                            .e_array => |arr| {
+                                for (arr.slice()) |bundled_dep| {
+                                    try bundled_deps_set.insert(bundled_dep.asString(allocator) orelse continue);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
 
                     var package_version: PackageVersion = empty_version;
 
@@ -2042,6 +2094,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
 
+                                const bundled_deps_begin = bundled_deps_offset;
+
                                 var i: usize = 0;
 
                                 for (items) |item| {
@@ -2050,6 +2104,11 @@ pub const PackageManifest = struct {
 
                                     this_names[i] = string_builder.append(ExternalString, name_str);
                                     this_versions[i] = string_builder.append(ExternalString, version_str);
+
+                                    if (!bundle_all_deps and bundled_deps_set.swapRemove(name_str)) {
+                                        bundled_deps_buf[bundled_deps_offset] = this_names[i].hash;
+                                        bundled_deps_offset += 1;
+                                    }
 
                                     if (comptime is_peer) {
                                         if (std.mem.indexOfScalar(u64, optional_peer_dep_names.items, this_names[i].hash) != null) {
@@ -2086,6 +2145,15 @@ pub const PackageManifest = struct {
                                 }
 
                                 count = i;
+
+                                if (bundle_all_deps) {
+                                    package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
+                                } else {
+                                    package_version.bundled_dependencies = ExternalPackageNameHashList.init(
+                                        bundled_deps_buf,
+                                        bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                    );
+                                }
 
                                 var name_list = ExternalStringList.init(all_extern_strings, this_names);
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
@@ -2368,15 +2436,11 @@ pub const PackageManifest = struct {
         result.external_strings_for_versions = version_extern_strings;
         result.package_versions = versioned_packages;
         result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
+        result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
 
         if (string_builder.ptr) |ptr| {
             result.string_buf = ptr[0..string_builder.len];
-            result.pkg.string_buf = BigExternalString{
-                .off = 0,
-                .len = @as(u32, @truncate(string_builder.len)),
-                .hash = 0,
-            };
         }
 
         return result;

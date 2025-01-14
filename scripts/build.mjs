@@ -132,16 +132,28 @@ function cmakePath(path) {
   return path.replace(/\\/g, "/");
 }
 
+/** @param {string} str */
+const toAlphaNumeric = str => str.replace(/[^a-z0-9]/gi, "-");
 function getCachePath(branch) {
-  const buildPath = process.env.BUILDKITE_BUILD_PATH;
-  const repository = process.env.BUILDKITE_REPO;
-  const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
-  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
-  const branchName = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const {
+    BUILDKITE_BUILD_PATH: buildPath,
+    BUILDKITE_REPO: repository,
+    BUILDKITE_PULL_REQUEST_REPO: fork,
+    BUILDKITE_BRANCH,
+    BUILDKITE_STEP_KEY,
+  } = process.env;
+
+  // NOTE: settings that could be long should be truncated to avoid hitting max
+  // path length limit on windows (4096)
+  const repositoryKey = toAlphaNumeric(
+    // remove domain name, only leaving 'org/repo'
+    (fork || repository).replace(/^https?:\/\/github\.com\/?/, ""),
+  );
+  const branchName = toAlphaNumeric(branch || BUILDKITE_BRANCH);
   const branchKey = branchName.startsWith("gh-readonly-queue-")
     ? branchName.slice(18, branchName.indexOf("-pr-"))
-    : branchName;
-  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
+    : branchName.slice(0, 32);
+  const stepKey = toAlphaNumeric(BUILDKITE_STEP_KEY);
   return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }
 

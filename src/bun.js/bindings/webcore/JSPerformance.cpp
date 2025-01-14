@@ -255,6 +255,12 @@ JSPerformance::JSPerformance(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
+size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
+{
+    JSPerformance* thisObject = jsCast<JSPerformance*>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
+}
+
 // static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 void JSPerformance::finishCreation(VM& vm)

@@ -24,12 +24,13 @@ const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
@@ -72,7 +73,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -94,7 +95,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.experimental_css = ctx.bundler_options.experimental_css;
+        b.options.experimental = ctx.bundler_options.experimental;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -156,7 +157,7 @@ pub const Run = struct {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
-        var bundle = try bun.Bundler.init(
+        var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
@@ -199,6 +200,7 @@ pub const Run = struct {
                     .smol = ctx.runtime_options.smol,
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
+                    .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
                 },
             ),
@@ -208,7 +210,7 @@ pub const Run = struct {
         };
 
         var vm = run.vm;
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
@@ -264,13 +266,13 @@ pub const Run = struct {
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         // Allow setting a custom timezone
-        if (vm.bundler.env.get("TZ")) |tz| {
+        if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
                 _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
             }
         }
 
-        vm.bundler.env.loadTracy();
+        vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
 
@@ -283,16 +285,12 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
-    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
-
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval.script.len > 0) {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        this.addConditionalGlobals();
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),
@@ -300,8 +298,8 @@ pub const Run = struct {
             else => {},
         }
 
-        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
-            this.entry_path = vm.bundler.fs.top_level_dir;
+        if (strings.eqlComptime(this.entry_path, ".") and vm.transpiler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.transpiler.fs.top_level_dir;
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
@@ -447,6 +445,22 @@ pub const Run = struct {
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
+    }
+
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+    /// add `gc()` to `globalThis`.
+    extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
+
+    fn addConditionalGlobals(this: *Run) void {
+        const vm = this.vm;
+        const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;
+
+        if (runtime_options.eval.script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
+        if (runtime_options.expose_gc) {
+            JSC__JSGlobalObject__addGc(vm.global);
+        }
     }
 };
 

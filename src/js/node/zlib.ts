@@ -24,13 +24,7 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const {
-  ERR_BROTLI_INVALID_PARAM,
-  ERR_BUFFER_TOO_LARGE,
-  ERR_INVALID_ARG_TYPE,
-  ERR_OUT_OF_RANGE,
-  ERR_ZLIB_INITIALIZATION_FAILED,
-} = require("internal/errors");
+const { ERR_BROTLI_INVALID_PARAM, ERR_BUFFER_TOO_LARGE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
 const {
@@ -126,7 +120,7 @@ function zlibBufferSync(engine, buffer) {
     if (isAnyArrayBuffer(buffer)) {
       buffer = Buffer.from(buffer);
     } else {
-      throw ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
     }
   }
   buffer = processChunkSync(engine, buffer, engine._finishFlushFlag);
@@ -562,7 +556,7 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
       }
     }
   }
@@ -686,7 +680,7 @@ function Brotli(opts, mode) {
 
       const value = opts.params[origKey];
       if (typeof value !== "number" && typeof value !== "boolean") {
-        throw ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
+        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
       brotliInitParamsArray[key] = value;
     });
@@ -696,7 +690,7 @@ function Brotli(opts, mode) {
 
   this._writeState = new Uint32Array(2);
   if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
-    throw ERR_ZLIB_INITIALIZATION_FAILED();
+    throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);

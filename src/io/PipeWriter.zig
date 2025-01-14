@@ -199,6 +199,10 @@ pub fn PosixBufferedWriter(
         closed_without_reporting: bool = false,
         close_fd: bool = true,
 
+        pub fn memoryCost(_: *const @This()) usize {
+            return @sizeOf(@This());
+        }
+
         const PosixWriter = @This();
 
         pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
@@ -392,6 +396,10 @@ pub fn PosixStreamingWriter(
 
         // TODO:
         chunk_size: usize = 0,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return @sizeOf(@This()) + this.buffer.capacity;
+        }
 
         pub fn getPoll(this: *@This()) ?*Async.FilePoll {
             return this.handle.getPoll();
@@ -909,6 +917,10 @@ pub fn WindowsBufferedWriter(
             }
         }
 
+        pub fn memoryCost(this: *const WindowsWriter) usize {
+            return @sizeOf(@This()) + this.write_buffer.len;
+        }
+
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
             bun.assert(this.source != null);
             this.is_done = false;
@@ -1023,6 +1035,10 @@ pub const StreamBuffer = struct {
             this.list.shrinkAndFree(std.mem.page_size);
         }
         this.list.clearRetainingCapacity();
+    }
+
+    pub fn memoryCost(this: *const StreamBuffer) usize {
+        return this.list.capacity;
     }
 
     pub fn size(this: *const StreamBuffer) usize {
@@ -1152,6 +1168,10 @@ pub fn WindowsStreamingWriter(
         closed_without_reporting: bool = false,
 
         pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+
+        pub fn memoryCost(this: *const WindowsWriter) usize {
+            return @sizeOf(@This()) + this.current_payload.memoryCost() + this.outgoing.memoryCost();
+        }
 
         fn onCloseSource(this: *WindowsWriter) void {
             this.source = null;

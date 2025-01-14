@@ -386,7 +386,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
         JSValue nameValue = callFrame->argument(1);
         if (nameValue.isString()) {
             FetchHeaders* impl = &headers->wrapped();
-            String name = nameValue.toWTFString(globalObject);
+            JSString* nameString = nameValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto name = nameString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
                 return fetchHeadersGetSetCookie(globalObject, vm, impl);
             }

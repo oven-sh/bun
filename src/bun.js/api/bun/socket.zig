@@ -1394,6 +1394,10 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.acquire);
         }
 
+        pub fn memoryCost(this: *This) usize {
+            return @sizeOf(This) + this.buffered_data_for_node_net.cap;
+        }
+
         pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
             if (this.native_callback != .none) return false;
             this.native_callback = callback;
@@ -1622,6 +1626,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
+                    handlers.promise.deinit();
                     if (this.this_value != .zero) {
                         this.this_value = .zero;
                     }
@@ -1629,7 +1634,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value);
                 }
 
                 return;
@@ -1653,7 +1658,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectOnNextTickAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {

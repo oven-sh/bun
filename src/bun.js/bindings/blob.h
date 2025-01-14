@@ -51,6 +51,8 @@ public:
     }
     void* m_impl;
 
+    size_t memoryCost() const;
+
 private:
     Blob(void* impl, String fileName = String())
     {

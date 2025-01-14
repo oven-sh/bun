@@ -116,6 +116,7 @@ try {
     entrypoints: [join(import.meta.dir, "out/manifest.js")],
     outdir: "out",
     minify: true,
+    throw: true,
   });
   const jsFilename = "manifest-" + jsBundle.outputs[0].hash + ".js";
   // const cssBundle = await build({

@@ -1,4 +1,4 @@
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const std = @import("std");
 const MutableString = bun.MutableString;
 const getAllocator = @import("../http.zig").getAllocator;

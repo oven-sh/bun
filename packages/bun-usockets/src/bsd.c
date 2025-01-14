@@ -843,13 +843,6 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         return LIBUS_SOCKET_ERROR;
     }
 
-#ifndef _WIN32
-    // 700 permission by default
-    fchmod(listenFd, S_IRWXU);
-#else
-    _chmod(path, S_IREAD | S_IWRITE | S_IEXEC);
-#endif
-
 #ifdef _WIN32
     _unlink(path);
 #else

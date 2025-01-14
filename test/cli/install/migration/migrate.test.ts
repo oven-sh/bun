@@ -78,6 +78,24 @@ test("migrate package with dependency on root package", async () => {
   expect(fs.existsSync(join(testDir, "node_modules", "test-pkg", "package.json"))).toBeTrue();
 });
 
+test("migrate package with npm dependency that resolves to a git package", async () => {
+  const testDir = tmpdirSync();
+
+  fs.cpSync(join(import.meta.dir, "npm-version-to-git-resolution"), testDir, { recursive: true });
+
+  const { exitCode } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "pipe",
+  });
+
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "node_modules", "jquery", "package.json")).json()).toHaveProperty(
+    "name",
+    "install-test",
+  );
+});
+
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
   const testDir = tmpdirSync();
 

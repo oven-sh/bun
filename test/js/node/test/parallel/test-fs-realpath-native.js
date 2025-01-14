@@ -5,6 +5,9 @@ const fs = require('fs');
 
 const filename = __filename.toLowerCase();
 
+// Bun: fix current working directory
+process.chdir(require('path').join(__dirname, '..', '..')); 
+
 assert.strictEqual(
   fs.realpathSync.native('./test/parallel/test-fs-realpath-native.js')
     .toLowerCase(),

@@ -2327,7 +2327,7 @@ pub const Command = struct {
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                const ctx = try Command.init(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .ExecCommand);
 
                 if (ctx.positionals.len > 1) {
                     try ExecCommand.exec(ctx);

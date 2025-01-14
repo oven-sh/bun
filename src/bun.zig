@@ -3353,12 +3353,23 @@ pub inline fn resolveSourcePath(
 }
 
 const RuntimeEmbedRoot = enum {
+    /// Relative to `<build>/codegen`.
     codegen,
+    /// Relative to `src`
     src,
+    /// Reallocates the slice at every call. Avoid this if possible.  An example
+    /// using this reasonably is referencing incremental_visualizer.html, which
+    /// is reloaded from disk for each request, but more importantly allows
+    /// maintaining the DevServer state while hacking on the visualizer.
     src_eager,
+    /// Avoid this if possible. See `.src_eager`.
     codegen_eager,
 };
 
+/// Load a file at runtime. This is only to be used in debug builds,
+/// specifically when `Environment.codegen_embed` is false. This allows quick
+/// iteration on files, as this skips the Zig compiler. Once Zig gains good
+/// incremental support, the non-eager cases can be deleted.
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,

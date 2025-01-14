@@ -602,6 +602,79 @@ describe("bundledDependnecies", () => {
     });
   }
 
+  test(`basic (bundledDependencies: true)`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled",
+          version: "4.4.4",
+          dependencies: {
+            "dep1": "1.1.1",
+          },
+          devDependencies: {
+            "dep2": "1.1.1",
+          },
+          bundledDependencies: true,
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "dep1", "package.json"),
+        JSON.stringify({
+          name: "dep1",
+          version: "1.1.1",
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "dep2", "package.json"),
+        JSON.stringify({
+          name: "dep2",
+          version: "1.1.1",
+        }),
+      ),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/dep1/package.json" },
+    ]);
+  });
+
+  test(`invalid bundledDependencies value should throw`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled",
+          version: "4.4.4",
+          bundledDependencies: "a",
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("error:");
+    expect(err).toContain("to be a boolean or an array of strings");
+    expect(err).not.toContain("warning:");
+    expect(err).not.toContain("failed");
+    expect(err).not.toContain("panic:");
+
+    const exitCode = await exited;
+    expect(exitCode).toBe(1);
+  });
+
   test("resolve dep of bundled dep", async () => {
     // Test that a bundled dep can have it's dependencies resolved without
     // needing to add them to `bundledDependencies`. Also test that only

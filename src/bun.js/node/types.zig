@@ -914,11 +914,11 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceW(this: PathLike, buf: *bun.PathBuffer) [:0]const u16 {
-        return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
+    pub inline fn sliceW(this: PathLike, buf: *bun.WPathBuffer) [:0]const u16 {
+        return strings.toWPath(buf, this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+    pub inline fn osPath(this: PathLike, buf: *bun.OSPathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }

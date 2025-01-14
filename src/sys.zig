@@ -900,15 +900,24 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
-        // handle the special "nul" device
-        // we technically should handle the other DOS devices too.
-        if (path_.len >= "\\nul".len and
-            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
-            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
-        {
-            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
-            buf[bun.strings.w("\\??\\NUL").len] = 0;
-            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        if (path_.len >= 4) {
+            if ((bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+                bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+            {
+                @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+                buf[bun.strings.w("\\??\\NUL").len] = 0;
+                return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+            }
+            if ((path[1] == '/' or path[1] == '\\') and
+                (path[2] == '.' or path[2] == '?') and
+                (path[3] == '/' or path[3] == '\\'))
+            {
+                buf[0..4].* = .{ '\\', '\\', path[2], '\\' };
+                const rest = path[4..];
+                @memcpy(buf[4..][0..rest.len], rest);
+                buf[path.len] = 0;
+                return .{ .result = buf[0..path.len :0] };
+            }
         }
 
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
@@ -962,7 +971,7 @@ pub fn normalizePathWindows(
 
 fn openDirAtWindowsNtPath(
     dirFd: bun.FileDescriptor,
-    path: []const u16,
+    path: [:0]const u16,
     options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
     const iterable = options.iterable;
@@ -976,6 +985,17 @@ fn openDirAtWindowsNtPath(
     const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
     const read_only_flag: u32 = if (read_only) 0 else w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
     const flags: u32 = iterable_flag | base_flags | rename_flag | read_only_flag;
+    const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+
+    // NtCreateFile seems to not function on device paths.
+    // Since it is absolute, it can just use CreateFileW
+    if (bun.strings.hasPrefixComptimeUTF16(path, "\\\\.\\"))
+        return openWindowsDevicePath(
+            path,
+            flags,
+            if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+        );
 
     const path_len_bytes: u16 = @truncate(path.len * 2);
     var nt_name = w.UNICODE_STRING{
@@ -996,7 +1016,6 @@ fn openDirAtWindowsNtPath(
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
     };
-    const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
     var fd: w.HANDLE = w.INVALID_HANDLE_VALUE;
     var io: w.IO_STATUS_BLOCK = undefined;
 
@@ -1053,6 +1072,33 @@ fn openDirAtWindowsNtPath(
             };
         },
     }
+}
+
+fn openWindowsDevicePath(
+    path: [:0]const u16,
+    dwDesiredAccess: u32,
+    dwCreationDisposition: u32,
+    dwFlagsAndAttributes: u32,
+) Maybe(bun.FileDescriptor) {
+    const rc = std.os.windows.kernel32.CreateFileW(
+        path,
+        dwDesiredAccess,
+        FILE_SHARE,
+        null,
+        dwCreationDisposition,
+        dwFlagsAndAttributes,
+        null,
+    );
+    if (rc == w.INVALID_HANDLE_VALUE) {
+        return .{ .err = .{
+            .errno = if (windows.Win32Error.get().toSystemErrno()) |e|
+                @intFromEnum(e)
+            else
+                @intFromEnum(bun.C.E.UNKNOWN),
+            .syscall = .open,
+        } };
+    }
+    return .{ .result = bun.toFD(rc) };
 }
 
 pub const WindowsOpenDirOptions = packed struct {
@@ -2799,9 +2845,10 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            subpath
+            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
+
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2824,7 +2871,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
-            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
+            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err, rc });
             return err;
         }
 

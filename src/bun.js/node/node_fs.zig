@@ -707,8 +707,8 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const args = this.args;
             var src_buf: bun.OSPathBuffer = undefined;
             var dest_buf: bun.OSPathBuffer = undefined;
-            const src = args.src.osPath(@ptrCast(&src_buf));
-            const dest = args.dest.osPath(@ptrCast(&dest_buf));
+            const src = args.src.osPath(&src_buf);
+            const dest = args.dest.osPath(&dest_buf);
 
             if (Environment.isWindows) {
                 const attributes = windows.GetFileAttributesW(src);
@@ -3805,7 +3805,7 @@ pub const NodeFS = struct {
                     else => {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
-                    .EXIST => return switch (bun.sys.directoryExistsAt(std.fs.cwd().fd, path)) {
+                    .EXIST => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
                         .err => .{ .err = .{
                             .errno = err.errno,
                             .syscall = .mkdir,
@@ -5672,22 +5672,14 @@ pub const NodeFS = struct {
 
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
-    pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
-        comptime bun.assert(flavor == .sync);
-
-        var src_buf: bun.PathBuffer = undefined;
-        var dest_buf: bun.PathBuffer = undefined;
+    pub fn cp(this: *NodeFS, args: Arguments.Cp, _: Flavor) Maybe(Return.Cp) {
+        var src_buf: bun.OSPathBuffer = undefined;
+        var dest_buf: bun.OSPathBuffer = undefined;
 
         const src = args.src.osPath(&src_buf);
         const dest = args.dest.osPath(&dest_buf);
 
-        return this._cpSync(
-            @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&src_buf))),
-            @intCast(src.len),
-            @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&dest_buf))),
-            @intCast(dest.len),
-            args,
-        );
+        return this.cpSyncInner(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len), args);
     }
 
     pub fn osPathIntoSyncErrorBuf(this: *NodeFS, slice: anytype) []const u8 {
@@ -5708,7 +5700,7 @@ pub const NodeFS = struct {
         } else {}
     }
 
-    fn _cpSync(
+    fn cpSyncInner(
         this: *NodeFS,
         src_buf: *bun.OSPathBuffer,
         src_dir_len: PathString.PathInt,
@@ -5734,7 +5726,7 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    @enumFromInt(if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0)),
                     attributes,
                     args,
                 );
@@ -5768,13 +5760,11 @@ pub const NodeFS = struct {
         }
 
         if (!cp_flags.recursive) {
-            return .{
-                .err = .{
-                    .errno = @intFromEnum(E.ISDIR),
-                    .syscall = .copyfile,
-                    .path = this.osPathIntoSyncErrorBuf(src),
-                },
-            };
+            return .{ .err = .{
+                .errno = @intFromEnum(E.ISDIR),
+                .syscall = .copyfile,
+                .path = this.osPathIntoSyncErrorBuf(src),
+            } };
         }
 
         if (comptime Environment.isMac) try_with_clonefile: {
@@ -5814,7 +5804,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode, false)) {
-            .err => |err| return Maybe(Return.Cp){ .err = err },
+            .err => |err| return .{ .err = err },
             .result => {},
         }
 
@@ -5841,7 +5831,7 @@ pub const NodeFS = struct {
 
             switch (current.kind) {
                 .directory => {
-                    const r = this._cpSync(
+                    const r = this.cpSyncInner(
                         src_buf,
                         src_dir_len + @as(PathString.PathInt, @intCast(1 + name_slice.len)),
                         dest_buf,

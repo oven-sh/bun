@@ -409,6 +409,10 @@ pub const StatWatcher = struct {
             },
         ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
+        if (this.closed) {
+            this.used_by_scheduler_thread.store(false, .release);
+            return;
+        }
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 

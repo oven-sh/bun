@@ -1287,7 +1287,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{ ".node", ".html" };
+const default_loader_ext_bun = [_]string{".node"};
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",
@@ -1377,6 +1377,10 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+
+        if (bun.CLI.Command.get().bundler_options.experimental.html) {
+            _ = try loaders.getOrPutValue(".html", .html);
         }
     }
 

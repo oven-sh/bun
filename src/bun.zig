@@ -1855,6 +1855,17 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
+    pub fn clone(self: StringSet) !StringSet {
+        var new_map = Map.init(self.map.allocator);
+        try new_map.ensureTotalCapacity(self.map.count());
+        for (self.map.keys()) |key| {
+            new_map.putAssumeCapacity(try self.map.allocator.dupe(u8, key), {});
+        }
+        return StringSet{
+            .map = new_map,
+        };
+    }
+
     pub fn init(allocator: std.mem.Allocator) StringSet {
         return StringSet{
             .map = Map.init(allocator),
@@ -1896,6 +1907,13 @@ pub const StringMap = struct {
     dupe_keys: bool = false,
 
     pub const Map = StringArrayHashMap(string);
+
+    pub fn clone(self: StringMap) !StringMap {
+        return StringMap{
+            .map = try self.map.clone(),
+            .dupe_keys = self.dupe_keys,
+        };
+    }
 
     pub fn init(allocator: std.mem.Allocator, dupe_keys: bool) StringMap {
         return StringMap{

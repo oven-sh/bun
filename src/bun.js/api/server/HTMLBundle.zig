@@ -98,20 +98,47 @@ pub const HTMLBundleRoute = struct {
     }
 
     fn onAnyRequest(this: *HTMLBundleRoute, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
+        this.ref();
+        defer this.deref();
+        const server: AnyServer = this.server orelse {
+            resp.endWithoutBody(true);
+            this.deref();
+            return;
+        };
+
+        if (server.config().development) {
+            // TODO: actually implement proper watch mode instead of "rebuild on every request"
+            if (this.value == .html) {
+                this.value.html.deref();
+                this.value = .pending;
+            } else if (this.value == .err) {
+                this.value.err.deinit();
+                this.value = .pending;
+            }
+        }
+
         if (this.value == .pending) {
             if (bun.Environment.enable_logs)
                 debug("onRequest: {s} - pending", .{req.url()});
-            const server: AnyServer = this.server orelse {
-                resp.endWithoutBody(true);
-                this.deref();
-                return;
-            };
+
             const globalThis = server.globalThis();
 
             const vm = globalThis.bunVM();
 
+            var config = this.html_bundle.config;
+            config.entry_points = config.entry_points.clone() catch bun.outOfMemory();
+            config.public_path = config.public_path.clone() catch bun.outOfMemory();
+            config.define = config.define.clone() catch bun.outOfMemory();
+            if (!server.config().development) {
+                config.minify.syntax = true;
+                config.minify.whitespace = true;
+                config.minify.identifiers = true;
+                config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
+            }
+            config.source_map = .linked;
+
             const completion_task = bun.BundleV2.createAndScheduleCompletionTask(
-                this.html_bundle.config,
+                config,
                 this.html_bundle.plugins,
                 globalThis,
                 vm.eventLoop(),
@@ -122,6 +149,7 @@ pub const HTMLBundleRoute = struct {
                 return;
             };
             this.ref();
+            completion_task.started_at_ns = bun.getRoughTickCount().ns();
             completion_task.html_build_task = this;
             this.value = .{ .building = completion_task };
         }
@@ -151,6 +179,7 @@ pub const HTMLBundleRoute = struct {
                     return;
                 };
 
+                this.ref();
                 pending.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
                 req.setYield(false);
@@ -176,7 +205,11 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn onComplete(this: *HTMLBundleRoute, completion_task: *bun.BundleV2.JSBundleCompletionTask) void {
+        // To ensure it stays alive for the deuration of this function.
         this.ref();
+        defer this.deref();
+
+        // For the build task.
         defer this.deref();
 
         switch (completion_task.result) {
@@ -185,6 +218,18 @@ pub const HTMLBundleRoute = struct {
                     debug("onComplete: err - {s}", .{@errorName(err)});
                 this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
                 completion_task.log.cloneToWithRecycled(&this.value.err, true) catch bun.outOfMemory();
+
+                if (this.server) |server| {
+                    if (server.config().development) {
+                        switch (bun.Output.enable_ansi_colors_stderr) {
+                            inline else => |enable_ansi_colors| {
+                                var writer = bun.Output.errorWriterBuffered();
+                                this.value.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
+                                writer.context.flush() catch {};
+                            },
+                        }
+                    }
+                }
             },
             .value => |bundle| {
                 if (bun.Environment.enable_logs)
@@ -193,6 +238,22 @@ pub const HTMLBundleRoute = struct {
                 const server: AnyServer = this.server orelse return;
                 const globalThis = server.globalThis();
                 const output_files = bundle.output_files.items;
+
+                if (server.config().development) {
+                    const now = bun.getRoughTickCount().ns();
+                    const duration = now - completion_task.started_at_ns;
+                    var duration_f64: f64 = @floatFromInt(duration);
+                    duration_f64 /= std.time.ns_per_s;
+
+                    bun.Output.printElapsed(duration_f64);
+                    var byte_length: u64 = 0;
+                    for (output_files) |*output_file| {
+                        byte_length += output_file.size_without_sourcemap;
+                    }
+
+                    bun.Output.prettyErrorln(" <green>bundle<r> {s} <d>{d:.2} KB<r>", .{ std.fs.path.basename(this.html_bundle.path), @as(f64, @floatFromInt(byte_length)) / 1000.0 });
+                    bun.Output.flush();
+                }
 
                 var this_html_route: ?*StaticRoute = null;
 
@@ -206,7 +267,20 @@ pub const HTMLBundleRoute = struct {
                         var hashbuf: [64]u8 = undefined;
                         const etag_str = std.fmt.bufPrint(&hashbuf, "{}", .{bun.fmt.hexIntLower(output_file.hash)}) catch bun.outOfMemory();
                         headers.append("ETag", etag_str) catch bun.outOfMemory();
-                        headers.append("Cache-Control", "public, max-age=31536000, immutable") catch bun.outOfMemory();
+                        if (!server.config().development and (output_file.output_kind == .chunk))
+                            headers.append("Cache-Control", "public, max-age=31536000") catch bun.outOfMemory();
+                    }
+
+                    // Add a SourceMap header if we have a source map index
+                    // and it's in development mode.
+                    if (server.config().development) {
+                        if (output_file.source_map_index != std.math.maxInt(u32)) {
+                            var route_path = output_files[output_file.source_map_index].dest_path;
+                            if (strings.hasPrefixComptime(route_path, "./") or strings.hasPrefixComptime(route_path, ".\\")) {
+                                route_path = route_path[1..];
+                            }
+                            headers.append("SourceMap", route_path) catch bun.outOfMemory();
+                        }
                     }
 
                     const static_route = StaticRoute.new(.{
@@ -277,7 +351,7 @@ pub const HTMLBundleRoute = struct {
                 },
                 .err => |log| {
                     _ = log; // autofix
-                    // TODO: Implement error rendering
+                    resp.writeStatus("500 Build Failed");
                     resp.endWithoutBody(true);
                 },
                 else => {

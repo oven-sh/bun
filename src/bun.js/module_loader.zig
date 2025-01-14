@@ -2108,15 +2108,13 @@ pub const ModuleLoader = struct {
                 }
 
                 const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
-                const obj = JSValue.createEmptyObject(globalObject.?, 1);
-                obj.put(globalObject.?, JSC.ZigString.static("default"), html_bundle.toJS(globalObject.?));
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
-                    .jsvalue_for_export = obj,
+                    .jsvalue_for_export = html_bundle.toJS(globalObject.?),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
-                    .tag = .exports_object,
+                    .tag = .export_default_object,
                 };
             },
 
@@ -2355,7 +2353,7 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
-            } else if (attribute.eqlComptime("html")) {
+            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
                 loader = .html;
             }
         }

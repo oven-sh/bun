@@ -1657,6 +1657,7 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+        started_at_ns: u64 = 0,
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,

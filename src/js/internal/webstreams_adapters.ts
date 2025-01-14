@@ -39,11 +39,7 @@ const ZLIB_FAILURES = new SafeSet([
   "Z_NEED_DICT",
 ]);
 
-/**
- * @param {Error|null} cause
- * @returns {Error|null}
- */
-function handleKnownInternalErrors(cause) {
+function handleKnownInternalErrors(cause: Error | null): Error | null {
   switch (true) {
     case cause?.code === "ERR_STREAM_PREMATURE_CLOSE": {
       return new AbortError(undefined, { cause });
@@ -58,21 +54,6 @@ function handleKnownInternalErrors(cause) {
   }
 }
 
-/**
- * @typedef {import('../../stream').Writable} Writable
- * @typedef {import('../../stream').Readable} Readable
- * @typedef {import('./writablestream').WritableStream} WritableStream
- * @typedef {import('./readablestream').ReadableStream} ReadableStream
- */
-
-/**
- * @typedef {import('../abort_controller').AbortSignal} AbortSignal
- */
-
-/**
- * @param {Writable} streamWritable
- * @returns {WritableStream}
- */
 function newWritableStreamFromStreamWritable(streamWritable) {
   // Not using the internal/streams/utils isWritableNodeStream utility
   // here because it will return false if streamWritable is a Duplex
@@ -168,16 +149,6 @@ function newWritableStreamFromStreamWritable(streamWritable) {
   );
 }
 
-/**
- * @param {WritableStream} writableStream
- * @param {{
- *   decodeStrings? : boolean,
- *   highWaterMark? : number,
- *   objectMode? : boolean,
- *   signal? : AbortSignal,
- * }} [options]
- * @returns {Writable}
- */
 function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
   if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
@@ -326,14 +297,6 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
   return writable;
 }
 
-/**
- * @typedef {import('./queuingstrategies').QueuingStrategy} QueuingStrategy
- * @param {Readable} streamReadable
- * @param {{
- *  strategy : QueuingStrategy
- * }} [options]
- * @returns {ReadableStream}
- */
 function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
@@ -415,16 +378,6 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   );
 }
 
-/**
- * @param {ReadableStream} readableStream
- * @param {{
- *   highWaterMark? : number,
- *   encoding? : string,
- *   objectMode? : boolean,
- *   signal? : AbortSignal,
- * }} [options]
- * @returns {Readable}
- */
 function newStreamReadableFromReadableStream(readableStream, options = kEmptyObject) {
   if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
@@ -499,16 +452,6 @@ function newStreamReadableFromReadableStream(readableStream, options = kEmptyObj
   return readable;
 }
 
-/**
- * @typedef {import('./readablestream').ReadableWritablePair
- * } ReadableWritablePair
- * @typedef {import('../../stream').Duplex} Duplex
- */
-
-/**
- * @param {Duplex} duplex
- * @returns {ReadableWritablePair}
- */
 function newReadableWritablePairFromDuplex(duplex) {
   // Not using the internal/streams/utils isWritableNodeStream and
   // isReadableNodeStream utilities here because they will return false
@@ -539,18 +482,6 @@ function newReadableWritablePairFromDuplex(duplex) {
   return { writable, readable };
 }
 
-/**
- * @param {ReadableWritablePair} pair
- * @param {{
- *   allowHalfOpen? : boolean,
- *   decodeStrings? : boolean,
- *   encoding? : string,
- *   highWaterMark? : number,
- *   objectMode? : boolean,
- *   signal? : AbortSignal,
- * }} [options]
- * @returns {Duplex}
- */
 function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = kEmptyObject) {
   validateObject(pair, "pair");
   const { readable: readableStream, writable: writableStream } = pair;

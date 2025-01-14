@@ -18,9 +18,11 @@ export default [
   ["ERR_INVALID_ARG_VALUE", TypeError],
   ["ERR_INVALID_PROTOCOL", TypeError],
   ["ERR_INVALID_THIS", TypeError],
+  ["ERR_INVALID_RETURN_VALUE", TypeError],
   ["ERR_IPC_CHANNEL_CLOSED", Error],
   ["ERR_IPC_DISCONNECTED", Error],
   ["ERR_MISSING_ARGS", TypeError],
+  ["ERR_AMBIGUOUS_ARGUMENT", TypeError],
   ["ERR_OUT_OF_RANGE", RangeError],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],
@@ -47,8 +49,24 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_SOCKET_BAD_PORT", RangeError],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
-  ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError, "TypeError"],
-  ["ERR_INVALID_URI", URIError, "URIError"],
+  ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
+  ["ERR_INVALID_IP_ADDRESS", TypeError],
+  ["ERR_UNAVAILABLE_DURING_EXIT", Error],
+  ["ERR_INVALID_URI", URIError],
+  ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error],
+  ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error],
+  ["ERR_UNHANDLED_ERROR", Error],
+  ["ERR_UNKNOWN_CREDENTIAL", Error],
+  ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
+  ["ERR_DLOPEN_FAILED", Error],
+  ["ERR_ASSERTION", Error],
+  ["ERR_IPC_ONE_PIPE", Error],
+  ["ERR_SOCKET_ALREADY_BOUND", Error],
+  ["ERR_SOCKET_BAD_BUFFER_SIZE", TypeError],
+  ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
+  ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
+  ["ERR_INVALID_CURSOR_POS", TypeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -59,10 +77,14 @@ export default [
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
-  //NET
+  // DNS
+  ["ERR_DNS_SET_SERVERS_FAILED", Error],
+
+  // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],
   ["ERR_SOCKET_CLOSED", Error],
-  //HTTP2
+
+  // HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED", TypeError],
   ["ERR_HTTP2_SEND_FILE", Error],
@@ -87,4 +109,50 @@ export default [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error],
   ["ERR_HTTP2_ERROR", Error],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],
+
+  // AsyncHooks
+  ["ERR_ASYNC_TYPE", TypeError],
+  ["ERR_INVALID_ASYNC_ID", RangeError],
+  ["ERR_ASYNC_CALLBACK", TypeError],
+
+  // Postgres
+  ["ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2", Error, "PostgresError"],
+  ["ERR_POSTGRES_SERVER_ERROR", Error, "PostgresError"],
+  ["ERR_POSTGRES_SYNTAX_ERROR", SyntaxError, "PostgresError"],
+  ["ERR_POSTGRES_CONNECTION_CLOSED", Error, "PostgresError"],
+  ["ERR_POSTGRES_EXPECTED_REQUEST", Error, "PostgresError"],
+  ["ERR_POSTGRES_EXPECTED_STATEMENT", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_BACKEND_KEY_DATA", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_BINARY_DATA", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_BYTE_SEQUENCE", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_CHARACTER", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_MESSAGE_LENGTH", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_MESSAGE", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_QUERY_BINDING", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_SERVER_KEY", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_SERVER_SIGNATURE", Error, "PostgresError"],
+  ["ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET", Error, "PostgresError"],
+  ["ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET", Error, "PostgresError"],
+  ["ERR_POSTGRES_OVERFLOW", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64", Error, "PostgresError"],
+  ["ERR_POSTGRES_SASL_SIGNATURE_MISMATCH", Error, "PostgresError"],
+  ["ERR_POSTGRES_TLS_NOT_AVAILABLE", Error, "PostgresError"],
+  ["ERR_POSTGRES_TLS_UPGRADE_FAILED", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNEXPECTED_MESSAGE", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
+
+  // S3
+  ["ERR_S3_MISSING_CREDENTIALS", Error],
+  ["ERR_S3_INVALID_METHOD", Error],
+  ["ERR_S3_INVALID_PATH", Error],
+  ["ERR_S3_INVALID_ENDPOINT", Error],
+  ["ERR_S3_INVALID_SIGNATURE", Error],
+  ["ERR_S3_INVALID_SESSION_TOKEN", Error],
 ] as ErrorCodeMapping;

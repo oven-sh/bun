@@ -18,6 +18,8 @@ const FileSystem = bun.fs.FileSystem;
 const path = bun.path;
 const glob = bun.glob;
 const Table = bun.fmt.Table;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const OOM = bun.OOM;
 
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -138,7 +140,7 @@ pub const OutdatedCommand = struct {
         original_cwd: string,
         manager: *PackageManager,
         filters: []const string,
-    ) error{OutOfMemory}![]const PackageID {
+    ) OOM![]const PackageID {
         const lockfile = manager.lockfile;
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
@@ -152,36 +154,10 @@ pub const OutdatedCommand = struct {
         }
 
         const converted_filters = converted_filters: {
-            const buf = try allocator.alloc(FilterType, filters.len);
+            const buf = try allocator.alloc(WorkspaceFilter, filters.len);
+            var path_buf: bun.PathBuffer = undefined;
             for (filters, buf) |filter, *converted| {
-                if ((filter.len == 1 and filter[0] == '*') or strings.eqlComptime(filter, "**")) {
-                    converted.* = .all;
-                    continue;
-                }
-
-                const is_path = filter.len > 0 and filter[0] == '.';
-
-                const joined_filter = if (is_path)
-                    strings.withoutTrailingSlash(path.joinAbsString(original_cwd, &[_]string{filter}, .posix))
-                else
-                    filter;
-
-                if (joined_filter.len == 0) {
-                    converted.* = FilterType.init(&.{}, is_path);
-                    continue;
-                }
-
-                const length = bun.simdutf.length.utf32.from.utf8.le(joined_filter);
-                const convert_buf = try allocator.alloc(u32, length);
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    // nothing would match
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], is_path);
+                converted.* = try WorkspaceFilter.init(allocator, filter, original_cwd, &path_buf);
             }
             break :converted_filters buf;
         };
@@ -212,14 +188,14 @@ pub const OutdatedCommand = struct {
 
                             const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                            if (!glob.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.walk.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.matchImpl(pattern, name).matches()) {
+                            if (!glob.walk.matchImpl(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -331,7 +307,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
+                                    if (!glob.walk.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },
@@ -453,10 +429,10 @@ pub const OutdatedCommand = struct {
         for (workspace_pkg_ids) |workspace_pkg_id| {
             inline for (
                 .{
-                    Behavior{ .normal = true },
-                    Behavior{ .dev = true },
-                    Behavior{ .peer = true },
-                    Behavior{ .optional = true },
+                    Behavior.prod,
+                    Behavior.dev,
+                    Behavior.peer,
+                    Behavior.optional,
                 },
             ) |group_behavior| {
                 for (outdated_ids.items) |ids| {
@@ -465,7 +441,7 @@ pub const OutdatedCommand = struct {
                     const dep_id = ids.dep_id;
 
                     const dep = dependencies[dep_id];
-                    if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+                    if (!dep.behavior.includes(group_behavior)) continue;
 
                     const package_name = pkg_names[package_id].slice(string_buf);
                     const resolution = pkg_resolutions[package_id];

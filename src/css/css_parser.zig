@@ -186,8 +186,14 @@ pub const VendorPrefix = packed struct(u8) {
     }
 
     /// Returns VendorPrefix::None if empty.
-    pub fn orNone(this: VendorPrefix) VendorPrefix {
-        return this.bitwiseOr(VendorPrefix{ .none = true });
+    pub inline fn orNone(this: VendorPrefix) VendorPrefix {
+        return this._or(VendorPrefix{ .none = true });
+    }
+
+    /// **WARNING**: NOT THE SAME as .bitwiseOr!!
+    pub inline fn _or(this: VendorPrefix, other: VendorPrefix) VendorPrefix {
+        if (this.isEmpty()) return other;
+        return this;
     }
 };
 

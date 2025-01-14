@@ -7,6 +7,7 @@ function generate(ssl) {
     hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
+    memoryCost: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -180,9 +181,6 @@ function generate(ssl) {
       reload: {
         fn: "reload",
         length: 1,
-      },
-      bytesWritten: {
-        getter: "getBytesWritten",
       },
       setServername: {
         fn: "setServername",

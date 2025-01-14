@@ -31,7 +31,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 
 When running programs with Bun from a Visual Studio Code terminal, Bun will connect to the extension and report errors as they happen, at the exact location they happened. We recommend using this feature with `bun --watch` so you can see errors on every save.
 
-![Error messages example](./error-messages.gif)
+![Error messages example](https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-vscode/error-messages.gif)
 
 <div align="center">
 <sup>In the example above VSCode is saving on every keypress. Under normal configuration you'd only see errors on every save.</sup>

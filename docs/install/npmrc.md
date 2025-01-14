@@ -6,7 +6,7 @@ Bun supports loading configuration options from [`.npmrc`](https://docs.npmjs.co
 
 {% /callout %}
 
-# Supported options
+## Supported options
 
 ### `registry`: Set the default registry
 

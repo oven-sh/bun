@@ -53,8 +53,8 @@ pub fn buildURL(
     full_name_: strings.StringOrTinyString,
     version: Semver.Version,
     string_buf: []const u8,
-) !string {
-    return try buildURLWithPrinter(
+) OOM!string {
+    return buildURLWithPrinter(
         registry_,
         full_name_,
         version,

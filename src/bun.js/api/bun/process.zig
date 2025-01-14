@@ -153,6 +153,10 @@ pub const Process = struct {
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
 
+    pub fn memoryCost(_: *const Process) usize {
+        return @sizeOf(@This());
+    }
+
     pub usingnamespace bun.NewRefCounted(Process, deinit);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {

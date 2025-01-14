@@ -16,7 +16,7 @@ pub const ExecCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
-        var bundle = try bun.Bundler.init(
+        var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
             try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),

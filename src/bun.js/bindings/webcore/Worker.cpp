@@ -427,9 +427,9 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         // clang-tidy is smart enough to realize that deref() leads to freeing
         // but it's not smart enough to realize that `hasOneRef()` ensures its safety
         while (!vm.hasOneRef()) // NOLINT
-            vm.deref(); // NOLINT
+            vm.derefSuppressingSaferCPPChecking(); // NOLINT
 
-        vm.deref(); // NOLINT
+        vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

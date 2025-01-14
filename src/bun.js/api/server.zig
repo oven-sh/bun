@@ -176,6 +176,48 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 }
 
 const StaticRoute = @import("./server/StaticRoute.zig");
+const HTMLBundle = JSC.API.HTMLBundle;
+const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
+pub const AnyStaticRoute = union(enum) {
+    StaticRoute: *StaticRoute,
+    HTMLBundleRoute: *HTMLBundleRoute,
+
+    pub fn setServer(this: AnyStaticRoute, server: ?AnyServer) void {
+        switch (this) {
+            .StaticRoute => |static_route| static_route.server = server,
+            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.server = server,
+        }
+    }
+
+    pub fn deref(this: AnyStaticRoute) void {
+        switch (this) {
+            .StaticRoute => |static_route| static_route.deref(),
+            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.deref(),
+        }
+    }
+
+    pub fn ref(this: AnyStaticRoute) void {
+        switch (this) {
+            .StaticRoute => |static_route| static_route.ref(),
+            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.ref(),
+        }
+    }
+
+    pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue, dedupe_html_bundle_map: *std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute)) bun.JSError!AnyStaticRoute {
+        if (argument.as(HTMLBundle)) |html_bundle| {
+            const entry = try dedupe_html_bundle_map.getOrPut(html_bundle);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = HTMLBundleRoute.init(html_bundle);
+            } else {
+                entry.value_ptr.*.ref();
+            }
+
+            return .{ .HTMLBundleRoute = entry.value_ptr.* };
+        }
+
+        return .{ .StaticRoute = try StaticRoute.fromJS(globalThis, argument) };
+    }
+};
 
 pub const ServerConfig = struct {
     address: union(enum) {
@@ -228,51 +270,116 @@ pub const ServerConfig = struct {
 
     pub const StaticRouteEntry = struct {
         path: []const u8,
-        route: *StaticRoute,
+        route: AnyStaticRoute,
+
+        /// Clone the path buffer and increment the ref count
+        /// This doesn't actually clone the route, it just increments the ref count
+        pub fn clone(this: StaticRouteEntry) !StaticRouteEntry {
+            this.route.ref();
+
+            return .{
+                .path = try bun.default_allocator.dupe(u8, this.path),
+                .route = this.route,
+            };
+        }
 
         pub fn deinit(this: *StaticRouteEntry) void {
             bun.default_allocator.free(this.path);
             this.route.deref();
         }
+
+        pub fn isLessThan(_: void, this: StaticRouteEntry, other: StaticRouteEntry) bool {
+            return strings.cmpStringsDesc({}, this.path, other.path);
+        }
     };
 
-    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: *StaticRoute) !void {
-        if (this.static_routes.items.len > 0) {
-            for (this.static_routes.items) |*entry| {
-                if (strings.eqlLong(entry.path, path, true)) {}
+    pub fn cloneForReloadingStaticRoutes(this: *ServerConfig) !ServerConfig {
+        var that = this.*;
+        this.ssl_config = null;
+        this.sni = null;
+        this.address = .{ .tcp = .{} };
+        this.websocket = null;
+        this.bake = null;
+
+        var prev_static_routes = this.static_routes;
+        var static_routes_dedupe_list = bun.StringHashMap(u32).init(bun.default_allocator);
+        try static_routes_dedupe_list.ensureTotalCapacity(@truncate(prev_static_routes.items.len));
+        defer static_routes_dedupe_list.deinit();
+
+        // Iterate through the list of static routes backwards
+        // Later ones added override earlier ones
+        var index = prev_static_routes.items.len;
+        while (index > 0) {
+            index -= 1;
+            const entry = static_routes_dedupe_list.getOrPut(prev_static_routes.items[index].path) catch unreachable;
+            if (!entry.found_existing) {
+                // replace the earliest one with the latest one
+                entry.value_ptr.* = @intCast(index);
             }
         }
+
+        var cloned_static_routes = try std.ArrayList(StaticRouteEntry).initCapacity(bun.default_allocator, static_routes_dedupe_list.count());
+        cloned_static_routes.items.len = static_routes_dedupe_list.count();
+
+        {
+            // Insert the deduped routes into the new list.
+            var iter = static_routes_dedupe_list.iterator();
+            var i: usize = 0;
+            while (iter.next()) |entry| : (i += 1) {
+                cloned_static_routes.items[i] = try prev_static_routes.items[entry.value_ptr.*].clone();
+            }
+
+            // sort the cloned static routes by name for determinism
+            std.mem.sort(StaticRouteEntry, cloned_static_routes.items, {}, StaticRouteEntry.isLessThan);
+        }
+
+        for (prev_static_routes.items) |*entry| {
+            entry.deinit();
+        }
+        prev_static_routes.clearAndFree();
+        that.static_routes = cloned_static_routes;
+
+        return that;
+    }
+
+    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyStaticRoute) !void {
         try this.static_routes.append(StaticRouteEntry{
             .path = try bun.default_allocator.dupe(u8, path),
             .route = route,
         });
     }
 
-    pub fn applyStaticRoute(this: *ServerConfig, server: AnyServer, comptime ssl: bool, app: *uws.NewApp(ssl), entry: *const StaticRouteEntry) void {
-        _ = this; // autofix
-        entry.route.server = server;
+    fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(ssl), comptime T: type, entry: T, path: []const u8) void {
+        entry.server = server;
         const handler_wrap = struct {
-            pub fn handler(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
+            pub fn handler(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
                 route.onRequest(req, switch (comptime ssl) {
                     true => .{ .SSL = resp },
                     false => .{ .TCP = resp },
                 });
             }
 
-            pub fn HEAD(route: *StaticRoute, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
+            pub fn HEAD(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
                 route.onHEADRequest(req, switch (comptime ssl) {
                     true => .{ .SSL = resp },
                     false => .{ .TCP = resp },
                 });
             }
         };
-        app.head(entry.path, *StaticRoute, entry.route, handler_wrap.HEAD);
-        app.any(entry.path, *StaticRoute, entry.route, handler_wrap.handler);
+        app.head(path, T, entry, handler_wrap.HEAD);
+        app.any(path, T, entry, handler_wrap.handler);
     }
 
     pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) void {
         for (this.static_routes.items) |*entry| {
-            this.applyStaticRoute(server, ssl, app, entry);
+            switch (entry.route) {
+                .StaticRoute => |static_route| {
+                    applyStaticRoute(server, ssl, app, *StaticRoute, static_route, entry.path);
+                },
+                .HTMLBundleRoute => |html_bundle_route| {
+                    applyStaticRoute(server, ssl, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                },
+            }
         }
     }
 
@@ -1007,6 +1114,16 @@ pub const ServerConfig = struct {
                 }).init(global, static);
                 defer iter.deinit();
 
+                var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.default_allocator);
+                defer dedupe_html_bundle_map.deinit();
+
+                errdefer {
+                    for (args.static_routes.items) |*static_route| {
+                        static_route.deinit();
+                    }
+                    args.static_routes.clearAndFree();
+                }
+
                 while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
 
@@ -1022,7 +1139,7 @@ pub const ServerConfig = struct {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
-                    const route = try StaticRoute.fromJS(global, value);
+                    const route = try AnyStaticRoute.fromJS(global, value, &dedupe_html_bundle_map);
                     args.static_routes.append(.{
                         .path = path,
                         .route = route,
@@ -5771,6 +5888,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
+        pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyStaticRoute) !void {
+            try this.config.appendStaticRoute(path, route);
+        }
+
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
@@ -6039,6 +6160,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.static_routes = new_config.static_routes;
 
             this.setRoutes();
+        }
+
+        pub fn reloadStaticRoutes(this: *ThisServer) !bool {
+            if (this.app == null) {
+                // Static routes will get cleaned up when the server is stopped
+                return false;
+            }
+            this.config = try this.config.cloneForReloadingStaticRoutes();
+            this.app.?.clearRoutes();
+            this.setRoutes();
+            return true;
         }
 
         pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -7291,6 +7423,18 @@ pub const AnyServer = union(enum) {
     HTTPSServer: *HTTPSServer,
     DebugHTTPServer: *DebugHTTPServer,
     DebugHTTPSServer: *DebugHTTPSServer,
+
+    pub fn reloadStaticRoutes(this: AnyServer) !bool {
+        return switch (this) {
+            inline else => |server| server.reloadStaticRoutes(),
+        };
+    }
+
+    pub fn appendStaticRoute(this: AnyServer, path: []const u8, route: AnyStaticRoute) !void {
+        return switch (this) {
+            inline else => |server| server.appendStaticRoute(path, route),
+        };
+    }
 
     pub fn globalThis(this: AnyServer) *JSC.JSGlobalObject {
         return switch (this) {

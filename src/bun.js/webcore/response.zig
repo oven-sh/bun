@@ -3483,6 +3483,27 @@ pub const Headers = struct {
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
 
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
+
     pub fn deinit(this: *Headers) void {
         this.entries.deinit(this.allocator);
         this.buf.clearAndFree(this.allocator);

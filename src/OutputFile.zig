@@ -413,6 +413,7 @@ pub fn toJS(
 pub fn toBlob(
     this: *OutputFile,
     allocator: std.mem.Allocator,
+    globalThis: *JSC.JSGlobalObject,
 ) !JSC.WebCore.Blob {
     return switch (this.value) {
         .move, .pending => @panic("Unexpected pending output file"),
@@ -431,7 +432,7 @@ pub fn toBlob(
                 allocator,
             );
 
-            break :brk JSC.WebCore.Blob.initWithStore(file_blob, null);
+            break :brk JSC.WebCore.Blob.initWithStore(file_blob, globalThis);
         },
         .saved => brk: {
             const file_blob = try JSC.WebCore.Blob.Store.initFile(
@@ -442,10 +443,10 @@ pub fn toBlob(
                 allocator,
             );
 
-            break :brk JSC.WebCore.Blob.initWithStore(file_blob, null);
+            break :brk JSC.WebCore.Blob.initWithStore(file_blob, globalThis);
         },
         .buffer => |buffer| brk: {
-            var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, null);
+            var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalThis);
             if (blob.store) |store| {
                 store.mime_type = this.loader.toMimeType();
                 blob.content_type = store.mime_type.value;

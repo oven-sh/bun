@@ -870,7 +870,7 @@ function SQL(o) {
       values = v.value;
     }
     if (!allowUnsafeTransaction) {
-      if (sqlString.length === 5 && sqlString.toUpperCase() === "BEGIN" && connectionInfo.max !== 1) {
+      if (sqlString.length === 5 && connectionInfo.max !== 1 && sqlString.toUpperCase() === "BEGIN") {
         throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
       }
     }

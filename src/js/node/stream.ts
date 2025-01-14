@@ -30,18 +30,14 @@ function createNativeStreamReadable(Readable) {
       if (slice.byteLength > 0) {
         nativeReadable.push(slice);
       }
-      if (isClosed) {
-        ProcessNextTick(() => {
-          nativeReadable.push(null);
-        });
-      }
-      return remainder.byteLength > 0 ? remainder : undefined;
     }
+
     if (isClosed) {
       ProcessNextTick(() => {
         nativeReadable.push(null);
       });
     }
+
     return view;
   };
 

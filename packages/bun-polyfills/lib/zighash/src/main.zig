@@ -51,6 +51,11 @@ export fn xxhash64(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
     defer std.heap.wasm_allocator.free(input);
     return std.hash.XxHash64.hash(seed, input);
 }
+export fn xxhash3(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
+    const input: []const u8 = input_ptr[0..input_size];
+    defer std.heap.wasm_allocator.free(input);
+    return std.hash.XxHash3.hash(seed, input);
+}
 export fn murmur32v3(input_ptr: [*]const u8, input_size: u32, seed: u32) u32 {
     const input: []const u8 = input_ptr[0..input_size];
     defer std.heap.wasm_allocator.free(input);

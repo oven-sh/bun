@@ -3294,11 +3294,17 @@ const HashObject = struct {
         }
     });
     pub const xxHash64 = hashWrap(struct {
-        pub const Algorithm = std.hash.XxHash64;
         pub fn hash(seed: u32, bytes: []const u8) u64 {
             // sidestep .hash taking in anytype breaking ArgTuple
             // downstream by forcing a type signature on the input
             return std.hash.XxHash64.hash(seed, bytes);
+        }
+    });
+    pub const xxHash3 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u64 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash3.hash(seed, bytes);
         }
     });
     pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
@@ -3315,6 +3321,7 @@ const HashObject = struct {
             "cityHash64",
             "xxHash32",
             "xxHash64",
+            "xxHash3",
             "murmur32v2",
             "murmur32v3",
             "murmur64v2",

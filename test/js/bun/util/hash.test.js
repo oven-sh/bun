@@ -45,6 +45,12 @@ it(`Bun.hash.xxHash64()`, () => {
   expect(Bun.hash.xxHash64(new TextEncoder().encode("hello world"))).toBe(0x45ab6734b21e6968n);
   gcTick();
 });
+it(`Bun.hash.xxHash3()`, () => {
+  expect(Bun.hash.xxHash3("hello world")).toBe(0xd447b1ea40e6988bn);
+  gcTick();
+  expect(Bun.hash.xxHash3(new TextEncoder().encode("hello world"))).toBe(0xd447b1ea40e6988bn);
+  gcTick();
+});
 it(`Bun.hash.murmur32v3()`, () => {
   expect(Bun.hash.murmur32v3("hello world")).toBe(0x5e928f0f);
   gcTick();

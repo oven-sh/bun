@@ -88,6 +88,11 @@ export function xxhash64(input = '', seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.xxhash64(ptr, size, seed));
 }
+/** @type {JSSeededHash64Function} */
+export function xxhash3(input = '', seed = 0n) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return BigInt.asUintN(64, exports.xxhash3(ptr, size, seed));
+}
 /** @type {JSSeededHash32Function} */
 export function murmur32v3(input = '', seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);

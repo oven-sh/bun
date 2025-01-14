@@ -35,8 +35,7 @@ describe("Given a single universal preload", () => {
     expect(code).toBe(0);
   });
 
-  // FIXME: relative paths are being resolved to cwd, not the file's directory
-  it.skip("When `bun run` is run from a different directory but bunfig.toml is explicitly used, preloads are run", async () => {
+  it("When `bun run` is run from a different directory but bunfig.toml is explicitly used, preloads are run", async () => {
     // `bun run index.ts`
     const [out, err, code] = await run(join(dir, "index.ts"), {
       args: [`--config=${join(dir, "bunfig.toml")}`],

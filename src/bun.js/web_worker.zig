@@ -9,6 +9,8 @@ const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 const Bool = std.atomic.Value(bool);
 
+const Preload = bun.CLI.Command.Preload;
+
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
@@ -22,7 +24,7 @@ pub const WebWorker = struct {
 
     /// Already resolved.
     specifier: []const u8 = "",
-    preloads: [][]const u8 = &.{},
+    preloads: []Preload = &[_]Preload{},
     store_fd: bool = false,
     arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
@@ -201,17 +203,19 @@ pub const WebWorker = struct {
             return null;
         };
 
-        var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
+        var preloads = std.ArrayList(Preload).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
         for (preload_modules) |module| {
             const utf8_slice = module.toUTF8(bun.default_allocator);
             defer utf8_slice.deinit();
-            if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
-                preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
+            if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload_target| {
+                // is this actually absolute?
+                const preload = Preload.absolute(bun.default_allocator.dupe(u8, preload_target) catch bun.outOfMemory());
+                preloads.appendAssumeCapacity(preload);
             }
 
             if (!error_message.isEmpty()) {
                 for (preloads.items) |preload| {
-                    bun.default_allocator.free(preload);
+                    bun.default_allocator.free(preload.target);
                 }
                 preloads.deinit();
                 return null;
@@ -317,7 +321,7 @@ pub const WebWorker = struct {
         this.parent_poll_ref.unrefConcurrently(this.parent);
         bun.default_allocator.free(this.specifier);
         for (this.preloads) |preload| {
-            bun.default_allocator.free(preload);
+            bun.default_allocator.free(preload.target);
         }
         bun.default_allocator.free(this.preloads);
         bun.default_allocator.destroy(this);

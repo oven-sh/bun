@@ -29,7 +29,7 @@ if (isLinux) {
         let buf = new Uint8Array(8 * 1024 * 1024);
         buf.fill(42);
         for (let i = 0; i < 1024 * 1024 * 16 + 1; i += buf.byteLength) {
-          writeSync(memfd, buf, i, buf.byteLength);
+          writeSync(memfd, buf, 0, buf.byteLength, i);
         }
       })(memfd);
       Bun.gc(true);

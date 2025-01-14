@@ -2432,23 +2432,23 @@ pub const Arguments = struct {
                         current = arguments.next() orelse break :parse;
 
                         if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        const length = current.to(i52);
+                        const length = current.to(i64);
                         const buf_len = args.buffer.buffer.slice().len;
                         if (args.offset > buf_len) {
                             return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(args.length)),
+                                @as(f64, @floatFromInt(args.offset)),
                                 .{ .field_name = "offset", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
                             );
                         }
                         if (length > buf_len - args.offset) {
                             return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(args.length)),
-                                .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                                @as(f64, @floatFromInt(length)),
+                                .{ .field_name = "length", .max = @intCast(@min(buf_len - args.offset, std.math.maxInt(i64))) },
                             );
                         }
                         if (length < 0) {
                             return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(args.length)),
+                                @as(f64, @floatFromInt(length)),
                                 .{ .field_name = "length", .min = 0 },
                             );
                         }

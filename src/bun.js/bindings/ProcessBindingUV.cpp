@@ -365,17 +365,11 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     }
 
     auto err = arg0.toInt32(globalObject);
-    switch (err) {
 #define CASE(name, desc) \
-    case -name:          \
-        return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
+    if (err == -name) return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
 
-        BUN_UV_ERRNO_MAP(CASE)
+    BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
-    default: {
-        break;
-    }
-    }
 
     return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
 }

@@ -84,7 +84,8 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
   });
 
   it("When `--preload=preload3.ts` is passed via CLI args, its added to the list of preloads", async () => {
-    const [out, err, code] = await run("cli-merge.ts", { args: ["--preload=preload3.ts"], cwd: dir });
+    // const [out, err, code] = await run("cli-merge.ts", { args: ["--preload=preload3.ts"], cwd: dir });
+    const [out, err, code] = await run("cli-merge.ts", { args: ["--preload", "./preload3.ts"], cwd: dir });
     expect(err).toEqual("");
     expect(out).toEqual("");
     expect(code).toBe(0);
@@ -102,7 +103,7 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
   });
 }); // </given a `bunfig.toml` with a plugin preload>
 
-describe("Given a `bunfit.toml` file with a relative path to a preload in a parent directory", () => {
+describe("Given a `bunfig.toml` file with a relative path to a preload in a parent directory", () => {
   const dir = fixturePath("parent", "foo");
 
   it("When `bun run` is run, preloads are run", async () => {
@@ -112,3 +113,16 @@ describe("Given a `bunfit.toml` file with a relative path to a preload in a pare
     expect(code).toBe(0);
   });
 }); // </given a `bunfit.toml` file with a relative path to a preload in a parent directory>
+
+// `preload="preload.ts"` is a relative path, just like `preload="./preload.ts"`
+// fixture is in "relative"
+describe("Given a `bunfig.toml` file with a relative path without a leading './'", () => {
+  const dir = fixturePath("relative");
+
+  it("preload = 'preload.ts' is treated like a relative path and loaded", async () => {
+    const [out, err, code] = await run("index.ts", { cwd: dir });
+    expect(err).toEqual("");
+    expect(out).toEqual("");
+    expect(code).toBe(0);
+  });
+}); // </given a `bunfig.toml` file with a relative path without a leading './'>

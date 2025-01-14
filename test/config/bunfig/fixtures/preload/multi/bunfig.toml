@@ -1,2 +1,1 @@
-# second one is testing for "implicit" relative path
-preload = ["./preload1.ts", "preload2.ts"]
+preload = ["./preload1.ts", "./preload2.ts"]

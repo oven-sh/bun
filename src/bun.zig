@@ -789,7 +789,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
+pub const JSC = @import("./jsc.zig");
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");

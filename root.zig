@@ -8,5 +8,3 @@ pub const completions = struct {
     pub const zsh = @embedFile("./completions/bun.zsh");
     pub const fish = @embedFile("./completions/bun.fish");
 };
-
-pub const JavaScriptCore = @import("./src/jsc.zig");

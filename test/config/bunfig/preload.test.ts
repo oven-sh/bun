@@ -75,8 +75,16 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     expect(out).toEqual("");
     expect(code).toBe(0);
   });
+
   it("when passed `--config=bunfig.empty.toml`, preloads are not run", async () => {
     const [out, err, code] = await run("empty.ts", { args: ["--config=bunfig.empty.toml"], cwd: dir });
+    expect(err).toEqual("");
+    expect(out).toEqual("");
+    expect(code).toBe(0);
+  });
+
+  it("When `--preload=preload3.ts` is passed via CLI args, its added to the list of preloads", async () => {
+    const [out, err, code] = await run("cli-merge.ts", { args: ["--preload=preload3.ts"], cwd: dir });
     expect(err).toEqual("");
     expect(out).toEqual("");
     expect(code).toBe(0);

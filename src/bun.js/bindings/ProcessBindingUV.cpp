@@ -367,7 +367,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     auto err = arg0.toInt32(globalObject);
     switch (err) {
 #define CASE(name, desc) \
-    case name:           \
+    case -name:          \
         return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
 
         BUN_UV_ERRNO_MAP(CASE)

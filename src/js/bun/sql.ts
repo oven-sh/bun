@@ -238,8 +238,9 @@ init(
 
 function onQueryFinish(onClose) {
   this.queries.delete(onClose);
+  this.pool.release(this);
 }
-class ConnectionWithState {
+class PooledConnection {
   pool: ConnectionPool;
   connection: ReturnType<typeof createConnection>;
   state: "pending" | "connected" | "closed" = "pending";
@@ -248,7 +249,6 @@ class ConnectionWithState {
   onFinish: ((err: Error | null) => void) | null = null;
   canBeConnected: boolean = false;
   connectionInfo: any;
-
   #onConnected(err, _) {
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
@@ -353,8 +353,8 @@ class ConnectionWithState {
 class ConnectionPool {
   connectionInfo: any;
 
-  connections: ConnectionWithState[];
-  readyConnections: Set<ConnectionWithState>;
+  connections: PooledConnection[];
+  readyConnections: Set<PooledConnection>;
   waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   poolStarted: boolean = false;
   closed: boolean = false;
@@ -375,11 +375,10 @@ class ConnectionPool {
     this.readyConnections = new Set();
   }
 
-  release(connection: ConnectionWithState) {
+  release(connection: PooledConnection) {
     if (this.waitingQueue.length > 0) {
       // we have some pending connections, lets connect them with the released connection
       const pending = this.waitingQueue.shift();
-
       pending?.(connection.storedError, connection);
     } else {
       if (connection.state !== "connected") {
@@ -509,7 +508,7 @@ class ConnectionPool {
       this.poolStarted = true;
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
-        this.connections[i] = new ConnectionWithState(this.connectionInfo, this);
+        this.connections[i] = new PooledConnection(this.connectionInfo, this);
       }
       return;
     }
@@ -859,7 +858,6 @@ function SQL(o) {
       pool.release(pooledConnection); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
-
     // bind close event to the query (will unbind and auto release the connection when the query is finished)
     pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
     handle.run(pooledConnection.connection, query);

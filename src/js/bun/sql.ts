@@ -294,7 +294,6 @@ class PooledConnection {
     this.pool.release(this);
   }
   constructor(connectionInfo, pool: ConnectionPool) {
-    //TODO: maxLifetime, idleTimeout, connectionTimeout
     this.connection = createConnection(connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
     this.state = "pending";
     this.pool = pool;
@@ -326,7 +325,6 @@ class PooledConnection {
     }
     // we need to reconnect
     // lets use a retry strategy
-    // TODO: implement retry strategy, maxLifetime, idleTimeout, connectionTimeout
 
     // we can only retry if one day we are able to connect
     if (this.canBeConnected) {

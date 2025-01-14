@@ -21,32 +21,27 @@
 
 'use strict';
 const common = require('../common');
-if (!common.isWindows)
-  common.skip('this test is Windows-specific.');
+
+// Make sure the deletion event gets reported in the following scenario:
+// 1. Watch a file.
+// 2. The initial stat() goes okay.
+// 3. Something deletes the watched file.
+// 4. The second stat() fails with ENOENT.
+
+// The second stat() translates into the first 'change' event but a logic error
+// stopped it from getting emitted.
+// https://github.com/nodejs/node-v0.x-archive/issues/4027
 
 const fs = require('fs');
-const path = require('path');
 
 const tmpdir = require('../common/tmpdir');
-
-// Make a path that will be at least 260 chars long.
-const fileNameLen = Math.max(260 - tmpdir.path.length - 1, 1);
-const fileName = tmpdir.resolve('x'.repeat(fileNameLen));
-const fullPath = path.resolve(fileName);
-
 tmpdir.refresh();
 
-console.log({
-  filenameLength: fileName.length,
-  fullPathLength: fullPath.length
-});
+const filename = tmpdir.resolve('watched');
+fs.writeFileSync(filename, 'quis custodiet ipsos custodes');
 
-fs.writeFile(fullPath, 'ok', common.mustSucceed(() => {
-  fs.stat(fullPath, common.mustSucceed());
-
-  // Tests https://github.com/nodejs/node/issues/39721
-  fs.realpath.native(fullPath, common.mustSucceed());
-
-  // Tests https://github.com/nodejs/node/issues/51031
-  fs.promises.realpath(fullPath).then(common.mustCall(), common.mustNotCall());
+fs.watchFile(filename, { interval: 50 }, common.mustCall(function(curr, prev) {
+  fs.unwatchFile(filename);
 }));
+
+fs.unlinkSync(filename);

@@ -20,27 +20,22 @@ const tmpdir = require('../common/tmpdir');
 const testDir = tmpdir.path;
 tmpdir.refresh();
 
-// Add a file to subfolder of a watching folder
+// Add a file to newly created folder to already watching folder
 
 const rootDirectory = fs.mkdtempSync(testDir + path.sep);
-const testDirectory = path.join(rootDirectory, 'test-4');
+const testDirectory = path.join(rootDirectory, 'test-3');
 fs.mkdirSync(testDirectory);
 
-const file = 'folder-5';
-const filePath = path.join(testDirectory, file);
-fs.mkdirSync(filePath);
+const filePath = path.join(testDirectory, 'folder-3');
 
-const subfolderPath = path.join(filePath, 'subfolder-6');
-fs.mkdirSync(subfolderPath);
-
-const childrenFile = 'file-7.txt';
-const childrenAbsolutePath = path.join(subfolderPath, childrenFile);
-const relativePath = path.join(file, path.basename(subfolderPath), childrenFile);
+const childrenFile = 'file-4.txt';
+const childrenAbsolutePath = path.join(filePath, childrenFile);
+const childrenRelativePath = path.join(path.basename(filePath), childrenFile);
+let watcherClosed = false;
 
 const watcher = fs.watch(testDirectory, { recursive: true });
-let watcherClosed = false;
 watcher.on('change', function(event, filename) {
-  if (filename === relativePath) {
+  if (filename === childrenRelativePath) {
     assert.strictEqual(event, 'rename');
     watcher.close();
     watcherClosed = true;
@@ -49,6 +44,7 @@ watcher.on('change', function(event, filename) {
 
 // Do the write with a delay to ensure that the OS is ready to notify us.
 setTimeout(() => {
+  fs.mkdirSync(filePath);
   fs.writeFileSync(childrenAbsolutePath, 'world');
 }, common.platformTimeout(200));
 

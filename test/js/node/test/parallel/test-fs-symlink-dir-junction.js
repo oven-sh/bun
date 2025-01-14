@@ -28,7 +28,7 @@ const fs = require('fs');
 const tmpdir = require('../common/tmpdir');
 
 // Test creating and reading symbolic link
-const linkData = fixtures.path('cycles/');
+const linkData = fixtures.path('cycles');
 const linkPath = tmpdir.resolve('cycles_link');
 
 tmpdir.refresh();
@@ -54,7 +54,6 @@ fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
   const linkPath = tmpdir.resolve('invalid_junction_link');
 
   fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-    if (!common.isWindows) // TODO: BUN
     assert(!fs.existsSync(linkPath));
 
     fs.unlink(linkPath, common.mustSucceed(() => {

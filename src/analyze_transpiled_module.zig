@@ -131,29 +131,24 @@ pub const ModuleInfoDeserialized = struct {
 };
 
 const StringMapKey = enum(u32) {
-    get_or_put = std.math.maxInt(u32),
     _,
 };
 pub const StringContext = struct {
-    get_or_put_key: []const u8,
     strings_buf: []const u8,
     strings_lens: []const u32,
 
-    pub fn hash(self: @This(), s: StringMapKey) u32 {
-        bun.assert(s == .get_or_put);
-        return @as(u32, @truncate(std.hash.Wyhash.hash(0, self.get_or_put_key)));
+    pub fn hash(_: @This(), s: []const u8) u32 {
+        return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
     }
-    pub fn eql(self: @This(), fetch_key: StringMapKey, item_key: StringMapKey, item_i: usize) bool {
-        bun.assert(item_key != .get_or_put);
-        bun.assert(fetch_key == .get_or_put);
-        return bun.strings.eqlLong(self.get_or_put_key, self.strings_buf[@intFromEnum(item_key)..][0..self.strings_lens[item_i]], true);
+    pub fn eql(self: @This(), fetch_key: []const u8, item_key: StringMapKey, item_i: usize) bool {
+        return bun.strings.eqlLong(fetch_key, self.strings_buf[@intFromEnum(item_key)..][0..self.strings_lens[item_i]], true);
     }
 };
 
 pub const ModuleInfo = struct {
     /// all strings in wtf-8. index in hashmap = StringID
     gpa: std.mem.Allocator,
-    strings_map: std.ArrayHashMapUnmanaged(StringMapKey, void, StringContext, true),
+    strings_map: std.ArrayHashMapUnmanaged(StringMapKey, void, void, true),
     strings_buf: std.ArrayListUnmanaged(u8),
     strings_lens: std.ArrayListUnmanaged(u32),
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
@@ -264,8 +259,9 @@ pub const ModuleInfo = struct {
         alloc.destroy(self);
     }
     pub fn str(self: *ModuleInfo, value: []const u8) !StringID {
-        const gpres = try self.strings_map.getOrPutContext(self.gpa, .get_or_put, .{
-            .get_or_put_key = value,
+        try self.strings_buf.ensureUnusedCapacity(self.gpa, value.len);
+        try self.strings_lens.ensureUnusedCapacity(self.gpa, 1);
+        const gpres = try self.strings_map.getOrPutAdapted(self.gpa, value, StringContext{
             .strings_buf = self.strings_buf.items,
             .strings_lens = self.strings_lens.items,
         });
@@ -273,8 +269,6 @@ pub const ModuleInfo = struct {
 
         gpres.key_ptr.* = @enumFromInt(@as(u32, @truncate(self.strings_buf.items.len)));
         gpres.value_ptr.* = {};
-        try self.strings_buf.ensureUnusedCapacity(self.gpa, value.len);
-        try self.strings_lens.ensureUnusedCapacity(self.gpa, 1);
         self.strings_buf.appendSliceAssumeCapacity(value);
         self.strings_lens.appendAssumeCapacity(@as(u32, @truncate(value.len)));
         return @enumFromInt(@as(u32, @intCast(gpres.index)));

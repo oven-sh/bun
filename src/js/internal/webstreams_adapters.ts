@@ -12,7 +12,7 @@ const { Writable, Readable, Duplex, destroy } = require("node:stream");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { Buffer } = require("node:buffer");
 const { AbortError } = require("internal/errors");
-const { kEmptyObject } = require("internal/shared");
+const { kEmptyObject, kGetNativeReadableProto } = require("internal/shared");
 const { validateBoolean, validateObject } = require("internal/validators");
 const finished = require("internal/streams/end-of-stream");
 
@@ -27,6 +27,156 @@ const PromisePrototypeThen = Promise.prototype.then;
 const SafePromisePrototypeFinally = Promise.prototype.finally;
 
 const constants_zlib = process.binding("constants").zlib;
+
+//
+//
+const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+
+function getNativeReadableStream(Readable, stream, options) {
+  const ptr = stream.$bunNativePtr;
+  if (!ptr || ptr === -1) {
+    $debug("no native readable stream");
+    return undefined;
+  }
+  const type = stream.$bunNativeType;
+  $assert(typeof type === "number", "Invalid native type");
+  $assert(typeof ptr === "object", "Invalid native ptr");
+
+  const NativeReadable = require("node:stream")[kGetNativeReadableProto](type);
+  // https://github.com/oven-sh/bun/pull/12801
+  // https://github.com/oven-sh/bun/issues/9555
+  // There may be a ReadableStream.Strong handle to the ReadableStream.
+  // We can't update those handles to point to the NativeReadable from JS
+  // So we instead mark it as no longer usable, and create a new NativeReadable
+  transferToNativeReadable(stream);
+
+  return new NativeReadable(ptr, options);
+}
+
+class ReadableFromWeb extends Readable {
+  #reader;
+  #closed;
+  #pendingChunks;
+  #stream;
+
+  constructor(options, stream) {
+    const { objectMode, highWaterMark, encoding, signal } = options;
+    super({
+      objectMode,
+      highWaterMark,
+      encoding,
+      signal,
+    });
+    this.#pendingChunks = [];
+    this.#reader = undefined;
+    this.#stream = stream;
+    this.#closed = false;
+  }
+
+  #drainPending() {
+    var pendingChunks = this.#pendingChunks,
+      pendingChunksI = 0,
+      pendingChunksCount = pendingChunks.length;
+
+    for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
+      const chunk = pendingChunks[pendingChunksI];
+      pendingChunks[pendingChunksI] = undefined;
+      if (!this.push(chunk, undefined)) {
+        this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
+        return true;
+      }
+    }
+
+    if (pendingChunksCount > 0) {
+      this.#pendingChunks = [];
+    }
+
+    return false;
+  }
+
+  #handleDone(reader) {
+    reader.releaseLock();
+    this.#reader = undefined;
+    this.#closed = true;
+    this.push(null);
+    return;
+  }
+
+  async _read() {
+    $debug("ReadableFromWeb _read()", this.__id);
+    var stream = this.#stream,
+      reader = this.#reader;
+    if (stream) {
+      reader = this.#reader = stream.getReader();
+      this.#stream = undefined;
+    } else if (this.#drainPending()) {
+      return;
+    }
+
+    var deferredError;
+    try {
+      do {
+        var done = false,
+          value;
+        const firstResult = reader.readMany();
+
+        if ($isPromise(firstResult)) {
+          ({ done, value } = await firstResult);
+
+          if (this.#closed) {
+            this.#pendingChunks.push(...value);
+            return;
+          }
+        } else {
+          ({ done, value } = firstResult);
+        }
+
+        if (done) {
+          this.#handleDone(reader);
+          return;
+        }
+
+        if (!this.push(value[0])) {
+          this.#pendingChunks = value.slice(1);
+          return;
+        }
+
+        for (let i = 1, count = value.length; i < count; i++) {
+          if (!this.push(value[i])) {
+            this.#pendingChunks = value.slice(i + 1);
+            return;
+          }
+        }
+      } while (!this.#closed);
+    } catch (e) {
+      deferredError = e;
+    } finally {
+      if (deferredError) throw deferredError;
+    }
+  }
+
+  _destroy(error, callback) {
+    if (!this.#closed) {
+      var reader = this.#reader;
+      if (reader) {
+        this.#reader = undefined;
+        reader.cancel(error).finally(() => {
+          this.#closed = true;
+          callback(error);
+        });
+      }
+
+      return;
+    }
+    try {
+      callback(error);
+    } catch (error) {
+      globalThis.reportError(error);
+    }
+  }
+}
+//
+//
 
 const encoder = new TextEncoder();
 
@@ -387,69 +537,23 @@ function newStreamReadableFromReadableStream(readableStream, options = kEmptyObj
   const { highWaterMark, encoding, objectMode = false, signal } = options;
 
   if (encoding !== undefined && !Buffer.isEncoding(encoding))
-    throw $ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+    throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
 
-  const reader = readableStream.getReader();
-  let closed = false;
+  const nativeStream = getNativeReadableStream(Readable, readableStream, options);
 
-  const readable = new Readable({
-    objectMode,
-    highWaterMark,
-    encoding,
-    signal,
-
-    read() {
-      PromisePrototypeThen.$call(
-        reader.read(),
-        chunk => {
-          if (chunk.done) {
-            // Value should always be undefined here.
-            readable.push(null);
-          } else {
-            readable.push(chunk.value);
-          }
-        },
-        error => destroy(readable, error),
-      );
-    },
-
-    destroy(error, callback) {
-      function done() {
-        try {
-          callback(error);
-        } catch (error) {
-          // In a next tick because this is happening within
-          // a promise context, and if there are any errors
-          // thrown we don't want those to cause an unhandled
-          // rejection. Let's just escape the promise and
-          // handle it separately.
-          process.nextTick(() => {
-            throw error;
-          });
-        }
-      }
-
-      if (!closed) {
-        PromisePrototypeThen.$call(reader.cancel(error), done, done);
-        return;
-      }
-      done();
-    },
-  });
-
-  PromisePrototypeThen.$call(
-    reader.closed,
-    () => {
-      closed = true;
-    },
-    error => {
-      closed = true;
-      destroy(readable, error);
-    },
+  return (
+    nativeStream ||
+    new ReadableFromWeb(
+      {
+        highWaterMark,
+        encoding,
+        objectMode,
+        signal,
+      },
+      readableStream,
+    )
   );
-
-  return readable;
 }
 
 function newReadableWritablePairFromDuplex(duplex) {

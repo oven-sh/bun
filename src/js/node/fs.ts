@@ -6,6 +6,7 @@ const Stream = require("node:stream");
 const types = require("node:util/types");
 
 const { validateInteger } = require("internal/validators");
+const { kGetNativeReadableProto } = require("internal/shared");
 
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
@@ -735,7 +736,7 @@ function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
 
-const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readable);
+const NativeReadable = Stream[kGetNativeReadableProto](2);
 const NativeReadablePrototype = NativeReadable.prototype;
 const kFs = Symbol("kFs");
 const kHandle = Symbol("kHandle");

@@ -111,5 +111,7 @@ export default {
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
+  kEnsureConstructed: Symbol("kEnsureConstructed"),
+  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
 };

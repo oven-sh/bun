@@ -27,6 +27,30 @@
 
 #include "ErrorCode.h"
 
+JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto thisVal = callFrame->thisValue();
+
+    auto name = thisVal.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto code = thisVal.get(globalObject, WebCore::builtinNames(vm).codePublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto message = thisVal.get(globalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto name_s = name.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto code_s = code.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto message_s = message.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::makeString(name_s, " ["_s, code_s, "]: "_s, message_s)));
+}
+
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
@@ -62,6 +86,7 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
     prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), 0);
 
     return prototype;
 }

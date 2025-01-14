@@ -18,7 +18,7 @@ function aggregateTwoErrors(innerError, outerError) {
   if (innerError && outerError && innerError !== outerError) {
     if (ArrayIsArray(outerError.errors)) {
       // If `outerError` is already an `AggregateError`.
-      ArrayPrototypePush(outerError.errors, innerError);
+      ArrayPrototypePush.$call(outerError.errors, innerError);
       return outerError;
     }
     const err = new AggregateError(new SafeArrayIterator([outerError, innerError]), outerError.message);

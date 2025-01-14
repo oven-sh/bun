@@ -35,22 +35,9 @@ pub fn deinit(this: *HTMLBundle) void {
     this.destroy();
 }
 
-pub fn getPath(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
     var str = bun.String.createUTF8(this.path);
     return str.transferToJS(globalObject);
-}
-
-// When you call .write on
-pub fn write(this: *HTMLBundle, globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    _ = this; // autofix
-    const args_ = callframe.arguments_old(1);
-    var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), args_.slice());
-    defer args.deinit();
-    const destination_path = (try JSC.Node.PathLike.fromJS(globalObject, &args)) orelse {
-        return globalObject.throwMissingArgumentsValue(&.{"path"});
-    };
-    _ = destination_path; // autofix
-    return globalObject.throwTODO("Finish implementing HTMLBundle.write");
 }
 
 pub const HTMLBundleRoute = struct {

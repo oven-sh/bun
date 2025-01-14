@@ -211,12 +211,8 @@ export default [
     noConstructor: true,
     finalize: true,
     proto: {
-      write: {
-        fn: "write",
-        length: 1,
-      },
-      path: {
-        getter: "getPath",
+      index: {
+        getter: "getIndex",
         cache: true,
       },
     },

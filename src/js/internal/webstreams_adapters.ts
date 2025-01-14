@@ -8,7 +8,10 @@ const {
   TypedArrayPrototypeGetByteLength,
 } = require("internal/primordials");
 
-const { Writable, Readable, Duplex, destroy } = require("node:stream");
+const Writable = require("internal/streams/writable");
+const Readable = require("internal/streams/readable");
+const Duplex = require("internal/streams/duplex");
+const { destroy } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { Buffer } = require("node:buffer");
 const { AbortError } = require("internal/errors");
@@ -779,4 +782,5 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
+  _ReadableFromWeb: ReadableFromWeb,
 };

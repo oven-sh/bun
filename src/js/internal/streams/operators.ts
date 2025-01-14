@@ -14,6 +14,7 @@ const PromiseReject = Promise.reject;
 const PromisePrototypeThen = Promise.prototype.then;
 const ArrayPrototypePush = Array.prototype.push;
 const NumberIsNaN = Number.isNaN;
+const ObjectDefineProperty = Object.defineProperty;
 
 const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
@@ -357,6 +358,7 @@ function drop(number, options?: { signal: AbortSignal }) {
     }
   }.$call(this);
 }
+ObjectDefineProperty(drop, "length", { value: 1 });
 
 function take(number, options?: { signal: AbortSignal }) {
   if (options != null) {
@@ -386,6 +388,7 @@ function take(number, options?: { signal: AbortSignal }) {
     }
   }.$call(this);
 }
+ObjectDefineProperty(take, "length", { value: 1 });
 
 export default {
   streamReturningOperators: {

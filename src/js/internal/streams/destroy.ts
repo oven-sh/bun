@@ -1,7 +1,6 @@
 "use strict";
 
 const { AbortError, aggregateTwoErrors } = require("internal/errors");
-
 const {
   kIsDestroyed,
   isDestroyed,
@@ -17,6 +16,8 @@ const {
   kAutoDestroy,
   kErrored,
 } = require("internal/streams/utils");
+
+const ProcessNextTick = process.nextTick;
 
 const kDestroy = Symbol("kDestroy");
 const kConstruct = Symbol("kConstruct");
@@ -100,9 +101,9 @@ function _destroy(self, err, cb) {
     }
 
     if (err) {
-      process.nextTick(emitErrorCloseNT, self, err);
+      ProcessNextTick(emitErrorCloseNT, self, err);
     } else {
-      process.nextTick(emitCloseNT, self);
+      ProcessNextTick(emitCloseNT, self);
     }
   }
   try {
@@ -212,7 +213,7 @@ function errorOrDestroy(stream, err, sync?) {
       r.errored = err;
     }
     if (sync) {
-      process.nextTick(emitErrorNT, stream, err);
+      ProcessNextTick(emitErrorNT, stream, err);
     } else {
       emitErrorNT(stream, err);
     }
@@ -241,7 +242,7 @@ function construct(stream, cb) {
     return;
   }
 
-  process.nextTick(constructNT, stream);
+  ProcessNextTick(constructNT, stream);
 }
 
 function constructNT(stream) {
@@ -276,10 +277,10 @@ function constructNT(stream) {
 
   try {
     stream._construct(err => {
-      process.nextTick(onConstruct, err);
+      ProcessNextTick(onConstruct, err);
     });
   } catch (err) {
-    process.nextTick(onConstruct, err);
+    ProcessNextTick(onConstruct, err);
   }
 }
 
@@ -293,7 +294,7 @@ function emitCloseLegacy(stream) {
 
 function emitErrorCloseLegacy(stream, err) {
   stream.emit("error", err);
-  process.nextTick(emitCloseLegacy, stream);
+  ProcessNextTick(emitCloseLegacy, stream);
 }
 
 // Normalize destroy for legacy.
@@ -320,9 +321,9 @@ function destroyer(stream, err) {
     // TODO: Don't lose err?
     stream.close();
   } else if (err) {
-    process.nextTick(emitErrorCloseLegacy, stream, err);
+    ProcessNextTick(emitErrorCloseLegacy, stream, err);
   } else {
-    process.nextTick(emitCloseLegacy, stream);
+    ProcessNextTick(emitCloseLegacy, stream);
   }
 
   if (!stream.destroyed) {

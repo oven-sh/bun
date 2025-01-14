@@ -6,9 +6,6 @@ const exports = require("internal/stream");
 
 $debug("node:stream loaded");
 
-var _ReadableFromWeb;
-var _ReadableFromWebForUndici;
-
 var nativeReadableStreamPrototypes = {
   0: undefined,
   1: undefined,
@@ -26,6 +23,11 @@ function getNativeReadableStreamPrototype(nativeType, Readable) {
 
 exports[kGetNativeReadableProto] = getNativeReadableStreamPrototype;
 exports.NativeWritable = require("internal/streams/nativewritable");
+
+const {
+  newStreamReadableFromReadableStream: _ReadableFromWeb,
+  _ReadableFromWeb: _ReadableFromWebForUndici,
+} = require("internal/webstreams_adapters");
 
 exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici, kEnsureConstructed };
 exports.eos = require("internal/streams/end-of-stream");

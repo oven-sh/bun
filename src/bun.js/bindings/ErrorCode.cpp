@@ -832,13 +832,28 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
             JSValue arg0 = callFrame->argument(1);
             auto str0 = arg0.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            JSValue arg1 = callFrame->argument(1);
+            JSValue arg1 = callFrame->argument(2);
             auto str1 = arg1.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" or \""_s, str1, "\" argument must be specified"_s)));
+            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" and \""_s, str1, "\" arguments must be specified"_s)));
         }
         default: {
-            ASSERT("TODO");
+            WTF::StringBuilder result;
+            result.append("The "_s);
+            auto argumentCount = callFrame->argumentCount();
+            for (int i = 1; i < argumentCount; i += 1) {
+                if (i == argumentCount - 1) result.append("and "_s);
+                result.append("\""_s);
+                JSValue arg = callFrame->argument(i);
+                auto str = arg.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                result.append(str);
+                result.append("\""_s);
+                if (i != argumentCount - 1) result.append(","_s);
+                result.append(" "_s);
+            }
+            result.append("arguments must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, result.toString()));
         }
         }
     }

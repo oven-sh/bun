@@ -860,7 +860,7 @@ function SQL(o) {
   var connectionInfo = loadOptions(o);
   var pool = new ConnectionPool(connectionInfo);
 
-  function doCreateQuery(strings, values) {
+  function doCreateQuery(strings, values, allowUnsafeTransaction) {
     const sqlString = normalizeStrings(strings, values);
     let columns;
     if (hasSQLArrayParameter) {
@@ -868,6 +868,11 @@ function SQL(o) {
       const v = values[0];
       columns = v.columns;
       values = v.value;
+    }
+    if (!allowUnsafeTransaction) {
+      if (sqlString.length === 5 && sqlString.toUpperCase() === "BEGIN" && connectionInfo.max !== 1) {
+        throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+      }
     }
 
     return createQuery(sqlString, values, new SQLResultArray(), columns);
@@ -906,14 +911,18 @@ function SQL(o) {
       return query.reject(err);
     }
     // query is cancelled
-    if (query.cancelled) {
+    if (!handle || query.cancelled) {
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
     pool.connect(onQueryConnected.bind(query, handle));
   }
   function queryFromPool(strings, values) {
-    return new Query(doCreateQuery(strings, values), queryFromPoolHandler);
+    try {
+      return new Query(doCreateQuery(strings, values, false), queryFromPoolHandler);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   function onTransactionQueryDisconnected(query) {
@@ -935,10 +944,14 @@ function SQL(o) {
     handle.run(pooledConnection.connection, query);
   }
   function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
-    return new Query(
-      doCreateQuery(strings, values),
-      queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-    );
+    try {
+      return new Query(
+        doCreateQuery(strings, values, true),
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+      );
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
   function onTransactionDisconnected(err) {
     const reject = this.reject;

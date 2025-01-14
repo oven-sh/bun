@@ -311,12 +311,20 @@ class PooledConnection {
     if (this.pool.closed) {
       return;
     }
+    // reset error and state
+    this.storedError = null;
+    this.state = "pending";
     // retry connection
     this.connection = createConnection(
       this.connectionInfo,
       this.#onConnected.bind(this, this.connectionInfo),
       this.#onClose.bind(this, this.connectionInfo),
     );
+  }
+  close() {
+    if (this.state === "connected") {
+      this.connection?.close();
+    }
   }
   retry() {
     // if pool is closed, we can't retry
@@ -939,8 +947,104 @@ function SQL(o) {
       return reject(err);
     }
   }
-  async function onTransactionConnected(options, resolve, reject, err, pooledConnection) {
-    const callback = this as unknown as TransactionCallback;
+
+  function onReserveDisconnected(err) {
+    const reject = this.reject;
+    this.closed = true;
+    if (err) {
+      return reject(err);
+    }
+  }
+
+  function onReserveConnected(err, pooledConnection) {
+    const { promise, resolve, reject } = this;
+    if (err) {
+      return reject(err);
+    }
+
+    const state = {
+      closed: false,
+      reject,
+    };
+    const onClose = onReserveDisconnected.bind(state);
+    pooledConnection.onClose(onClose);
+
+    let reserveQueries = new Set();
+    function reserved_sql(strings, ...values) {
+      if (state.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
+        return new SQLArrayParameter(strings, values);
+      }
+      // we use the same code path as the transaction sql
+      return queryFromTransaction(strings, values, pooledConnection, reserveQueries);
+    }
+    reserved_sql.connect = () => {
+      if (state.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      return Promise.resolve(reserved_sql);
+    };
+
+    // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
+    // this matchs the behavior of the postgres package
+    reserved_sql.reserve = () => sql.reserve();
+
+    reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
+      // begin is allowed the difference is that we need to make sure to use the same connection and never release it
+      if (state.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      let callback = fn;
+      let options: string | undefined = options_or_fn as unknown as string;
+      if ($isCallable(options_or_fn)) {
+        callback = options_or_fn as unknown as TransactionCallback;
+        options = undefined;
+      } else if (typeof options_or_fn !== "string") {
+        return Promise.reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
+      }
+      if (!$isCallable(callback)) {
+        return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+      }
+      const { promise, resolve, reject } = Promise.withResolvers();
+      // lets just reuse the same code path as the transaction begin
+      onTransactionConnected(callback, options, resolve, reject, true, null, pooledConnection);
+      return promise;
+    };
+
+    reserved_sql.flush = () => {
+      if (state.closed) {
+        throw connectionClosedError();
+      }
+      return pooledConnection.flush();
+    };
+    reserved_sql.close = async () => {
+      if (state.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      // close will release the connection back to the pool but will actually close the connection if its open
+      state.closed = true;
+      pooledConnection.queries.delete(onClose);
+
+      pooledConnection.close();
+
+      pool.release(pooledConnection);
+      return Promise.resolve(undefined);
+    };
+    reserved_sql.release = () => {
+      // just release the connection back to the pool
+      state.closed = true;
+      pooledConnection.queries.delete(onClose);
+      pool.release(pooledConnection);
+      return Promise.resolve(undefined);
+    };
+    reserved_sql[Symbol.asyncDispose] = () => reserved_sql.release();
+    reserved_sql.then = reserved_sql.connect;
+    reserved_sql.options = sql.options;
+    resolve(reserved_sql);
+  }
+  async function onTransactionConnected(callback, options, resolve, reject, dontRelease, err, pooledConnection) {
     if (err) {
       return reject(err);
     }
@@ -963,6 +1067,10 @@ function SQL(o) {
 
       return queryFromTransaction(strings, values, pooledConnection, transactionQueries);
     }
+    // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
+    // this matchs the behavior of the postgres package
+    transaction_sql.reserve = () => sql.reserve();
+
     transaction_sql.connect = () => {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
@@ -1045,7 +1153,9 @@ function SQL(o) {
     } finally {
       state.closed = true;
       pooledConnection.queries.delete(onClose);
-      pool.release(pooledConnection);
+      if (!dontRelease) {
+        pool.release(pooledConnection);
+      }
     }
   }
   function sql(strings, ...values) {
@@ -1069,7 +1179,17 @@ function SQL(o) {
     return queryFromPool(strings, values);
   }
 
-  sql.begin = async (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
+  sql.reserve = () => {
+    if (pool.closed) {
+      return Promise.reject(connectionClosedError());
+    }
+
+    const promiseWithResolvers = Promise.withResolvers();
+    pool.connect(onReserveConnected.bind(promiseWithResolvers));
+    return promiseWithResolvers.promise;
+  };
+
+  sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
     /*
     BEGIN; -- works on POSTGRES, MySQL, and SQLite (need to change to BEGIN TRANSACTION on MSSQL)
 
@@ -1092,7 +1212,7 @@ function SQL(o) {
     */
 
     if (pool.closed) {
-      throw connectionClosedError();
+      return Promise.reject(connectionClosedError());
     }
     let callback = fn;
     let options: string | undefined = options_or_fn as unknown as string;
@@ -1100,13 +1220,13 @@ function SQL(o) {
       callback = options_or_fn as unknown as TransactionCallback;
       options = undefined;
     } else if (typeof options_or_fn !== "string") {
-      throw $ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string");
+      return Promise.reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
     }
     if (!$isCallable(callback)) {
-      throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
+      return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    pool.connect(onTransactionConnected.bind(callback, options, resolve, reject));
+    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false));
     return promise;
   };
 
@@ -1134,8 +1254,8 @@ function SQL(o) {
     return promise;
   };
 
-  sql.close = () => {
-    return pool.close();
+  sql.close = async () => {
+    await pool.close();
   };
 
   sql[Symbol.asyncDispose] = () => sql.close();

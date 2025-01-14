@@ -5,13 +5,12 @@ import type { SpawnOptions } from "bun";
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
 
 type Opts = {
-  subcommand?: "run" | "test";
   args?: string[];
   cwd?: string;
 };
 type Out = [stdout: string, stderr: string, exitCode: number];
-const run = (file: string, { subcommand = "run", args = [], cwd }: Opts = {}): Promise<Out> => {
-  const res = Bun.spawn([bunExe(), subcommand, ...args, file], {
+const run = (file: string, { args = [], cwd }: Opts = {}): Promise<Out> => {
+  const res = Bun.spawn([bunExe(), ...args, file], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
@@ -36,7 +35,7 @@ describe("Given a single universal preload", () => {
     expect(code).toBe(0);
   });
 
-  it("When `bun run` is run from a different directory  but bunfig.toml is explicitly used, preloads are run", async () => {
+  it("When `bun run` is run from a different directory but bunfig.toml is explicitly used, preloads are run", async () => {
     // `bun run index.ts`
     const [out, err, code] = await run(join(dir, "index.ts"), {
       args: [`--config=${join(dir, "bunfig.toml")}`],
@@ -59,7 +58,7 @@ describe("Given a bunfig.toml with both universal and test-only preloads", () =>
   });
 
   it("`bun test` only loads test-only preloads, clobbering the universal ones", async () => {
-    const [out, err, code] = await run("./index.fixture-test.ts", { subcommand: "test", cwd: dir });
+    const [out, err, code] = await run("./index.fixture-test.ts", { args: ["test"], cwd: dir });
     // note: err has test report, out has "bun test <version>"
 
     expect(code).toBe(0);
@@ -83,9 +82,16 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     expect(code).toBe(0);
   });
 
-  it("When `--preload=preload3.ts` is passed via CLI args, its added to the list of preloads", async () => {
-    // const [out, err, code] = await run("cli-merge.ts", { args: ["--preload=preload3.ts"], cwd: dir });
-    const [out, err, code] = await run("cli-merge.ts", { args: ["--preload", "./preload3.ts"], cwd: dir });
+  it.each([
+    //
+    "--preload ./preload3.ts",
+    "--preload=./preload3.ts",
+    "--preload ./preload3.ts run",
+    "--preload=./preload3.ts run",
+    "run --preload ./preload3.ts",
+    "run --preload=./preload3.ts",
+  ])("When `bun %s cli-merge.ts` is run, `--preload` adds the target file to the list of preloads", async args => {
+    const [out, err, code] = await run("cli-merge.ts", { args: args.split(" "), cwd: dir });
     expect(err).toEqual("");
     expect(out).toEqual("");
     expect(code).toBe(0);

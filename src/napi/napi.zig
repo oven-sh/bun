@@ -1412,20 +1412,16 @@ pub const Finalizer = struct {
     data: ?*anyopaque = null,
     hint: ?*anyopaque = null,
 
-    pub const Queue = std.fifo.LinearFifo(Finalizer, .Dynamic);
-
-    pub fn drain(this: *Finalizer.Queue) void {
-        while (this.readItem()) |finalizer| {
-            const env = finalizer.env.?;
-            const handle_scope = NapiHandleScope.open(env, false);
-            defer if (handle_scope) |scope| scope.close(env);
-            if (finalizer.fun) |fun| {
-                fun(env, finalizer.data, finalizer.hint);
-            }
-            napi_internal_remove_finalizer(env, finalizer.fun, finalizer.hint, finalizer.data);
-            if (env.toJS().tryTakeException()) |exception| {
-                _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
-            }
+    pub fn run(this: *Finalizer) void {
+        const env = this.env.?;
+        const handle_scope = NapiHandleScope.open(env, false);
+        defer if (handle_scope) |scope| scope.close(env);
+        if (this.fun) |fun| {
+            fun(env, this.data, this.hint);
+        }
+        napi_internal_remove_finalizer(env, this.fun, this.hint, this.data);
+        if (env.toJS().tryTakeException()) |exception| {
+            _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
         }
     }
 
@@ -1433,8 +1429,8 @@ pub const Finalizer = struct {
     /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
     /// which they couldn't if they ran immediately while the garbage collector is still running.
     pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
-        const vm = JSC.VirtualMachine.get();
-        vm.eventLoop().napi_finalizer_queue.writeItem(.{ .env = env, .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();
+        const task = NapiFinalizerTask.init(.{ .env = env, .fun = fun, .data = data, .hint = hint });
+        task.schedule();
     }
 };
 
@@ -2149,3 +2145,30 @@ pub fn fixDeadCodeElimination() void {
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }
+
+pub const NapiFinalizerTask = struct {
+    finalizer: Finalizer = undefined,
+
+    const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
+
+    pub fn init(finalizer: Finalizer) *NapiFinalizerTask {
+        const finalizer_task = bun.default_allocator.create(NapiFinalizerTask) catch bun.outOfMemory();
+        finalizer_task.* = .{
+            .finalizer = finalizer,
+        };
+        return finalizer_task;
+    }
+
+    pub fn schedule(this: *NapiFinalizerTask) void {
+        this.finalizer.env.?.toJS().bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+    }
+
+    pub fn deinit(this: *NapiFinalizerTask) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn runOnJSThread(this: *NapiFinalizerTask) void {
+        this.finalizer.run();
+        this.deinit();
+    }
+};

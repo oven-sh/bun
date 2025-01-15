@@ -3079,18 +3079,6 @@ extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, Encoded
 }
 JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
 
-extern "C" bool Bun__queueFinishNapiFinalizers(JSGlobalObject* jsGlobalObject)
-{
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
-    if (globalObject->hasNapiFinalizers()) {
-        globalObject->queueTask(new EventLoopTask([](ScriptExecutionContext&) {
-            // TODO(@heimskr): do something more sensible
-        }));
-        return true;
-    }
-    return false;
-}
-
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     JSValue nextTickQueueObject;

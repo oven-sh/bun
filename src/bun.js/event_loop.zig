@@ -21,6 +21,7 @@ const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
 
 const JSValue = JSC.JSValue;
 const js = JSC.C;
@@ -494,6 +495,7 @@ pub const Task = TaggedPointerUnion(.{
     ServerAllConnectionsClosedTask,
     bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
+    NapiFinalizerTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -778,8 +780,6 @@ pub const EventLoop = struct {
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     immediate_tasks: Queue = undefined,
     next_immediate_tasks: Queue = undefined,
-
-    napi_finalizer_queue: JSC.napi.Finalizer.Queue = undefined,
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
@@ -1297,6 +1297,9 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(PosixSignalTask))) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
                 },
+                @field(Task.Tag, typeBaseName(@typeName(NapiFinalizerTask))) => {
+                    task.get(NapiFinalizerTask).?.runOnJSThread();
+                },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -1316,7 +1319,6 @@ pub const EventLoop = struct {
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
         _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
-        JSC.napi.Finalizer.drain(&this.napi_finalizer_queue);
     }
 
     fn tickConcurrent(this: *EventLoop) void {

@@ -689,7 +689,7 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
-            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
             install_root_dependencies: if (method == .filter) bool else void,
             path_buf: []u8,
 
@@ -1300,7 +1300,7 @@ pub fn cleanWithLogger(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
+    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start();
 
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -1616,7 +1616,7 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level else {},
+        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -1626,7 +1626,7 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level else {},
+            if (method == .filter) manager.options.log_level,
         );
     }
 

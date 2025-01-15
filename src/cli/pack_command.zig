@@ -535,34 +535,79 @@ pub const PackCommand = struct {
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
-            const entry_name = entry.name.slice();
+            const _entry_name = entry.name.slice();
 
-            for (ctx.bundled_deps.items) |*dep| {
-                bun.assertWithLocation(dep.from_root_package_json, @src());
-                if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+            if (strings.startsWithChar(_entry_name, '@')) {
+                const concat = try entrySubpath(ctx.allocator, "node_modules", _entry_name);
 
-                const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+                const scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch |err| {
+                    if (err != error.NotDir and err != error.FileNotFound) {
+                        std.debug.print("Error accessing scoped directory: {s}\n", .{concat});
+                    }
+                    continue;
+                };
 
-                const dedupe_entry = try dedupe.getOrPut(entry_subpath);
-                if (dedupe_entry.found_existing) {
-                    // already got to it in `addBundledDep` below
+                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                while (scoped_iter.next().unwrap() catch null) |sub_entry| {
+                    const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
+
+                    for (ctx.bundled_deps.items) |*dep| {
+                        bun.assertWithLocation(dep.from_root_package_json, @src());
+                        if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                        const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                        const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                        if (dedupe_entry.found_existing) {
+                            // already got to it in `addBundledDep` below
+                            dep.was_packed = true;
+                            break;
+                        }
+
+                        const subdir = openSubdir(dir, entry_name, entry_subpath);
+                        dep.was_packed = true;
+                        try addBundledDep(
+                            ctx,
+                            root_dir,
+                            .{ subdir, entry_subpath, 2 },
+                            &bundled_pack_queue,
+                            &dedupe,
+                            &additional_bundled_deps,
+                            log_level,
+                        );
+
+                        break;
+                    }
+                }
+            } else {
+                const entry_name = _entry_name;
+                for (ctx.bundled_deps.items) |*dep| {
+                    bun.assertWithLocation(dep.from_root_package_json, @src());
+                    if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                    const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                    const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                    if (dedupe_entry.found_existing) {
+                        // already got to it in `addBundledDep` below
+                        dep.was_packed = true;
+                        break;
+                    }
+
+                    const subdir = openSubdir(dir, entry_name, entry_subpath);
                     dep.was_packed = true;
+                    try addBundledDep(
+                        ctx,
+                        root_dir,
+                        .{ subdir, entry_subpath, 2 },
+                        &bundled_pack_queue,
+                        &dedupe,
+                        &additional_bundled_deps,
+                        log_level,
+                    );
+
                     break;
                 }
-
-                const subdir = openSubdir(dir, entry_name, entry_subpath);
-                dep.was_packed = true;
-                try addBundledDep(
-                    ctx,
-                    root_dir,
-                    .{ subdir, entry_subpath, 2 },
-                    &bundled_pack_queue,
-                    &dedupe,
-                    &additional_bundled_deps,
-                    log_level,
-                );
-
-                break;
             }
         }
 

@@ -7,7 +7,7 @@
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
 //
-// For explanation on this, please nag @paperdave to write documentation on how everything works.
+// For explanation on this, please nag @paperclover to write documentation on how everything works.
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";

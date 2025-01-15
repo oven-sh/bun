@@ -232,7 +232,7 @@ describe("bunshell", () => {
       });
     }
 
-    // funny/crazy edgecases thanks to @paperdave and @Electroid
+    // funny/crazy edgecases thanks to @paperclover and @Electroid
     doTest(`echo "$(echo 1; echo 2)"`, "1\n2\n");
     doTest(`echo "$(echo "1" ; echo "2")"`, "1\n2\n");
     doTest(`echo $(echo 1; echo 2)`, "1 2\n");

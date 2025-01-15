@@ -7,7 +7,7 @@
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
 //
-// For explanation on this, please nag @paperdave to write documentation on how everything works.
+// For explanation on this, please nag @paperclover to write documentation on how everything works.
 //
 // The output is intended to be similar to what WebCore does internally with a couple differences:
 //

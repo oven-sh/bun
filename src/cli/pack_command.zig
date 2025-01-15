@@ -542,7 +542,6 @@ pub const PackCommand = struct {
 
                 const scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch |err| {
                     if (err != error.NotDir and err != error.FileNotFound) {
-                        std.debug.print("Error accessing scoped directory: {s}\n", .{concat});
                     }
                     continue;
                 };

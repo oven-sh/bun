@@ -4544,6 +4544,14 @@ pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte
     return slice;
 }
 
+/// prefix is of type []const u8 or []const u16
+pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: anytype) []const T {
+    return if (hasPrefixComptimeType(T, buffer, prefix))
+        buffer[prefix.len..]
+    else
+        buffer;
+}
+
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {

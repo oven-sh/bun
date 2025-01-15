@@ -2184,11 +2184,6 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_SUCCESS(env);
 }
 
-static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "All NAPI bigint functions assume that bigint words are 64 bits");
-#if USE(BIGINT32)
-#error All NAPI bigint functions assume that BIGINT32 is disabled
-#endif
-
 template<typename BufferElement, WebCore::BufferEncodingType EncodeTo>
 napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, BufferElement* buf, size_t bufsize, size_t* writtenPtr)
 {
@@ -2513,11 +2508,6 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     // If both sign_bit and words are nullptr, we're just querying the word count
     // However, if exactly one of them is nullptr, we have an invalid argument
     NAPI_RETURN_EARLY_IF_FALSE(env, (sign_bit == nullptr && words == nullptr) || (sign_bit && words), napi_invalid_arg);
-
-    static_assert(std::is_same_v<JSC::JSBigInt::Digit, uint64_t>);
-#if USE(BIGINT32)
-#error napi_get_value_bigint_words does not support BIGINT32
-#endif
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
 

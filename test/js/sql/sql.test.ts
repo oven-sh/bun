@@ -490,7 +490,7 @@ if (!isCI && hasPsql) {
     expect(result[0]?.x).toBe(1);
   });
 
-  // test.only("Prepared transaction", async () => {
+  // test("Prepared transaction", async () => {
   //   await sql`create table test (a int)`;
 
   //   await sql.begin(async sql => {
@@ -506,29 +506,31 @@ if (!isCI && hasPsql) {
   //   }
   // });
 
-  // t('Transaction requests are executed implicitly', async() => {
-  //   const sql = postgres({ debug: true, idle_timeout: 1, fetch_types: false })
-  //   return [
-  //     'testing',
-  //     (await sql.begin(sql => [
-  //       sql`select set_config('bun_sql.test', 'testing', true)`,
-  //       sql`select current_setting('bun_sql.test') as x`
-  //     ]))[1][0].x
-  //   ]
-  // })
+  test("Transaction requests are executed implicitly", async () => {
+    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    expect(
+      (
+        await sql.begin(sql => [
+          sql`select set_config('bun_sql.test', 'testing', true)`,
+          sql`select current_setting('bun_sql.test') as x`,
+        ])
+      )[1][0].x,
+    ).toBe("testing");
+  });
 
-  // t('Uncaught transaction request errors bubbles to transaction', async() => [
-  //   '42703',
-  //   (await sql.begin(sql => [
-  //     sql`select wat`,
-  //     sql`select current_setting('bun_sql.test') as x, ${ 1 } as a`
-  //   ]).catch(e => e.code))
-  // ])
+  test("Uncaught transaction request errosó rs bubbles to transaction", async () => {
+    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    expect(
+      await sql
+        .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
+        .catch(e => e.errno),
+    ).toBe(42703);
+  });
 
-  // t('Fragments in transactions', async() => [
-  //   true,
-  //   (await sql.begin(sql => sql`select true as x where ${ sql`1=1` }`))[0].x
-  // ])
+  // test.only("Fragments in transactions", async () => {
+  //   const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+  //   expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
+  // });
 
   // t('Transaction rejects with rethrown error', async() => [
   //   'WAT',

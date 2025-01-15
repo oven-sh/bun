@@ -1136,8 +1136,11 @@ function SQL(o) {
       await transaction_sql(`SAVEPOINT ${save_point_name}`);
 
       try {
-        const result = await savepoint_callback(transaction_sql);
+        let result = await savepoint_callback(transaction_sql);
         await transaction_sql(`RELEASE SAVEPOINT ${save_point_name}`);
+        if (Array.isArray(result)) {
+          result = await Promise.all(result);
+        }
         return result;
       } catch (err) {
         if (!state.closed) {
@@ -1156,7 +1159,10 @@ function SQL(o) {
         await transaction_sql("BEGIN");
       }
       needs_rollback = true;
-      const transaction_result = await callback(transaction_sql);
+      let transaction_result = await callback(transaction_sql);
+      if (Array.isArray(transaction_result)) {
+        transaction_result = await Promise.all(transaction_result);
+      }
       await transaction_sql("COMMIT");
       return resolve(transaction_result);
     } catch (err) {

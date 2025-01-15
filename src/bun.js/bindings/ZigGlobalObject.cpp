@@ -1,7 +1,6 @@
 
 #include "root.h"
 
-#include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -244,9 +243,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
-        // Disable IPInt, the in-place WASM interpreter, by default until it is more stable
-        // (it breaks pglite as of 2025-01-06)
-        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
@@ -859,6 +855,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+// executionContextId: -1 for main thread
+// executionContextId: maxInt32 for macros
+// executionContextId: >-1 for workers
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -875,7 +874,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (UNLIKELY(executionContextId > -1)) {
+        if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (UNLIKELY(!structure)) {
                 return nullptr;
@@ -1214,6 +1213,7 @@ GlobalObject::~GlobalObject()
 
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
+        ctx->deref();
     }
 }
 

@@ -2479,23 +2479,6 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.InternalForTesting, specifier);
                 },
 
-                .@"internal/test/binding" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:test/binding", specifier);
-                },
-
-                .@"internal/crypto/x509" => {
-                    if (!is_allowed_to_use_internal_testing_apis) {
-                        return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:crypto/x509", specifier);
-                },
-
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sql" => {
@@ -2773,8 +2756,6 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
-    @"internal/test/binding",
-    @"internal/crypto/x509",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2856,9 +2837,6 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
-
-            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
-            .{ "internal/crypto/x509", HardcodedModule.@"internal/crypto/x509" },
         },
     );
 
@@ -3018,9 +2996,6 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
-
-            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
-            .{ "internal/crypto/x509", .{ .path = "internal/crypto/x509" } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{

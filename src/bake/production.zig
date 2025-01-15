@@ -844,9 +844,6 @@ export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     if (pt.module_map.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
     }
-    for (pt.module_map.keys()) |keys| {
-        std.debug.print("key that does exist: {s}\n", .{keys});
-    }
     return bun.String.dead;
 }
 

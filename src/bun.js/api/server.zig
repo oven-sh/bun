@@ -2709,18 +2709,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
-                    globalThis,
-                )),
+                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJSC(globalThis)),
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
-                        globalThis,
-                    ));
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
                     if (auto_close) {
                         _ = bun.sys.close(fd);
                     }
@@ -2757,11 +2753,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
                         .syscall = .sendfile,
                     };
-                    var sys = err.withPathLike(file.pathlike).toSystemError();
+                    var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        globalThis,
-                    ));
+                    this.runErrorHandler(sys.toErrorInstance(globalThis));
                     return;
                 }
             }

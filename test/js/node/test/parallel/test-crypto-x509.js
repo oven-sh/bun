@@ -12,9 +12,11 @@ const {
   createSign,
 } = require('crypto');
 
-const {
-  isX509Certificate
-} = require('internal/crypto/x509');
+// const {
+//   isX509Certificate
+// } = require('internal/crypto/x509');
+
+const { isX509Certificate } = process.binding("crypto/x509");
 
 const assert = require('assert');
 const fixtures = require('../common/fixtures');

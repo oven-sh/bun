@@ -1002,7 +1002,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);

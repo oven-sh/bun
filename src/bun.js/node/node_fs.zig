@@ -3586,20 +3586,10 @@ pub const NodeFS = struct {
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
+        // NOTE: exists cannot return an error
         const path = args.path orelse return .{ .result = false };
-        const slice = path.sliceZ(&this.sync_error_buf);
-
-        // Use libuv access on windows
-        if (Environment.isWindows) {
-            return .{ .result = Syscall.access(slice, std.posix.F_OK) != .err };
-        }
-
-        // access() may not work correctly on NFS file systems with UID
-        // mapping enabled, because UID mapping is done on the server and
-        // hidden from the client, which checks permissions. Similar
-        // problems can occur to FUSE mounts.
-        const rc = (system.access(slice, std.posix.F_OK));
-        return .{ .result = rc == 0 };
+        const slice = path.osPathKernel32(&this.sync_error_buf);
+        return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
 
     pub fn chown(this: *NodeFS, args: Arguments.Chown, _: Flavor) Maybe(Return.Chown) {
@@ -3751,16 +3741,14 @@ pub const NodeFS = struct {
         return mkdirRecursiveImpl(this, args, void, {});
     }
 
-    // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         const buf = bun.OSPathBufferPool.get();
         defer bun.OSPathBufferPool.put(buf);
         const path: bun.OSPathSliceZ = if (Environment.isWindows)
-            strings.toNTPath(buf, args.path.slice())
+            strings.toKernel32Path(buf, args.path.slice())
         else
             args.path.osPath(buf);
 
-        // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),
         };

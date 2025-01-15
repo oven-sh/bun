@@ -790,7 +790,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
             const wbuf = bun.WPathBufferPool.get();
             defer bun.WPathBufferPool.put(wbuf);
             return Maybe(void).errnoSysP(
-                kernel32.CreateDirectoryW(bun.strings.toWPath(wbuf, file_path).ptr, null),
+                kernel32.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
             ) orelse Maybe(void).success;
@@ -822,7 +822,7 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const wpath = bun.strings.toWPath(wbuf, file_path);
+        const wpath = bun.strings.toKernel32Path(wbuf, file_path);
         assertIsValidWindowsPath(u16, wpath);
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
@@ -2768,16 +2768,22 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
 }
 
 pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
-    if (comptime Environment.isPosix) {
+    if (Environment.isPosix) {
+        // access() may not work correctly on NFS file systems with UID
+        // mapping enabled, because UID mapping is done on the server and
+        // hidden from the client, which checks permissions. Similar
+        // problems can occur to FUSE mounts.
         return syscall.access(path, 0) == 0;
     }
 
-    if (comptime Environment.isWindows) {
+    if (Environment.isWindows) {
         const attributes = getFileAttributes(path) orelse return false;
 
         if (file_only and attributes.is_directory) {
             return false;
         }
+
+        std.debug.print("{}\n", .{attributes});
 
         return true;
     }

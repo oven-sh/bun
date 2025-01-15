@@ -708,6 +708,8 @@ pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;
 
 const net_if_h = @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("net/if.h");
 });
 pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
@@ -730,6 +732,8 @@ pub const sockaddr_dl = extern struct {
 };
 
 pub usingnamespace @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("sys/spawn.h");
     @cInclude("sys/fcntl.h");
     @cInclude("sys/socket.h");
@@ -781,10 +785,6 @@ pub const CLOCK_UPTIME_RAW = 8;
 pub const CLOCK_UPTIME_RAW_APPROX = 9;
 pub const CLOCK_PROCESS_CPUTIME_ID = 12;
 pub const CLOCK_THREAD_CPUTIME_ID = 1;
-
-pub const netdb = @cImport({
-    @cInclude("netdb.h");
-});
 
 pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
 pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;

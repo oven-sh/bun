@@ -926,6 +926,14 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
+    pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+        if (comptime Environment.isWindows) {
+            return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u14, buf)), this.slice());
+        }
+
+        return sliceZWithForceCopy(this, buf, false);
+    }
+
     pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .string => this.string.toJS(globalObject, null),
@@ -1632,10 +1640,10 @@ pub fn StatType(comptime big: bool) type {
             const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_sec)) else ts.tv_sec;
             const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_nsec)) else ts.tv_nsec;
             if (big) {
-                const sec: i64 = @intCast(tv_sec);
-                const nsec: i64 = @intCast(tv_nsec);
-                return @as(i64, @intCast(sec * std.time.ms_per_s)) +
-                    @as(i64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+                const sec: i64 = tv_sec;
+                const nsec: i64 = tv_nsec;
+                return @as(i64, sec * std.time.ms_per_s) +
+                    @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
                 return (@as(f64, @floatFromInt(tv_sec)) * std.time.ms_per_s) +
                     (@as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms);

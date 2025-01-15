@@ -383,7 +383,7 @@ pub const BundleV2 = struct {
     framework: ?bake.Framework,
     graph: Graph,
     linker: LinkerContext,
-    bun_watcher: ?*bun.JSC.Watcher,
+    bun_watcher: ?*bun.Watcher,
     plugins: ?*JSC.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
     source_code_length: usize,

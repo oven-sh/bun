@@ -1600,6 +1600,8 @@ pub const Semver = @import("./install/semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
+pub const Watcher = @import("./Watcher.zig");
+
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and

@@ -2032,6 +2032,7 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
+
 pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
     return toPathMaybeDir(buf, utf8, false);
 }
@@ -2039,6 +2040,20 @@ pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
+
+pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    const path = if (hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
+        utf8[bun.windows.nt_object_prefix_u8.len..]
+    else
+        utf8;
+    if (hasPrefixComptime(path, bun.windows.nt_maxpath_prefix_u8)) {
+        return toWPath(wbuf, path);
+    }
+    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+    const wpath = toWPath(wbuf[4..], path);
+    return wbuf[0 .. wpath.len + 4 :0];
+}
+
 fn isUNCPath(comptime T: type, path: []const T) bool {
     return path.len >= 3 and
         bun.path.Platform.windows.isSeparatorT(T, path[0]) and

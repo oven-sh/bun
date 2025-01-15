@@ -839,8 +839,8 @@ function loadOptions(o) {
   if (adapter && !(adapter === "postgres" || adapter === "postgresql")) {
     throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
-
-  const ret: any = { hostname, port, username, password, database, tls, query, sslMode };
+  //TODO: when adding MySQL, SQLite or MSSQL we need to add the adapter to match
+  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter: "postgres" };
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;
   }
@@ -1078,6 +1078,39 @@ function SQL(o) {
     pooledConnection.onClose(onClose);
     let savepoints = 0;
     let transactionQueries = new Set();
+    const adapter = connectionInfo.adapter;
+    let BEGIN_COMMAND: string = "BEGIN";
+    let ROLLBACK_COMMAND: string = "COMMIT";
+    let COMMIT_COMMAND: string = "ROLLBACK";
+    let SAVEPOINT_COMMAND: string = "SAVEPOINT";
+    let RELEASE_SAVEPOINT_COMMAND: string | null = "RELEASE SAVEPOINT";
+    let ROLLBACK_TO_SAVEPOINT_COMMAND: string = "ROLLBACK TO SAVEPOINT";
+    switch (adapter) {
+      case "postgres":
+        if (options) {
+          BEGIN_COMMAND = `BEGIN ${options}`;
+        }
+        break;
+      case "mysql":
+        // START TRANSACTION is autocommit false
+        BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
+        break;
+
+      case "sqlite":
+        // do not support options just use defaults
+        break;
+      case "mssql":
+        BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
+        ROLLBACK_COMMAND = "ROLLBACK TRANSACTION";
+        COMMIT_COMMAND = "COMMIT TRANSACTION";
+        SAVEPOINT_COMMAND = "SAVE";
+        RELEASE_SAVEPOINT_COMMAND = null; // mssql dont have release savepoint
+        ROLLBACK_TO_SAVEPOINT_COMMAND = "ROLLBACK TRANSACTION";
+        break;
+      default:
+        // TODO: use ERR_
+        throw new Error(`Unsupported adapter: ${adapter}.`);
+    }
 
     function transaction_sql(strings, ...values) {
       if (state.closed) {
@@ -1115,7 +1148,7 @@ function SQL(o) {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
       }
-      await transaction_sql("ROLLBACK");
+      await transaction_sql(ROLLBACK_COMMAND);
       state.closed = true;
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
@@ -1136,43 +1169,39 @@ function SQL(o) {
       }
       // matchs the format of the savepoint name in postgres package
       const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
-      await transaction_sql(`SAVEPOINT ${save_point_name}`);
+      await transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
 
       try {
         let result = await savepoint_callback(transaction_sql);
-        await transaction_sql(`RELEASE SAVEPOINT ${save_point_name}`);
+        if (RELEASE_SAVEPOINT_COMMAND) {
+          // mssql dont have release savepoint
+          await transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
+        }
         if (Array.isArray(result)) {
           result = await Promise.all(result);
         }
         return result;
       } catch (err) {
         if (!state.closed) {
-          await transaction_sql(`ROLLBACK TO SAVEPOINT ${save_point_name}`);
+          await transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
         }
         throw err;
       }
     };
     let needs_rollback = false;
     try {
-      //TODO: this works well for MySQL and POSTGRES but not for SQLite or MSSQL
-      if (options) {
-        //@ts-ignore
-        await transaction_sql(`START TRANSACTION ${options}`);
-      } else {
-        //@ts-ignore
-        await transaction_sql("START TRANSACTION");
-      }
+      await transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
       if (Array.isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
-      await transaction_sql("COMMIT");
+      await transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
       try {
         if (!state.closed && needs_rollback) {
-          await transaction_sql("ROLLBACK");
+          await transaction_sql(ROLLBACK_COMMAND);
         }
       } catch (err) {
         return reject(err);

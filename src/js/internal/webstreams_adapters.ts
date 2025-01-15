@@ -11,7 +11,7 @@ const {
 const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
-const { destroy } = require("internal/streams/destroy");
+const { destroyer } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { Buffer } = require("node:buffer");
 const { AbortError } = require("internal/errors");
@@ -284,7 +284,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       },
 
       abort(reason) {
-        destroy(streamWritable, reason);
+        destroyer(streamWritable, reason);
       },
 
       close() {
@@ -333,7 +333,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroy(writable, error));
+          process.nextTick(() => destroyer(writable, error));
         }
       }
 
@@ -370,7 +370,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
         try {
           callback(error);
         } catch (error) {
-          destroy(writable, error);
+          destroyer(writable, error);
         }
       }
 
@@ -421,7 +421,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroy(writable, error));
+          process.nextTick(() => destroyer(writable, error));
         }
       }
 
@@ -437,13 +437,13 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
       // If the WritableStream closes before the stream.Writable has been
       // ended, we signal an error on the stream.Writable.
       closed = true;
-      if (!isWritableEnded(writable)) destroy(writable, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isWritableEnded(writable)) destroyer(writable, $ERR_STREAM_PREMATURE_CLOSE());
     },
     error => {
       // If the WritableStream errors before the stream.Writable has been
       // destroyed, signal an error on the stream.Writable.
       closed = true;
-      destroy(writable, error);
+      destroyer(writable, error);
     },
   );
 
@@ -524,7 +524,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
 
       cancel(reason) {
         wasCanceled = true;
-        destroy(streamReadable, reason);
+        destroyer(streamReadable, reason);
       },
     },
     strategy,
@@ -631,7 +631,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroy(duplex, error));
+          process.nextTick(() => destroyer(duplex, error));
         }
       }
 
@@ -668,7 +668,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
         try {
           callback(error);
         } catch (error) {
-          destroy(duplex, error);
+          destroyer(duplex, error);
         }
       }
 
@@ -691,7 +691,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroy(duplex, error));
+          process.nextTick(() => destroyer(duplex, error));
         }
       }
 
@@ -710,7 +710,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
             duplex.push(chunk.value);
           }
         },
-        error => destroy(duplex, error),
+        error => destroyer(duplex, error),
       );
     },
 
@@ -751,12 +751,12 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
     writer.closed,
     () => {
       writableClosed = true;
-      if (!isWritableEnded(duplex)) destroy(duplex, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isWritableEnded(duplex)) destroyer(duplex, $ERR_STREAM_PREMATURE_CLOSE());
     },
     error => {
       writableClosed = true;
       readableClosed = true;
-      destroy(duplex, error);
+      destroyer(duplex, error);
     },
   );
 
@@ -768,7 +768,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
     error => {
       writableClosed = true;
       readableClosed = true;
-      destroy(duplex, error);
+      destroyer(duplex, error);
     },
   );
 

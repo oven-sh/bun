@@ -1899,7 +1899,7 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
     }
@@ -1928,14 +1928,14 @@ pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
     return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
 }
 
-pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
     wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
-pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
         wbuf[utf16.len] = 0;
@@ -1961,7 +1961,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathNormalized(wbuf, utf8);
 }
 
-pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
     const renormalized = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(renormalized);
 
@@ -2025,10 +2025,10 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWDirPath(wbuf, path_to_use);
 }
 
-pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
-pub fn toPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
     return toPathMaybeDir(buf, utf8, false);
 }
 
@@ -2061,7 +2061,7 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     }
 }
 
-pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
@@ -2078,7 +2078,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
 
     return wbuf[0..result.count :0];
 }
-pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u8 {
+pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u8 {
     bun.unsafeAssert(buf.len > 0);
 
     var len = utf8.len;

@@ -5189,6 +5189,21 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
   interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket

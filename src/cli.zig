@@ -241,6 +241,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -1163,6 +1164,7 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
+        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or

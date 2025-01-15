@@ -84,6 +84,13 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
             value.getObject());
     }
 
+    return generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+}
+
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value)
+{
     if (value.isCell())
         gcProtectNullTolerant(value.asCell());
     return [value](JSC::JSGlobalObject* lexicalGlobalObject,

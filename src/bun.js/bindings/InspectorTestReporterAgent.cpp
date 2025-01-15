@@ -11,8 +11,11 @@
 #include "ZigGlobalObject.h"
 
 #include "ModuleLoader.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
 
 // Zig bindings implementation
 extern "C" {

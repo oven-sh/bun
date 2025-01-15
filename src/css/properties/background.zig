@@ -1023,7 +1023,10 @@ pub const BackgroundHandler = struct {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if (this.has_prefix) {
-            _ = this.decls.popOrNull();
+            var prop = this.decls.popOrNull();
+            if (prop != null) {
+                prop.?.deinit(allocator);
+            }
         }
 
         dest.appendSlice(allocator, this.decls.items) catch bun.outOfMemory();

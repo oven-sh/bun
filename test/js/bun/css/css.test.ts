@@ -3561,4 +3561,400 @@ describe("css tests", () => {
       ".foo{background:repeating-conic-gradient(#000 0deg 25%,#fff 0deg 50%)}",
     );
   });
+
+  describe("font", () => {
+    cssTest(
+      `
+      .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
+        font: italic small-caps bold expanded 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+      }
+`,
+    );
+
+    minifyTest(
+      `
+      .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font: 12px "Helvetica", "Times New Roman", sans-serif;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
+        font: 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font: 12px "Helvetica", "Times New Roman", sans-serif;
+        line-height: var(--lh);
+      }
+    `,
+      indoc`
+      .foo {
+        font: 12px Helvetica, Times New Roman, sans-serif;
+        line-height: var(--lh);
+      }
+`,
+    );
+
+    minifyTest(
+      `
+      .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-stretch: expanded;
+      }
+    `,
+      indoc`.foo{font-family:Helvetica,Times New Roman,sans-serif;font-size:12px;font-stretch:125%}`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: all-small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
+        font: italic bold expanded 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+        font-variant-caps: all-small-caps;
+      }
+`,
+    );
+
+    minifyTest(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");
+    minifyTest(".foo { font: normal normal 500 medium/normal Charcoal; }", ".foo{font:500 medium Charcoal}");
+    minifyTest(".foo { font: normal normal 400 medium Charcoal; }", ".foo{font:400 medium Charcoal}");
+    minifyTest(".foo { font: normal normal 500 medium/10px Charcoal; }", ".foo{font:500 medium/10px Charcoal}");
+    minifyTest(".foo { font-family: 'sans-serif'; }", '.foo{font-family:"sans-serif"}');
+    minifyTest(".foo { font-family: sans-serif; }", ".foo{font-family:sans-serif}");
+    minifyTest(".foo { font-family: 'default'; }", '.foo{font-family:"default"}');
+    minifyTest(".foo { font-family: default; }", ".foo{font-family:default}");
+    minifyTest(".foo { font-family: 'inherit'; }", '.foo{font-family:"inherit"}');
+    minifyTest(".foo { font-family: inherit; }", ".foo{font-family:inherit}");
+    minifyTest(".foo { font-family: inherit test; }", ".foo{font-family:inherit test}");
+    minifyTest(".foo { font-family: 'inherit test'; }", ".foo{font-family:inherit test}");
+    minifyTest(".foo { font-family: revert; }", ".foo{font-family:revert}");
+    minifyTest(".foo { font-family: 'revert'; }", '.foo{font-family:"revert"}');
+    minifyTest(".foo { font-family: revert-layer; }", ".foo{font-family:revert-layer}");
+    minifyTest(".foo { font-family: revert-layer, serif; }", ".foo{font-family:revert-layer,serif}");
+    minifyTest(".foo { font-family: 'revert', sans-serif; }", '.foo{font-family:"revert",sans-serif}');
+    minifyTest(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
+    minifyTest(".foo { font-family: ''; }", '.foo{font-family:""}');
+
+    // font-family in @font-face
+    minifyTest("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
+    minifyTest("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
+
+    prefix_test(
+      `
+      .foo {
+        font-family: Helvetica, system-ui, sans-serif;
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: Helvetica, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, sans-serif;
+      }
+`,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font: 100%/1.5 Helvetica, system-ui, sans-serif;
+      }
+    `,
+      indoc`
+      .foo {
+        font: 100% / 1.5 Helvetica, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, sans-serif;
+      }
+`,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial, sans-serif, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji;
+      }
+`,
+      {
+        firefox: 91 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-size: 22px;
+        font-size: max(2cqw, 22px);
+      }
+    `,
+      indoc`
+      .foo {
+        font-size: 22px;
+        font-size: max(2cqw, 22px);
+      }
+`,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-size: 22px;
+        font-size: max(2cqw, 22px);
+      }
+    `,
+      indoc`
+      .foo {
+        font-size: max(2cqw, 22px);
+      }
+`,
+      {
+        safari: 16 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-size: 22px;
+        font-size: xxx-large;
+      }
+    `,
+      indoc`
+      .foo {
+        font-size: 22px;
+        font-size: xxx-large;
+      }
+`,
+      {
+        chrome: 70 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-size: 22px;
+        font-size: xxx-large;
+      }
+    `,
+      indoc`
+      .foo {
+        font-size: xxx-large;
+      }
+`,
+      {
+        chrome: 80 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-weight: 700;
+        font-weight: 789;
+      }
+    `,
+      indoc`
+      .foo {
+        font-weight: 700;
+        font-weight: 789;
+      }
+`,
+      {
+        chrome: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-weight: 700;
+        font-weight: 789;
+      }
+    `,
+      indoc`
+      .foo {
+        font-weight: 789;
+      }
+`,
+      {
+        chrome: 80 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-family: Helvetica;
+        font-family: system-ui;
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: Helvetica;
+        font-family: system-ui;
+      }
+`,
+      {
+        chrome: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-family: Helvetica;
+        font-family: system-ui;
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: system-ui;
+      }
+`,
+      {
+        chrome: 80 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-style: oblique;
+        font-style: oblique 40deg;
+      }
+    `,
+      indoc`
+      .foo {
+        font-style: oblique;
+        font-style: oblique 40deg;
+      }
+`,
+      {
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-style: oblique;
+        font-style: oblique 40deg;
+      }
+    `,
+      indoc`
+      .foo {
+        font-style: oblique 40deg;
+      }
+`,
+      {
+        firefox: 80 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font: 22px Helvetica;
+        font: xxx-large system-ui;
+      }
+    `,
+      indoc`
+      .foo {
+        font: 22px Helvetica;
+        font: xxx-large system-ui;
+      }
+`,
+      {
+        chrome: 70 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font: 22px Helvetica;
+        font: xxx-large system-ui;
+      }
+    `,
+      indoc`
+      .foo {
+        font: xxx-large system-ui;
+      }
+`,
+      {
+        chrome: 80 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font: var(--fallback);
+        font: xxx-large system-ui;
+      }
+    `,
+      indoc`
+      .foo {
+        font: var(--fallback);
+        font: xxx-large system-ui;
+      }
+`,
+      {
+        chrome: 50 << 16,
+      },
+    );
+  });
 });

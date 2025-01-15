@@ -25,6 +25,27 @@ const DashedIdentFns = css.DashedIdentFns;
 const Ident = css.Ident;
 const IdentFns = css.IdentFns;
 
+pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.Browsers) bool {
+    if (@hasDecl(T, "isCompatible")) return T.isCompatible(val, browsers);
+    const tyinfo = @typeInfo(T);
+    if (tyinfo == .Pointer) {
+        const TT = std.meta.Child(T);
+        return isCompatible(TT, val.*, browsers);
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        const slice = switch (result.list) {
+            .array_list => val.items,
+            .baby_list => val.sliceConst(),
+            .small_list => val.sliceConst(),
+        };
+        for (slice) |*item| {
+            if (!isCompatible(result.child, item, browsers)) return false;
+        }
+        return true;
+    }
+    @compileError("Unsupported type: " ++ @typeName(T));
+}
+
 pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
     if (T != f32 and T != i32 and @hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
@@ -238,15 +259,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
             .baby_list => {
-                var ret = bun.BabyList(result.child){
-                    .ptr = (allocator.alloc(result.child, this.len) catch bun.outOfMemory()).ptr,
-                    .len = this.len,
-                    .cap = this.len,
-                };
-                for (this.sliceConst(), ret.ptr[0..this.len]) |*old, *new| {
-                    new.* = bun.css.generic.deepClone(result.child, old, allocator);
-                }
-                return ret;
+                return bun.BabyList(result.child).deepClone2(this, allocator);
             },
             .small_list => this.deepClone(allocator),
         };

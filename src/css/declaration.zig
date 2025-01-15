@@ -19,6 +19,7 @@ const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
 const MarginHandler = css.css_properties.margin_padding.MarginHandler;
 const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
 const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
+const FontHandler = css.css_properties.font.FontHandler;
 const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 const SizeHandler = css.css_properties.size.SizeHandler;
 
@@ -333,6 +334,7 @@ pub const DeclarationHandler = struct {
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
     scroll_margin: ScrollMarginHandler = .{},
+    font: FontHandler = .{},
     inset: InsetHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
@@ -355,6 +357,7 @@ pub const DeclarationHandler = struct {
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
         this.scroll_margin.finalize(&this.decls, context);
+        this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
@@ -366,6 +369,7 @@ pub const DeclarationHandler = struct {
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or
             this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }

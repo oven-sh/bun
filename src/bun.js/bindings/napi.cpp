@@ -442,13 +442,11 @@ static void defineNapiProperty(napi_env env, JSC::JSObject* to, void* inheritedD
         }
 
         JSValue value = NapiClass::create(vm, env, name, property.method, dataPtr, 0, nullptr);
-
         to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
         return;
     }
 
     if (property.getter != nullptr || property.setter != nullptr) {
-
         JSC::JSObject* getter = nullptr;
         JSC::JSObject* setter = nullptr;
         auto getterProperty = reinterpret_cast<CFFIFunction>(property.getter);
@@ -485,7 +483,8 @@ static void defineNapiProperty(napi_env env, JSC::JSObject* to, void* inheritedD
             value = JSC::jsUndefined();
         }
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
+        PropertyDescriptor descriptor(value, getPropertyAttributes(property));
+        to->methodTable()->defineOwnProperty(to, globalObject, propertyName, descriptor, false);
     }
 }
 
@@ -513,12 +512,9 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
 
     JSValue jsValue = toJS(value);
 
-    bool putResult = object->put(object, globalObject, identifier, jsValue, slot);
-    NAPI_RETURN_IF_EXCEPTION(env);
-    if (!putResult) return napi_set_last_error(env, napi_generic_failure);
-
-    // we should have returned if there is an exception
-    NAPI_RETURN_SUCCESS(env);
+    // Ignoring the return value matches JS sloppy mode
+    (void)object->methodTable()->put(object, globalObject, identifier, jsValue, slot);
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_set_element(napi_env env, napi_value object_,

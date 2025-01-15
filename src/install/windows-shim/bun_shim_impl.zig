@@ -37,7 +37,7 @@
 //! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
-//! Questions about this file should be directed at @paperdave.
+//! Questions about this file should be directed at @paperclover.
 const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
 

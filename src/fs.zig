@@ -1713,15 +1713,20 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
-        if (strings.eqlComptime(str, "package.json")) {
+
+        if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
             return true;
         }
 
-        if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
-            return false;
+        if (strings.hasSuffixComptime(str, ".jsonc")) {
+            return true;
         }
 
-        return strings.hasSuffixComptime(str, ".json");
+        if (strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig.")) {
+            return strings.hasSuffixComptime(str, ".json");
+        }
+
+        return false;
     }
 
     pub const PackageRelative = struct {

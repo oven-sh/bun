@@ -235,6 +235,11 @@ for (let credentials of allCredentials) {
               const text = await file.slice(6, 10).text();
               expect(text).toBe("Bun!");
             });
+            it("should download range with 0 offset", async () => {
+              const file = bucket.file(tmp_filename, options);
+              const text = await file.slice(0, 5).text();
+              expect(text).toBe("Hello");
+            });
 
             it("should check if a key exists or content-length", async () => {
               const file = bucket.file(tmp_filename, options);

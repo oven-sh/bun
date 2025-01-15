@@ -27,6 +27,7 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { promisify } = require("internal/promisify");
 
 const {
   validateFunction,
@@ -40,9 +41,6 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const ObjectValues = Object.values;
 const PromiseReject = Promise.reject;
 
 var isWritable;
@@ -157,72 +155,6 @@ function stripVTControlCharacters(str) {
   validateString(str, "str");
   return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
 }
-
-// Promisify
-
-var kCustomPromisifiedSymbol = SymbolFor("nodejs.util.promisify.custom");
-var kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-function promisify(original) {
-  validateFunction(original, "original");
-
-  if (original[kCustomPromisifiedSymbol]) {
-    let fn = original[kCustomPromisifiedSymbol];
-
-    validateFunction(fn, "util.promisify.custom");
-
-    return ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-      __proto__: null,
-      value: fn,
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
-  }
-
-  // Names to create an object from in case the callback receives multiple
-  // arguments, e.g. ['bytesRead', 'buffer'] for fs.read.
-  var argumentNames = original[kCustomPromisifyArgsSymbol];
-
-  function fn(...args) {
-    return new Promise((resolve, reject) => {
-      ArrayPrototypePush.$call(args, (err, ...values) => {
-        if (err) {
-          return reject(err);
-        }
-        if (argumentNames !== undefined && values.length > 1) {
-          var obj = {};
-          for (var i = 0; i < argumentNames.length; i++) obj[argumentNames[i]] = values[i];
-          resolve(obj);
-        } else {
-          resolve(values[0]);
-        }
-      });
-      original.$apply(this, args);
-    });
-  }
-
-  ObjectSetPrototypeOf(fn, ObjectGetPrototypeOf(original));
-
-  ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    writable: false,
-    configurable: true,
-  });
-
-  var descriptors = ObjectGetOwnPropertyDescriptors(original);
-  var propertiesValues = ObjectValues(descriptors);
-  for (var i = 0; i < propertiesValues.length; i++) {
-    // We want to use null-prototype objects to not rely on globally mutable
-    // %Object.prototype%.
-    ObjectSetPrototypeOf(propertiesValues[i], null);
-  }
-  return ObjectDefineProperties(fn, descriptors);
-}
-
-promisify.custom = kCustomPromisifiedSymbol;
 
 // Constants
 

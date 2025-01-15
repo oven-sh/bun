@@ -1910,7 +1910,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         return report;
     }
 #else // !OS(WINDOWS)
-    return jsString(vm, String("Not implemented. blame @paperdave"_s));
+    return jsString(vm, String("Not implemented. blame @paperclover"_s));
 #endif
 }
 

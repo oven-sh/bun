@@ -282,10 +282,10 @@ pub const PatchTask = struct {
         )) {
             .result => |txt| txt,
             .err => |e| {
-                try log.addErrorFmtOpts(
+                try log.addSysError(
                     this.manager.allocator,
-                    "failed to read patchfile: {}",
-                    .{e.toSystemError()},
+                    e,
+                    "failed to read patchfile",
                     .{},
                 );
                 return;

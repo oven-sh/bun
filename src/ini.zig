@@ -1168,6 +1168,7 @@ pub fn loadNpmrc(
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                // Apply config to default registry
                 const v: *bun.Schema.Api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
                     install.default_registry = bun.Schema.Api.NpmRegistry{
@@ -1194,7 +1195,6 @@ pub fn loadNpmrc(
                     },
                     .email, .certfile, .keyfile => unreachable,
                 }
-                continue;
             }
 
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
@@ -1206,6 +1206,7 @@ pub fn loadNpmrc(
                             continue;
                         }
                     }
+                    // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;

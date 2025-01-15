@@ -2091,6 +2091,33 @@ pub const ModuleLoader = struct {
                 };
             },
 
+            .html => {
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
+
+                if (globalObject == null) {
+                    return error.NotSupported;
+                }
+
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                return ResolvedSource{
+                    .allocator = &jsc_vm.allocator,
+                    .jsvalue_for_export = html_bundle.toJS(globalObject.?),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                    .tag = .export_default_object,
+                };
+            },
+
             else => {
                 if (virtual_source == null) {
                     if (comptime !disable_transpilying) {
@@ -2326,6 +2353,15 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+                loader = .html;
+            }
+        }
+
+        // If we were going to choose file loader, see if it's a bun.lock
+        if (loader == null) {
+            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+                loader = .json;
             }
         }
 
@@ -2433,7 +2469,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.source_code),
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
@@ -2473,15 +2509,6 @@ pub const ModuleLoader = struct {
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);
-                },
-
-                .@"internal/test/binding" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:test/binding", specifier);
                 },
 
                 // These are defined in src/js/*
@@ -2761,7 +2788,6 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
-    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2843,8 +2869,6 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
-
-            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
@@ -3004,8 +3028,6 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
-
-            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{

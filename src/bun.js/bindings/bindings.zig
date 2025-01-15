@@ -156,6 +156,15 @@ pub const JSObject = extern struct {
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
         return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
     }
+
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
+
+    /// This will not call getters or be observable from JavaScript.
+    pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {
+        const v = Bun__JSObject__getCodePropertyVMInquiry(global, obj);
+        if (v == .zero) return null;
+        return v;
+    }
 };
 
 pub const CachedBytecode = opaque {
@@ -2970,6 +2979,7 @@ pub const JSGlobalObject = opaque {
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, value.toFmt(&formatter) }).throw();
     }
 
+    /// "The <argname> argument must be of type <typename>. Received <value>"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3009,6 +3019,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
+    /// Not enough arguments passed to function named `name_`
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -5516,12 +5527,12 @@ pub const JSValue = enum(i64) {
     }
 
     /// Many Node.js APIs use `validateBoolean`
-    /// Missing value, null, and undefined return `null`
+    /// Missing value and undefined return `null`
     pub inline fn getBooleanStrict(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
         const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
-            .null, .undefined => null,
+            .undefined => null,
             .false, .true => prop == .true,
             else => {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);

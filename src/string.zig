@@ -994,6 +994,7 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    /// use `byteSlice` to get a `[]const u8`.
     pub fn toSlice(this: String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         return SliceWithUnderlyingString{
             .utf8 = this.toUTF8(allocator),
@@ -1001,7 +1002,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);

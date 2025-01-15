@@ -11,7 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../mimalloc_arena.zig").Arena;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
 
 const Allocator = std.mem.Allocator;
@@ -68,7 +68,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -121,7 +120,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
-        pub var lock: bun.Lock = .{};
+        pub var lock: bun.Mutex = .{};
     };
 
     BunDebugHolder.lock.lock();
@@ -2092,6 +2091,33 @@ pub const ModuleLoader = struct {
                 };
             },
 
+            .html => {
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
+
+                if (globalObject == null) {
+                    return error.NotSupported;
+                }
+
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                return ResolvedSource{
+                    .allocator = &jsc_vm.allocator,
+                    .jsvalue_for_export = html_bundle.toJS(globalObject.?),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                    .tag = .export_default_object,
+                };
+            },
+
             else => {
                 if (virtual_source == null) {
                     if (comptime !disable_transpilying) {
@@ -2327,6 +2353,15 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+                loader = .html;
+            }
+        }
+
+        // If we were going to choose file loader, see if it's a bun.lock
+        if (loader == null) {
+            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+                loader = .json;
             }
         }
 
@@ -2434,7 +2469,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.source_code),
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
@@ -2474,15 +2509,6 @@ pub const ModuleLoader = struct {
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);
-                },
-
-                .@"internal/test/binding" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:test/binding", specifier);
                 },
 
                 // These are defined in src/js/*
@@ -2531,6 +2557,7 @@ pub const ModuleLoader = struct {
                 .@"node:stream/consumers" => return jsSyntheticModule(.@"node:stream/consumers", specifier),
                 .@"node:stream/promises" => return jsSyntheticModule(.@"node:stream/promises", specifier),
                 .@"node:stream/web" => return jsSyntheticModule(.@"node:stream/web", specifier),
+                .@"node:test" => return jsSyntheticModule(.@"node:test", specifier),
                 .@"node:timers" => return jsSyntheticModule(.@"node:timers", specifier),
                 .@"node:timers/promises" => return jsSyntheticModule(.@"node:timers/promises", specifier),
                 .@"node:tls" => return jsSyntheticModule(.@"node:tls", specifier),
@@ -2731,6 +2758,7 @@ pub const HardcodedModule = enum {
     @"node:stream/promises",
     @"node:stream/web",
     @"node:string_decoder",
+    @"node:test",
     @"node:timers",
     @"node:timers/promises",
     @"node:tls",
@@ -2760,7 +2788,6 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
-    @"internal/test/binding",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2780,6 +2807,8 @@ pub const HardcodedModule = enum {
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
+
+            .{ "node:test", HardcodedModule.@"node:test" },
 
             .{ "assert", HardcodedModule.@"node:assert" },
             .{ "assert/strict", HardcodedModule.@"node:assert/strict" },
@@ -2840,8 +2869,6 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
-
-            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
@@ -2852,7 +2879,7 @@ pub const HardcodedModule = enum {
 
     pub const Aliases = struct {
         // Used by both Bun and Node.
-        const common_alias_kvs = .{
+        const common_alias_kvs = [_]struct { string, Alias }{
             .{ "node:assert", .{ .path = "assert" } },
             .{ "node:assert/strict", .{ .path = "assert/strict" } },
             .{ "node:async_hooks", .{ .path = "async_hooks" } },
@@ -2892,6 +2919,7 @@ pub const HardcodedModule = enum {
             .{ "node:stream/promises", .{ .path = "stream/promises" } },
             .{ "node:stream/web", .{ .path = "stream/web" } },
             .{ "node:string_decoder", .{ .path = "string_decoder" } },
+            .{ "node:test", .{ .path = "node:test" } },
             .{ "node:timers", .{ .path = "timers" } },
             .{ "node:timers/promises", .{ .path = "timers/promises" } },
             .{ "node:tls", .{ .path = "tls" } },
@@ -2905,6 +2933,22 @@ pub const HardcodedModule = enum {
             .{ "node:wasi", .{ .path = "wasi" } },
             .{ "node:worker_threads", .{ .path = "worker_threads" } },
             .{ "node:zlib", .{ .path = "zlib" } },
+
+            // These are returned in builtinModules, but probably not many packages use them so we will just alias them.
+            .{ "node:_http_agent", .{ .path = "http" } },
+            .{ "node:_http_client", .{ .path = "http" } },
+            .{ "node:_http_common", .{ .path = "http" } },
+            .{ "node:_http_incoming", .{ .path = "http" } },
+            .{ "node:_http_outgoing", .{ .path = "http" } },
+            .{ "node:_http_server", .{ .path = "http" } },
+            .{ "node:_stream_duplex", .{ .path = "stream" } },
+            .{ "node:_stream_passthrough", .{ .path = "stream" } },
+            .{ "node:_stream_readable", .{ .path = "stream" } },
+            .{ "node:_stream_transform", .{ .path = "stream" } },
+            .{ "node:_stream_writable", .{ .path = "stream" } },
+            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_tls_wrap", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "tls" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -2945,6 +2989,7 @@ pub const HardcodedModule = enum {
             .{ "stream/promises", .{ .path = "stream/promises" } },
             .{ "stream/web", .{ .path = "stream/web" } },
             .{ "string_decoder", .{ .path = "string_decoder" } },
+            // .{ "test", .{ .path = "test" } },
             .{ "timers", .{ .path = "timers" } },
             .{ "timers/promises", .{ .path = "timers/promises" } },
             .{ "tls", .{ .path = "tls" } },
@@ -2983,11 +3028,9 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
-
-            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
-        const bun_extra_alias_kvs = .{
+        const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
@@ -3017,10 +3060,9 @@ pub const HardcodedModule = enum {
             .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
         };
 
-        const node_alias_kvs = .{
+        const node_alias_kvs = [_]struct { string, Alias }{
             .{ "inspector/promises", .{ .path = "inspector/promises" } },
             .{ "node:inspector/promises", .{ .path = "inspector/promises" } },
-            .{ "node:test", .{ .path = "node:test" } },
         };
 
         const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);

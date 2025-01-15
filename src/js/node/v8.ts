@@ -133,7 +133,7 @@ function writeHeapSnapshot(path, options) {
     }
 
     if (!path) {
-      throw $ERR_INVALID_ARG_VALUE("path must be a non-empty string");
+      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
     }
   } else {
     path = getDefaultHeapSnapshotPath();

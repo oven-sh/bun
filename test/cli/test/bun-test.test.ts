@@ -577,7 +577,7 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error title=error: Oops!::/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
     test("should annotate a test timeout", () => {
       const stderr = runTest({

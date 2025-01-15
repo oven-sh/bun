@@ -59,7 +59,7 @@ $ bun install --lockfile-only
 
 {% callout %}
 **Note** - using `--lockfile-only` will still populate the global install cache with registry metadata and git/tarball dependencies.
-{% endcallout %}
+{% /callout %}
 
 #### Can I opt out?
 
@@ -100,7 +100,7 @@ $ head -n3 bun.lock
   "workspaces": {
 ```
 
-Once `bun.lock` is generated, Bun will use it for all subsequent installs and updates through commands that read and modify the lockfile. If both lockfiles exist, `bun.lock` will be choosen over `bun.lockb`.
+Once `bun.lock` is generated, Bun will use it for all subsequent installs and updates through commands that read and modify the lockfile. If both lockfiles exist, `bun.lock` will be chosen over `bun.lockb`.
 
 Bun v1.2.0 will switch the default lockfile format to `bun.lock`.
 

@@ -830,7 +830,6 @@ pub const Blob = struct {
                         .recursive = true,
                         .always_return_none = true,
                     },
-                    .sync,
                 )) {
                     .result => {
                         this.mkdirp_if_not_exists = false;
@@ -1010,7 +1009,7 @@ pub const Blob = struct {
             if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                 ctx,
                 source_blob,
-                @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                @truncate(s3.options.partSize),
             ), ctx)) |stream| {
                 return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
             } else {
@@ -1048,7 +1047,7 @@ pub const Blob = struct {
                         if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                             ctx,
                             source_blob,
-                            @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                            @truncate(s3.options.partSize),
                         ), ctx)) |stream| {
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -1113,7 +1112,7 @@ pub const Blob = struct {
                     if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                         ctx,
                         source_blob,
-                        @truncate(s3.options.partSize * S3.MultiPartUploadOptions.OneMiB),
+                        @truncate(s3.options.partSize),
                     ), ctx)) |stream| {
                         return S3.uploadStream(
                             (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -2757,7 +2756,7 @@ pub const Blob = struct {
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
                 const globalThis = this.promise.strong.globalThis.?;
                 const promise = this.promise.swap();
-                const err_instance = err.toSystemError().toErrorInstance(globalThis);
+                const err_instance = err.toJSC(globalThis);
                 var event_loop = this.event_loop;
                 event_loop.enter();
                 defer event_loop.exit();
@@ -3478,12 +3477,9 @@ pub const Blob = struct {
 
         pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this.pathlike) {
-                .path => switch (globalThis.bunVM().nodeFS().unlink(.{
-                    .path = this.pathlike.path,
-                }, .sync)) {
-                    .err => |err| JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis)),
-                    else => JSC.JSPromise.resolvedPromiseValue(globalThis, .true),
-                },
+                .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
+                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                }, globalThis.bunVM()),
                 .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
             };
         }
@@ -4738,11 +4734,26 @@ pub const Blob = struct {
             _ = Bun__Blob__getSizeForBindings;
         }
     }
-
-    pub fn getSize(this: *Blob, globalThis: *JSC.JSGlobalObject) JSValue {
+    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
+        const store = this.store orelse return JSC.JSValue.jsUndefined();
+        // TODO: make this async for files
+        return switch (store.data) {
+            .file => |*file| {
+                return switch (file.pathlike) {
+                    .path => |path_like| JSC.Node.Async.stat.create(globalThis, undefined, .{
+                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                    }, globalThis.bunVM()),
+                    .fd => |fd| JSC.Node.Async.fstat.create(globalThis, undefined, .{ .fd = fd }, globalThis.bunVM()),
+                };
+            },
+            .s3 => S3File.getStat(this, globalThis, callback),
+            else => JSC.JSValue.jsUndefined(),
+        };
+    }
+    pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {
         if (this.size == Blob.max_size) {
             if (this.isS3()) {
-                return S3File.S3BlobStatTask.size(globalThis, this);
+                return JSC.JSValue.jsNumber(std.math.nan(f64));
             }
             this.resolveSize();
             if (this.size == Blob.max_size and this.store != null) {

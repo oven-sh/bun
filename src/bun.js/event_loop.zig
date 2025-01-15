@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -372,6 +372,7 @@ const Link = JSC.Node.Async.link;
 const Symlink = JSC.Node.Async.symlink;
 const Readlink = JSC.Node.Async.readlink;
 const Realpath = JSC.Node.Async.realpath;
+const RealpathNonNative = JSC.Node.Async.realpathNonNative;
 const Mkdir = JSC.Node.Async.mkdir;
 const Fsync = JSC.Node.Async.fsync;
 const Rename = JSC.Node.Async.rename;
@@ -457,6 +458,7 @@ pub const Task = TaggedPointerUnion(.{
     Symlink,
     Readlink,
     Realpath,
+    RealpathNonNative,
     Mkdir,
     Fsync,
     Fdatasync,
@@ -1211,6 +1213,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Realpath))) => {
                     var any: *Realpath = task.get(Realpath).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(RealpathNonNative))) => {
+                    var any: *RealpathNonNative = task.get(RealpathNonNative).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {

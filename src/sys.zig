@@ -130,6 +130,8 @@ pub const O = switch (Environment.os) {
             pub const TMPFILE = 0o20040000;
             pub const NDELAY = NONBLOCK;
 
+            pub const SYMLINK = bun.C.translated.O_SYMLINK;
+
             pub const toPacked = toPackedO;
         },
     },
@@ -194,7 +196,7 @@ pub const Tag = enum(u8) {
     link,
     lseek,
     lstat,
-    lutimes,
+    lutime,
     mkdir,
     mkdtemp,
     fnctl,
@@ -211,7 +213,7 @@ pub const Tag = enum(u8) {
     symlink,
     symlinkat,
     unlink,
-    utimes,
+    utime,
     write,
     getcwd,
     getenv,
@@ -229,6 +231,7 @@ pub const Tag = enum(u8) {
     pidfd_open,
     poll,
     watch,
+    scandir,
 
     kevent,
     kqueue,
@@ -250,6 +253,7 @@ pub const Tag = enum(u8) {
     try_write,
     socketpair,
     setsockopt,
+    statx,
 
     uv_spawn,
     uv_pipe,
@@ -296,10 +300,12 @@ pub const Error = struct {
     from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
     path: []const u8 = "",
     syscall: Syscall.Tag = Syscall.Tag.TODO,
+    dest: []const u8 = "",
 
     pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
         var copy = this.*;
         copy.path = try allocator.dupe(u8, copy.path);
+        copy.dest = try allocator.dupe(u8, copy.dest);
         return copy;
     }
 
@@ -318,7 +324,7 @@ pub const Error = struct {
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toSystemError().format(fmt, opts, writer);
+        try self.toShellSystemError().format(fmt, opts, writer);
     }
 
     pub inline fn getErrno(this: Error) E {
@@ -351,6 +357,21 @@ pub const Error = struct {
             .errno = this.errno,
             .syscall = this.syscall,
             .path = bun.span(path),
+        };
+    }
+
+    pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
+        if (std.meta.Child(@TypeOf(path)) == u16) {
+            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (path)");
+        }
+        if (std.meta.Child(@TypeOf(dest)) == u16) {
+            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (dest)");
+        }
+        return Error{
+            .errno = this.errno,
+            .syscall = this.syscall,
+            .path = bun.span(path),
+            .dest = bun.span(dest),
         };
     }
 
@@ -389,41 +410,115 @@ pub const Error = struct {
         return bun.errnoToZigErr(this.errno);
     }
 
-    pub fn toSystemError(this: Error) SystemError {
+    /// 1. Convert libuv errno values into libc ones.
+    /// 2. Get the tag name as a string for printing.
+    pub fn getErrorCodeTagName(err: *const Error) ?struct { [:0]const u8, C.SystemErrno } {
+        if (!Environment.isWindows) {
+            if (err.errno > 0 and err.errno < C.SystemErrno.max) {
+                const system_errno = @as(C.SystemErrno, @enumFromInt(err.errno));
+                return .{ @tagName(system_errno), system_errno };
+            }
+        } else {
+            const system_errno: C.SystemErrno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                if (err.from_libuv) {
+                    break :brk @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(@as(c_int, err.errno) * -1)));
+                }
+
+                break :brk @enumFromInt(err.errno);
+            };
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                return .{ errname, system_errno };
+            }
+        }
+        return null;
+    }
+
+    /// Simpler formatting which does not allocate a message
+    pub fn toShellSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
         };
 
         // errno label
-        if (!Environment.isWindows) {
-            if (this.errno > 0 and this.errno < C.SystemErrno.max) {
-                const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-                err.code = bun.String.static(@tagName(system_errno));
-                if (C.SystemErrno.labels.get(system_errno)) |label| {
-                    err.message = bun.String.static(label);
-                }
-            }
-        } else {
-            const system_errno = brk: {
-                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
-                @setRuntimeSafety(false);
-                if (this.from_libuv) {
-                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
-                }
-
-                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
-            };
-            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
-                err.code = bun.String.static(errname);
-                if (C.SystemErrno.labels.get(system_errno)) |label| {
-                    err.message = bun.String.static(label);
-                }
+        if (this.getErrorCodeTagName()) |resolved_errno| {
+            const code, const system_errno = resolved_errno;
+            err.code = bun.String.static(code);
+            if (coreutils_error_map.get(system_errno)) |label| {
+                err.message = bun.String.static(label);
             }
         }
 
         if (this.path.len > 0) {
             err.path = bun.String.createUTF8(this.path);
+        }
+
+        if (this.dest.len > 0) {
+            err.dest = bun.String.createUTF8(this.dest);
+        }
+
+        if (this.fd != bun.invalid_fd) {
+            err.fd = this.fd;
+        }
+
+        return err;
+    }
+
+    /// More complex formatting to precisely match the printing that Node.js emits.
+    /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
+    pub fn toSystemError(this: Error) SystemError {
+        var err = SystemError{
+            .errno = -%@as(c_int, this.errno),
+            .syscall = bun.String.static(@tagName(this.syscall)),
+        };
+
+        // errno label
+        var code: ?[:0]const u8 = null;
+        var label: ?[]const u8 = null;
+        if (this.getErrorCodeTagName()) |resolved_errno| {
+            code, const system_errno = resolved_errno;
+            err.code = bun.String.static(code.?);
+            label = libuv_error_map.get(system_errno);
+        }
+
+        // format taken from Node.js 'exceptions.cc'
+        // search keyword: `Local<Value> UVException(Isolate* isolate,`
+        var message_buf: [4096]u8 = undefined;
+        const message = message: {
+            var stream = std.io.fixedBufferStream(&message_buf);
+            const writer = stream.writer();
+            brk: {
+                if (code) |c| {
+                    writer.writeAll(c) catch break :brk;
+                    writer.writeAll(": ") catch break :brk;
+                }
+                writer.writeAll(label orelse "Unknown Error") catch break :brk;
+                writer.writeAll(", ") catch break :brk;
+                writer.writeAll(@tagName(this.syscall)) catch break :brk;
+                if (this.path.len > 0) {
+                    writer.writeAll(" '") catch break :brk;
+                    writer.writeAll(this.path) catch break :brk;
+                    writer.writeAll("'") catch break :brk;
+
+                    if (this.dest.len > 0) {
+                        writer.writeAll(" -> '") catch break :brk;
+                        writer.writeAll(this.dest) catch break :brk;
+                        writer.writeAll("'") catch break :brk;
+                    }
+                }
+            }
+            break :message stream.getWritten();
+        };
+        err.message = bun.String.createUTF8(message);
+
+        if (this.path.len > 0) {
+            err.path = bun.String.createUTF8(this.path);
+        }
+
+        if (this.dest.len > 0) {
+            err.dest = bun.String.createUTF8(this.dest);
         }
 
         if (this.fd != bun.invalid_fd) {
@@ -469,7 +564,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
         var wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, wbuf);
-        if (Result.errnoSys(len, .getcwd)) |err| return err;
+        if (Result.errnoSysP(len, .getcwd, buf)) |err| return err;
         return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
     }
 
@@ -477,7 +572,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     return if (rc != null)
         Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
     else
-        Result.errnoSys(@as(c_int, 0), .getcwd).?;
+        Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
@@ -485,14 +580,14 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
         return sys_uv.fchmod(fd, mode);
     }
 
-    return Maybe(void).errnoSys(C.fchmod(fd.cast(), mode), .fchmod) orelse
+    return Maybe(void).errnoSysFd(C.fchmod(fd.cast(), mode), .fchmod, fd) orelse
         Maybe(void).success;
 }
 
 pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
-    return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+    return Maybe(void).errnoSysFd(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat, fd) orelse
         Maybe(void).success;
 }
 
@@ -505,19 +600,21 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
-pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
+pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
-        return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
+        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isWindows) {
-        if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), kernel32.GetLastError() });
-            return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        if (kernel32.SetCurrentDirectory(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
+            log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
+            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), 0 });
+        log("SetCurrentDirectory({s}) = {d}", .{ destination, 0 });
 
         return Maybe(void).success;
     }
@@ -525,12 +622,16 @@ pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     @compileError("Not implemented yet");
 }
 
-pub fn chdir(destination: anytype) Maybe(void) {
+pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
     const Type = @TypeOf(destination);
 
     if (comptime Environment.isPosix) {
         if (comptime Type == []u8 or Type == []const u8) {
             return chdirOSPath(
+                &(std.posix.toPosixPath(path) catch return .{ .err = .{
+                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .syscall = .chdir,
+                } }),
                 &(std.posix.toPosixPath(destination) catch return .{ .err = .{
                     .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
                     .syscall = .chdir,
@@ -538,25 +639,23 @@ pub fn chdir(destination: anytype) Maybe(void) {
             );
         }
 
-        return chdirOSPath(destination);
+        return chdirOSPath(path, destination);
     }
 
     if (comptime Environment.isWindows) {
         if (comptime Type == *[*:0]u16) {
             if (kernel32.SetCurrentDirectory(destination) != 0) {
-                return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
             }
 
             return Maybe(void).success;
         }
 
         if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSliceZ, destination));
+            return chdirOSPath(path, @as(bun.OSPathSliceZ, destination));
         }
 
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
-        return chdirOSPath(bun.strings.toWDirPath(wbuf, destination));
+        return chdirOSPath(path, destination);
     }
 
     return Maybe(void).todo();
@@ -590,7 +689,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-        if (Maybe(bun.Stat).errnoSys(rc, .stat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -599,9 +698,9 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         return sys_uv.lstat(path);
     } else {
-        var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
-        return Maybe(bun.Stat){ .result = stat_ };
+        var stat_buf = mem.zeroes(bun.Stat);
+        if (Maybe(bun.Stat).errnoSysP(C.lstat(path, &stat_buf), .lstat, path)) |err| return err;
+        return Maybe(bun.Stat){ .result = stat_buf };
     }
 }
 
@@ -621,7 +720,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });
 
-    if (Maybe(bun.Stat).errnoSys(rc, .fstat)) |err| return err;
+    if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
@@ -657,7 +756,6 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
-
     _ = close(dir_to_make.result);
     return .{ .result = {} };
 }
@@ -674,7 +772,7 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSys(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat, fd, path)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
@@ -758,7 +856,7 @@ const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
     while (true) {
         const result = fcntl_symbol(fd.cast(), cmd, arg);
-        if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| {
+        if (Maybe(fnctl_int).errnoSysFd(result, .fcntl, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -800,15 +898,24 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
-        // handle the special "nul" device
-        // we technically should handle the other DOS devices too.
-        if (path_.len >= "\\nul".len and
-            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
-            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
-        {
-            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
-            buf[bun.strings.w("\\??\\NUL").len] = 0;
-            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        if (path_.len >= 4) {
+            if ((bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+                bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+            {
+                @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+                buf[bun.strings.w("\\??\\NUL").len] = 0;
+                return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+            }
+            if ((path[1] == '/' or path[1] == '\\') and
+                (path[2] == '.' or path[2] == '?') and
+                (path[3] == '/' or path[3] == '\\'))
+            {
+                buf[0..4].* = .{ '\\', '\\', path[2], '\\' };
+                const rest = path[4..];
+                @memcpy(buf[4..][0..rest.len], rest);
+                buf[path.len] = 0;
+                return .{ .result = buf[0..path.len :0] };
+            }
         }
 
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
@@ -862,7 +969,7 @@ pub fn normalizePathWindows(
 
 fn openDirAtWindowsNtPath(
     dirFd: bun.FileDescriptor,
-    path: []const u16,
+    path: [:0]const u16,
     options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
     const iterable = options.iterable;
@@ -876,6 +983,17 @@ fn openDirAtWindowsNtPath(
     const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
     const read_only_flag: u32 = if (read_only) 0 else w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
     const flags: u32 = iterable_flag | base_flags | rename_flag | read_only_flag;
+    const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+
+    // NtCreateFile seems to not function on device paths.
+    // Since it is absolute, it can just use CreateFileW
+    if (bun.strings.hasPrefixComptimeUTF16(path, "\\\\.\\"))
+        return openWindowsDevicePath(
+            path,
+            flags,
+            if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+        );
 
     const path_len_bytes: u16 = @truncate(path.len * 2);
     var nt_name = w.UNICODE_STRING{
@@ -896,7 +1014,6 @@ fn openDirAtWindowsNtPath(
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
     };
-    const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
     var fd: w.HANDLE = w.INVALID_HANDLE_VALUE;
     var io: w.IO_STATUS_BLOCK = undefined;
 
@@ -953,6 +1070,33 @@ fn openDirAtWindowsNtPath(
             };
         },
     }
+}
+
+fn openWindowsDevicePath(
+    path: [:0]const u16,
+    dwDesiredAccess: u32,
+    dwCreationDisposition: u32,
+    dwFlagsAndAttributes: u32,
+) Maybe(bun.FileDescriptor) {
+    const rc = std.os.windows.kernel32.CreateFileW(
+        path,
+        dwDesiredAccess,
+        FILE_SHARE,
+        null,
+        dwCreationDisposition,
+        dwFlagsAndAttributes,
+        null,
+    );
+    if (rc == w.INVALID_HANDLE_VALUE) {
+        return .{ .err = .{
+            .errno = if (windows.Win32Error.get().toSystemErrno()) |e|
+                @intFromEnum(e)
+            else
+                @intFromEnum(bun.C.E.UNKNOWN),
+            .syscall = .open,
+        } };
+    }
+    return .{ .result = bun.toFD(rc) };
 }
 
 pub const WindowsOpenDirOptions = packed struct {
@@ -1278,7 +1422,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
-        return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = bun.toFD(rc) };
+        return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = bun.toFD(rc) };
     } else if (comptime Environment.isWindows) {
         return openatWindowsT(bun.OSPathChar, dirfd, file_path, flags);
     }
@@ -1620,7 +1764,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd.cast(), buf.ptr, adjusted_len, ioffset);
-        if (Maybe(usize).errnoSys(rc, .pread)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .pread, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1732,7 +1876,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = syscall.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
-        if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
             log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
@@ -1763,7 +1907,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = syscall.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-        if (Maybe(usize).errnoSys(rc, .send)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
             syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
             return err;
         }
@@ -1775,7 +1919,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
         while (true) {
             const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-            if (Maybe(usize).errnoSys(rc, .send)) |err| {
+            if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
                 syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
                 return err;
@@ -1790,7 +1934,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
     while (true) {
         const rc = syscall.lseek(fd.cast(), offset, whence);
-        if (Maybe(usize).errnoSys(rc, .lseek)) |err| {
+        if (Maybe(usize).errnoSysFd(rc, .lseek, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1807,7 +1951,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     while (true) {
         const rc = syscall.readlink(in, buf.ptr, buf.len);
 
-        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSysP(rc, .readlink, in)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1820,7 +1964,7 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
     while (true) {
         const rc = syscall.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSysFP(rc, .readlink, fd, in)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1832,14 +1976,14 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .ftruncate, fd) orelse Maybe(void).success;
         }
 
         return Maybe(void).success;
     }
 
     return while (true) {
-        if (Maybe(void).errnoSys(syscall.ftruncate(fd.cast(), size), .ftruncate)) |err| {
+        if (Maybe(void).errnoSysFd(syscall.ftruncate(fd.cast(), size), .ftruncate, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2013,7 +2157,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
 
 pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
+        if (Maybe(void).errnoSysP(C.chown(path, uid, gid), .chown, path)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2184,7 +2328,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errnoSysP(syscall.unlink(from), .unlink, from)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2213,7 +2357,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
     }
 
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
+        if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2231,7 +2375,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return unlinkatWithFlags(dirfd, to, 0);
     }
     while (true) {
-        if (Maybe(void).errnoSys(syscall.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -2351,7 +2495,7 @@ pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
 pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
     while (true) {
         const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
-        if (Maybe(i32).errnoSys(rc, .setsockopt)) |err| {
+        if (Maybe(i32).errnoSysFd(rc, .setsockopt, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });
             return err;
@@ -2497,12 +2641,12 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
     // We don't use glibc here
     // It didn't work. Always returned 0.
     const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
-    if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
+    if (Maybe(usize).errnoSysFd(pipe_len, .fcntl, fd)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
     const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
-    if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
+    if (Maybe(usize).errnoSysFd(new_pipe_len, .fcntl, fd)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
 
@@ -2693,12 +2837,17 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     return JSC.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
-    const dir_fd = bun.toFD(dir_);
+pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
+    const dir_fd = bun.toFD(dir);
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path = bun.strings.toNTPath(wbuf, subpath);
+        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+        else
+            bun.strings.toNTPath(wbuf, subpath);
+        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
+
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2720,8 +2869,11 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
-        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
-            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
+        if (rc == .OBJECT_NAME_INVALID) {
+            bun.Output.warn("internal error: invalid object name: {}", .{bun.fmt.fmtOSPath(path, .{})});
+        }
+        if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
+            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err, rc });
             return err;
         }
 
@@ -2730,12 +2882,31 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
         syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
 
-        return .{
-            .result = is_dir,
-        };
+        return .{ .result = is_dir };
     }
 
-    return faccessat(dir_fd, subpath);
+    const have_statx = Environment.isLinux;
+    if (have_statx) brk: {
+        var statx: std.os.linux.Statx = undefined;
+        if (Maybe(bool).errnoSys(bun.C.linux.statx(
+            dir_fd.cast(),
+            subpath,
+            std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.STATX_SYNC_AS_STAT,
+            std.os.linux.STATX_TYPE,
+            &statx,
+        ), .statx)) |err| {
+            if (err.err.getErrno() == .NOSYS) break :brk; // Linux < 4.11
+            return err;
+        }
+        return .{ .result = S.ISDIR(statx.mode) };
+    }
+
+    // TODO: on macOS, try getattrlist
+
+    return switch (fstatat(dir_fd, subpath)) {
+        .err => |err| .{ .err = err },
+        .result => |result| .{ .result = S.ISDIR(result.mode) },
+    };
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
@@ -2892,7 +3063,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             windows.FILE_BEGIN,
         );
         if (rc == windows.FALSE) {
-            return Maybe(void).errnoSys(0, .lseek) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse Maybe(void).success;
         }
         return Maybe(void).success;
     }
@@ -2903,7 +3074,7 @@ pub fn setFileOffsetToEndWindows(fd: bun.FileDescriptor) Maybe(usize) {
         var new_ptr: std.os.windows.LARGE_INTEGER = undefined;
         const rc = kernel32.SetFilePointerEx(fd.cast(), 0, &new_ptr, windows.FILE_END);
         if (rc == windows.FALSE) {
-            return Maybe(usize).errnoSys(0, .lseek) orelse Maybe(usize){ .result = 0 };
+            return Maybe(usize).errnoSysFd(0, .lseek, fd) orelse Maybe(usize){ .result = 0 };
         }
         return Maybe(usize){ .result = @intCast(new_ptr) };
     }
@@ -2922,10 +3093,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
 
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
-    if (Maybe([2]bun.FileDescriptor).errnoSys(
-        rc,
-        .pipe,
-    )) |err| {
+    if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
@@ -3608,3 +3776,372 @@ pub inline fn toLibUVOwnedFD(
 
 pub const Dir = @import("./dir.zig");
 const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;
+
+/// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
+pub const libuv_error_map = brk: {
+    const entries: []const struct { [:0]const u8, [:0]const u8 } = &.{
+        .{ "E2BIG", "argument list too long" },
+        .{ "EACCES", "permission denied" },
+        .{ "EADDRINUSE", "address already in use" },
+        .{ "EADDRNOTAVAIL", "address not available" },
+        .{ "EAFNOSUPPORT", "address family not supported" },
+        .{ "EAGAIN", "resource temporarily unavailable" },
+        .{ "EAI_ADDRFAMILY", "address family not supported" },
+        .{ "EAI_AGAIN", "temporary failure" },
+        .{ "EAI_BADFLAGS", "bad ai_flags value" },
+        .{ "EAI_BADHINTS", "invalid value for hints" },
+        .{ "EAI_CANCELED", "request canceled" },
+        .{ "EAI_FAIL", "permanent failure" },
+        .{ "EAI_FAMILY", "ai_family not supported" },
+        .{ "EAI_MEMORY", "out of memory" },
+        .{ "EAI_NODATA", "no address" },
+        .{ "EAI_NONAME", "unknown node or service" },
+        .{ "EAI_OVERFLOW", "argument buffer overflow" },
+        .{ "EAI_PROTOCOL", "resolved protocol is unknown" },
+        .{ "EAI_SERVICE", "service not available for socket type" },
+        .{ "EAI_SOCKTYPE", "socket type not supported" },
+        .{ "EALREADY", "connection already in progress" },
+        .{ "EBADF", "bad file descriptor" },
+        .{ "EBUSY", "resource busy or locked" },
+        .{ "ECANCELED", "operation canceled" },
+        .{ "ECHARSET", "invalid Unicode character" },
+        .{ "ECONNABORTED", "software caused connection abort" },
+        .{ "ECONNREFUSED", "connection refused" },
+        .{ "ECONNRESET", "connection reset by peer" },
+        .{ "EDESTADDRREQ", "destination address required" },
+        .{ "EEXIST", "file already exists" },
+        .{ "EFAULT", "bad address in system call argument" },
+        .{ "EFBIG", "file too large" },
+        .{ "EHOSTUNREACH", "host is unreachable" },
+        .{ "EINTR", "interrupted system call" },
+        .{ "EINVAL", "invalid argument" },
+        .{ "EIO", "i/o error" },
+        .{ "EISCONN", "socket is already connected" },
+        .{ "EISDIR", "illegal operation on a directory" },
+        .{ "ELOOP", "too many symbolic links encountered" },
+        .{ "EMFILE", "too many open files" },
+        .{ "EMSGSIZE", "message too long" },
+        .{ "ENAMETOOLONG", "name too long" },
+        .{ "ENETDOWN", "network is down" },
+        .{ "ENETUNREACH", "network is unreachable" },
+        .{ "ENFILE", "file table overflow" },
+        .{ "ENOBUFS", "no buffer space available" },
+        .{ "ENODEV", "no such device" },
+        .{ "ENOENT", "no such file or directory" },
+        .{ "ENOMEM", "not enough memory" },
+        .{ "ENONET", "machine is not on the network" },
+        .{ "ENOPROTOOPT", "protocol not available" },
+        .{ "ENOSPC", "no space left on device" },
+        .{ "ENOSYS", "function not implemented" },
+        .{ "ENOTCONN", "socket is not connected" },
+        .{ "ENOTDIR", "not a directory" },
+        .{ "ENOTEMPTY", "directory not empty" },
+        .{ "ENOTSOCK", "socket operation on non-socket" },
+        .{ "ENOTSUP", "operation not supported on socket" },
+        .{ "EOVERFLOW", "value too large for defined data type" },
+        .{ "EPERM", "operation not permitted" },
+        .{ "EPIPE", "broken pipe" },
+        .{ "EPROTO", "protocol error" },
+        .{ "EPROTONOSUPPORT", "protocol not supported" },
+        .{ "EPROTOTYPE", "protocol wrong type for socket" },
+        .{ "ERANGE", "result too large" },
+        .{ "EROFS", "read-only file system" },
+        .{ "ESHUTDOWN", "cannot send after transport endpoint shutdown" },
+        .{ "ESPIPE", "invalid seek" },
+        .{ "ESRCH", "no such process" },
+        .{ "ETIMEDOUT", "connection timed out" },
+        .{ "ETXTBSY", "text file is busy" },
+        .{ "EXDEV", "cross-device link not permitted" },
+        .{ "UNKNOWN", "unknown error" },
+        .{ "EOF", "end of file" },
+        .{ "ENXIO", "no such device or address" },
+        .{ "EMLINK", "too many links" },
+        .{ "EHOSTDOWN", "host is down" },
+        .{ "EREMOTEIO", "remote I/O error" },
+        .{ "ENOTTY", "inappropriate ioctl for device" },
+        .{ "EFTYPE", "inappropriate file type or format" },
+        .{ "EILSEQ", "illegal byte sequence" },
+        .{ "ESOCKTNOSUPPORT", "socket type not supported" },
+        .{ "ENODATA", "no data available" },
+        .{ "EUNATCH", "protocol driver not attached" },
+    };
+    const SystemErrno = bun.C.SystemErrno;
+    var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
+    for (entries) |entry| {
+        const key, const text = entry;
+        if (@hasField(SystemErrno, key)) {
+            map.put(@field(SystemErrno, key), text);
+        }
+    }
+
+    // sanity check
+    bun.assert(std.mem.eql(u8, map.get(SystemErrno.ENOENT).?, "no such file or directory"));
+
+    break :brk map;
+};
+
+/// This map is derived off of what coreutils uses in printing errors. This is
+/// equivalent to `strerror`, but as strings with constant lifetime.
+pub const coreutils_error_map = brk: {
+    // macOS and Linux have slightly different error messages.
+    const entries: []const struct { [:0]const u8, [:0]const u8 } = switch (Environment.os) {
+        // Since windows is just an emulation of linux, it will derive the linux error messages.
+        .linux, .windows, .wasm => &.{
+            .{ "EPERM", "Operation not permitted" },
+            .{ "ENOENT", "No such file or directory" },
+            .{ "ESRCH", "No such process" },
+            .{ "EINTR", "Interrupted system call" },
+            .{ "EIO", "Input/output error" },
+            .{ "ENXIO", "No such device or address" },
+            .{ "E2BIG", "Argument list too long" },
+            .{ "ENOEXEC", "Exec format error" },
+            .{ "EBADF", "Bad file descriptor" },
+            .{ "ECHILD", "No child processes" },
+            .{ "EAGAIN", "Resource temporarily unavailable" },
+            .{ "ENOMEM", "Cannot allocate memory" },
+            .{ "EACCES", "Permission denied" },
+            .{ "EFAULT", "Bad address" },
+            .{ "ENOTBLK", "Block device required" },
+            .{ "EBUSY", "Device or resource busy" },
+            .{ "EEXIST", "File exists" },
+            .{ "EXDEV", "Invalid cross-device link" },
+            .{ "ENODEV", "No such device" },
+            .{ "ENOTDIR", "Not a directory" },
+            .{ "EISDIR", "Is a directory" },
+            .{ "EINVAL", "Invalid argument" },
+            .{ "ENFILE", "Too many open files in system" },
+            .{ "EMFILE", "Too many open files" },
+            .{ "ENOTTY", "Inappropriate ioctl for device" },
+            .{ "ETXTBSY", "Text file busy" },
+            .{ "EFBIG", "File too large" },
+            .{ "ENOSPC", "No space left on device" },
+            .{ "ESPIPE", "Illegal seek" },
+            .{ "EROFS", "Read-only file system" },
+            .{ "EMLINK", "Too many links" },
+            .{ "EPIPE", "Broken pipe" },
+            .{ "EDOM", "Numerical argument out of domain" },
+            .{ "ERANGE", "Numerical result out of range" },
+            .{ "EDEADLK", "Resource deadlock avoided" },
+            .{ "ENAMETOOLONG", "File name too long" },
+            .{ "ENOLCK", "No locks available" },
+            .{ "ENOSYS", "Function not implemented" },
+            .{ "ENOTEMPTY", "Directory not empty" },
+            .{ "ELOOP", "Too many levels of symbolic links" },
+            .{ "ENOMSG", "No message of desired type" },
+            .{ "EIDRM", "Identifier removed" },
+            .{ "ECHRNG", "Channel number out of range" },
+            .{ "EL2NSYNC", "Level 2 not synchronized" },
+            .{ "EL3HLT", "Level 3 halted" },
+            .{ "EL3RST", "Level 3 reset" },
+            .{ "ELNRNG", "Link number out of range" },
+            .{ "EUNATCH", "Protocol driver not attached" },
+            .{ "ENOCSI", "No CSI structure available" },
+            .{ "EL2HLT", "Level 2 halted" },
+            .{ "EBADE", "Invalid exchange" },
+            .{ "EBADR", "Invalid request descriptor" },
+            .{ "EXFULL", "Exchange full" },
+            .{ "ENOANO", "No anode" },
+            .{ "EBADRQC", "Invalid request code" },
+            .{ "EBADSLT", "Invalid slot" },
+            .{ "EBFONT", "Bad font file format" },
+            .{ "ENOSTR", "Device not a stream" },
+            .{ "ENODATA", "No data available" },
+            .{ "ETIME", "Timer expired" },
+            .{ "ENOSR", "Out of streams resources" },
+            .{ "ENONET", "Machine is not on the network" },
+            .{ "ENOPKG", "Package not installed" },
+            .{ "EREMOTE", "Object is remote" },
+            .{ "ENOLINK", "Link has been severed" },
+            .{ "EADV", "Advertise error" },
+            .{ "ESRMNT", "Srmount error" },
+            .{ "ECOMM", "Communication error on send" },
+            .{ "EPROTO", "Protocol error" },
+            .{ "EMULTIHOP", "Multihop attempted" },
+            .{ "EDOTDOT", "RFS specific error" },
+            .{ "EBADMSG", "Bad message" },
+            .{ "EOVERFLOW", "Value too large for defined data type" },
+            .{ "ENOTUNIQ", "Name not unique on network" },
+            .{ "EBADFD", "File descriptor in bad state" },
+            .{ "EREMCHG", "Remote address changed" },
+            .{ "ELIBACC", "Can not access a needed shared library" },
+            .{ "ELIBBAD", "Accessing a corrupted shared library" },
+            .{ "ELIBSCN", ".lib section in a.out corrupted" },
+            .{ "ELIBMAX", "Attempting to link in too many shared libraries" },
+            .{ "ELIBEXEC", "Cannot exec a shared library directly" },
+            .{ "EILSEQ", "Invalid or incomplete multibyte or wide character" },
+            .{ "ERESTART", "Interrupted system call should be restarted" },
+            .{ "ESTRPIPE", "Streams pipe error" },
+            .{ "EUSERS", "Too many users" },
+            .{ "ENOTSOCK", "Socket operation on non-socket" },
+            .{ "EDESTADDRREQ", "Destination address required" },
+            .{ "EMSGSIZE", "Message too long" },
+            .{ "EPROTOTYPE", "Protocol wrong type for socket" },
+            .{ "ENOPROTOOPT", "Protocol not available" },
+            .{ "EPROTONOSUPPORT", "Protocol not supported" },
+            .{ "ESOCKTNOSUPPORT", "Socket type not supported" },
+            .{ "EOPNOTSUPP", "Operation not supported" },
+            .{ "EPFNOSUPPORT", "Protocol family not supported" },
+            .{ "EAFNOSUPPORT", "Address family not supported by protocol" },
+            .{ "EADDRINUSE", "Address already in use" },
+            .{ "EADDRNOTAVAIL", "Cannot assign requested address" },
+            .{ "ENETDOWN", "Network is down" },
+            .{ "ENETUNREACH", "Network is unreachable" },
+            .{ "ENETRESET", "Network dropped connection on reset" },
+            .{ "ECONNABORTED", "Software caused connection abort" },
+            .{ "ECONNRESET", "Connection reset by peer" },
+            .{ "ENOBUFS", "No buffer space available" },
+            .{ "EISCONN", "Transport endpoint is already connected" },
+            .{ "ENOTCONN", "Transport endpoint is not connected" },
+            .{ "ESHUTDOWN", "Cannot send after transport endpoint shutdown" },
+            .{ "ETOOMANYREFS", "Too many references: cannot splice" },
+            .{ "ETIMEDOUT", "Connection timed out" },
+            .{ "ECONNREFUSED", "Connection refused" },
+            .{ "EHOSTDOWN", "Host is down" },
+            .{ "EHOSTUNREACH", "No route to host" },
+            .{ "EALREADY", "Operation already in progress" },
+            .{ "EINPROGRESS", "Operation now in progress" },
+            .{ "ESTALE", "Stale file handle" },
+            .{ "EUCLEAN", "Structure needs cleaning" },
+            .{ "ENOTNAM", "Not a XENIX named type file" },
+            .{ "ENAVAIL", "No XENIX semaphores available" },
+            .{ "EISNAM", "Is a named type file" },
+            .{ "EREMOTEIO", "Remote I/O error" },
+            .{ "EDQUOT", "Disk quota exceeded" },
+            .{ "ENOMEDIUM", "No medium found" },
+            .{ "EMEDIUMTYPE", "Wrong medium type" },
+            .{ "ECANCELED", "Operation canceled" },
+            .{ "ENOKEY", "Required key not available" },
+            .{ "EKEYEXPIRED", "Key has expired" },
+            .{ "EKEYREVOKED", "Key has been revoked" },
+            .{ "EKEYREJECTED", "Key was rejected by service" },
+            .{ "EOWNERDEAD", "Owner died" },
+            .{ "ENOTRECOVERABLE", "State not recoverable" },
+            .{ "ERFKILL", "Operation not possible due to RF-kill" },
+            .{ "EHWPOISON", "Memory page has hardware error" },
+        },
+        // Mac has slightly different messages. To keep it consistent with bash/coreutils,
+        // it will use those altered messages.
+        .mac => &.{
+            .{ "E2BIG", "Argument list too long" },
+            .{ "EACCES", "Permission denied" },
+            .{ "EADDRINUSE", "Address already in use" },
+            .{ "EADDRNOTAVAIL", "Can't assign requested address" },
+            .{ "EAFNOSUPPORT", "Address family not supported by protocol family" },
+            .{ "EAGAIN", "non-blocking and interrupt i/o. Resource temporarily unavailable" },
+            .{ "EALREADY", "Operation already in progress" },
+            .{ "EAUTH", "Authentication error" },
+            .{ "EBADARCH", "Bad CPU type in executable" },
+            .{ "EBADEXEC", "Program loading errors. Bad executable" },
+            .{ "EBADF", "Bad file descriptor" },
+            .{ "EBADMACHO", "Malformed Macho file" },
+            .{ "EBADMSG", "Bad message" },
+            .{ "EBADRPC", "RPC struct is bad" },
+            .{ "EBUSY", "Device / Resource busy" },
+            .{ "ECANCELED", "Operation canceled" },
+            .{ "ECHILD", "No child processes" },
+            .{ "ECONNABORTED", "Software caused connection abort" },
+            .{ "ECONNREFUSED", "Connection refused" },
+            .{ "ECONNRESET", "Connection reset by peer" },
+            .{ "EDEADLK", "Resource deadlock avoided" },
+            .{ "EDESTADDRREQ", "Destination address required" },
+            .{ "EDEVERR", "Device error, for example paper out" },
+            .{ "EDOM", "math software. Numerical argument out of domain" },
+            .{ "EDQUOT", "Disc quota exceeded" },
+            .{ "EEXIST", "File or folder exists" },
+            .{ "EFAULT", "Bad address" },
+            .{ "EFBIG", "File too large" },
+            .{ "EFTYPE", "Inappropriate file type or format" },
+            .{ "EHOSTDOWN", "Host is down" },
+            .{ "EHOSTUNREACH", "No route to host" },
+            .{ "EIDRM", "Identifier removed" },
+            .{ "EILSEQ", "Illegal byte sequence" },
+            .{ "EINPROGRESS", "Operation now in progress" },
+            .{ "EINTR", "Interrupted system call" },
+            .{ "EINVAL", "Invalid argument" },
+            .{ "EIO", "Input/output error" },
+            .{ "EISCONN", "Socket is already connected" },
+            .{ "EISDIR", "Is a directory" },
+            .{ "ELOOP", "Too many levels of symbolic links" },
+            .{ "EMFILE", "Too many open files" },
+            .{ "EMLINK", "Too many links" },
+            .{ "EMSGSIZE", "Message too long" },
+            .{ "EMULTIHOP", "Reserved" },
+            .{ "ENAMETOOLONG", "File name too long" },
+            .{ "ENEEDAUTH", "Need authenticator" },
+            .{ "ENETDOWN", "ipc/network software - operational errors Network is down" },
+            .{ "ENETRESET", "Network dropped connection on reset" },
+            .{ "ENETUNREACH", "Network is unreachable" },
+            .{ "ENFILE", "Too many open files in system" },
+            .{ "ENOATTR", "Attribute not found" },
+            .{ "ENOBUFS", "No buffer space available" },
+            .{ "ENODATA", "No message available on STREAM" },
+            .{ "ENODEV", "Operation not supported by device" },
+            .{ "ENOENT", "No such file or directory" },
+            .{ "ENOEXEC", "Exec format error" },
+            .{ "ENOLCK", "No locks available" },
+            .{ "ENOLINK", "Reserved" },
+            .{ "ENOMEM", "Out of memory" },
+            .{ "ENOMSG", "No message of desired type" },
+            .{ "ENOPOLICY", "No such policy registered" },
+            .{ "ENOPROTOOPT", "Protocol not available" },
+            .{ "ENOSPC", "No space left on device" },
+            .{ "ENOSR", "No STREAM resources" },
+            .{ "ENOSTR", "Not a STREAM" },
+            .{ "ENOSYS", "Function not implemented" },
+            .{ "ENOTBLK", "Block device required" },
+            .{ "ENOTCONN", "Socket is not connected" },
+            .{ "ENOTDIR", "Not a directory" },
+            .{ "ENOTEMPTY", "Directory not empty" },
+            .{ "ENOTRECOVERABLE", "State not recoverable" },
+            .{ "ENOTSOCK", "ipc/network software - argument errors. Socket operation on non-socket" },
+            .{ "ENOTSUP", "Operation not supported" },
+            .{ "ENOTTY", "Inappropriate ioctl for device" },
+            .{ "ENXIO", "Device not configured" },
+            .{ "EOVERFLOW", "Value too large to be stored in data type" },
+            .{ "EOWNERDEAD", "Previous owner died" },
+            .{ "EPERM", "Operation not permitted" },
+            .{ "EPFNOSUPPORT", "Protocol family not supported" },
+            .{ "EPIPE", "Broken pipe" },
+            .{ "EPROCLIM", "quotas & mush. Too many processes" },
+            .{ "EPROCUNAVAIL", "Bad procedure for program" },
+            .{ "EPROGMISMATCH", "Program version wrong" },
+            .{ "EPROGUNAVAIL", "RPC prog. not avail" },
+            .{ "EPROTO", "Protocol error" },
+            .{ "EPROTONOSUPPORT", "Protocol not supported" },
+            .{ "EPROTOTYPE", "Protocol wrong type for socket" },
+            .{ "EPWROFF", "Intelligent device errors. Device power is off" },
+            .{ "EQFULL", "Interface output queue is full" },
+            .{ "ERANGE", "Result too large" },
+            .{ "EREMOTE", "Too many levels of remote in path" },
+            .{ "EROFS", "Read-only file system" },
+            .{ "ERPCMISMATCH", "RPC version wrong" },
+            .{ "ESHLIBVERS", "Shared library version mismatch" },
+            .{ "ESHUTDOWN", "Can’t send after socket shutdown" },
+            .{ "ESOCKTNOSUPPORT", "Socket type not supported" },
+            .{ "ESPIPE", "Illegal seek" },
+            .{ "ESRCH", "No such process" },
+            .{ "ESTALE", "Network File System. Stale NFS file handle" },
+            .{ "ETIME", "STREAM ioctl timeout" },
+            .{ "ETIMEDOUT", "Operation timed out" },
+            .{ "ETOOMANYREFS", "Too many references: can't splice" },
+            .{ "ETXTBSY", "Text file busy" },
+            .{ "EUSERS", "Too many users" },
+            .{ "EWOULDBLOCK", "Operation would block" },
+            .{ "EXDEV", "Cross-device link" },
+        },
+    };
+
+    const SystemErrno = bun.C.SystemErrno;
+    var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
+    for (entries) |entry| {
+        const key, const text = entry;
+        if (@hasField(SystemErrno, key)) {
+            map.put(@field(SystemErrno, key), text);
+        }
+    }
+
+    // sanity check
+    bun.assert(std.mem.eql(u8, map.get(SystemErrno.ENOENT).?, "No such file or directory"));
+
+    break :brk map;
+};

@@ -1270,14 +1270,14 @@ pub const Interpreter = struct {
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
         const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .result => |fd| fd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
@@ -1291,7 +1291,7 @@ pub const Interpreter = struct {
         log("Duping stdin", .{});
         const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
         };
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
@@ -1332,7 +1332,7 @@ pub const Interpreter = struct {
         };
 
         if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
 
         return .{ .result = interpreter };
@@ -1406,7 +1406,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -1473,7 +1473,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ path_for_errors, e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -3348,7 +3348,7 @@ pub const Interpreter = struct {
                         closefd(pipe[0]);
                         closefd(pipe[1]);
                     }
-                    const system_err = err.toSystemError();
+                    const system_err = err.toShellSystemError();
                     this.writeFailingError("bun: {s}\n", .{system_err.message});
                     return .yield;
                 }
@@ -3368,7 +3368,7 @@ pub const Interpreter = struct {
                         const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
                             .result => |s| s,
                             .err => |err| {
-                                const system_err = err.toSystemError();
+                                const system_err = err.toShellSystemError();
                                 this.writeFailingError("bun: {s}\n", .{system_err.message});
                                 return .yield;
                             },
@@ -4819,7 +4819,7 @@ pub const Interpreter = struct {
                     switch (this.exec.bltn.start()) {
                         .result => {},
                         .err => |e| {
-                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message });
+                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toShellSystemError().message });
                             return;
                         },
                     }
@@ -4913,7 +4913,7 @@ pub const Interpreter = struct {
                         const flags = this.node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                return this.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                return this.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                             },
                             .result => |f| f,
                         };
@@ -5504,7 +5504,7 @@ pub const Interpreter = struct {
                         const flags = node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                                 return .yield;
                             },
                             .result => |f| f,
@@ -5745,12 +5745,17 @@ pub const Interpreter = struct {
         /// Error messages formatted to match bash
         fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []const u8 {
             switch (@TypeOf(err)) {
-                Syscall.Error => return switch (err.getErrno()) {
-                    bun.C.E.NOENT => this.fmtErrorArena(kind, "{s}: No such file or directory\n", .{err.path}),
-                    bun.C.E.NAMETOOLONG => this.fmtErrorArena(kind, "{s}: File name too long\n", .{err.path}),
-                    bun.C.E.ISDIR => this.fmtErrorArena(kind, "{s}: is a directory\n", .{err.path}),
-                    bun.C.E.NOTEMPTY => this.fmtErrorArena(kind, "{s}: Directory not empty\n", .{err.path}),
-                    else => this.fmtErrorArena(kind, "{s}\n", .{err.toSystemError().message.byteSlice()}),
+                Syscall.Error => {
+                    if (err.getErrorCodeTagName()) |entry| {
+                        _, const sys_errno = entry;
+                        if (bun.sys.coreutils_error_map.get(sys_errno)) |message| {
+                            if (err.path.len > 0) {
+                                return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.path, message });
+                            }
+                            return this.fmtErrorArena(kind, "{s}\n", .{message});
+                        }
+                    }
+                    return this.fmtErrorArena(kind, "unknown error {d}\n", .{err.errno});
                 },
                 JSC.SystemError => {
                     if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
@@ -6372,7 +6377,7 @@ pub const Interpreter = struct {
                         .mtime = mtime,
                         .path = .{ .string = bun.PathString.init(filepath) },
                     };
-                    if (node_fs.utimes(args, .callback).asErr()) |err| out: {
+                    if (node_fs.utimes(args, .sync).asErr()) |err| out: {
                         if (err.getErrno() == bun.C.E.NOENT) {
                             const perm = 0o664;
                             switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
@@ -6381,12 +6386,12 @@ pub const Interpreter = struct {
                                     break :out;
                                 },
                                 .err => |e| {
-                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                     break :out;
                                 },
                             }
                         }
-                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                     }
 
                     if (this.event_loop == .js) {
@@ -6776,10 +6781,10 @@ pub const Interpreter = struct {
 
                         var vtable = MkdirVerboseVTable{ .inner = this, .active = this.opts.verbose };
 
-                        switch (node_fs.mkdirRecursiveImpl(args, .callback, *MkdirVerboseVTable, &vtable)) {
+                        switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                             .result => {},
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -6789,7 +6794,7 @@ pub const Interpreter = struct {
                             .recursive = false,
                             .always_return_none = true,
                         };
-                        switch (node_fs.mkdirNonRecursive(args, .callback)) {
+                        switch (node_fs.mkdirNonRecursive(args)) {
                             .result => {
                                 if (this.opts.verbose) {
                                     this.created_directories.appendSlice(filepath[0..filepath.len]) catch bun.outOfMemory();
@@ -6797,7 +6802,7 @@ pub const Interpreter = struct {
                                 }
                             },
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -8434,7 +8439,7 @@ pub const Interpreter = struct {
                                             return this.writeFailingError(buf, 1);
                                         },
                                         else => {
-                                            const sys_err = e.toSystemError();
+                                            const sys_err = e.toShellSystemError();
                                             const buf = this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
                                             return this.writeFailingError(buf, 1);
                                         },
@@ -8568,7 +8573,7 @@ pub const Interpreter = struct {
                 exec.tasks_done += 1;
                 if (exec.tasks_done >= exec.task_count) {
                     if (exec.err) |err| {
-                        const e = err.toSystemError();
+                        const e = err.toShellSystemError();
                         const buf = this.bltn.fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
                         _ = this.writeFailingError(buf, err.errno);
                         return;
@@ -8710,7 +8715,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -9188,7 +9193,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10691,7 +10696,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -11269,7 +11274,7 @@ pub const Interpreter = struct {
 
         pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
             this.setReading(false);
-            this.err = err.toSystemError();
+            this.err = err.toShellSystemError();
             for (this.readers.slice()) |r| {
                 r.onReaderDone(if (this.err) |*e| brk: {
                     e.ref();
@@ -11661,7 +11666,7 @@ pub const Interpreter = struct {
 
         pub fn onError(this: *This, err__: bun.sys.Error) void {
             this.setWriting(false);
-            const ee = err__.toSystemError();
+            const ee = err__.toShellSystemError();
             this.err = ee;
             log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
             var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);

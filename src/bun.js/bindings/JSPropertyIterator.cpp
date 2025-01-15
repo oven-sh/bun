@@ -45,6 +45,10 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
+    if (UNLIKELY(object->hasNonReifiedStaticProperties())) {
+        object->reifyAllStaticProperties(globalObject);
+    }
+
 #if OS(WINDOWS)
     if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
@@ -75,7 +79,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
         if (only_non_index_properties) {
             object->getOwnNonIndexPropertyNames(globalObject, array, DontEnumPropertiesMode::Exclude);
         } else {
-            object->getOwnPropertyNames(object, globalObject, array, DontEnumPropertiesMode::Exclude);
+            object->methodTable()->getOwnPropertyNames(object, globalObject, array, DontEnumPropertiesMode::Exclude);
         }
     } else {
         object->getPropertyNames(globalObject, array, DontEnumPropertiesMode::Exclude);
@@ -88,36 +92,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     }
 
     return JSPropertyIterator::create(vm, array.releaseData());
-}
-
-// The only non-own property that we sometimes want to get is the code property.
-extern "C" EncodedJSValue Bun__JSPropertyIterator__getCodeProperty(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
-{
-    if (UNLIKELY(!iter)) {
-        return {};
-    }
-
-    auto& vm = iter->vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
-        return {};
-    }
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    if (!object->getNonIndexPropertySlot(globalObject, builtinNames.codePublicName(), slot)) {
-        return {};
-    }
-
-    if (slot.isAccessor() || slot.isCustom()) {
-        return {};
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(slot.getPureResult());
 }
 
 extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
@@ -161,7 +135,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (!object->getOwnPropertySlot(object, globalObject, prop, slot)) {
+    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, prop, slot)) {
         return {};
     }
     RETURN_IF_EXCEPTION(scope, {});

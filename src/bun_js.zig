@@ -29,7 +29,8 @@ const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
@@ -199,6 +200,7 @@ pub const Run = struct {
                     .smol = ctx.runtime_options.smol,
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
+                    .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
                 },
             ),
@@ -283,16 +285,12 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
-    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
-
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval.script.len > 0) {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        this.addConditionalGlobals();
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),
@@ -447,6 +445,22 @@ pub const Run = struct {
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
+    }
+
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+    /// add `gc()` to `globalThis`.
+    extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
+
+    fn addConditionalGlobals(this: *Run) void {
+        const vm = this.vm;
+        const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;
+
+        if (runtime_options.eval.script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
+        if (runtime_options.expose_gc) {
+            JSC__JSGlobalObject__addGc(vm.global);
+        }
     }
 };
 

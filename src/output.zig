@@ -310,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -746,7 +745,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {
@@ -1064,12 +1063,20 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const info = @typeInfo(T);
 
     if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        const e: bun.sys.Error = error_name;
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            err("unknown error", fmt, args);
+            return;
+        };
+        if (bun.sys.coreutils_error_map.get(sys_errno)) |label| {
+            prettyErrorln("<r><red>{s}<r><d>:<r> {s}: " ++ fmt ++ " <d>({s})<r>", .{ tag_name, label } ++ args ++ .{@tagName(e.syscall)});
+        } else {
+            prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
+        }
         return;
     }
 
     const display_name, const is_comptime_name = display_name: {
-
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
         if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {

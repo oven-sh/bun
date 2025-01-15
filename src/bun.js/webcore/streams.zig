@@ -4560,7 +4560,7 @@ pub const FileReader = struct {
 
     pub fn memoryCost(this: *const FileReader) usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
-        return this.reader.memoryCost();
+        return this.reader.memoryCost() + this.buffered.capacity;
     }
 
     pub const Source = ReadableStreamSource(

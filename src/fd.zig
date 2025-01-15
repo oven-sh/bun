@@ -321,7 +321,12 @@ pub const FDImpl = packed struct {
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
     pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) bun.JSError!?FDImpl {
-        if (!value.isAnyInt()) return null;
+        if (!value.isNumber()) {
+            return null;
+        }
+        if (!value.isAnyInt()) {
+            return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be an integer. Received {}", .{bun.fmt.double(value.asNumber())}).throw();
+        }
         const fd64 = value.toInt64();
         try JSC.Node.Valid.fileDescriptor(fd64, global);
         const fd: i32 = @intCast(fd64);
@@ -362,7 +367,7 @@ pub const FDImpl = packed struct {
             // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
             //
             // Remember this formatter will
-            // - on posix, print the numebr
+            // - on posix, print the number
             // - on windows, print if it is a handle or a libuv file descriptor
             // - in debug on all platforms, print the path of the file descriptor
             //

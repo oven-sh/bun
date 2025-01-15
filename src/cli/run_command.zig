@@ -46,7 +46,7 @@ const NpmArgs = struct {
     pub const package_version: string = "npm_package_version";
 };
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands: []const u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
 const PosixSpawn = bun.posix.spawn;
@@ -179,7 +179,7 @@ pub const RunCommand = struct {
                                 }
 
                                 // implicit yarn commands
-                                if (std.mem.indexOfScalar(u64, yarn_commands, bun.hash(yarn_cmd)) == null) {
+                                if (!yarn_commands.has(yarn_cmd)) {
                                     try copy_script.appendSlice(BUN_RUN);
                                     try copy_script.append(' ');
                                     try copy_script.appendSlice(yarn_cmd);
@@ -228,6 +228,18 @@ pub const RunCommand = struct {
                         if (strings.hasPrefixComptime(script[start..], "pnpm run ")) {
                             try copy_script.appendSlice(BUN_RUN ++ " ");
                             entry_i += "pnpm run ".len;
+                            delimiter = 0;
+                            continue;
+                        }
+                        if (strings.hasPrefixComptime(script[start..], "pnpm dlx ")) {
+                            try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
+                            entry_i += "pnpm dlx ".len;
+                            delimiter = 0;
+                            continue;
+                        }
+                        if (strings.hasPrefixComptime(script[start..], "pnpx ")) {
+                            try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
+                            entry_i += "pnpx ".len;
                             delimiter = 0;
                             continue;
                         }

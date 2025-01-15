@@ -44,7 +44,7 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
@@ -57,7 +57,7 @@ const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
@@ -3068,7 +3068,7 @@ pub const PackageManager = struct {
             duration: u64,
         };
 
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
         list: std.ArrayListUnmanaged(Entry) = .{},
 
         pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
@@ -7245,6 +7245,7 @@ pub const PackageManager = struct {
         pub const Update = struct {
             development: bool = false,
             optional: bool = false,
+            peer: bool = false,
         };
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
@@ -7566,7 +7567,7 @@ pub const PackageManager = struct {
                     this.do.save_lockfile = false;
                 }
 
-                if (cli.no_summary) {
+                if (cli.no_summary or cli.silent) {
                     this.do.summary = false;
                 }
 
@@ -7659,8 +7660,13 @@ pub const PackageManager = struct {
                     this.enable.force_save_lockfile = true;
                 }
 
-                this.update.development = cli.development;
-                if (!this.update.development) this.update.optional = cli.optional;
+                if (cli.development) {
+                    this.update.development = cli.development;
+                } else if (cli.optional) {
+                    this.update.optional = cli.optional;
+                } else if (cli.peer) {
+                    this.update.peer = cli.peer;
+                }
 
                 switch (cli.patch) {
                     .nothing => {},
@@ -8837,7 +8843,7 @@ pub const PackageManager = struct {
                                 } else child_path;
 
                                 if (strings.eqlLong(maybe_workspace_path, path, true)) {
-                                    fs.top_level_dir = parent;
+                                    fs.top_level_dir = try bun.default_allocator.dupeZ(u8, parent);
                                     found = true;
                                     child_json.close();
                                     if (comptime Environment.isWindows) {
@@ -8854,16 +8860,15 @@ pub const PackageManager = struct {
                 }
             }
 
-            fs.top_level_dir = child_cwd;
+            fs.top_level_dir = try bun.default_allocator.dupeZ(u8, child_cwd);
             break :root_package_json_file child_json;
         };
 
-        try bun.sys.chdir(fs.top_level_dir).unwrap();
+        try bun.sys.chdir(fs.top_level_dir, fs.top_level_dir).unwrap();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
-        cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
-        cwd_buf[fs.top_level_dir.len + 1] = 0;
-        fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
+        cwd_buf[fs.top_level_dir.len] = 0;
+        fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
         package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
@@ -9600,6 +9605,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
@@ -9622,6 +9628,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
@@ -9705,6 +9712,7 @@ pub const PackageManager = struct {
 
         development: bool = false,
         optional: bool = false,
+        peer: bool = false,
 
         omit: ?Omit = null,
 
@@ -9740,12 +9748,18 @@ pub const PackageManager = struct {
         };
 
         pub fn printHelp(subcommand: Subcommand) void {
+
+            // the output of --help uses the following syntax highlighting
+            // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+            // use [foo] for multiple arguments or flags for foo.
+            // use <bar> to emphasize 'bar'
+
             switch (subcommand) {
                 // fall back to HelpCommand.printWithReason
                 Subcommand.install => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]
-                        \\<b>Alias: <b>bun i<r>
+                        \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
+                        \\<b>Alias: <b><green>bun i<r>
                         \\  Install the dependencies listed in package.json
                     ;
                     const outro_text =
@@ -9754,7 +9768,7 @@ pub const PackageManager = struct {
                         \\  <b><green>bun install<r>
                         \\
                         \\  <d>Skip devDependencies<r>
-                        \\  <b><green>bun install --production<r>
+                        \\  <b><green>bun install<r> <cyan>--production<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
                     ;
@@ -9768,7 +9782,7 @@ pub const PackageManager = struct {
                 },
                 Subcommand.update => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r>
+                        \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
                         \\  Update all dependencies to most recent versions within the version range in package.json
                         \\
                     ;
@@ -9778,10 +9792,10 @@ pub const PackageManager = struct {
                         \\  <b><green>bun update<r>
                         \\
                         \\  <d>Update all dependencies to latest:<r>
-                        \\  <b><green>bun update --latest<r>
+                        \\  <b><green>bun update<r> <cyan>--latest<r>
                         \\
                         \\  <d>Update specific packages:<r>
-                        \\  <b><green>bun update zod jquery@3<r>
+                        \\  <b><green>bun update<r> <blue>zod jquery@3<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
                     ;
@@ -9795,7 +9809,7 @@ pub const PackageManager = struct {
                 },
                 Subcommand.patch => {
                     const intro_text =
-                        \\<b>Usage: bun patch <r><cyan>\<name\>@\<version\><r>
+                        \\<b>Usage<r>: <b><green>bun patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
                         \\
                         \\Prepare a package for patching.
                         \\
@@ -9807,11 +9821,12 @@ pub const PackageManager = struct {
                     Output.flush();
                     clap.simpleHelp(PackageManager.patch_params);
                     // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.pretty("\n", .{});
                     Output.flush();
                 },
                 Subcommand.@"patch-commit" => {
                     const intro_text =
-                        \\<b>Usage: bun patch-commit <r><cyan>\<directory\><r>
+                        \\<b>Usage<r>: <b><green>bun patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
                         \\
                         \\Generate a patc out of a directory and save it.
                         \\
@@ -9832,6 +9847,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     clap.simpleHelp(PackageManager.patch_params);
                     // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.pretty("\n", .{});
                     Output.flush();
                 },
                 Subcommand.pm => {
@@ -9839,20 +9855,20 @@ pub const PackageManager = struct {
                 },
                 Subcommand.add => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
-                        \\<b>Alias: <b>bun a<r>
+                        \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
+                        \\<b>Alias: <b><green>bun a<r>
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Add a dependency from the npm registry<r>
-                        \\  <b><green>bun add zod<r>
-                        \\  <b><green>bun add zod@next<r>
-                        \\  <b><green>bun add zod@3.0.0<r>
+                        \\  <b><green>bun add<r> <blue>zod<r>
+                        \\  <b><green>bun add<r> <blue>zod@next<r>
+                        \\  <b><green>bun add<r> <blue>zod@3.0.0<r>
                         \\
                         \\  <d>Add a dev, optional, or peer dependency <r>
-                        \\  <b><green>bun add -d typescript<r>
-                        \\  <b><green>bun add --optional lodash<r>
-                        \\  <b><green>bun add --peer esbuild<r>
+                        \\  <b><green>bun add<r> <cyan>-d<r> <blue>typescript<r>
+                        \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
+                        \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
                     ;
@@ -9866,7 +9882,7 @@ pub const PackageManager = struct {
                 },
                 Subcommand.remove => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
+                        \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
                         \\<b>Alias: <b>bun r<r>
                         \\  Remove a package from package.json and uninstall from node_modules
                         \\
@@ -9874,7 +9890,7 @@ pub const PackageManager = struct {
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Remove a dependency<r>
-                        \\  <b><green>bun remove ts-node<r>
+                        \\  <b><green>bun remove<r> <blue>ts-node<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
                     ;
@@ -9888,7 +9904,7 @@ pub const PackageManager = struct {
                 },
                 Subcommand.link => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> [\<package\>]
+                        \\<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
                         \\
                     ;
                     const outro_text =
@@ -9898,7 +9914,7 @@ pub const PackageManager = struct {
                         \\  <b><green>bun link<r>
                         \\
                         \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
-                        \\  <b><green>bun link \<package\><r>
+                        \\  <b><green>bun link<r> <blue>\<package\><r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
                     ;
@@ -9933,7 +9949,7 @@ pub const PackageManager = struct {
                 },
                 .outdated => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r>
+                        \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
                     ;
 
                     const outro_text =
@@ -9942,14 +9958,14 @@ pub const PackageManager = struct {
                         \\  <b><green>bun outdated<r>
                         \\
                         \\  <d>Use --filter to include more than one workspace.<r>
-                        \\  <b><green>bun outdated --filter="*"<r>
-                        \\  <b><green>bun outdated --filter="./app/*"<r>
-                        \\  <b><green>bun outdated --filter="!frontend"<r>
+                        \\  <b><green>bun outdated<r> <cyan>--filter="*"<r>
+                        \\  <b><green>bun outdated<r> <cyan>--filter="./app/*"<r>
+                        \\  <b><green>bun outdated<r> <cyan>--filter="!frontend"<r>
                         \\
                         \\  <d>Filter dependencies with name patterns.<r>
-                        \\  <b><green>bun outdated jquery<r>
-                        \\  <b><green>bun outdated "is-*"<r>
-                        \\  <b><green>bun outdated "!is-even"<r>
+                        \\  <b><green>bun outdated<r> <blue>jquery<r>
+                        \\  <b><green>bun outdated<r> <blue>"is-*"<r>
+                        \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
                         \\
                     ;
 
@@ -9980,19 +9996,19 @@ pub const PackageManager = struct {
                 },
                 .publish => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r>
+                        \\<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
                     ;
 
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Display files that would be published, without publishing to the registry.<r>
-                        \\  <b><green>bun publish --dry-run<r>
+                        \\  <b><green>bun publish<r> <cyan>--dry-run<r>
                         \\
                         \\  <d>Publish the current package with public access.<r>
-                        \\  <b><green>bun publish --access public<r>
+                        \\  <b><green>bun publish<r> <cyan>--access public<r>
                         \\
                         \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
-                        \\  <b><green>bun publish ./path/to/tarball.tgz --tag next<r>
+                        \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                         \\
                     ;
 
@@ -10181,6 +10197,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add or subcommand == .install) {
                 cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
+                cli.peer = args.flag("--peer");
                 cli.exact = args.flag("--exact");
             }
 
@@ -10203,7 +10220,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                bun.sys.chdir(final_path).unwrap() catch |err| {
+                bun.sys.chdir("", final_path).unwrap() catch |err| {
                     Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
                     Global.crash();
                 };
@@ -10770,6 +10787,8 @@ pub const PackageManager = struct {
             "devDependencies"
         else if (manager.options.update.optional)
             "optionalDependencies"
+        else if (manager.options.update.peer)
+            "peerDependencies"
         else
             "dependencies";
         var any_changes = false;
@@ -11341,10 +11360,7 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :src s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
-                                .{e.withPath(package_json_path).toSystemError()},
-                            );
+                            Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
                             Global.crash();
                         },
                     }
@@ -11755,10 +11771,7 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :brk s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
-                                .{e.withPath(package_json_path).toSystemError()},
-                            );
+                            Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
                             Global.crash();
                         },
                     }
@@ -11863,10 +11876,7 @@ pub const PackageManager = struct {
                 const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
-                        Output.prettyError(
-                            "<r><red>error<r>: failed to read from cache {}<r>\n",
-                            .{e.toSystemError()},
-                        );
+                        Output.err(e, "failed to read from cache", .{});
                         Global.crash();
                     },
                 };
@@ -11877,10 +11887,7 @@ pub const PackageManager = struct {
             };
 
             const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
-                    .{@errorName(e)},
-                );
+                Output.err(e, "failed to make tempdir", .{});
                 Global.crash();
             });
 
@@ -11891,10 +11898,7 @@ pub const PackageManager = struct {
             // will `rename()` it out and back again.
             const has_nested_node_modules = has_nested_node_modules: {
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
+                    Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -11911,10 +11915,7 @@ pub const PackageManager = struct {
             };
 
             const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
-                    .{@errorName(e)},
-                );
+                Output.err(e, "failed to make tempdir", .{});
                 Global.crash();
             });
 
@@ -11932,10 +11933,7 @@ pub const PackageManager = struct {
                     break :has_bun_patch_tag null;
                 };
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
+                    Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -12086,20 +12084,14 @@ pub const PackageManager = struct {
         )) {
             .result => |fd| fd,
             .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to open temp file {}<r>\n",
-                    .{e.toSystemError()},
-                );
+                Output.err(e, "failed to open temp file", .{});
                 Global.crash();
             },
         };
         defer _ = bun.sys.close(tmpfd);
 
         if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to write patch to temp file {}<r>\n",
-                .{e.toSystemError()},
-            );
+            Output.err(e, "failed to write patch to temp file", .{});
             Global.crash();
         }
 
@@ -12124,11 +12116,8 @@ pub const PackageManager = struct {
         const args = bun.JSC.Node.Arguments.Mkdir{
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
-        if (nodefs.mkdirRecursive(args, .sync).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to make patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
+        if (nodefs.mkdirRecursive(args).asErr()) |e| {
+            Output.err(e, "failed to make patches dir {}", .{bun.fmt.quote(args.path.slice())});
             Global.crash();
         }
 
@@ -12140,10 +12129,7 @@ pub const PackageManager = struct {
             path_in_patches_dir,
             .{ .move_fallback = true },
         ).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
+            Output.err(e, "failed renaming patch file to patches dir", .{});
             Global.crash();
         }
 

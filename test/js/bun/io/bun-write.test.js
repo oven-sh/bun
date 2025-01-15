@@ -479,7 +479,7 @@ describe("ENOENT", () => {
       const file = join(dir, "file");
       try {
         expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
-          "No such file or directory",
+          "no such file or directory",
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {

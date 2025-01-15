@@ -17,6 +17,7 @@ declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  import type { Stats } from "node:fs";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -175,6 +176,8 @@ declare module "bun" {
      * ```
      */
     blob(): Blob;
+
+    bytes(): Uint8Array;
   }
 
   class ShellPromise extends Promise<ShellOutput> {
@@ -1034,6 +1037,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {
@@ -1225,6 +1232,16 @@ declare module "bun" {
      * Deletes the file.
      */
     unlink(): Promise<void>;
+
+    /**
+     * Deletes the file. ( same as unlink )
+     */
+    delete(): Promise<void>;
+
+    /**
+     *  Provides useful information about the file.
+     */
+    stat(): Promise<Stats>;
   }
   interface NetworkSink extends FileSink {
     /**
@@ -1241,110 +1258,14 @@ declare module "bun" {
      * Finish the upload. This also flushes the internal buffer.
      */
     end(error?: Error): number | Promise<number>;
+
+    /**
+     * Get the stat of the file.
+     */
+    stat(): Promise<Stats>;
   }
 
-  type S3 = {
-    /**
-     * Create a new instance of an S3 bucket so that credentials can be managed
-     * from a single instance instead of being passed to every method.
-     *
-     * @param options The default options to use for the S3 client. Can be
-     * overriden by passing options to the methods.
-     *
-     * ## Keep S3 credentials in a single instance
-     *
-     * @example
-     *     const bucket = new Bun.S3({
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *       bucket: "my-bucket",
-     *       endpoint: "https://s3.us-east-1.amazonaws.com",
-     *       sessionToken: "your-session-token",
-     *     });
-     *
-     *     // S3Bucket is callable, so you can do this:
-     *     const file = bucket("my-file.txt");
-     *
-     *     // or this:
-     *     await file.write("Hello Bun!");
-     *     await file.text();
-     *
-     *     // To delete the file:
-     *     await bucket.delete("my-file.txt");
-     *
-     *     // To write a file without returning the instance:
-     *     await bucket.write("my-file.txt", "Hello Bun!");
-     *
-     */
-    new (options?: S3Options): S3Bucket;
-
-    /**
-     * Delete a file from an S3-compatible object storage service.
-     *
-     * @param path The path to the file.
-     * @param options The options to use for the S3 client.
-     *
-     * For an instance method version, {@link S3File.unlink}. You can also use {@link S3Bucket.unlink}.
-     *
-     * @example
-     *     import { S3 } from "bun";
-     *     await S3.unlink("s3://my-bucket/my-file.txt", {
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *     });
-     *
-     * @example
-     *     await S3.unlink("key", {
-     *       bucket: "my-bucket",
-     *       accessKeyId: "your-access-key",
-     *       secretAccessKey: "your-secret-key",
-     *     });
-     */
-    delete(path: string, options?: S3Options): Promise<void>;
-    /**
-     * unlink is an alias for {@link S3.delete}
-     */
-    unlink: S3["delete"];
-
-    /**
-     * Writes data to an S3-compatible storage service.
-     * Supports various input types and handles large files with multipart uploads.
-     *
-     * @param path The path or key where the file will be written
-     * @param data The data to write
-     * @param options S3 configuration and upload options
-     * @returns promise that resolves with the number of bytes written
-     *
-     * @example
-     *   // Writing a string
-     *   await S3.write("hello.txt", "Hello World!", {
-     *     bucket: "my-bucket",
-     *     type: "text/plain"
-     *   });
-     *
-     * @example
-     *   // Writing JSON
-     *   await S3.write(
-     *     "data.json",
-     *     JSON.stringify({ hello: "world" }),
-     *     { type: "application/json" }
-     *   );
-     *
-     * @example
-     *   // Writing a large file with multipart upload
-     *   await S3.write("large-file.dat", largeBuffer, {
-     *     partSize: 10 * 1024 * 1024, // 10MB parts
-     *     queueSize: 4, // Upload 4 parts in parallel
-     *     retry: 3 // Retry failed parts up to 3 times
-     *   });
-     */
-    write(
-      path: string,
-      data: string | ArrayBufferView | ArrayBufferLike | Response | Request | ReadableStream | Blob | File,
-      options?: S3Options,
-    ): Promise<number>;
-  };
-  var S3: S3;
+  var S3Client: S3Client;
 
   /**
    * Creates a new S3File instance for working with a single file.
@@ -1487,7 +1408,7 @@ declare module "bun" {
     endpoint?: string;
 
     /**
-     * The size of each part in multipart uploads (in MiB).
+     * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB
      * - Default: 5 MiB
@@ -1495,7 +1416,7 @@ declare module "bun" {
      * @example
      *     // Configuring multipart uploads
      *     const file = s3("large-file.dat", {
-     *       partSize: 10, // 10 MiB parts
+     *       partSize: 10 * 1024 * 1024, // 10 MiB parts
      *       queueSize: 4  // Upload 4 parts in parallel
      *     });
      *
@@ -1587,6 +1508,13 @@ declare module "bun" {
      *     });
      */
     method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+  }
+
+  interface S3Stats {
+    size: number;
+    lastModified: Date;
+    etag: string;
+    type: string;
   }
 
   /**
@@ -1858,6 +1786,13 @@ declare module "bun" {
      * await file.unlink();
      */
     unlink: S3File["delete"];
+
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @returns Promise resolving to S3Stat
+     */
+    stat(): Promise<S3Stats>;
   }
 
   /**
@@ -1867,7 +1802,7 @@ declare module "bun" {
    *
    * @example
    *     // Basic bucket setup
-   *     const bucket = new S3({
+   *     const bucket = new S3Client({
    *       bucket: "my-bucket",
    *       accessKeyId: "key",
    *       secretAccessKey: "secret"
@@ -1881,19 +1816,53 @@ declare module "bun" {
    *     const url = bucket.presign("file.pdf");
    *     await bucket.unlink("old.txt");
    */
-  type S3Bucket = {
+  type S3Client = {
+    /**
+     * Create a new instance of an S3 bucket so that credentials can be managed
+     * from a single instance instead of being passed to every method.
+     *
+     * @param options The default options to use for the S3 client. Can be
+     * overriden by passing options to the methods.
+     *
+     * ## Keep S3 credentials in a single instance
+     *
+     * @example
+     *     const bucket = new Bun.S3Client({
+     *       accessKeyId: "your-access-key",
+     *       secretAccessKey: "your-secret-key",
+     *       bucket: "my-bucket",
+     *       endpoint: "https://s3.us-east-1.amazonaws.com",
+     *       sessionToken: "your-session-token",
+     *     });
+     *
+     *     // S3Client is callable, so you can do this:
+     *     const file = bucket.file("my-file.txt");
+     *
+     *     // or this:
+     *     await file.write("Hello Bun!");
+     *     await file.text();
+     *
+     *     // To delete the file:
+     *     await bucket.delete("my-file.txt");
+     *
+     *     // To write a file without returning the instance:
+     *     await bucket.write("my-file.txt", "Hello Bun!");
+     *
+     */
+    new (options?: S3Options): S3Client;
+
     /**
      * Creates an S3File instance for the given path.
      *
      * @example
-     * const file = bucket("image.jpg");
+     * const file = bucket.file("image.jpg");
      * await file.write(imageData);
      * const configFile = bucket("config.json", {
      *   type: "application/json",
      *   acl: "private"
      * });
      */
-    (path: string, options?: S3Options): S3File;
+    file(path: string, options?: S3Options): S3File;
 
     /**
      * Writes data directly to a path in the bucket.
@@ -1978,6 +1947,7 @@ declare module "bun" {
      *     }
      */
     unlink(path: string, options?: S3Options): Promise<void>;
+    delete: S3Client["unlink"];
 
     /**
      * Get the size of a file in bytes.
@@ -2016,6 +1986,13 @@ declare module "bun" {
      *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @param path The path to the file.
+     * @param options The options to use for the S3 client.
+     */
+    stat(path: string, options?: S3Options): Promise<S3Stats>;
   };
 
   /**
@@ -2050,6 +2027,9 @@ declare module "bun" {
     crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
+    xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
@@ -2701,8 +2681,230 @@ declare module "bun" {
     logs: Array<BuildMessage | ResolveMessage>;
   }
 
-  function build(config: BuildConfig): Promise<BuildOutput>;
+  /**
+   * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
+   *
+   * @param {Object} config - Build configuration options
+   * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
+   * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
+   * 
+   * @example Basic usage - Bundle a single entrypoint and check results
+   ```ts
+   const result = await Bun.build({
+     entrypoints: ['./src/index.tsx'],
+     outdir: './dist'
+   });
 
+    if (!result.success) {
+      console.error('Build failed:', result.logs);
+      process.exit(1);
+    }
+   ```
+    * 
+    * @example Set up multiple entrypoints with code splitting enabled
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+      outdir: './dist',
+      splitting: true,
+      sourcemap: "external"
+    });
+    ```
+    * 
+    * @example Configure minification and optimization settings
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      minify: {
+        whitespace: true,
+        identifiers: true,
+        syntax: true
+      },
+      drop: ['console', 'debugger']
+    });
+    ```
+    *
+    * @example Set up custom loaders and mark packages as external
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      loader: {
+        '.png': 'dataurl',
+        '.svg': 'file',
+        '.txt': 'text',
+        '.json': 'json'
+      },
+      external: ['react', 'react-dom']
+    });
+    ```
+    *
+    * @example Configure environment variable handling with different modes
+    ```ts
+    // Inline all environment variables
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'inline'
+    });
+
+    // Only include specific env vars
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'PUBLIC_*'
+    });
+    ```
+    *
+    * @example Set up custom naming patterns for all output types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      naming: {
+        entry: '[dir]/[name]-[hash].[ext]',
+        chunk: 'chunks/[name]-[hash].[ext]',
+        asset: 'assets/[name]-[hash].[ext]'
+      }
+    });
+    ```
+    @example Work with build artifacts in different formats
+    ```ts
+    const result = await Bun.build({
+      entrypoints: ['./src/index.tsx']
+    });
+
+    for (const artifact of result.outputs) {
+      const text = await artifact.text();
+      const buffer = await artifact.arrayBuffer();
+      const bytes = await artifact.bytes();
+
+      new Response(artifact);
+      await Bun.write(artifact.path, artifact);
+    }
+    ```
+    @example Implement comprehensive error handling with position info
+    ```ts
+    try {
+      const result = await Bun.build({
+        entrypoints: ['./src/index.tsx'],
+        throw: true
+      });
+    } catch (e) {
+      const error = e as AggregateError;
+      console.error('Build failed:');
+      for (const msg of error.errors) {
+        if ('position' in msg) {
+          console.error(
+            `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+          );
+        } else {
+          console.error(msg.message);
+        }
+      }
+    }
+    ```
+    @example Set up Node.js target with specific configurations
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'node',
+      format: 'cjs',
+      sourcemap: 'external',
+      minify: false,
+      packages: 'external'
+    });
+    ```
+    *
+    * @example Configure experimental CSS bundling with multiple themes
+    ```ts
+    await Bun.build({
+      entrypoints: [
+        './src/styles.css',
+        './src/themes/dark.css',
+        './src/themes/light.css'
+      ],
+      outdir: './dist/css',
+      experimentalCss: true
+    });
+    ```
+    @example Define compile-time constants and version information
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+        'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+        'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    });
+    ```
+    @example Create a custom plugin for handling special file types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      plugins: [
+        {
+          name: 'my-plugin',
+          setup(build) {
+            build.onLoad({ filter: /\.custom$/ }, async (args) => {
+              const content = await Bun.file(args.path).text();
+              return {
+                contents: `export default ${JSON.stringify(content)}`,
+                loader: 'js'
+              };
+            });
+          }
+        }
+      ]
+    });
+    ```
+    @example Enable bytecode generation for faster startup
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'bun',
+      format: 'cjs',
+      bytecode: true
+    });
+    ```
+    @example Add custom banner and footer to output files
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      banner: '"use client";\n// Built with Bun',
+      footer: '// Generated on ' + new Date().toISOString()
+    });
+    ```
+    @example Configure CDN public path for asset loading
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      publicPath: 'https://cdn.example.com/assets/',
+      loader: {
+        '.png': 'file',
+        '.svg': 'file'
+      }
+    });
+    ```
+    @example Set up package export conditions for different environments
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      conditions: ['production', 'browser', 'module'],
+      packages: 'external'
+    });
+    ```
+  */
+  function build(config: BuildConfig): Promise<BuildOutput>;
   /**
    * A status that represents the outcome of a sent message.
    *
@@ -4987,6 +5189,21 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
   interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
@@ -6456,9 +6673,67 @@ declare module "bun" {
      */
     timestamp?: number | Date,
   ): Buffer;
-}
 
-// extends lib.dom.d.ts
-interface BufferEncodingOption {
-  encoding?: BufferEncoding;
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0;
+    workspaces: {
+      [workspace: string]: BunLockFileWorkspacePackage;
+    };
+    overrides?: Record<string, string>;
+    patchedDependencies?: Record<string, string>;
+    trustedDependencies?: string[];
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path", INFO ]
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [pkg: string]: BunLockFilePackageArray;
+    };
+  };
+
+  type BunLockFileBasePackageInfo = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
+    os?: string | string[];
+    cpu?: string | string[];
+    bin?: Record<string, string>;
+    binDir?: string;
+    bundled?: true;
+  };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball, workspace */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
 }

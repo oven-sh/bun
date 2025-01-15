@@ -41,7 +41,7 @@ const Run = @import("../bun_js.zig").Run;
 const HeaderBuilder = bun.http.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const HTTPChannel = bun.http.HTTPChannel;
@@ -51,7 +51,7 @@ const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -1681,7 +1681,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
+            _ = bun.sys.chdir("", std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 
@@ -2508,7 +2508,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
-            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
         },
         .result => |f| f,
@@ -2518,7 +2518,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
-            Output.err(e, "failed to write lockfile\n{}", .{});
+            Output.err(e, "failed to write lockfile", .{});
             Global.crash();
         },
         .result => {},
@@ -2534,7 +2534,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
-                Output.err(err, "failed to change lockfile permissions\n{}", .{});
+                Output.err(err, "failed to change lockfile permissions", .{});
                 Global.crash();
             },
             .result => {},

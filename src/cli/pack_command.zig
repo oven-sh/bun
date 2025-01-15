@@ -508,7 +508,7 @@ pub const PackCommand = struct {
         var bundled_pack_queue = PackQueue.init(ctx.allocator, {});
         if (ctx.bundled_deps.items.len == 0) return bundled_pack_queue;
 
-        const dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+        var dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
             switch (err) {
                 // ignore node_modules if it isn't a directory, or doesn't exist
                 error.NotDir, error.FileNotFound => return bundled_pack_queue,
@@ -519,6 +519,7 @@ pub const PackCommand = struct {
                 },
             }
         };
+        defer dir.close();
 
         // A set of bundled dependency locations
         // - node_modules/is-even
@@ -540,10 +541,10 @@ pub const PackCommand = struct {
             if (strings.startsWithChar(_entry_name, '@')) {
                 const concat = try entrySubpath(ctx.allocator, "node_modules", _entry_name);
 
-                const scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch |err| {
-                    if (err != error.NotDir and err != error.FileNotFound) {}
+                var scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch {
                     continue;
                 };
+                defer scoped_dir.close();
 
                 var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
                 while (scoped_iter.next().unwrap() catch null) |sub_entry| {

@@ -3052,10 +3052,6 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
     });
 
-    m_napiWraps.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
-        init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
-    });
-
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
@@ -3856,7 +3852,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
-    thisObject->m_napiWraps.visit(visitor);
     thisObject->m_napiTypeTags.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
     thisObject->mockModule.mockFunctionStructure.visit(visitor);

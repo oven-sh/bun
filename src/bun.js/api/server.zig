@@ -322,44 +322,32 @@ pub const ServerConfig = struct {
         this.websocket = null;
         this.bake = null;
 
-        var prev_static_routes = this.static_routes;
-        var static_routes_dedupe_list = bun.StringHashMap(u32).init(bun.default_allocator);
-        try static_routes_dedupe_list.ensureTotalCapacity(@truncate(prev_static_routes.items.len));
+        var static_routes_dedupe_list = bun.StringHashMap(void).init(bun.default_allocator);
+        try static_routes_dedupe_list.ensureTotalCapacity(@truncate(this.static_routes.items.len));
         defer static_routes_dedupe_list.deinit();
 
         // Iterate through the list of static routes backwards
         // Later ones added override earlier ones
-        var index = prev_static_routes.items.len;
-        while (index > 0) {
-            index -= 1;
-            const entry = static_routes_dedupe_list.getOrPut(prev_static_routes.items[index].path) catch unreachable;
-            if (!entry.found_existing) {
-                // replace the earliest one with the latest one
-                entry.value_ptr.* = @intCast(index);
+        var static_routes = this.static_routes;
+        this.static_routes = std.ArrayList(StaticRouteEntry).init(bun.default_allocator);
+        if (static_routes.items.len > 0) {
+            var index = static_routes.items.len - 1;
+            while (true) {
+                const route = &static_routes.items[index];
+                const entry = static_routes_dedupe_list.getOrPut(route.path) catch unreachable;
+                if (entry.found_existing) {
+                    var item = static_routes.orderedRemove(index);
+                    item.deinit();
+                }
+                if (index == 0) break;
+                index -= 1;
             }
         }
 
-        var cloned_static_routes = try std.ArrayList(StaticRouteEntry).initCapacity(bun.default_allocator, static_routes_dedupe_list.count());
-        cloned_static_routes.items.len = static_routes_dedupe_list.count();
+        // sort the cloned static routes by name for determinism
+        std.mem.sort(StaticRouteEntry, static_routes.items, {}, StaticRouteEntry.isLessThan);
 
-        {
-            // Insert the deduped routes into the new list.
-            var iter = static_routes_dedupe_list.iterator();
-            var i: usize = 0;
-            while (iter.next()) |entry| : (i += 1) {
-                cloned_static_routes.items[i] = try prev_static_routes.items[entry.value_ptr.*].clone();
-            }
-
-            // sort the cloned static routes by name for determinism
-            std.mem.sort(StaticRouteEntry, cloned_static_routes.items, {}, StaticRouteEntry.isLessThan);
-        }
-
-        for (prev_static_routes.items) |*entry| {
-            entry.deinit();
-        }
-        prev_static_routes.clearAndFree();
-        that.static_routes = cloned_static_routes;
-
+        that.static_routes = static_routes;
         return that;
     }
 

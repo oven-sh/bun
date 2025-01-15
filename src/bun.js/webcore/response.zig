@@ -3487,6 +3487,14 @@ pub const Headers = struct {
         return this.buf.items.len + this.entries.memoryCost();
     }
 
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
     pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
         var offset: u32 = @truncate(this.buf.items.len);
         try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);

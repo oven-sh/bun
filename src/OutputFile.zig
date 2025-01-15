@@ -24,6 +24,14 @@ referenced_css_files: []const Index = &.{},
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
 
+pub fn deinit(this: *OutputFile) void {
+    this.value.deinit();
+
+    bun.default_allocator.free(this.src_path.text);
+    bun.default_allocator.free(this.dest_path);
+    bun.default_allocator.free(this.referenced_css_files);
+}
+
 // Depending on:
 // - The target
 // - The number of open file handles
@@ -64,6 +72,19 @@ pub const Value = union(Kind) {
     },
     pending: resolver.Result,
     saved: SavedFile,
+
+    pub fn deinit(this: *Value) void {
+        switch (this.*) {
+            .buffer => |buf| {
+                buf.allocator.free(buf.bytes);
+            },
+            .saved => {},
+            .move => {},
+            .copy => {},
+            .noop => {},
+            .pending => {},
+        }
+    }
 
     pub fn toBunString(v: Value) bun.String {
         return switch (v) {
@@ -360,6 +381,13 @@ pub fn toJS(
                 .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
             });
 
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
+            };
+
             break :brk build_output.toJS(globalObject);
         },
         .saved => brk: {
@@ -374,6 +402,13 @@ pub fn toJS(
                 globalObject.allocator(),
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+            };
+
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
             };
 
             build_output.* = JSC.API.BuildArtifact{
@@ -405,6 +440,14 @@ pub fn toJS(
                 .output_kind = this.output_kind,
                 .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
             };
+
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
+            };
+
             break :brk build_output.toJS(globalObject);
         },
     };
@@ -432,6 +475,13 @@ pub fn toBlob(
                 allocator,
             );
 
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
+            };
+
             break :brk JSC.WebCore.Blob.initWithStore(file_blob, globalThis);
         },
         .saved => brk: {
@@ -443,6 +493,13 @@ pub fn toBlob(
                 allocator,
             );
 
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
+            };
+
             break :brk JSC.WebCore.Blob.initWithStore(file_blob, globalThis);
         },
         .buffer => |buffer| brk: {
@@ -453,6 +510,13 @@ pub fn toBlob(
             } else {
                 blob.content_type = this.loader.toMimeType().value;
             }
+
+            this.value = .{
+                .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = &.{},
+                },
+            };
 
             blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
             break :brk blob;

@@ -19,6 +19,20 @@ fn deinit(this: *StaticRoute) void {
     this.destroy();
 }
 
+pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute {
+    var blob = this.blob.toBlob(globalThis);
+    this.blob = .{ .Blob = blob };
+
+    return StaticRoute.new(.{
+        .blob = .{ .Blob = blob.dupe() },
+        .cached_blob_size = this.cached_blob_size,
+        .has_content_disposition = this.has_content_disposition,
+        .headers = try this.headers.clone(),
+        .server = this.server,
+        .status_code = this.status_code,
+    });
+}
+
 pub fn memoryCost(this: *const StaticRoute) usize {
     return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
 }

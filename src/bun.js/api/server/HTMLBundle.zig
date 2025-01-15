@@ -78,7 +78,10 @@ pub const HTMLBundleRoute = struct {
                 .err => |*log| {
                     log.deinit();
                 },
-                .building => {},
+                .building => |completion| {
+                    completion.cancelled = true;
+                    completion.deref();
+                },
                 .html => {
                     this.html.deref();
                 },
@@ -119,7 +122,6 @@ pub const HTMLBundleRoute = struct {
         defer this.deref();
         const server: AnyServer = this.server orelse {
             resp.endWithoutBody(true);
-            this.deref();
             return;
         };
 
@@ -165,10 +167,12 @@ pub const HTMLBundleRoute = struct {
                 bun.outOfMemory();
                 return;
             };
-            this.ref();
             completion_task.started_at_ns = bun.getRoughTickCount().ns();
             completion_task.html_build_task = this;
             this.value = .{ .building = completion_task };
+
+            // While we're building, ensure this doesn't get freed.
+            this.ref();
         }
 
         switch (this.value) {
@@ -324,12 +328,9 @@ pub const HTMLBundleRoute = struct {
                     server.appendStaticRoute(route_path, .{ .StaticRoute = static_route }) catch bun.outOfMemory();
                 }
 
-                if (this_html_route) |html_route| {
-                    html_route.ref();
-                    this.value = .{ .html = html_route };
-                } else {
-                    @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
-                }
+                const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
+                const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
+                this.value = .{ .html = html_route_clone };
 
                 if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
                     // Server has shutdown, so it won't receive any new requests
@@ -369,10 +370,10 @@ pub const HTMLBundleRoute = struct {
                 .err => |log| {
                     _ = log; // autofix
                     resp.writeStatus("500 Build Failed");
-                    resp.endWithoutBody(true);
+                    resp.endWithoutBody(false);
                 },
                 else => {
-                    resp.endWithoutBody(true);
+                    resp.endWithoutBody(false);
                 },
             }
 

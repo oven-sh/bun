@@ -547,56 +547,75 @@ if (!isCI && hasPsql) {
   //   expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
   // });
 
-  // t('Transaction rejects with rethrown error', async() => [
-  //   'WAT',
-  //   await sql.begin(async sql => {
-  //     try {
-  //       await sql`select exception`
-  //     } catch (ex) {
-  //       throw new Error('WAT')
-  //     }
-  //   }).catch(e => e.message)
-  // ])
+  test("Transaction rejects with rethrown error", async () => {
+    await using sql = postgres({ ...options });
+    expect(
+      await sql
+        .begin(async sql => {
+          try {
+            await sql`select exception`;
+          } catch (ex) {
+            throw new Error("WAT");
+          }
+        })
+        .catch(e => e.message),
+    ).toBe("WAT");
+  });
 
-  // t('Parallel transactions', async() => {
-  //   await sql`create table test (a int)`
-  //   return ['11', (await Promise.all([
-  //     sql.begin(sql => sql`select 1`),
-  //     sql.begin(sql => sql`select 1`)
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
+  test("Parallel transactions", async () => {
+    await sql`create table test (a int)`;
+    expect(
+      (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
+        .map(x => x[0].count)
+        .join(""),
+    ).toBe("11");
+    await sql`drop table test`;
+  });
 
-  // t("Many transactions at beginning of connection", async () => {
-  //   const sql = postgres(options);
-  //   const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
-  //   return [100, xs.length];
-  // });
+  test("Many transactions at beginning of connection", async () => {
+    await using sql = postgres(options);
+    const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
+    return expect(xs.length).toBe(100);
+  });
 
-  // t('Transactions array', async() => {
-  //   await sql`create table test (a int)`
+  test("Transactions array", async () => {
+    await using sql = postgres(options);
+    await sql`create table test (a int)`;
+    try {
+      expect(
+        (await sql.begin(sql => [sql`select 1 as count`, sql`select 1 as count`])).map(x => x[0].count).join(""),
+      ).toBe("11");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  //   return ['11', (await sql.begin(sql => [
-  //     sql`select 1`.then(x => x),
-  //     sql`select 1`
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
+  test("Transaction waits", async () => {
+    await using sql = postgres({ ...options });
+    await sql`create table test (a int)`;
+    try {
+      await sql.begin(async sql => {
+        await sql`insert into test values(1)`;
+        await sql
+          .savepoint(async sql => {
+            await sql`insert into test values(2)`;
+            throw new Error("please rollback");
+          })
+          .catch(() => {
+            /* ignore */
+          });
+        await sql`insert into test values(3)`;
+      });
 
-  // t('Transaction waits', async() => {
-  //   await sql`create table test (a int)`
-  //   await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.savepoint(async sql => {
-  //       await sql`insert into test values(2)`
-  //       throw new Error('please rollback')
-  //     }).catch(() => { /* ignore */ })
-  //     await sql`insert into test values(3)`
-  //   })
-
-  //   return ['11', (await Promise.all([
-  //     sql.begin(sql => sql`select 1`),
-  //     sql.begin(sql => sql`select 1`)
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
+      expect(
+        (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
+          .map(x => x[0].count)
+          .join(""),
+      ).toBe("11");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
   // t('Helpers in Transaction', async() => {
   //   return ['1', (await sql.begin(async sql =>

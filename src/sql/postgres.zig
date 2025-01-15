@@ -2460,7 +2460,7 @@ pub const PostgresSQLConnection = struct {
                     DataCell.Putter.put,
                 );
 
-                const pending_value = PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
+                const pending_value = if (request.thisValue == .zero) .zero else PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
                 pending_value.ensureStillAlive();
                 const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject), statement.fields_flags);
 

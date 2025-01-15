@@ -308,32 +308,76 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
 
 class NAPICallFrame {
 public:
-    NAPICallFrame(const JSC::ArgList args, void* dataPtr)
-        : m_args(args)
-        , m_dataPtr(dataPtr)
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
+        : NAPICallFrame(globalObject, callFrame, dataPtr)
     {
+        m_storedNewTarget = storedNewTarget;
+        m_isConstructorCall = !m_storedNewTarget.isEmpty();
     }
 
-    JSC::JSValue thisValue() const
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
+        : m_callFrame(callFrame)
+        , m_dataPtr(dataPtr)
     {
-        return m_args.at(0);
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
+        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
+        // `this` to an object.
+        // TODO change to global? or find another way to avoid JSGlobalProxy
+        JSC::JSObject* jscThis = globalObject->globalThis();
+        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            jscThis = m_callFrame->thisValue().toObject(globalObject);
+            // https://tc39.es/ecma262/#sec-toobject
+            // toObject only throws for undefined and null, which we checked for
+            scope.assertNoException();
+        }
+        m_callFrame->setThisValue(jscThis);
+    }
+
+    JSValue thisValue() const
+    {
+        return m_callFrame->thisValue();
     }
 
     static constexpr uintptr_t NAPICallFramePtrTag = static_cast<uint64_t>(1) << 63;
 
-    static bool isNAPICallFramePtr(uintptr_t ptr)
+    napi_callback_info toNapi()
     {
-        return ptr & NAPICallFramePtrTag;
+        return reinterpret_cast<napi_callback_info>(this);
     }
 
-    static uintptr_t tagNAPICallFramePtr(uintptr_t ptr)
+    ALWAYS_INLINE void* dataPtr() const
     {
-        return ptr | NAPICallFramePtrTag;
+        return m_dataPtr;
     }
 
-    static napi_callback_info toNapiCallbackInfo(NAPICallFrame& frame)
+    void extract(size_t* argc, // [in-out] Specifies the size of the provided argv array
+                               // and receives the actual count of args.
+        napi_value* argv, // [out] Array of values
+        napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
+        void** data, Zig::GlobalObject* globalObject)
     {
-        return reinterpret_cast<napi_callback_info>(tagNAPICallFramePtr(reinterpret_cast<uintptr_t>(&frame)));
+        if (this_arg != nullptr) {
+            *this_arg = ::toNapi(m_callFrame->thisValue(), globalObject);
+        }
+
+        if (data != nullptr) {
+            *data = dataPtr();
+        }
+
+        size_t maxArgc = 0;
+        if (argc != nullptr) {
+            maxArgc = *argc;
+            *argc = m_callFrame->argumentCount();
+        }
+
+        if (argv != nullptr) {
+            for (size_t i = 0; i < maxArgc; i++) {
+                // OK if we overflow argumentCount(), because argument() returns JS undefined
+                // for OOB which is what we want
+                argv[i] = ::toNapi(m_callFrame->argument(i), globalObject);
+            }
+        }
     }
 
     static std::optional<NAPICallFrame*> get(JSC::CallFrame* callFrame)
@@ -347,61 +391,33 @@ public:
         return { reinterpret_cast<NAPICallFrame*>(ptr) };
     }
 
-    ALWAYS_INLINE const JSC::ArgList& args() const
+    static bool isNAPICallFramePtr(uintptr_t ptr)
     {
-        return m_args;
+        return ptr & NAPICallFramePtrTag;
     }
 
-    ALWAYS_INLINE void* dataPtr() const
+    JSValue newTarget()
     {
-        return m_dataPtr;
-    }
-
-    static void extract(NAPICallFrame& callframe, size_t* argc, // [in-out] Specifies the size of the provided argv array
-                                                                // and receives the actual count of args.
-        napi_value* argv, // [out] Array of values
-        napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
-        void** data, Zig::GlobalObject* globalObject)
-    {
-        if (this_arg != nullptr) {
-            *this_arg = toNapi(callframe.thisValue(), globalObject);
+        if (!m_isConstructorCall) {
+            return JSValue();
         }
 
-        if (data != nullptr) {
-            *data = callframe.dataPtr();
-        }
-
-        size_t maxArgc = 0;
-        if (argc != nullptr) {
-            maxArgc = *argc;
-            *argc = callframe.args().size() - 1;
-        }
-
-        if (argv != nullptr) {
-            size_t realArgCount = callframe.args().size() - 1;
-
-            size_t overflow = maxArgc > realArgCount ? maxArgc - realArgCount : 0;
-            realArgCount = realArgCount < maxArgc ? realArgCount : maxArgc;
-
-            if (realArgCount > 0) {
-                memcpy(argv, callframe.args().data() + 1, sizeof(napi_value) * realArgCount);
-                argv += realArgCount;
-            }
-
-            if (overflow > 0) {
-                while (overflow--) {
-                    *argv = toNapi(jsUndefined(), globalObject);
-                    argv++;
-                }
-            }
+        if (m_storedNewTarget.isUndefined()) {
+            // napi_get_new_target:
+            // "This API returns the new.target of the constructor call. If the current callback
+            // is not a constructor call, the result is NULL."
+            // they mean a null pointer, not JavaScript null
+            return JSValue();
+        } else {
+            return m_storedNewTarget;
         }
     }
-
-    JSC::JSValue newTarget;
 
 private:
-    const JSC::ArgList m_args;
+    JSC::CallFrame* m_callFrame;
     void* m_dataPtr;
+    JSValue m_storedNewTarget;
+    bool m_isConstructorCall = false;
 };
 
 static void defineNapiProperty(napi_env env, JSC::JSObject* to, void* inheritedDataPtr, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
@@ -1087,72 +1103,10 @@ extern "C" napi_status napi_get_cb_info(
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, cbinfo);
 
-    JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
+    auto* callFrame = reinterpret_cast<NAPICallFrame*>(cbinfo);
     Zig::GlobalObject* globalObject = toJS(env);
 
-    if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        NAPICallFrame::extract(*frame, argc, argv, this_arg, data, globalObject);
-        NAPI_RETURN_SUCCESS(env);
-    }
-
-    auto inputArgsCount = argc == nullptr ? 0 : *argc;
-
-    // napi expects arguments to be copied into the argv array.
-    if (inputArgsCount > 0) {
-        auto outputArgsCount = callFrame->argumentCount();
-        auto argsToCopy = inputArgsCount < outputArgsCount ? inputArgsCount : outputArgsCount;
-        *argc = argsToCopy;
-
-        memcpy(argv, callFrame->addressOfArgumentsStart(), argsToCopy * sizeof(JSC::JSValue));
-
-        for (size_t i = outputArgsCount; i < inputArgsCount; i++) {
-            argv[i] = toNapi(JSC::jsUndefined(), globalObject);
-        }
-    }
-
-    JSC::JSValue thisValue = callFrame->thisValue();
-
-    if (this_arg != nullptr) {
-        *this_arg = toNapi(thisValue, globalObject);
-    }
-
-    if (data != nullptr) {
-        JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
-
-        if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(callee)) {
-            *data = ffiFunction->dataPtr;
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->nativeObject;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(callee)) {
-            void* local = proto->dataPtr();
-            if (!local) {
-                NapiRef* ref = nullptr;
-                if (ref) {
-                    *data = ref->nativeObject;
-                }
-            } else {
-                *data = local;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(thisValue)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->nativeObject;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(thisValue)) {
-            void* local = proto->dataPtr();
-            if (local) {
-                *data = local;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
-            *data = proto->value();
-        } else {
-            *data = nullptr;
-        }
-    }
-
+    callFrame->extract(argc, argv, this_arg, data, globalObject);
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1683,7 +1637,7 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
 
     if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        *result = toNapi(frame->newTarget, toJS(env));
+        *result = toNapi(frame->newTarget(), toJS(env));
         NAPI_RETURN_SUCCESS(env);
     }
 
@@ -1852,16 +1806,10 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         callFrame->setThisValue(subclass);
     }
 
-    MarkedArgumentBufferWithSize<12> args;
-    size_t argc = callFrame->argumentCount() + 1;
-    args.fill(vm, argc, [&](auto* slot) {
-        memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
-    });
-    NAPICallFrame frame(JSC::ArgList(args), nullptr);
-    frame.newTarget = newTarget;
+    NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-    JSValue ret = toJS(napi->constructor()(napi->env(), NAPICallFrame::toNapiCallbackInfo(frame)));
+    JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
     RETURN_IF_EXCEPTION(scope, {});
     if (ret.isEmpty()) {

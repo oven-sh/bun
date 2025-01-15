@@ -1067,7 +1067,7 @@ pub const UV_EUNATCH = -uv.UV_EUNATCH;
 pub const off_t = i64;
 pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {}
 
-const uv = @import("./deps/libuv.zig");
+const uv = @import("../deps/libuv.zig");
 
 pub const E = enum(u16) {
     SUCCESS = 0,

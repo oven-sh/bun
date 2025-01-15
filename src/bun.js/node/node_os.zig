@@ -186,7 +186,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
 
 extern fn bun_sysconf__SC_CLK_TCK() isize;
 fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
-    const local_bindings = @import("../../darwin_c.zig");
+    const local_bindings = @import("../../c/darwin.zig");
     const c = std.c;
 
     // Fetch the CPU info structure

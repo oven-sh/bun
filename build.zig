@@ -628,6 +628,12 @@ const WindowsShim = struct {
             .link_libc = false,
         });
 
+        const options = b.addOptions();
+        options.addOption(bool, "is_standalone", true);
+
+        exe.root_module.addOptions("windows_shim", options);
+        dbg.root_module.addOptions("windows_shim", options);
+
         return .{ .exe = exe, .dbg = dbg };
     }
 };

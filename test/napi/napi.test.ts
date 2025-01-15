@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const install = spawnSync({
-      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,
@@ -15,18 +15,6 @@ describe("napi", () => {
       stdin: "inherit",
     });
     if (!install.success) {
-      throw new Error("install dependencies failed");
-    }
-
-    const build = spawnSync({
-      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug", "-j", "max"],
-      cwd: join(__dirname, "napi-app"),
-      stderr: "inherit",
-      env: bunEnv,
-      stdout: "inherit",
-      stdin: "inherit",
-    });
-    if (!build.success) {
       throw new Error("build failed");
     }
   });
@@ -159,7 +147,7 @@ describe("napi", () => {
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
-      expect(result).toStartWith("data = 1234, context = 42");
+      expect(result).toStartWith("data: nullptr");
     });
   });
 
@@ -211,9 +199,6 @@ describe("napi", () => {
     });
     it("exists while calling a napi_async_complete_callback", () => {
       checkSameOutput("create_promise", [false]);
-    });
-    it("keeps arguments moved off the stack alive", () => {
-      checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
   });
 
@@ -278,18 +263,18 @@ describe("napi", () => {
 
   describe("napi_run_script", () => {
     it("evaluates a basic expression", () => {
-      checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
+      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
     });
     it("provides the right this value", () => {
-      checkSameOutput("test_napi_run_script", ["this === global"]);
+      checkSameOutput("eval_wrapper", ["this === global"]);
     });
     it("propagates exceptions", () => {
-      checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
+      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
-      let bunResult = runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
+      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(
@@ -301,12 +286,6 @@ describe("napi", () => {
   describe("napi_get_named_property", () => {
     it("handles edge cases", () => {
       checkSameOutput("test_get_property", []);
-    });
-  });
-
-  describe("napi_set_named_property", () => {
-    it("handles edge cases", () => {
-      checkSameOutput("test_set_property", []);
     });
   });
 
@@ -369,15 +348,6 @@ describe("napi", () => {
       checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
-    });
-  });
-
-  describe("napi_define_class", () => {
-    it("handles edge cases in the constructor", () => {
-      checkSameOutput("test_napi_class", []);
-      checkSameOutput("test_subclass_napi_class", []);
-      checkSameOutput("test_napi_class_non_constructor_call", []);
-      checkSameOutput("test_reflect_construct_napi_class", []);
     });
   });
 

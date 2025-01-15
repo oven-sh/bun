@@ -39,6 +39,7 @@ try {
       .catch(e => {
         console.error("rejected:", e);
       });
+    result.then(x => console.log("resolved to", x));
   } else if (process.argv[2] == "eval_wrapper") {
     // eval_wrapper just returns the result of the expression so it shouldn't be an error
     console.log(result);

@@ -704,6 +704,10 @@ const PosixBufferedReader = struct {
         return this.flags.is_done or this.flags.received_eof or this.flags.closed_without_reporting;
     }
 
+    pub fn memoryCost(this: *const PosixBufferedReader) usize {
+        return @sizeOf(@This()) + this._buffer.capacity;
+    }
+
     pub fn from(to: *@This(), other: *PosixBufferedReader, parent_: *anyopaque) void {
         to.* = .{
             .handle = other.handle,
@@ -806,7 +810,7 @@ const PosixBufferedReader = struct {
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
-            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer()).unwrap() catch |err| {
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), false).unwrap() catch |err| {
                 bun.Output.debugWarn("error reading from memfd\n{}", .{err});
                 return this.buffer();
             };
@@ -971,6 +975,10 @@ pub const WindowsBufferedReader = struct {
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     const WindowsOutputReader = @This();
+
+    pub fn memoryCost(this: *const WindowsOutputReader) usize {
+        return @sizeOf(@This()) + this._buffer.capacity;
+    }
 
     const Flags = packed struct {
         is_done: bool = false,

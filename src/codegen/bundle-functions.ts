@@ -223,7 +223,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       define,
       target: "bun",
       minify: { syntax: true, whitespace: false },
+      throw: true,
     });
+    // TODO: Wait a few versions before removing this
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }

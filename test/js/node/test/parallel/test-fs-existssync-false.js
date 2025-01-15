@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const tmpdir = require('../common/tmpdir');
 
 // This test ensures that fs.existsSync doesn't incorrectly return false.

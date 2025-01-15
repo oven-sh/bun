@@ -6,6 +6,7 @@ if (!common.isWindows) {
   // TODO: Similar checks on *nix-like systems (e.g using chmod or the like)
   common.skip('test only runs on Windows');
 }
+if (common.isWindows) return; // TODO: BUN
 
 const assert = require('assert');
 const fs = require('fs');

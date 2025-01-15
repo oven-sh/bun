@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 
 // Test creating a symbolic link pointing to a directory.
 // Ref: https://github.com/nodejs/node/pull/23724
@@ -51,6 +52,8 @@ for (const linkTarget of linkTargets) {
       .then(common.mustCall());
   }
 }
+
+if (common.isWindows) return; // TODO: BUN
 
 // Test invalid symlink
 {

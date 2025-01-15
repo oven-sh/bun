@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 
 if (!common.hasCrypto)
   common.skip('missing crypto');

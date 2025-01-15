@@ -153,6 +153,10 @@ pub const Process = struct {
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
 
+    pub fn memoryCost(_: *const Process) usize {
+        return @sizeOf(@This());
+    }
+
     pub usingnamespace bun.NewRefCounted(Process, deinit);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
@@ -969,6 +973,7 @@ pub const PosixSpawnOptions = struct {
     windows: void = {},
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
+    sync: bool = false,
 
     /// Apple Extension: If this bit is set, rather
     /// than returning to the caller, posix_spawn(2)
@@ -998,6 +1003,7 @@ pub const WindowsSpawnResult = struct {
     stderr: StdioResult = .unavailable,
     extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.default_allocator),
     stream: bool = true,
+    sync: bool = false,
 
     pub const StdioResult = union(enum) {
         /// inherit, ignore, path, pipe
@@ -1240,8 +1246,7 @@ pub fn spawnProcessPosix(
     var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
-            const fcntl_flags = bun.sys.fcntl(fd, std.posix.F.GETFD, 0).unwrap() catch continue;
-            _ = bun.sys.fcntl(fd, std.posix.F.SETFD, bun.C.FD_CLOEXEC | fcntl_flags);
+            _ = bun.sys.setCloseOnExec(fd);
         }
         to_set_cloexec.clearAndFree();
 
@@ -1323,24 +1328,9 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                    if (rc != 0) {
-                        return error.SystemResources;
-                    }
+                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
 
-                    {
-                        const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.posix.F.GETFD);
-                        _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.posix.F.SETFD, before | std.posix.FD_CLOEXEC);
-                    }
-
-                    if (comptime Environment.isMac) {
-                        // SO_NOSIGPIPE
-                        const before: i32 = 1;
-                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                    }
-
-                    break :brk .{ bun.toFD(fds_[if (i == 0) 1 else 0]), bun.toFD(fds_[if (i == 0) 0 else 1]) };
+                    break :brk .{ bun.toFD(pair[if (i == 0) 1 else 0]), bun.toFD(pair[if (i == 0) 0 else 1]) };
                 };
 
                 if (i == 0) {
@@ -1381,6 +1371,10 @@ pub fn spawnProcessPosix(
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);
 
+                if (!options.sync) {
+                    try bun.sys.setNonblocking(fds[0]).unwrap();
+                }
+
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);
@@ -1414,25 +1408,15 @@ pub fn spawnProcessPosix(
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
             .ipc, .buffer => {
-                const fds: [2]bun.FileDescriptor = brk: {
-                    var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                    if (rc != 0) {
-                        return error.SystemResources;
-                    }
+                const fds: [2]bun.FileDescriptor = try bun.sys.socketpair(
+                    std.posix.AF.UNIX,
+                    std.posix.SOCK.STREAM,
+                    0,
+                    if (ipc == .ipc) .nonblocking else .blocking,
+                ).unwrap();
 
-                    // enable non-block
-                    var before = std.c.fcntl(fds_[0], std.posix.F.GETFD);
-
-                    _ = std.c.fcntl(fds_[0], std.posix.F.SETFD, before | bun.C.FD_CLOEXEC);
-
-                    if (comptime Environment.isMac) {
-                        // SO_NOSIGPIPE
-                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                    }
-
-                    break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
-                };
+                if (!options.sync and ipc == .buffer)
+                    try bun.sys.setNonblocking(fds[0]).unwrap();
 
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);

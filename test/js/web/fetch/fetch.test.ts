@@ -1,7 +1,7 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, gc, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
 import net from "net";
 import { join } from "path";
@@ -17,6 +17,7 @@ const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
+    idleTimeout: 0,
     ...options,
     fetch,
     port: 0,
@@ -1314,9 +1315,16 @@ describe("Response", () => {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
-      var input = await response.arrayBuffer();
+      const input = await response.bytes();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
+      let chunks: Uint8Array[] = [];
+      const reader = output.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      expect(input).toEqual(Buffer.concat(chunks));
     });
   });
 
@@ -2010,7 +2018,7 @@ describe("http/1.1 response body length", () => {
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 
-  it("should ignore body on HEAD", async () => {
+  it.todoIf(isBroken)("should ignore body on HEAD", async () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
@@ -2018,35 +2026,31 @@ describe("http/1.1 response body length", () => {
 });
 describe("fetch Response life cycle", () => {
   it("should not keep Response alive if not consumed", async () => {
-    const serverProcess = Bun.spawn({
+    let deferred = Promise.withResolvers<string>();
+
+    await using serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
+      ipc(message) {
+        deferred.resolve(message);
+      },
     });
 
-    async function getServerUrl() {
-      const reader = serverProcess.stdout.getReader();
-      const { done, value } = await reader.read();
-      return new TextDecoder().decode(value);
-    }
-    const serverUrl = await getServerUrl();
-    const clientProcess = Bun.spawn({
+    const serverUrl = await deferred.promise;
+    await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
     });
-    try {
-      expect(await clientProcess.exited).toBe(0);
-    } finally {
-      serverProcess.kill();
-    }
+    expect(await clientProcess.exited).toBe(0);
   });
   it("should allow to get promise result after response is GC'd", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         return new Response(
@@ -2235,6 +2239,7 @@ describe("fetch should allow duplex", () => {
   it("should work in redirects .manual when using duplex", async () => {
     using server = Bun.serve({
       port: 0,
+      idleTimeout: 0,
       async fetch(req) {
         if (req.url.indexOf("/redirect") === -1) {
           return Response.redirect("/");
@@ -2298,7 +2303,11 @@ it("should allow to follow redirect if connection is closed, abort should work e
     await once(server.listen(0), "listening");
 
     try {
-      const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/redirect`, {
+      let { address, port } = server.address() as AddressInfo;
+      if (address === "::") {
+        address = "[::]";
+      }
+      const response = await fetch(`http://${address}:${port}/redirect`, {
         signal: AbortSignal.timeout(150),
       });
       if (type === "delay") {

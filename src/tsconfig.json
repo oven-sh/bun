@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Path remapping
+    "baseUrl": ".",
+    "paths": {
+      "bindgen": ["./codegen/bindgen-lib.ts"],
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  // separate projects have extra settings that only apply in those scopes
+  "exclude": ["js", "bake"]
+}

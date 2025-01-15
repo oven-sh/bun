@@ -1,4 +1,30 @@
 const nativeTests = require("./build/Release/napitests.node");
+const secondAddon = require("./build/Release/second_addon.node");
+
+function assert(ok) {
+  if (!ok) {
+    throw new Error("assertion failed");
+  }
+}
+
+async function gcUntil(fn) {
+  const MAX = 100;
+  for (let i = 0; i < MAX; i++) {
+    await new Promise(resolve => {
+      setTimeout(resolve, 1);
+    });
+    if (typeof Bun == "object") {
+      Bun.gc(true);
+    } else {
+      // if this fails, you need to pass --expose-gc to node
+      global.gc();
+    }
+    if (fn()) {
+      return;
+    }
+  }
+  throw new Error(`Condition was not met after ${MAX} GC attempts`);
+}
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
@@ -268,6 +294,204 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_napi_wrap = () => {
+  const values = [
+    {},
+    {}, // should be able to be wrapped differently than the distinct empty object above
+    5,
+    new Number(5),
+    "abc",
+    new String("abc"),
+    null,
+    Symbol("abc"),
+    Symbol.for("abc"),
+    new (nativeTests.get_class_with_constructor())(),
+    new Proxy(
+      {},
+      Object.fromEntries(
+        [
+          "apply",
+          "construct",
+          "defineProperty",
+          "deleteProperty",
+          "get",
+          "getOwnPropertyDescriptor",
+          "getPrototypeOf",
+          "has",
+          "isExtensible",
+          "ownKeys",
+          "preventExtensions",
+          "set",
+          "setPrototypeOf",
+        ].map(name => [
+          name,
+          () => {
+            throw new Error("oops");
+          },
+        ]),
+      ),
+    ),
+  ];
+  const wrapSuccess = Array(values.length).fill(false);
+  for (const [i, v] of values.entries()) {
+    wrapSuccess[i] = nativeTests.try_wrap(v, i + 1);
+    console.log(`${typeof v} did wrap: `, wrapSuccess[i]);
+  }
+
+  for (const [i, v] of values.entries()) {
+    if (wrapSuccess[i]) {
+      if (nativeTests.try_unwrap(v) !== i + 1) {
+        throw new Error("could not unwrap same value");
+      }
+    } else {
+      if (nativeTests.try_unwrap(v) !== undefined) {
+        throw new Error("value unwraps without being successfully wrapped");
+      }
+    }
+  }
+};
+
+nativeTests.test_napi_wrap_proxy = () => {
+  const target = {};
+  const proxy = new Proxy(target, {});
+  assert(nativeTests.try_wrap(target, 5));
+  assert(nativeTests.try_wrap(proxy, 6));
+  console.log(nativeTests.try_unwrap(target), nativeTests.try_unwrap(proxy));
+};
+
+nativeTests.test_napi_wrap_cross_addon = () => {
+  const wrapped = {};
+  console.log("wrap succeeds:", nativeTests.try_wrap(wrapped, 42));
+  console.log("unwrapped from other addon", secondAddon.try_unwrap(wrapped));
+};
+
+nativeTests.test_napi_wrap_prototype = () => {
+  class Foo {}
+  console.log("wrap prototype succeeds:", nativeTests.try_wrap(Foo.prototype, 42));
+  // wrapping should not look at prototype chain
+  console.log("unwrap instance:", nativeTests.try_unwrap(new Foo()));
+};
+
+nativeTests.test_napi_remove_wrap = () => {
+  const targets = [{}, new (nativeTests.get_class_with_constructor())()];
+  for (const t of targets) {
+    const target = {};
+    // fails
+    assert(nativeTests.try_remove_wrap(target) === undefined);
+    // wrap it
+    assert(nativeTests.try_wrap(target, 5));
+    // remove yields the wrapped value
+    assert(nativeTests.try_remove_wrap(target) === 5);
+    // neither remove nor unwrap work anymore
+    assert(nativeTests.try_unwrap(target) === undefined);
+    assert(nativeTests.try_remove_wrap(target) === undefined);
+    // can re-wrap
+    assert(nativeTests.try_wrap(target, 6));
+    assert(nativeTests.try_unwrap(target) === 6);
+  }
+};
+
+// parameters to create_wrap are: object, ask_for_ref, strong
+const createWrapWithoutRef = o => nativeTests.create_wrap(o, false, false);
+const createWrapWithWeakRef = o => nativeTests.create_wrap(o, true, false);
+const createWrapWithStrongRef = o => nativeTests.create_wrap(o, true, true);
+
+nativeTests.test_wrap_lifetime_without_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithoutRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+  object = undefined;
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_wrap_lifetime_with_weak_ref = async () => {
+  // this looks the same as test_wrap_lifetime_without_ref because it is -- these cases should behave the same
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+  object = undefined;
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_wrap_lifetime_with_strong_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithStrongRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  object = undefined;
+  // still referenced by native module so this should fail
+  try {
+    await gcUntil(() => nativeTests.was_wrap_finalize_called());
+    throw new Error("object was garbage collected while still referenced by native code");
+  } catch (e) {
+    if (!e.toString().includes("Condition was not met")) {
+      throw e;
+    }
+  }
+
+  // can still get the value using the ref
+  assert(nativeTests.get_wrap_data_from_ref() === 42);
+
+  // now we free it
+  nativeTests.unref_wrapped_value();
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_remove_wrap_lifetime_with_weak_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  nativeTests.remove_wrap(object);
+  assert(nativeTests.get_wrap_data(object) === undefined);
+  assert(nativeTests.get_wrap_data_from_ref() === undefined);
+  assert(nativeTests.get_object_from_ref() === object);
+
+  object = undefined;
+
+  // ref will stop working once the object is collected
+  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+
+  // finalizer shouldn't have been called
+  assert(nativeTests.was_wrap_finalize_called() === false);
+};
+
+nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithStrongRef(object) === object);
+
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  nativeTests.remove_wrap(object);
+  assert(nativeTests.get_wrap_data(object) === undefined);
+  assert(nativeTests.get_wrap_data_from_ref() === undefined);
+  assert(nativeTests.get_object_from_ref() === object);
+
+  object = undefined;
+
+  // finalizer should not be called and object should not be freed
+  try {
+    await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
+    throw new Error("finalizer ran");
+  } catch (e) {
+    if (!e.toString().includes("Condition was not met")) {
+      throw e;
+    }
+  }
+
+  // native code can still get the object
+  assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
+
+  // now it gets deleted
+  nativeTests.unref_wrapped_value();
+  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+};
+
+nativeTests.test_create_bigint_words = () => {
+  console.log(nativeTests.create_weird_bigints());
 };
 
 module.exports = nativeTests;

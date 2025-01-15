@@ -2971,3 +2971,12 @@ describe("serialization", () => {
     expect(JSON.parse(string, receiver)).toEqual(buffer);
   });
 });
+
+it("should not trim utf-8 start bytes at end of string", () => {
+  // always worked
+  const buf1 = Buffer.from("e136e1", "hex");
+  expect(buf1.toString("utf-8")).toEqual("\uFFFD6\uFFFD");
+  // bugged
+  const buf2 = Buffer.from("36e1", "hex");
+  expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
+});

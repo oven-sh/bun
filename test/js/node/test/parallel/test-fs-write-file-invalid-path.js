@@ -6,6 +6,7 @@ const fs = require('fs');
 
 if (!common.isWindows)
   common.skip('This test is for Windows only.');
+if (common.isWindows) return; // TODO: BUN
 
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();

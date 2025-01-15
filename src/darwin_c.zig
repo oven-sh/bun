@@ -66,12 +66,28 @@ pub const COPYFILE_CONTINUE = @as(c_int, 0);
 pub const COPYFILE_SKIP = @as(c_int, 1);
 pub const COPYFILE_QUIT = @as(c_int, 2);
 
+pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+
 // int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
 pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int fclonefileat(int srcfd, int dst_dirfd, const char * dst, int flags);
 pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int clonefile(const char * src, const char * dst, int flags);
 pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
+
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
 //     if (builtin.os.tag == .windows) {
@@ -637,9 +653,6 @@ pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t
 
 pub extern fn getuid(...) std.posix.uid_t;
 pub extern fn getgid(...) std.posix.gid_t;
-
-pub extern fn get_process_priority(pid: c_uint) i32;
-pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
     @memset(buf, 0);

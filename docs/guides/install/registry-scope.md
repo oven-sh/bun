@@ -2,7 +2,9 @@
 name: Configure a private registry for an organization scope with bun install
 ---
 
-Bun does not read `.npmrc` files; instead private registries are configured via `bunfig.toml`. To configure a registry for a particular npm scope:
+Private registries can be configured using either [`.npmrc`](https://bun.sh/docs/install/npmrc) or [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig#install-registry). While both are supported, we recommend using **bunfig.toml** for enhanced flexibility and Bun-specific options.
+
+To configure a registry for a particular npm scope:
 
 ```toml#bunfig.toml
 [install.scopes]

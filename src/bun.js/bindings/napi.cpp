@@ -2227,7 +2227,7 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
 
-    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asDouble());
+    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asNumber());
     NAPI_RETURN_SUCCESS(env);
 }
 

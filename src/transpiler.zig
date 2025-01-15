@@ -260,6 +260,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
+        if (!on_resolve_plugin.isObject()) return null;
         const path_value = try on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {

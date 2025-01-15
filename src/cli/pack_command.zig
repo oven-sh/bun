@@ -835,22 +835,47 @@ pub const PackCommand = struct {
         const bundled_deps = json.get(field) orelse return null;
 
         invalid_field: {
-            var iter = bundled_deps.asArray() orelse switch (bundled_deps.data) {
-                .e_array => return .{},
+            switch (bundled_deps.data) {
+                .e_array => {
+                    var iter = bundled_deps.asArray() orelse return .{};
+
+                    while (iter.next()) |bundled_dep_item| {
+                        const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
+                        try deps.append(allocator, .{
+                            .name = bundled_dep,
+                            .from_root_package_json = true,
+                        });
+                    }
+                },
+                .e_boolean => {
+                    const b = bundled_deps.asBool() orelse return .{};
+                    if (!b == true) return .{};
+
+                    if (json.get("dependencies")) |dependencies_expr| {
+                        switch (dependencies_expr.data) {
+                            .e_object => |dependencies| {
+                                for (dependencies.properties.slice()) |*dependency| {
+                                    if (dependency.key == null) continue;
+                                    if (dependency.value == null) continue;
+
+                                    const bundled_dep = try dependency.key.?.asStringCloned(allocator) orelse break :invalid_field;
+                                    try deps.append(allocator, .{
+                                        .name = bundled_dep,
+                                        .from_root_package_json = true,
+                                    });
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
                 else => break :invalid_field,
-            };
-            while (iter.next()) |bundled_dep_item| {
-                const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
-                try deps.append(allocator, .{
-                    .name = bundled_dep,
-                    .from_root_package_json = true,
-                });
             }
 
             return deps;
         }
 
-        Output.errGeneric("expected `{s}` to be an array of strings", .{field});
+        Output.errGeneric("expected `{s}` to be a boolean or an array of strings", .{field});
         Global.crash();
     }
 

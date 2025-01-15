@@ -984,6 +984,21 @@ pub const Log = struct {
         });
     }
 
+    // Use a bun.sys.Error's message in addition to some extra context.
+    pub fn addSysError(log: *Log, alloc: std.mem.Allocator, e: bun.sys.Error, comptime fmt: string, args: anytype) OOM!void {
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            try log.addErrorFmt(null, Loc.Empty, alloc, fmt, args);
+            return;
+        };
+        try log.addErrorFmt(
+            null,
+            Loc.Empty,
+            alloc,
+            "{s}: " ++ fmt,
+            .{bun.sys.coreutils_error_map.get(sys_errno) orelse tag_name} ++ args,
+        );
+    }
+
     pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;

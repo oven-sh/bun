@@ -29,7 +29,7 @@ pub const ExecCommand = struct {
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,
             .err => |e| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script, e.toSystemError() });
+                Output.err(e, "failed to run script <b>{s}<r>", .{script});
                 Global.exit(1);
             },
         };
@@ -40,7 +40,7 @@ pub const ExecCommand = struct {
         const script_path = bun.path.join(parts, .auto);
 
         const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script_path, @errorName(err) });
+            Output.err(err, "failed to run script <b>{s}<r>", .{script_path});
             Global.exit(1);
         };
 

@@ -6278,3 +6278,31 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
 }
+
+extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)
+{
+    if (UNLIKELY(!object)) {
+        return {};
+    }
+
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
+        return {};
+    }
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    ASSERT(!scope.exception());
+    if (!object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot)) {
+        ASSERT(!scope.exception());
+        return {};
+    }
+
+    if (slot.isAccessor() || slot.isCustom()) {
+        return {};
+    }
+
+    return JSValue::encode(slot.getPureResult());
+}

@@ -1773,7 +1773,7 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             try writer.writeAll("The value of \"");
             try writer.writeAll(self.field_name);
             try writer.writeAll("\" is out of range. It ");
-            
+
             const min = self.min;
             const max = self.max;
             const msg = self.msg;

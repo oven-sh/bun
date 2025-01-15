@@ -457,11 +457,7 @@ public:
 
     JSC::JSValue value() const
     {
-        if (m_isEternal) {
-            return m_eternalGlobalSymbolRef.get();
-        }
-
-        if (refCount == 0) {
+        if (refCount == 0 && !m_isEternal) {
             return weakValueRef.get();
         }
 
@@ -486,8 +482,10 @@ public:
             if (symbol->uid().isRegistered()) {
                 // Global symbols must always be retrievable,
                 // even if garbage collection happens while the ref count is 0.
-                m_eternalGlobalSymbolRef.set(globalObject->vm(), symbol);
                 m_isEternal = true;
+                if (refCount == 0) {
+                    strongRef.set(globalObject->vm(), symbol);
+                }
             }
         }
     }
@@ -506,7 +504,10 @@ public:
             boundCleanup = nullptr;
         }
 
-        strongRef.clear();
+        if (!m_isEternal) {
+            strongRef.clear();
+        }
+
         // The weak ref can lead to calling the destructor
         // so we must first clear the weak ref before we call the finalizer
         weakValueRef.clear();
@@ -523,7 +524,6 @@ public:
     bool releaseOnWeaken = false;
 
 private:
-    JSC::Strong<JSC::Symbol> m_eternalGlobalSymbolRef;
     bool m_isEternal = false;
 };
 

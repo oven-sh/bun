@@ -2997,7 +2997,7 @@ void NapiRef::unref()
     NAPI_LOG("unref %p %u -> %u", this, refCount, refCount - 1);
     bool clear = refCount == 1;
     refCount = refCount > 0 ? refCount - 1 : 0;
-    if (clear) {
+    if (clear && !m_isEternal) {
         // we still dont clean weakValueRef so we can ref it again using NapiRef::ref() if the GC didn't collect it
         // and use it to call the finalizer when GC'd
         strongRef.clear();
@@ -3011,7 +3011,6 @@ void NapiRef::clear()
     globalObject.clear();
     weakValueRef.clear();
     strongRef.clear();
-    m_eternalGlobalSymbolRef.clear();
 }
 
 NapiWeakValue::~NapiWeakValue()

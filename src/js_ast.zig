@@ -8090,6 +8090,7 @@ pub const Macro = struct {
                 .allocator = default_allocator,
                 .args = resolver.opts.transform_options,
                 .log = log,
+                .is_main_thread = false,
                 .env_loader = env,
             });
 

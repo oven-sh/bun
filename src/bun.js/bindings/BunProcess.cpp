@@ -527,7 +527,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    JSC::JSValue resultValue = JSValue::decode(reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue))));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    JSC::JSValue resultValue = encoded == 0 ? jsUndefined() : JSValue::decode(encoded);
 
     if (auto resultObject = resultValue.getObject()) {
 #if OS(DARWIN) || OS(LINUX)

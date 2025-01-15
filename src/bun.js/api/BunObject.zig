@@ -1359,28 +1359,37 @@ pub const Crypto = struct {
                     return globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
                 }
 
-                if (!arguments[3].isAnyInt()) {
-                    return globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
+                if (!arguments[3].isNumber()) {
+                    return globalThis.throwInvalidArgumentTypeValue("keylen", "number", arguments[3]);
                 }
 
-                const length = arguments[3].coerce(i64, globalThis);
+                const keylen_num = arguments[3].asNumber();
 
-                if (!globalThis.hasException() and (length < 0 or length > std.math.maxInt(i32))) {
-                    return globalThis.throwInvalidArguments("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
+                if (std.math.isInf(keylen_num) or std.math.isNan(keylen_num)) {
+                    return globalThis.throwRangeError(keylen_num, .{
+                        .field_name = "keylen",
+                        .msg = "an integer",
+                    });
                 }
+
+                if (keylen_num < 0 or keylen_num > std.math.maxInt(i32)) {
+                    return globalThis.throwRangeError(keylen_num, .{ .field_name = "keylen", .min = 0, .max = std.math.maxInt(i32) });
+                }
+
+                const keylen: i32 = @intFromFloat(keylen_num);
 
                 if (globalThis.hasException()) {
                     return error.JSError;
                 }
 
                 if (!arguments[2].isAnyInt()) {
-                    return globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
+                    return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arguments[2]);
                 }
 
                 const iteration_count = arguments[2].coerce(i64, globalThis);
 
-                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(u32))) {
-                    return globalThis.throwInvalidArguments("iteration count must be >= 1 and <= maxInt", .{});
+                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(i32))) {
+                    return globalThis.throwRangeError(iteration_count, .{ .field_name = "iterations", .min = 1, .max = std.math.maxInt(i32) + 1 });
                 }
 
                 if (globalThis.hasException()) {
@@ -1389,7 +1398,7 @@ pub const Crypto = struct {
 
                 const algorithm = brk: {
                     if (!arguments[4].isString()) {
-                        return globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
+                        return globalThis.throwInvalidArgumentTypeValue("digest", "string", arguments[4]);
                     }
 
                     break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
@@ -1405,7 +1414,7 @@ pub const Crypto = struct {
 
                 var out = PBKDF2{
                     .iteration_count = @intCast(iteration_count),
-                    .length = @truncate(length),
+                    .length = keylen,
                     .algorithm = algorithm,
                 };
                 defer {
@@ -1434,6 +1443,12 @@ pub const Crypto = struct {
 
                 if (out.password.slice().len > std.math.maxInt(i32)) {
                     return globalThis.throwInvalidArguments("password is too long", .{});
+                }
+
+                if (is_async) {
+                    if (!arguments[5].isFunction()) {
+                        return globalThis.throwInvalidArgumentTypeValue("callback", "function", arguments[5]);
+                    }
                 }
 
                 return out;

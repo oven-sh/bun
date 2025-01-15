@@ -317,6 +317,13 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
     return str;
 }
 
+extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
+{
+    JSValue jsValue = JSValue::decode(value);
+    WTF::String typeString = determineSpecificType(globalObject, jsValue);
+    return Bun::toStringRef(typeString);
+}
+
 namespace Message {
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)

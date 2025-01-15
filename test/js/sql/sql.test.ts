@@ -506,6 +506,21 @@ if (!isCI && hasPsql) {
   //   }
   // });
 
+  test("Prepared transaction", async () => {
+    await sql`create table test (a int)`;
+
+    try {
+      await sql.beginDistributed("tx1", async sql => {
+        await sql`insert into test values(1)`;
+      });
+
+      await sql.commitDistributed("tx1");
+      expect((await sql`select count(1) from test`)[0].count).toBe("1");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
   test("Transaction requests are executed implicitly", async () => {
     const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
     expect(

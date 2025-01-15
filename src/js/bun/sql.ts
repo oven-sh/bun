@@ -874,7 +874,6 @@ function SQL(o) {
         throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
       }
     }
-
     return createQuery(sqlString, values, new SQLResultArray(), columns);
   }
 
@@ -1142,7 +1141,7 @@ function SQL(o) {
         throw err;
       }
     };
-    let transaction_started = false;
+    let needs_rollback = false;
     try {
       if (options) {
         //@ts-ignore
@@ -1151,13 +1150,14 @@ function SQL(o) {
         //@ts-ignore
         await transaction_sql("BEGIN");
       }
-      transaction_started = true;
+      needs_rollback = true;
       const transaction_result = await callback(transaction_sql);
       await transaction_sql("COMMIT");
+      needs_rollback = false;
       return resolve(transaction_result);
     } catch (err) {
       try {
-        if (!state.closed && transaction_started) {
+        if (!state.closed && needs_rollback) {
           await transaction_sql("ROLLBACK");
         }
       } catch (err) {

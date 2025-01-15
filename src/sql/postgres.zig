@@ -219,6 +219,9 @@ pub const PostgresSQLQuery = struct {
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
 
     pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (this.thisValue == .zero) {
+            return .zero;
+        }
         const target = PostgresSQLQuery.targetGetCached(this.thisValue) orelse return .zero;
         PostgresSQLQuery.targetSetCached(this.thisValue, globalObject, .zero);
         return target;

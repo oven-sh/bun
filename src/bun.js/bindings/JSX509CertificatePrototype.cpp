@@ -182,6 +182,8 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
             flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT;
         } else if (view == "never"_s) {
             flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+        } else if (view == "default"_s) {
+            // Matches OpenSSL's default, no flags.
         } else {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "subject must be 'always' or 'never'"_s);
             return 0;

@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 
 #include "JavaScriptCore/ArrayAllocationProfile.h"
@@ -73,7 +71,7 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
     BUF_MEM* bptr;
     BIO_get_mem_ptr(bio.get(), &bptr);
     std::span<const char> span(bptr->data, bptr->length);
-    if (simdutf::validate_utf8(span.data(), span.size())) {
+    if (simdutf::validate_ascii(span.data(), span.size())) {
         return toExternalStringImpl(bio, span);
     }
     return WTF::String::fromUTF8({ reinterpret_cast<const LChar*>(bptr->data), bptr->length });
@@ -1174,6 +1172,14 @@ extern "C" EncodedJSValue Bun__X509__toJS(X509* cert, JSGlobalObject* globalObje
     ncrypto::X509Pointer cert_ptr(cert);
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     return JSValue::encode(JSX509Certificate::create(zigGlobalObject->vm(), zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject), globalObject, WTFMove(cert_ptr)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsIsX509Certificate, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(0);
+    if (!value.isCell())
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(value.asCell()->inherits(JSX509Certificate::info())));
 }
 
 } // namespace Bun

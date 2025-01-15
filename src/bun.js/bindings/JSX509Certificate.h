@@ -18,6 +18,8 @@ class GlobalObject;
 
 namespace Bun {
 
+JSC_DECLARE_HOST_FUNCTION(jsIsX509Certificate);
+
 using namespace JSC;
 
 class JSX509Certificate final : public JSC::JSDestructibleObject {

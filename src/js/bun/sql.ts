@@ -1007,10 +1007,69 @@ function SQL(o) {
       return Promise.resolve(reserved_sql);
     };
 
+    reserved_sql.commitDistributed = async function (name: string) {
+      if (state.closed) {
+        throw connectionClosedError();
+      }
+      const adapter = connectionInfo.adapter;
+      if (name.indexOf("'") !== -1) {
+        throw Error(`Distributed transaction name cannot contain single quotes.`);
+      }
+      switch (adapter) {
+        case "postgres":
+          return await reserved_sql(`COMMIT PREPARED '${name}'`);
+        case "mysql":
+          return await reserved_sql(`XA COMMIT '${name}'`);
+        case "mssql":
+          throw Error(`MSSQL distributed transaction is automatically committed.`);
+        case "sqlite":
+          throw Error(`SQLite dont support distributed transactions.`);
+        default:
+          throw Error(`Unsupported adapter: ${adapter}.`);
+      }
+    };
+    reserved_sql.rollbackDistributed = async function (name: string) {
+      if (state.closed) {
+        throw connectionClosedError();
+      }
+      const adapter = connectionInfo.adapter;
+      switch (adapter) {
+        case "postgres":
+          return await reserved_sql(`ROLLBACK PREPARED '${name}'`);
+        case "mysql":
+          return await reserved_sql(`XA ROLLBACK '${name}'`);
+        case "mssql":
+          throw Error(`MSSQL distributed transaction is automatically rolled back.`);
+        case "sqlite":
+          throw Error(`SQLite dont support distributed transactions.`);
+        default:
+          throw Error(`Unsupported adapter: ${adapter}.`);
+      }
+    };
+
     // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
 
+    reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
+      // begin is allowed the difference is that we need to make sure to use the same connection and never release it
+      if (state.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      let callback = fn;
+
+      if (typeof name !== "string") {
+        return Promise.reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
+      }
+
+      if (!$isCallable(callback)) {
+        return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+      }
+      const { promise, resolve, reject } = Promise.withResolvers();
+      // lets just reuse the same code path as the transaction begin
+      onTransactionConnected(callback, name, resolve, reject, true, true, null, pooledConnection);
+      return promise;
+    };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.closed) {
@@ -1029,7 +1088,7 @@ function SQL(o) {
       }
       const { promise, resolve, reject } = Promise.withResolvers();
       // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(callback, options, resolve, reject, true, null, pooledConnection);
+      onTransactionConnected(callback, options, resolve, reject, true, false, null, pooledConnection);
       return promise;
     };
 
@@ -1066,7 +1125,38 @@ function SQL(o) {
     reserved_sql.options = sql.options;
     resolve(reserved_sql);
   }
-  async function onTransactionConnected(callback, options, resolve, reject, dontRelease, err, pooledConnection) {
+  async function onTransactionConnected(
+    callback,
+    options,
+    resolve,
+    reject,
+    dontRelease,
+    distributed,
+    err,
+    pooledConnection,
+  ) {
+    /*
+    BEGIN; -- works on POSTGRES, MySQL (autocommit is true, no options accepted), and SQLite (no options accepted) (need to change to BEGIN TRANSACTION on MSSQL)
+    START TRANSACTION; -- works on POSTGRES, MySQL (autocommit is false, options accepted), (need to change to BEGIN TRANSACTION on MSSQL and BEGIN on SQLite)
+
+    -- Create a SAVEPOINT
+    SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to SAVE TRANSACTION on MSSQL)
+
+    -- QUERY
+
+    -- Roll back to SAVEPOINT if needed
+    ROLLBACK TO SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
+
+    -- Release the SAVEPOINT
+    RELEASE SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (MSSQL dont have RELEASE SAVEPOINT you just need to transaction again)
+
+    -- Commit the transaction
+    COMMIT; -- works on POSTGRES, MySQL, and SQLite (need to change to COMMIT TRANSACTION on MSSQL)
+    -- or rollback everything
+    ROLLBACK; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
+
+    */
+
     if (err) {
       return reject(err);
     }
@@ -1074,8 +1164,7 @@ function SQL(o) {
       closed: false,
       reject,
     };
-    const onClose = onTransactionDisconnected.bind(state);
-    pooledConnection.onClose(onClose);
+
     let savepoints = 0;
     let transactionQueries = new Set();
     const adapter = connectionInfo.adapter;
@@ -1085,33 +1174,76 @@ function SQL(o) {
     let SAVEPOINT_COMMAND: string = "SAVEPOINT";
     let RELEASE_SAVEPOINT_COMMAND: string | null = "RELEASE SAVEPOINT";
     let ROLLBACK_TO_SAVEPOINT_COMMAND: string = "ROLLBACK TO SAVEPOINT";
-    switch (adapter) {
-      case "postgres":
-        if (options) {
-          BEGIN_COMMAND = `BEGIN ${options}`;
-        }
-        break;
-      case "mysql":
-        // START TRANSACTION is autocommit false
-        BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
-        break;
+    // MySQL and maybe other adapters need to call XA END or some other command before commit or rollback in a distributed transaction
+    let BEFORE_COMMIT_OR_ROLLBACK_COMMAND: string | null = null;
+    if (distributed) {
+      if (options.indexOf("'") !== -1) {
+        pool.release(pooledConnection);
+        return reject(new Error(`Distributed transaction name cannot contain single quotes.`));
+      }
+      // distributed transaction
+      // in distributed transaction options is the name/id of the transaction
+      switch (adapter) {
+        case "postgres":
+          // in postgres we only need to call prepare transaction instead of commit
+          COMMIT_COMMAND = `PREPARE TRANSACTION '${options}'`;
+          break;
+        case "mysql":
+          // MySQL we use XA transactions
+          // START TRANSACTION is autocommit false
+          BEGIN_COMMAND = `XA START '${options}'`;
+          BEFORE_COMMIT_OR_ROLLBACK_COMMAND = `XA END '${options}'`;
+          COMMIT_COMMAND = `XA PREPARE '${options}'`;
+          ROLLBACK_COMMAND = `XA ROLLBACK '${options}'`;
+          break;
+        case "sqlite":
+          pool.release(pooledConnection);
 
-      case "sqlite":
-        // do not support options just use defaults
-        break;
-      case "mssql":
-        BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
-        ROLLBACK_COMMAND = "ROLLBACK TRANSACTION";
-        COMMIT_COMMAND = "COMMIT TRANSACTION";
-        SAVEPOINT_COMMAND = "SAVE";
-        RELEASE_SAVEPOINT_COMMAND = null; // mssql dont have release savepoint
-        ROLLBACK_TO_SAVEPOINT_COMMAND = "ROLLBACK TRANSACTION";
-        break;
-      default:
-        // TODO: use ERR_
-        throw new Error(`Unsupported adapter: ${adapter}.`);
+          // do not support options just use defaults
+          return reject(new Error(`SQLite dont support distributed transactions.`));
+        case "mssql":
+          BEGIN_COMMAND = ` BEGIN DISTRIBUTED TRANSACTION ${options}`;
+          ROLLBACK_COMMAND = `ROLLBACK TRANSACTION ${options}`;
+          COMMIT_COMMAND = `COMMIT TRANSACTION ${options}`;
+          break;
+        default:
+          pool.release(pooledConnection);
+
+          // TODO: use ERR_
+          return reject(new Error(`Unsupported adapter: ${adapter}.`));
+      }
+    } else {
+      // normal transaction
+      switch (adapter) {
+        case "postgres":
+          if (options) {
+            BEGIN_COMMAND = `BEGIN ${options}`;
+          }
+          break;
+        case "mysql":
+          // START TRANSACTION is autocommit false
+          BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
+          break;
+
+        case "sqlite":
+          // do not support options just use defaults
+          break;
+        case "mssql":
+          BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
+          ROLLBACK_COMMAND = "ROLLBACK TRANSACTION";
+          COMMIT_COMMAND = "COMMIT TRANSACTION";
+          SAVEPOINT_COMMAND = "SAVE";
+          RELEASE_SAVEPOINT_COMMAND = null; // mssql dont have release savepoint
+          ROLLBACK_TO_SAVEPOINT_COMMAND = "ROLLBACK TRANSACTION";
+          break;
+        default:
+          pool.release(pooledConnection);
+          // TODO: use ERR_
+          return reject(new Error(`Unsupported adapter: ${adapter}.`));
+      }
     }
-
+    const onClose = onTransactionDisconnected.bind(state);
+    pooledConnection.onClose(onClose);
     function transaction_sql(strings, ...values) {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
@@ -1130,11 +1262,64 @@ function SQL(o) {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
       }
+
       return Promise.resolve(transaction_sql);
+    };
+    transaction_sql.commitDistributed = async function (name: string) {
+      if (state.closed) {
+        throw connectionClosedError();
+      }
+      if (name.indexOf("'") !== -1) {
+        throw Error(`Distributed transaction name cannot contain single quotes.`);
+      }
+      switch (adapter) {
+        case "postgres":
+          return await transaction_sql(`COMMIT PREPARED '${name}'`);
+        case "mysql":
+          return await transaction_sql(`XA COMMIT '${name}'`);
+        case "mssql":
+          throw Error(`MSSQL distributed transaction is automatically committed.`);
+        case "sqlite":
+          throw Error(`SQLite dont support distributed transactions.`);
+        default:
+          throw Error(`Unsupported adapter: ${adapter}.`);
+      }
+    };
+    transaction_sql.rollbackDistributed = async function (name: string) {
+      if (state.closed) {
+        throw connectionClosedError();
+      }
+      if (name.indexOf("'") !== -1) {
+        throw Error(`Distributed transaction name cannot contain single quotes.`);
+      }
+      switch (adapter) {
+        case "postgres":
+          return await transaction_sql(`ROLLBACK PREPARED '${name}'`);
+        case "mysql":
+          return await transaction_sql(`XA ROLLBACK '${name}'`);
+        case "mssql":
+          throw Error(`MSSQL distributed transaction is automatically rolled back.`);
+        case "sqlite":
+          throw Error(`SQLite dont support distributed transactions.`);
+        default:
+          throw Error(`Unsupported adapter: ${adapter}.`);
+      }
     };
     // begin is not allowed on a transaction we need to use savepoint() instead
     transaction_sql.begin = function () {
+      if (distributed) {
+        throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call begin inside a distributed transaction");
+      }
       throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call begin inside a transaction use savepoint() instead");
+    };
+
+    transaction_sql.beginDistributed = function () {
+      if (distributed) {
+        throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call beginDistributed inside a distributed transaction");
+      }
+      throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE(
+        "cannot call beginDistributed inside a transaction use savepoint() instead",
+      );
     };
 
     transaction_sql.flush = function () {
@@ -1148,46 +1333,55 @@ function SQL(o) {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
       }
+      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+        await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+      }
       await transaction_sql(ROLLBACK_COMMAND);
       state.closed = true;
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;
 
-    transaction_sql.savepoint = async (fn: TransactionCallback, name?: string) => {
-      let savepoint_callback = fn;
+    if (distributed) {
+      transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
+        throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call savepoint inside a distributed transaction");
+      };
+    } else {
+      transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
+        let savepoint_callback = fn;
 
-      if (state.closed) {
-        throw connectionClosedError();
-      }
-      if ($isCallable(name)) {
-        savepoint_callback = name as unknown as TransactionCallback;
-        name = "";
-      }
-      if (!$isCallable(savepoint_callback)) {
-        throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
-      }
-      // matchs the format of the savepoint name in postgres package
-      const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
-      await transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
+        if (state.closed) {
+          throw connectionClosedError();
+        }
+        if ($isCallable(name)) {
+          savepoint_callback = name as unknown as TransactionCallback;
+          name = "";
+        }
+        if (!$isCallable(savepoint_callback)) {
+          throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
+        }
+        // matchs the format of the savepoint name in postgres package
+        const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
+        await transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
 
-      try {
-        let result = await savepoint_callback(transaction_sql);
-        if (RELEASE_SAVEPOINT_COMMAND) {
-          // mssql dont have release savepoint
-          await transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
+        try {
+          let result = await savepoint_callback(transaction_sql);
+          if (RELEASE_SAVEPOINT_COMMAND) {
+            // mssql dont have release savepoint
+            await transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
+          }
+          if (Array.isArray(result)) {
+            result = await Promise.all(result);
+          }
+          return result;
+        } catch (err) {
+          if (!state.closed) {
+            await transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          }
+          throw err;
         }
-        if (Array.isArray(result)) {
-          result = await Promise.all(result);
-        }
-        return result;
-      } catch (err) {
-        if (!state.closed) {
-          await transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
-        }
-        throw err;
-      }
-    };
+      };
+    }
     let needs_rollback = false;
     try {
       await transaction_sql(BEGIN_COMMAND);
@@ -1196,11 +1390,19 @@ function SQL(o) {
       if (Array.isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
+      // at this point we dont need to rollback anymore
+      needs_rollback = false;
+      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+        await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+      }
       await transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
       try {
         if (!state.closed && needs_rollback) {
+          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+            await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+          }
           await transaction_sql(ROLLBACK_COMMAND);
         }
       } catch (err) {
@@ -1245,30 +1447,70 @@ function SQL(o) {
     pool.connect(onReserveConnected.bind(promiseWithResolvers));
     return promiseWithResolvers.promise;
   };
+  sql.rollbackDistributed = async function (name: string) {
+    if (pool.closed) {
+      throw connectionClosedError();
+    }
+    if (name.indexOf("'") !== -1) {
+      throw Error(`Distributed transaction name cannot contain single quotes.`);
+    }
+    const adapter = connectionInfo.adapter;
+    switch (adapter) {
+      case "postgres":
+        return await sql(`ROLLBACK PREPARED '${name}'`);
+      case "mysql":
+        return await sql(`XA ROLLBACK '${name}'`);
+      case "mssql":
+        throw Error(`MSSQL distributed transaction is automatically rolled back.`);
+      case "sqlite":
+        throw Error(`SQLite dont support distributed transactions.`);
+      default:
+        throw Error(`Unsupported adapter: ${adapter}.`);
+    }
+  };
+
+  sql.commitDistributed = async function (name: string) {
+    if (pool.closed) {
+      throw connectionClosedError();
+    }
+    if (name.indexOf("'") !== -1) {
+      throw Error(`Distributed transaction name cannot contain single quotes.`);
+    }
+    const adapter = connectionInfo.adapter;
+    switch (adapter) {
+      case "postgres":
+        return await sql(`COMMIT PREPARED '${name}'`);
+      case "mysql":
+        return await sql(`XA COMMIT '${name}'`);
+      case "mssql":
+        throw Error(`MSSQL distributed transaction is automatically committed.`);
+      case "sqlite":
+        throw Error(`SQLite dont support distributed transactions.`);
+      default:
+        throw Error(`Unsupported adapter: ${adapter}.`);
+    }
+  };
+
+  sql.beginDistributed = (name: string, fn: TransactionCallback) => {
+    if (pool.closed) {
+      return Promise.reject(connectionClosedError());
+    }
+    let callback = fn;
+
+    if (typeof name !== "string") {
+      return Promise.reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
+    }
+
+    if (!$isCallable(callback)) {
+      return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+    }
+    const { promise, resolve, reject } = Promise.withResolvers();
+    // lets just reuse the same code path as the transaction begin
+    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true));
+    return promise;
+  };
 
   sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
-    /*
-    BEGIN; -- works on POSTGRES, MySQL (autocommit is true, no options accepted), and SQLite (no options accepted) (need to change to BEGIN TRANSACTION on MSSQL)
-    START TRANSACTION; -- works on POSTGRES, MySQL (autocommit is false, options accepted), (need to change to BEGIN TRANSACTION on MSSQL and BEGIN on SQLite)
-
-    -- Create a SAVEPOINT
-    SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to SAVE TRANSACTION on MSSQL)
-
-    -- QUERY
-
-    -- Roll back to SAVEPOINT if needed
-    ROLLBACK TO SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
-
-    -- Release the SAVEPOINT
-    RELEASE SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (MSSQL dont have RELEASE SAVEPOINT you just need to transaction again)
-
-    -- Commit the transaction
-    COMMIT; -- works on POSTGRES, MySQL, and SQLite (need to change to COMMIT TRANSACTION on MSSQL)
-    -- or rollback everything
-    ROLLBACK; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
-
-    */
-
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
     }
@@ -1284,7 +1526,7 @@ function SQL(o) {
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false));
+    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false));
     return promise;
   };
 

@@ -987,7 +987,6 @@ extern "C" napi_status napi_wrap(napi_env env,
     } else {
         // wrap the ref in an external so that it can serve as a JSValue
         auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
-        globalObject->napiWraps()->set(globalObject->vm(), jsc_object, external);
         jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
 
@@ -1010,9 +1009,6 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     // may be null
     auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
-    //// auto* external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()));
-    //// NAPI_CHECK_ARG(env, external);
-
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = globalObject->vm();
     NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
@@ -1030,8 +1026,6 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     }
 
     ref->finalizer.clear();
-    //// external->m_value = nullptr;
-    //// globalObject->napiWraps()->remove(value.asCell());
 
     // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
     // if strong, native addon needs to clean it up.
@@ -1054,15 +1048,8 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     auto& vm = globalObject->vm();
     NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
-    //// auto* external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()));
-    //// NAPI_RETURN_EARLY_IF_FALSE(env, external && external->m_value, napi_invalid_arg);
-    //// auto* ref = reinterpret_cast<NapiRef*>(external->m_value);
 
-    if (result) {
-        *result = ref->nativeObject;
-    } else {
-        //// napi_invalid_arg?
-    }
+    *result = ref->nativeObject;
 
     NAPI_RETURN_SUCCESS(env);
 }

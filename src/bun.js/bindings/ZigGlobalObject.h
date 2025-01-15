@@ -462,14 +462,9 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // Used by napi_wrap to associate native objects with JS values.
-    // Should only use JSCell* keys and NapiExternal values that contain NapiRefs.
-    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiWraps;
     // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
     // Should only use JSCell* keys and NapiTypeTag values.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
-
-    JSC::JSWeakMap* napiWraps() const { return m_napiWraps.getInitializedOnMainThread(this); }
 
     JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
 

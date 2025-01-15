@@ -70,10 +70,7 @@ beforeAll(async () => {
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 
-  const start = Date.now();
-
   async function buildOne(dir: string) {
-    console.log(`Building in ${dir.replace(/.+node-napi-tests.test./, "")}.`, (Date.now() - start) / 1000, "s elapsed");
     const child = spawn({
       cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
       cwd: dir,

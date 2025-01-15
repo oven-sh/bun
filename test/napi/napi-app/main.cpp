@@ -543,14 +543,6 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
 static bool finalize_called = false;
 
 void finalize_cb(napi_env env, void *finalize_data, void *finalize_hint) {
-  // only do this in bun
-  bool &create_handle_scope = *reinterpret_cast<bool *>(finalize_hint);
-  if (create_handle_scope) {
-    napi_handle_scope hs;
-    assert(napi_open_handle_scope(env, &hs) == napi_ok);
-    assert(napi_close_handle_scope(env, hs) == napi_ok);
-  }
-  delete &create_handle_scope;
   finalize_called = true;
 }
 

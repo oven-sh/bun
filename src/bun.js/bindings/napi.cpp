@@ -2637,8 +2637,6 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, result);
-    NAPI_RETURN_EARLY_IF_FALSE(env, sign_bit == 0 || sign_bit == 1, napi_invalid_arg);
-    NAPI_RETURN_EARLY_IF_FALSE(env, word_count == 0 || words, napi_invalid_arg);
     NAPI_CHECK_ARG(env, words);
     // JSBigInt::createWithLength's size argument is unsigned int
     NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= UINT_MAX, napi_invalid_arg);

@@ -898,7 +898,6 @@ pub const EventLoop = struct {
     pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
         this.enter();
         defer this.exit();
-
         _ = callback.call(globalObject, thisValue, arguments) catch |err|
             globalObject.reportActiveExceptionAsUnhandled(err);
     }

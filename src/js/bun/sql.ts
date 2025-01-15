@@ -47,6 +47,7 @@ const {
   createQuery,
   PostgresSQLConnection,
   init,
+  setPromiseAsHandled, // maybe we should move this to utils.zig
 } = $zig("postgres.zig", "createBinding");
 
 function normalizeSSLMode(value: string): SSLMode {
@@ -105,7 +106,7 @@ class Query extends PublicPromise {
     this[_queryStatus] = handle ? 0 : QueryStatus.cancelled;
   }
 
-  async [_run]() {
+  [_run]() {
     const { [_handle]: handle, [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled)) {
@@ -113,7 +114,7 @@ class Query extends PublicPromise {
     }
 
     this[_queryStatus] |= QueryStatus.executed;
-    await 1;
+    // await 1;
     return handler(this, handle);
   }
 
@@ -183,12 +184,16 @@ class Query extends PublicPromise {
 
   then() {
     this[_run]();
-    return super.$then.$apply(this, arguments);
+    const result = super.$then.$apply(this, arguments);
+    setPromiseAsHandled(result);
+    return result;
   }
 
   catch() {
     this[_run]();
-    return super.catch.$apply(this, arguments);
+    const result = super.catch.$apply(this, arguments);
+    setPromiseAsHandled(result);
+    return result;
   }
 
   finally() {
@@ -1153,7 +1158,6 @@ function SQL(o) {
       needs_rollback = true;
       const transaction_result = await callback(transaction_sql);
       await transaction_sql("COMMIT");
-      needs_rollback = false;
       return resolve(transaction_result);
     } catch (err) {
       try {

@@ -328,10 +328,13 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        // TODO: error handling
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, err.toJS(globalObject) });
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(function, globalObject, thisValue, &.{
+            targetValue,
+            err.toJS(globalObject),
+        });
     }
 
     const CommandTag = union(enum) {
@@ -3175,6 +3178,14 @@ const Signature = struct {
     }
 };
 
+pub fn setPromiseAsHandled(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const js_promise = callframe.argument(0);
+    if (js_promise.asAnyPromise()) |promise| {
+        promise.setHandled(globalObject.vm());
+    }
+
+    return .undefined;
+}
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
     binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.getConstructor(globalObject));
@@ -3189,6 +3200,11 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
         globalObject,
         ZigString.static("createConnection"),
         JSC.JSFunction.create(globalObject, "createQuery", PostgresSQLConnection.call, 2, .{}),
+    );
+    binding.put(
+        globalObject,
+        ZigString.static("setPromiseAsHandled"),
+        JSC.JSFunction.create(globalObject, "setPromiseAsHandled", setPromiseAsHandled, 1, .{}),
     );
 
     return binding;

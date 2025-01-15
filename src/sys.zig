@@ -893,7 +893,7 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
-    const wbuf = if (T != u16) bun.WPathBufferPool.get() else {};
+    const wbuf = if (T != u16) bun.WPathBufferPool.get();
     defer if (T != u16) bun.WPathBufferPool.put(wbuf);
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 

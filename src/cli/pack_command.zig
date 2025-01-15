@@ -541,8 +541,7 @@ pub const PackCommand = struct {
                 const concat = try entrySubpath(ctx.allocator, "node_modules", _entry_name);
 
                 const scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch |err| {
-                    if (err != error.NotDir and err != error.FileNotFound) {
-                    }
+                    if (err != error.NotDir and err != error.FileNotFound) {}
                     continue;
                 };
 

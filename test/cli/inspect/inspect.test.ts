@@ -1,14 +1,21 @@
 import { Subprocess, spawn } from "bun";
-import { afterEach, expect, test, describe } from "bun:test";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { afterEach, expect, test, describe, beforeAll, afterAll } from "bun:test";
+import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles, tmpdirSync } from "harness";
 import { WebSocket } from "ws";
 import { join } from "node:path";
+import fs from "fs";
 let inspectee: Subprocess;
 import { SocketFramer } from "./socket-framer";
 import { JUnitReporter, InspectorSession, connect } from "./junit-reporter";
 import stripAnsi from "strip-ansi";
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
+
+/**
+ * Get a function that creates a random `.sock` file in the specified temporary directory.
+ */
+const randomSocketPathFn = (tempdir: string) => (): string =>
+  join(tempdir, Math.random().toString(36).substring(2, 15) + ".sock");
 
 describe("websocket", () => {
   const tests = [
@@ -294,6 +301,20 @@ describe("websocket", () => {
 });
 
 describe("unix domain socket without websocket", () => {
+  let tempdir: string;
+  let randomSocketPath: () => string;
+
+  beforeAll(() => {
+    // Create .tmp in root repo directory to avoid long paths on Windows
+    tempdir = ".tmp";
+    fs.mkdirSync(tempdir, { recursive: true });
+    randomSocketPath = randomSocketPathFn(tempdir);
+  });
+
+  afterAll(() => {
+    fs.rmdirSync(tempdir, { recursive: true });
+  });
+
   if (isPosix) {
     async function runTest(path: string, args: string[], env = bunEnv) {
       let { promise, resolve, reject } = Promise.withResolvers();
@@ -337,23 +358,23 @@ describe("unix domain socket without websocket", () => {
     }
 
     test("bun --inspect=unix://", async () => {
-      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      const path = randomSocketPath();
       const url = new URL(`unix://${path}`);
       await runTest(path, ["--inspect=" + url.href]);
     });
 
     test("bun --inspect=unix:", async () => {
-      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      const path = randomSocketPath();
       await runTest(path, ["--inspect=unix:" + path]);
     });
 
     test("BUN_INSPECT=' unix://' bun --inspect", async () => {
-      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix://" + path });
     });
 
     test("BUN_INSPECT='unix:' bun --inspect", async () => {
-      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
   }
@@ -362,7 +383,6 @@ describe("unix domain socket without websocket", () => {
 /// TODO: this test is flaky because the inspect may not send all messages before the process exit
 /// we need to implement a way/option so we wait every message from the inspector before exiting
 test.todo("junit reporter", async () => {
-  const path = Math.random().toString(36).substring(2, 15) + ".sock";
   let reporter: JUnitReporter;
   let session: InspectorSession;
 
@@ -386,6 +406,7 @@ test.todo("junit reporter", async () => {
       });
     `,
   });
+  const path = randomSocketPathFn(tempdir)();
   let { resolve, reject, promise } = Promise.withResolvers();
   const [socket, subprocess] = await Promise.all([
     connect(`unix://${path}`, resolve),

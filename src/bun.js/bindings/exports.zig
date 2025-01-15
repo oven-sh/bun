@@ -21,7 +21,6 @@ const Environment = bun.Environment;
 const ScriptArguments = opaque {};
 const JSPromise = JSC.JSPromise;
 const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
@@ -30,6 +29,18 @@ const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+
+pub const Exception = opaque {
+    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
+    extern fn JSC__Exception__asJSValue(this: *Exception) JSValue;
+    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void {
+        JSC__Exception__getStackTrace(this, global, stack);
+    }
+
+    pub fn value(this: *Exception) JSValue {
+        return JSC__Exception__asJSValue(this);
+    }
+};
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -48,6 +59,10 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
+
+        // JSC might mess with the stack size.
+        bun.StackCheck.configureThread();
+
         return global;
     }
 
@@ -140,6 +155,7 @@ pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
+pub const JSNetworkSink = JSC.WebCore.NetworkSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -357,15 +373,22 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
-    const _bun: string = "bun";
+    var title_mutex = bun.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
-        title.* = ZigString.init(_bun);
+        title_mutex.lock();
+        defer title_mutex.unlock();
+        const str = bun.CLI.Bun__Node__ProcessTitle;
+        title.* = ZigString.init(str orelse "bun");
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-    pub fn setTitle(globalObject: *JSGlobalObject, _: *ZigString) callconv(.C) JSValue {
-        return ZigString.init(_bun).toJS(globalObject);
+    pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
+        title_mutex.lock();
+        defer title_mutex.unlock();
+        if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
+        bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+        return newvalue.toJS(globalObject);
     }
 
     pub const getArgv = JSC.Node.Process.getArgv;
@@ -664,9 +687,17 @@ pub const ZigStackFrame = extern struct {
 
             switch (this.code_type) {
                 .Eval => {
-                    try writer.writeAll("(eval)");
+                    if (this.enable_color) {
+                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                    } else {
+                        try writer.writeAll("eval");
+                    }
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                        } else {
+                            try std.fmt.format(writer, " {}", .{name});
+                        }
                     }
                 },
                 .Function => {
@@ -676,15 +707,15 @@ pub const ZigStackFrame = extern struct {
                         } else {
                             try std.fmt.format(writer, "{}", .{name});
                         }
-                    }
-                },
-                .Global => {
-                    if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
-                        try writer.writeAll("globalThis");
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                        } else {
+                            try writer.writeAll("<anonymous>");
+                        }
                     }
                 },
+                .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
                         try std.fmt.format(writer, "{}", .{name});
@@ -962,6 +993,7 @@ comptime {
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
+        JSNetworkSink.shim.ref();
         JSFileSink.shim.ref();
         JSFileSink.shim.ref();
         _ = ZigString__free;

@@ -26,7 +26,7 @@ class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
-static WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
+static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -54,6 +54,10 @@ public:
     }
     void unpauseForInitializedInspector() override
     {
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        }
     }
 };
 
@@ -120,11 +124,6 @@ public:
             };
         }
 
-        if (waitingForConnection) {
-            waitingForConnection = false;
-            Debugger__didConnect();
-        }
-
         this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
     }
 
@@ -152,11 +151,6 @@ public:
             default: {
                 break;
             }
-            }
-
-            if (waitingForConnection) {
-                waitingForConnection = false;
-                Debugger__didConnect();
             }
         });
     }
@@ -493,7 +487,7 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (inspectorConnections == nullptr) {
-            inspectorConnections = new WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
+            inspectorConnections = new WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
         }
 
         inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<BunInspectorConnection*, 8>());

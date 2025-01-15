@@ -77,6 +77,10 @@ pub const Request = struct {
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
     pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
 
+    pub fn memoryCost(this: *const Request) usize {
+        return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
+    }
+
     pub export fn Request__getUWSRequest(
         this: *Request,
     ) ?*uws.Request {
@@ -93,13 +97,9 @@ pub const Request = struct {
         this.request_context.enableTimeoutEvents();
     }
 
-    pub export fn Request__setTimeout(
-        this: *Request,
-        seconds: JSC.JSValue,
-        globalThis: *JSC.JSGlobalObject,
-    ) void {
+    pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
         if (!seconds.isNumber()) {
-            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
+            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{}) catch {};
             return;
         }
 
@@ -227,7 +227,7 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
             if (this.body.value == .Blob) {
                 try writer.writeAll("\n");
@@ -247,7 +247,7 @@ pub const Request = struct {
                 if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
-                    formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                    try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
                 }
             }
         }
@@ -381,12 +381,9 @@ pub const Request = struct {
     ) JSC.JSValue {
         return ZigString.init("").toJS(globalThis);
     }
-    pub fn getUrl(
-        this: *Request,
-        globalObject: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getUrl(this: *Request, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         this.ensureURL() catch {
-            globalObject.throw("Failed to join URL", .{});
+            globalObject.throw("Failed to join URL", .{}) catch {}; // TODO: propagate
             return .zero;
         };
 
@@ -542,9 +539,9 @@ pub const Request = struct {
         }
 
         if (arguments.len == 0) {
-            return globalThis.throw2("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
+            return globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
-            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
+            return globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
         }
 
         const url_or_object = arguments[0];
@@ -564,7 +561,7 @@ pub const Request = struct {
             if (!req.url.isEmpty())
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
-            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object", .{});
+            return globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
         }
 
         const values_to_try_ = [_]JSValue{
@@ -686,7 +683,7 @@ pub const Request = struct {
                         req.signal = signal.ref();
                     } else {
                         if (!globalThis.hasException()) {
-                            globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                            return globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
                         }
                         return error.JSError;
                     }
@@ -729,7 +726,7 @@ pub const Request = struct {
         }
 
         if (req.url.isEmpty()) {
-            return globalThis.throw2("Failed to construct 'Request': url is required.", .{});
+            return globalThis.throw("Failed to construct 'Request': url is required.", .{});
         }
 
         const href = JSC.URL.hrefFromString(req.url);
@@ -737,9 +734,7 @@ pub const Request = struct {
             if (!globalThis.hasException()) {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
                 // so we must increment the reference count before calling it.
-                globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                    req.url,
-                }).throw();
+                return globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
             }
             return error.JSError;
         }
@@ -924,7 +919,7 @@ pub const Request = struct {
         const vm = globalThis.bunVM();
         const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
             if (!globalThis.hasException()) {
-                globalThis.throw("Failed to clone request", .{});
+                globalThis.throw("Failed to clone request", .{}) catch {};
             }
             return;
         };

@@ -58,9 +58,8 @@ pub const Stdio = union(enum) {
             };
         }
 
-        pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) JSValue {
-            globalThis.throw("{s}", .{this.toStr()});
-            return .zero;
+        pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
+            return globalThis.throw("{s}", .{this.toStr()});
         }
     };
 

@@ -1203,7 +1203,7 @@ var require_browser2 = __commonJS({
       this._hasher.update(data, encoding);
       return this;
     };
-    LazyHash.prototype.digest = function update(data, encoding) {
+    LazyHash.prototype.digest = function digest(data, encoding) {
       this._checkFinalized();
       this._finalized = true;
       return this._hasher.digest(data, encoding);
@@ -1334,8 +1334,8 @@ var require_browser2 = __commonJS({
       });
     }
 
-    module.exports = function createHash(algorithm) {
-      return new LazyHash(algorithm);
+    module.exports = function createHash(algorithm, options) {
+      return new LazyHash(algorithm, options);
     };
 
     module.exports.createHash = module.exports;
@@ -12037,6 +12037,10 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
+crypto_exports.getFips = function getFips() {
+  return 0;
+};
+
 crypto_exports.getRandomValues = getRandomValues;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomInt = randomInt;
@@ -12046,6 +12050,7 @@ crypto_exports.scryptSync = scryptSync;
 crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
+crypto_exports.X509Certificate = require_certificate().X509Certificate;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

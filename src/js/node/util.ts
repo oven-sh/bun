@@ -2,12 +2,14 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
+const { validateString, validateOneOf } = require("internal/validators");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectKeys = Object.keys;
 
 var cjs_exports;
 
@@ -29,10 +31,12 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
+const codesWarned = new Set();
 function deprecate(fn, msg, code) {
   if (process.noDeprecation === true) {
     return fn;
   }
+  if (code !== undefined) validateString(code, "code");
 
   var warned = false;
   function deprecated() {
@@ -44,7 +48,15 @@ function deprecate(fn, msg, code) {
       } else if (process.traceDeprecation) {
         console.trace(msg);
       } else {
-        console.error(msg);
+        if (code !== undefined) {
+          // only warn for each code once
+          if (codesWarned.has(code)) {
+            process.emitWarning(msg, "DeprecationWarning", code);
+          }
+          codesWarned.add(code);
+        } else {
+          process.emitWarning(msg, "DeprecationWarning");
+        }
       }
       warned = true;
     }
@@ -137,17 +149,23 @@ var log = function log() {
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
-    throw ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
+    throw $ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
   }
 
   if (superCtor === undefined || superCtor === null) {
-    throw ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
+    throw $ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
   }
 
   if (superCtor.prototype === undefined) {
-    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
   }
-  ctor.super_ = superCtor;
+  Object.defineProperty(ctor, "super_", {
+    // @ts-ignore
+    __proto__: null,
+    value: superCtor,
+    writable: true,
+    configurable: true,
+  });
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {
@@ -170,30 +188,40 @@ function callbackifyOnRejected(reason, cb) {
   return cb(reason);
 }
 function callbackify(original) {
-  if (typeof original !== "function") {
-    throw new TypeError('The "original" argument must be of type Function');
-  }
-  function callbackified() {
-    var args = Array.prototype.slice.$call(arguments);
-    var maybeCb = args.pop();
-    if (typeof maybeCb !== "function") {
-      throw new TypeError("The last argument must be of type Function");
-    }
-    var self = this;
-    var cb = function () {
-      return maybeCb.$apply(self, arguments);
-    };
+  const { validateFunction } = require("internal/validators");
+  validateFunction(original, "original");
+
+  // We DO NOT return the promise as it gives the user a false sense that
+  // the promise is actually somehow related to the callback's execution
+  // and that the callback throwing will reject the promise.
+  function callbackified(...args) {
+    const maybeCb = Array.prototype.pop.$call(args);
+    validateFunction(maybeCb, "last argument");
+    const cb = Function.prototype.bind.$call(maybeCb, this);
+    // In true node style we process the callback on `nextTick` with all the
+    // implications (stack, `uncaughtException`, `async_hooks`)
     original.$apply(this, args).then(
-      function (ret) {
-        process.nextTick(cb, null, ret);
-      },
-      function (rej) {
-        process.nextTick(callbackifyOnRejected, rej, cb);
-      },
+      ret => process.nextTick(cb, null, ret),
+      rej => process.nextTick(callbackifyOnRejected, rej, cb),
     );
   }
-  Object.setPrototypeOf(callbackified, Object.getPrototypeOf(original));
-  Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
+
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  // It is possible to manipulate a functions `length` or `name` property. This
+  // guards against the manipulation.
+  if (typeof descriptors.length.value === "number") {
+    descriptors.length.value++;
+  }
+  if (typeof descriptors.name.value === "string") {
+    descriptors.name.value += "Callbackified";
+  }
+  const propertiesValues = Object.values(descriptors);
+  for (let i = 0; i < propertiesValues.length; i++) {
+    // We want to use null-prototype objects to not rely on globally mutable
+    // %Object.prototype%.
+    Object.setPrototypeOf(propertiesValues[i], null);
+  }
+  Object.defineProperties(callbackified, descriptors);
   return callbackified;
 }
 var toUSVString = input => {
@@ -201,24 +229,33 @@ var toUSVString = input => {
 };
 
 function styleText(format, text) {
-  if (typeof text !== "string") {
-    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
-    e.code = "ERR_INVALID_ARG_TYPE";
-    throw e;
+  validateString(text, "text");
+
+  if ($isJSArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+      }
+      left += `\u001b[${formatCodes[0]}m`;
+      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+
+    return `${left}${text}${right}`;
   }
-  const formatCodes = inspect.colors[format];
+
+  let formatCodes = inspect.colors[format];
+
   if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+    validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
 function getSystemErrorName(err: any) {
-  if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
   if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
@@ -235,11 +272,11 @@ function onAbortedCallback(resolveFn: Function) {
 
 function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
-    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }
 
   if (!$isObject(resource)) {
-    throw ERR_INVALID_ARG_TYPE("resource", "object", resource);
+    throw $ERR_INVALID_ARG_TYPE("resource", "object", resource);
   }
 
   if (signal.aborted) {
@@ -279,17 +316,43 @@ function aborted(signal: AbortSignal, resource: object) {
 }
 
 cjs_exports = {
-  format,
-  formatWithOptions,
-  stripVTControlCharacters,
-  deprecate,
+  // This is in order of `node --print 'Object.keys(util)'`
+  // _errnoException,
+  // _exceptionWithHostPort,
+  _extend,
+  callbackify,
   debug: debuglog,
   debuglog,
-  _extend,
+  deprecate,
+  format,
+  styleText,
+  formatWithOptions,
+  // getCallSite,
+  // getCallSites,
+  // getSystemErrorMap,
+  getSystemErrorName,
+  // getSystemErrorMessage,
+  inherits,
   inspect,
+  isDeepStrictEqual,
+  promisify,
+  stripVTControlCharacters,
+  toUSVString,
+  // transferableAbortSignal,
+  // transferableAbortController,
+  aborted,
   types,
+  // parseEnv,
+  parseArgs,
+  TextDecoder,
+  TextEncoder,
+  // MIMEType,
+  // MIMEParams,
+
+  // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,
   isBoolean,
+  isBuffer,
   isNull,
   isNullOrUndefined,
   isNumber,
@@ -299,22 +362,10 @@ cjs_exports = {
   isRegExp,
   isObject,
   isDate,
-  isFunction,
   isError,
+  isFunction,
   isPrimitive,
-  isBuffer,
   log,
-  inherits,
-  toUSVString,
-  promisify,
-  callbackify,
-  isDeepStrictEqual,
-  TextDecoder,
-  TextEncoder,
-  parseArgs,
-  styleText,
-  getSystemErrorName,
-  aborted,
 };
 
 export default cjs_exports;

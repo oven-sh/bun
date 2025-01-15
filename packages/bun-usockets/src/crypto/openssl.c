@@ -2153,6 +2153,8 @@ us_socket_context_on_socket_connect_error(
   socket->ssl_read_wants_write = 0;
   socket->fatal_error = 0;
   socket->handshake_state = HANDSHAKE_PENDING;
+  // always resume the socket
+  us_socket_resume(1, &socket->s);
   return socket;
 }
 

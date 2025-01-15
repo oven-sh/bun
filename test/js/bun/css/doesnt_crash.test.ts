@@ -15,47 +15,60 @@ describe("doesnt_crash", async () => {
   files = readdirSync(files_dir).map(file => path.join(files_dir, file));
   console.log("Tempdir", temp_dir);
 
-  files.map(absolute => {
+  files.forEach(absolute => {
     absolute = absolute.replaceAll("\\", "/");
     const file = path.basename(absolute);
-    const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
-    const outfile2 = path.join(temp_dir, "file-2" + file).replaceAll("\\", "/");
-    const outfile3 = path.join(temp_dir, "file-3" + file).replaceAll("\\", "/");
-    const outfile4 = path.join(temp_dir, "file-4" + file).replaceAll("\\", "/");
 
-    test(file, async () => {
-      {
-        const { stdout, stderr, exitCode } =
-          await Bun.$`${bunExe()} build --experimental-css ${absolute} --outfile=${outfile1}`.quiet().env(bunEnv);
-        expect(exitCode).toBe(0);
-        expect(stdout.toString()).not.toContain("error");
-        expect(stderr.toString()).toBeEmpty();
-      }
+    const configs: { target: string; minify: boolean }[] = [
+      { target: "bun", minify: false },
+      { target: "bun", minify: true },
+      { target: "browser", minify: false },
+      { target: "browser", minify: true },
+    ];
 
-      const { stdout, stderr, exitCode } =
-        await Bun.$`${bunExe()} build --experimental-css ${outfile1} --outfile=${outfile2}`.quiet().env(bunEnv);
-      expect(exitCode).toBe(0);
-      expect(stdout.toString()).not.toContain("error");
-      expect(stderr.toString()).toBeEmpty();
-    });
+    for (const { target, minify } of configs) {
+      test(`${file} - ${minify ? "minify" : "not minify"}`, async () => {
+        const timeLog = `Transpiled ${file} - ${minify ? "minify" : "not minify"}`;
+        console.time(timeLog);
+        const { logs, outputs } = await Bun.build({
+          entrypoints: [absolute],
+          experimentalCss: true,
+          minify: minify,
+          target,
+          throw: true,
+        });
+        console.timeEnd(timeLog);
 
-    test(`(minify) ${file}`, async () => {
-      {
-        const { stdout, stderr, exitCode } =
-          await Bun.$`${bunExe()} build --experimental-css ${absolute} --minify --outfile=${outfile3}`
-            .quiet()
-            .env(bunEnv);
-        expect(exitCode).toBe(0);
-        expect(stdout.toString()).not.toContain("error");
-        expect(stderr.toString()).toBeEmpty();
-      }
-      const { stdout, stderr, exitCode } =
-        await Bun.$`${bunExe()} build --experimental-css ${outfile3} --minify --outfile=${outfile4}`
-          .quiet()
-          .env(bunEnv);
-      expect(exitCode).toBe(0);
-      expect(stdout.toString()).not.toContain("error");
-      expect(stderr.toString()).toBeEmpty();
-    });
+        if (logs?.length) {
+          throw new Error(logs.join("\n"));
+        }
+
+        expect(outputs.length).toBe(1);
+        const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
+
+        await Bun.write(outfile1, outputs[0]);
+
+        {
+          const timeLog = `Re-transpiled ${file} - ${minify ? "minify" : "not minify"}`;
+          console.time(timeLog);
+          console.log("  Transpiled file path:", outfile1);
+          const { logs, outputs } = await Bun.build({
+            entrypoints: [outfile1],
+            experimentalCss: true,
+            target,
+            minify: minify,
+            throw: true,
+          });
+
+          if (logs?.length) {
+            throw new Error(logs.join("\n"));
+          }
+
+          expect(outputs.length).toBe(1);
+          expect(await outputs[0].text()).not.toBeEmpty();
+          console.timeEnd(timeLog);
+        }
+      });
+    }
   });
 });

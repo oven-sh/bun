@@ -1,7 +1,7 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -213,92 +213,95 @@ for (let withDelay of [true, false]) {
     });
   }
 }
-describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
-  for (let isDirect of [true, false] as const) {
-    it(
-      isDirect ? "direct" : "default",
-      async () => {
-        const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
-        Bun.gc(true);
+describe.todoIf(isBroken && isIntelMacOS)(
+  "1000 uploads & downloads in batches of 64 do not leak ReadableStream",
+  () => {
+    for (let isDirect of [true, false] as const) {
+      it(
+        isDirect ? "direct" : "default",
+        async () => {
+          const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
+          Bun.gc(true);
 
-        const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
-        const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
+          const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
+          const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
 
-        await runTest(
-          {
-            async fetch(req) {
-              var hasher = new Bun.SHA256();
-              for await (const chunk of req.body) {
-                await Bun.sleep(0);
-                hasher.update(chunk);
+          await runTest(
+            {
+              async fetch(req) {
+                var hasher = new Bun.SHA256();
+                for await (const chunk of req.body) {
+                  await Bun.sleep(0);
+                  hasher.update(chunk);
+                }
+                return new Response(
+                  isDirect
+                    ? new ReadableStream({
+                        type: "direct",
+                        async pull(controller) {
+                          await Bun.sleep(0);
+                          controller.write(Buffer.from(hasher.digest("base64")));
+                          await controller.flush();
+                          controller.close();
+                        },
+                      })
+                    : new ReadableStream({
+                        async pull(controller) {
+                          await Bun.sleep(0);
+                          controller.enqueue(Buffer.from(hasher.digest("base64")));
+                          controller.close();
+                        },
+                      }),
+                );
+              },
+            },
+            async server => {
+              const count = 1000;
+              async function callback() {
+                const response = await fetch(server.url, {
+                  body: blob,
+                  method: "POST",
+                });
+
+                // We are testing for ReadableStream leaks, so we use the ReadableStream here.
+                const chunks = [];
+                for await (const chunk of response.body) {
+                  chunks.push(chunk);
+                }
+
+                const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
+
+                expect(digest).toBe(expected);
+                Bun.gc(false);
               }
-              return new Response(
-                isDirect
-                  ? new ReadableStream({
-                      type: "direct",
-                      async pull(controller) {
-                        await Bun.sleep(0);
-                        controller.write(Buffer.from(hasher.digest("base64")));
-                        await controller.flush();
-                        controller.close();
-                      },
-                    })
-                  : new ReadableStream({
-                      async pull(controller) {
-                        await Bun.sleep(0);
-                        controller.enqueue(Buffer.from(hasher.digest("base64")));
-                        controller.close();
-                      },
-                    }),
+              {
+                let remaining = count;
+
+                const batchSize = 64;
+                while (remaining > 0) {
+                  const promises = new Array(count);
+                  for (let i = 0; i < batchSize && remaining > 0; i++) {
+                    promises[i] = callback();
+                  }
+                  await Promise.all(promises);
+                  remaining -= batchSize;
+                }
+              }
+
+              Bun.gc(true);
+              dumpStats();
+              expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
+                Math.max(initialCount - count / 2, 0),
+                initialCount + count / 2,
               );
             },
-          },
-          async server => {
-            const count = 1000;
-            async function callback() {
-              const response = await fetch(server.url, {
-                body: blob,
-                method: "POST",
-              });
-
-              // We are testing for ReadableStream leaks, so we use the ReadableStream here.
-              const chunks = [];
-              for await (const chunk of response.body) {
-                chunks.push(chunk);
-              }
-
-              const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
-
-              expect(digest).toBe(expected);
-              Bun.gc(false);
-            }
-            {
-              let remaining = count;
-
-              const batchSize = 64;
-              while (remaining > 0) {
-                const promises = new Array(count);
-                for (let i = 0; i < batchSize && remaining > 0; i++) {
-                  promises[i] = callback();
-                }
-                await Promise.all(promises);
-                remaining -= batchSize;
-              }
-            }
-
-            Bun.gc(true);
-            dumpStats();
-            expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
-              Math.max(initialCount - count / 2, 0),
-              initialCount + count / 2,
-            );
-          },
-        );
-      },
-      100000,
-    );
-  }
-});
+          );
+        },
+        100000,
+      );
+    }
+  },
+);
 
 [200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {

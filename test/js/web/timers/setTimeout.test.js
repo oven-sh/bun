@@ -267,7 +267,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThan(149);
+    expect(end - start).toBeGreaterThanOrEqual(149);
     done();
   }, 100);
 

@@ -3,7 +3,7 @@ const std = @import("std");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const FSEvents = @import("./fs_events.zig");
 
 const bun = @import("root").bun;
@@ -151,7 +151,7 @@ pub const PathWatcherManager = struct {
             .main_watcher = try Watcher.init(
                 PathWatcherManager,
                 this,
-                vm.bundler.fs,
+                vm.transpiler.fs,
                 bun.default_allocator,
             ),
             .vm = vm,

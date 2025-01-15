@@ -141,6 +141,13 @@ static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__revokeObjectURL, 1 } },
 };
 
+size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSDOMURL*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = lexicalGlobalObject->vm();

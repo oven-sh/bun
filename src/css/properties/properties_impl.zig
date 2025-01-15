@@ -20,6 +20,7 @@ pub fn PropertyIdImpl() type {
             var first = true;
             const name = this.name(this);
             const prefix_value = this.prefix().orNone();
+
             inline for (VendorPrefix.FIELDS) |field| {
                 if (@field(prefix_value, field)) {
                     var prefix: VendorPrefix = .{};

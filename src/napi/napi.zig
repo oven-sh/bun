@@ -2,7 +2,7 @@ const std = @import("std");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const bun = @import("root").bun;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
@@ -34,7 +34,6 @@ pub const NapiEnv = opaque {
 
     /// These wrappers exist for convenience and so we can set a breakpoint in lldb
     pub fn invalidArg(self: *NapiEnv) napi_status {
-        @setCold(true);
         if (comptime bun.Environment.allow_assert) {
             log("invalid arg", .{});
         }
@@ -42,7 +41,6 @@ pub const NapiEnv = opaque {
     }
 
     pub fn genericFailure(self: *NapiEnv) napi_status {
-        @setCold(true);
         if (comptime bun.Environment.allow_assert) {
             log("generic failure", .{});
         }
@@ -622,6 +620,7 @@ pub extern fn napi_delete_reference(env: napi_env, ref: napi_ref) napi_status;
 pub extern fn napi_reference_ref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
 pub extern fn napi_reference_unref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
 pub extern fn napi_get_reference_value(env: napi_env, ref: napi_ref, result: *napi_value) napi_status;
+pub extern fn napi_get_reference_value_internal(ref: napi_ref) JSC.JSValue;
 
 pub export fn napi_open_handle_scope(env_: napi_env, result_: ?*napi_handle_scope) napi_status {
     log("napi_open_handle_scope", .{});
@@ -1470,7 +1469,9 @@ pub const ThreadSafeFunction = struct {
 
     // User implementation error can cause this number to go negative.
     thread_count: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    // for std.condvar
     lock: std.Thread.Mutex = .{},
+
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 
@@ -1663,22 +1664,23 @@ pub const ThreadSafeFunction = struct {
             }
         } else {
             if (this.queue.isBlocked()) {
-                return this.env.setLastError(.queue_full);
+                // don't set the error on the env as this is run from another thread
+                return @intFromEnum(NapiStatus.queue_full);
             }
         }
 
         if (this.isClosing()) {
             if (this.thread_count.load(.seq_cst) <= 0) {
-                return this.env.invalidArg();
+                return @intFromEnum(NapiStatus.invalid_arg);
             }
             _ = this.release(.release, true);
-            return this.env.setLastError(.closing);
+            return @intFromEnum(NapiStatus.closing);
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
         this.queue.data.writeItem(ctx) catch bun.outOfMemory();
         this.scheduleDispatch();
-        return this.env.ok();
+        return @intFromEnum(NapiStatus.ok);
     }
 
     fn scheduleDispatch(this: *ThreadSafeFunction) void {
@@ -1719,10 +1721,10 @@ pub const ThreadSafeFunction = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (this.isClosing()) {
-            return this.env.setLastError(.closing);
+            return @intFromEnum(NapiStatus.closing);
         }
         _ = this.thread_count.fetchAdd(1, .seq_cst);
-        return this.env.ok();
+        return @intFromEnum(NapiStatus.ok);
     }
 
     pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
@@ -1730,7 +1732,7 @@ pub const ThreadSafeFunction = struct {
         defer if (!already_locked) this.lock.unlock();
 
         if (this.thread_count.load(.seq_cst) < 0) {
-            return this.env.invalidArg();
+            return @intFromEnum(NapiStatus.invalid_arg);
         }
 
         const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
@@ -1748,7 +1750,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        return this.env.ok();
+        return @intFromEnum(NapiStatus.ok);
     }
 };
 
@@ -1916,6 +1918,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
+    pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1924,7 +1927,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     //
     // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\*.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
     //
-    // Bug @paperdave if you get stuck here
+    // Bug @paperclover if you get stuck here
     pub extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
     pub extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
     pub extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"() *anyopaque;
@@ -1986,6 +1989,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
 };
 
 // To update this list, use find + multi-cursor in your editor.

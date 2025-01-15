@@ -79,7 +79,6 @@ const webIdlExposedWildcard = new Set([
   'TextDecoder',
   'AbortController',
   'AbortSignal',
-  'CustomEvent',
   'EventTarget',
   'Event',
   'URL',
@@ -127,7 +126,6 @@ const webIdlExposedWindow = new Set([
   'Response',
   'WebSocket',
   'EventSource',
-  'CloseEvent',
 ]);
 
 const nodeGlobals = new Set([

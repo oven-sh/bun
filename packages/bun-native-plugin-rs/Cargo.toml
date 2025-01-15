@@ -1,0 +1,17 @@
+[package]
+name = "bun-native-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+bindgen = "0.70.1"
+
+[dependencies]
+anyhow = "1.0.94"
+bun-macro = { path = "./bun-macro" }
+napi = { version = "2.14.1", default-features = false, features = ["napi4"] }
+
+[features]
+default = ["napi"]
+napi = []
+

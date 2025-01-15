@@ -479,6 +479,10 @@ pub const NumberOrPercentage = union(enum) {
     //     @panic(css.todo_stuff.depth);
     // }
 
+    pub fn deepClone(this: *const NumberOrPercentage, allocator: std.mem.Allocator) NumberOrPercentage {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const NumberOrPercentage, other: *const NumberOrPercentage) bool {
         return switch (this.*) {
             .number => |*a| switch (other.*) {

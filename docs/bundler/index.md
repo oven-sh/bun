@@ -546,6 +546,113 @@ export type ImportKind =
 
 By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format. -->
 
+### `env`
+
+Controls how environment variables are handled during bundling. Internally, this uses `define` to inject environment variables into the bundle, but makes it easier to specify the environment variables to inject.
+
+#### `env: "inline"`
+
+Injects environment variables into the bundled output by converting `process.env.FOO` references to string literals containing the actual environment variable values.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  env: "inline",
+})
+```
+
+```bash#CLI
+$ FOO=bar BAZ=123 bun build ./index.tsx --outdir ./out --env inline
+```
+
+{% /codetabs %}
+
+For the input below:
+
+```js#input.js
+console.log(process.env.FOO);
+console.log(process.env.BAZ);
+```
+
+The generated bundle will contain the following code:
+
+```js#output.js
+console.log("bar");
+console.log("123");
+```
+
+#### `env: "PUBLIC_*"` (prefix)
+
+Inlines environment variables matching the given prefix (the part before the `*` character), replacing `process.env.FOO` with the actual environment variable value. This is useful for selectively inlining environment variables for things like public-facing URLs or client-side tokens, without worrying about injecting private credentials into output bundles.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+
+  // Inline all env vars that start with "ACME_PUBLIC_"
+  env: "ACME_PUBLIC_*",
+})
+```
+
+```bash#CLI
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com bun build ./index.tsx --outdir ./out --env 'ACME_PUBLIC_*'
+```
+
+{% /codetabs %}
+
+For example, given the following environment variables:
+
+```bash
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com
+```
+
+And source code:
+
+```ts#index.tsx
+console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
+console.log(process.env.BAZ);
+```
+
+The generated bundle will contain the following code:
+
+```js
+console.log(process.env.FOO);
+console.log("https://acme.com");
+console.log(process.env.BAZ);
+```
+
+#### `env: "disable"`
+
+Disables environment variable injection entirely.
+
+For example, given the following environment variables:
+
+```bash
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com
+```
+
+And source code:
+
+```ts#index.tsx
+console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
+console.log(process.env.BAZ);
+```
+
+The generated bundle will contain the following code:
+
+```js
+console.log(process.env.FOO);
+console.log(process.env.BAZ);
+```
+
 ### `sourcemap`
 
 Specifies the type of sourcemap to generate.
@@ -1152,7 +1259,7 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 ### `experimentalCss`
 
-Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`.
+Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`. In 1.2, this property will be deleted, and CSS bundling will always be enabled.
 
 This supports bundling CSS files imported from JS, as well as CSS entrypoints.
 
@@ -1167,6 +1274,12 @@ const result = await Bun.build({
 ```
 
 {% /codetabs %}
+
+### `throw`
+
+If set to `true`, `Bun.build` will throw on build failure. See the section ["Logs and Errors"](#logs-and-errors) for more details on the error message structure.
+
+In 1.2, this will default to `true`, with the previous behavior as `throw: false`
 
 ## Outputs
 
@@ -1307,7 +1420,70 @@ Refer to [Bundler > Executables](https://bun.sh/docs/bundler/executables) for co
 
 ## Logs and errors
 
-`Bun.build` only throws if invalid options are provided. Read the `success` property to determine if the build was successful; the `logs` property will contain additional details.
+<!-- 1.2 documentation -->
+<!-- On failure, `Bun.build` returns a rejected promise with an `AggregateError`. This can be logged to the console for pretty printing of the error list, or programmatically read with a `try`/`catch` block.
+
+```ts
+try {
+  const result = await Bun.build({
+    entrypoints: ["./index.tsx"],
+    outdir: "./out",
+  });
+} catch (e) {
+  // TypeScript does not allow annotations on the catch clause
+  const error = e as AggregateError;
+  console.error("Build Failed");
+
+  // Example: Using the built-in formatter
+  console.error(error);
+
+  // Example: Serializing the failure as a JSON string.
+  console.error(JSON.stringify(error, null, 2));
+}
+```
+
+{% callout %}
+
+Most of the time, an explicit `try`/`catch` is not needed, as Bun will neatly print uncaught exceptions. It is enough to just use a top-level `await` on the `Bun.build` call.
+
+{% /callout %}
+
+Each item in `error.errors` is an instance of `BuildMessage` or `ResolveMessage` (subclasses of Error), containing detailed information for each error.
+
+```ts
+class BuildMessage {
+  name: string;
+  position?: Position;
+  message: string;
+  level: "error" | "warning" | "info" | "debug" | "verbose";
+}
+
+class ResolveMessage extends BuildMessage {
+  code: string;
+  referrer: string;
+  specifier: string;
+  importKind: ImportKind;
+}
+```
+
+On build success, the returned object contains a `logs` property, which contains bundler warnings and info messages.
+
+```ts
+const result = await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+});
+
+if (result.logs.length > 0) {
+  console.warn("Build succeeded with warnings:");
+  for (const message of result.logs) {
+    // Bun will pretty print the message object
+    console.warn(message);
+  }
+}
+``` -->
+
+By default, `Bun.build` only throws if invalid options are provided. Read the `success` property to determine if the build was successful; the `logs` property will contain additional details.
 
 ```ts
 const result = await Bun.build({
@@ -1350,6 +1526,27 @@ if (!result.success) {
 }
 ```
 
+In Bun 1.2, throwing an aggregate error like this will become the default beahavior. You can opt-into it early using the `throw: true` option.
+
+```ts
+try {
+  const result = await Bun.build({
+    entrypoints: ["./index.tsx"],
+    outdir: "./out",
+  });
+} catch (e) {
+  // TypeScript does not allow annotations on the catch clause
+  const error = e as AggregateError;
+  console.error("Build Failed");
+
+  // Example: Using the built-in formatter
+  console.error(error);
+
+  // Example: Serializing the failure as a JSON string.
+  console.error(JSON.stringify(error, null, 2));
+}
+```
+
 ## Reference
 
 ```ts
@@ -1371,39 +1568,23 @@ interface BuildConfig {
    *
    * @default "esm"
    */
-  format?: /**
-
-     * ECMAScript Module format
-     */
-  | "esm"
-    /**
-     * CommonJS format
-     * **Experimental**
-     */
-    | "cjs"
-    /**
-     * IIFE format
-     * **Experimental**
-     */
-    | "iife";
+  format?: "esm" | "cjs" | "iife";
   naming?:
     | string
     | {
         chunk?: string;
         entry?: string;
         asset?: string;
-      }; // | string;
+      };
   root?: string; // project root
   splitting?: boolean; // default true, enable code splitting
   plugins?: BunPlugin[];
-  // manifest?: boolean; // whether to return manifest
   external?: string[];
   packages?: "bundle" | "external";
   publicPath?: string;
   define?: Record<string, string>;
-  // origin?: string; // e.g. http://mydomain.com
   loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+  sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
   /**
    * package.json `exports` conditions used when resolving imports
    *
@@ -1412,6 +1593,18 @@ interface BuildConfig {
    * https://nodejs.org/api/packages.html#exports
    */
   conditions?: Array<string> | string;
+
+  /**
+   * Controls how environment variables are handled during bundling.
+   *
+   * Can be one of:
+   * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+   *   references to string literals containing the actual environment variable values
+   * - `"disable"`: Disables environment variable injection entirely
+   * - A string ending in `*`: Inlines environment variables that match the given prefix.
+   *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+   */
+  env?: "inline" | "disable" | `${string}*`;
   minify?:
     | boolean
     | {
@@ -1429,20 +1622,6 @@ interface BuildConfig {
    * Force emitting @__PURE__ annotations even if minify.whitespace is true.
    */
   emitDCEAnnotations?: boolean;
-  // treeshaking?: boolean;
-
-  // jsx?:
-  //   | "automatic"
-  //   | "classic"
-  //   | /* later: "preserve" */ {
-  //       runtime?: "automatic" | "classic"; // later: "preserve"
-  //       /** Only works when runtime=classic */
-  //       factory?: string; // default: "React.createElement"
-  //       /** Only works when runtime=classic */
-  //       fragment?: string; // default: "React.Fragment"
-  //       /** Only works when runtime=automatic */
-  //       importSource?: string; // default: "react"
-  //     };
 
   /**
    * Generate bytecode for the output. This can dramatically improve cold
@@ -1455,6 +1634,37 @@ interface BuildConfig {
    * @default false
    */
   bytecode?: boolean;
+  /**
+   * Add a banner to the bundled code such as "use client";
+   */
+  banner?: string;
+  /**
+   * Add a footer to the bundled code such as a comment block like
+   *
+   * `// made with bun!`
+   */
+  footer?: string;
+
+  /**
+   * **Experimental**
+   *
+   * Enable CSS support.
+   */
+  experimentalCss?: boolean;
+
+  /**
+   * Drop function calls to matching property accesses.
+   */
+  drop?: string[];
+
+  /**
+   * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+   * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+   *
+   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
+   * as most usage of `Bun.build` forgets to check for errors.
+   */
+  throw?: boolean;
 }
 
 interface BuildOutput {
@@ -1512,32 +1722,3 @@ declare class ResolveMessage {
   toString(): string;
 }
 ```
-
-<!--
-interface BuildManifest {
-  inputs: {
-    [path: string]: {
-      output: {
-        path: string;
-      };
-      imports: {
-        path: string;
-        kind: ImportKind;
-        external?: boolean;
-        asset?: boolean; // whether the import defaulted to "file" loader
-      }[];
-    };
-  };
-  outputs: {
-    [path: string]: {
-      type: "chunk" | "entrypoint" | "asset";
-      inputs: { path: string }[];
-      imports: {
-        path: string;
-        kind: ImportKind;
-        external?: boolean;
-      }[];
-      exports: string[];
-    };
-  };
-} -->

@@ -7,15 +7,61 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
-
+#include "BunBroadcastChannelRegistry.h"
+#include <wtf/LazyRef.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
+static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;
 
-static std::atomic<unsigned> lastUniqueIdentifier = 0;
+static std::atomic<unsigned> lastUniqueIdentifier = INITIAL_IDENTIFIER_INTERNAL;
+
+#if ASSERT_ENABLED
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    static bool hasCalledInitialIdentifier = false;
+    ASSERT_WITH_MESSAGE(!hasCalledInitialIdentifier, "ScriptExecutionContext::initialIdentifier() cannot be called more than once. Use generateIdentifier() instead.");
+    hasCalledInitialIdentifier = true;
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#else
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#endif
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(initialIdentifier())
+    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
+        lazyRef.set(BunBroadcastChannelRegistry::create());
+    })
+{
+    relaxAdoptionRequirement();
+    addToContextsMap();
+}
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
+        lazyRef.set(BunBroadcastChannelRegistry::create());
+    })
+{
+    relaxAdoptionRequirement();
+    addToContextsMap();
+}
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
+
+#if !ENABLE(MALLOC_BREAKDOWN)
 WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
+#endif
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -84,10 +130,13 @@ ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
 
+#if ASSERT_ENABLED
     {
         Locker locker { allScriptExecutionContextsMapLock };
         ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
     }
+    m_inScriptExecutionContextDestructor = true;
+#endif // ASSERT_ENABLED
 
     auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
     for (auto& completionHandler : postMessageCompletionHandlers)
@@ -95,6 +144,10 @@ ScriptExecutionContext::~ScriptExecutionContext()
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();
+
+#if ASSERT_ENABLED
+    m_inScriptExecutionContextDestructor = false;
+#endif // ASSERT_ENABLED
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
@@ -111,12 +164,17 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
-    // ASSERT(!m_inScriptExecutionContextDestructor);
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
     m_destructionObservers.add(&observer);
 }
 
 void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
     m_destructionObservers.remove(&observer);
 }
 
@@ -212,16 +270,14 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
 
 void ScriptExecutionContext::checkConsistency() const
 {
-    // for (auto* messagePort : m_messagePorts)
-    //     ASSERT(messagePort->scriptExecutionContext() == this);
+#if ASSERT_ENABLED
+    for (auto* messagePort : m_messagePorts)
+        ASSERT(messagePort->scriptExecutionContext() == this);
 
-    // for (auto* destructionObserver : m_destructionObservers)
-    //     ASSERT(destructionObserver->scriptExecutionContext() == this);
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
 
-    // for (auto* activeDOMObject : m_activeDOMObjects) {
-    //     ASSERT(activeDOMObject->scriptExecutionContext() == this);
-    //     activeDOMObject->assertSuspendIfNeededWasCalled();
-    // }
+#endif // ASSERT_ENABLED
 }
 
 void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)

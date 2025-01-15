@@ -12,6 +12,7 @@ const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const short = postgres.short;
 const int4 = postgres.int4;
+const AnyPostgresError = postgres.AnyPostgresError;
 
 //     select b.typname,  b.oid, b.typarray
 //       from pg_catalog.pg_type a
@@ -169,7 +170,16 @@ pub const Tag = enum(short) {
     bit_array = 1561,
     varbit_array = 1563,
     numeric_array = 1231,
+    jsonb = 3802,
+    jsonb_array = 3807,
+    // Not really sure what this is.
+    jsonpath = 4072,
+    jsonpath_array = 4073,
     _,
+
+    pub fn name(this: Tag) ?[]const u8 {
+        return std.enums.tagName(Tag, this);
+    }
 
     pub fn isBinaryFormatSupported(this: Tag) bool {
         return switch (this) {
@@ -282,7 +292,7 @@ pub const Tag = enum(short) {
         globalObject: *JSC.JSGlobalObject,
         comptime Type: type,
         value: Type,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         switch (tag) {
             .numeric => {
                 return numeric.toJS(globalObject, value);
@@ -292,7 +302,7 @@ pub const Tag = enum(short) {
                 return numeric.toJS(globalObject, value);
             },
 
-            .json => {
+            .json, .jsonb => {
                 return json.toJS(globalObject, value);
             },
 
@@ -326,7 +336,7 @@ pub const Tag = enum(short) {
         tag: Tag,
         globalObject: *JSC.JSGlobalObject,
         value: anytype,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return toJSWithType(tag, globalObject, @TypeOf(value), value);
     }
 
@@ -363,16 +373,16 @@ pub const Tag = enum(short) {
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return error.JSError;
+                return globalObject.ERR_INVALID_ARG_TYPE("Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             if (tag == .BooleanObject) {
-                return error.JSError;
+                return globalObject.ERR_INVALID_ARG_TYPE("Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return error.JSError;
+                return globalObject.ERR_INVALID_ARG_TYPE("Unknown object is not a valid PostgreSQL type", .{}).throw();
             }
 
             // We will JSON.stringify anything else.
@@ -414,7 +424,7 @@ pub const string = struct {
         globalThis: *JSC.JSGlobalObject,
         comptime Type: type,
         value: Type,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         switch (comptime Type) {
             [:0]u8, []u8, []const u8, [:0]const u8 => {
                 var str = String.fromUTF8(value);
@@ -456,7 +466,7 @@ pub const numeric = struct {
     pub fn toJS(
         _: *JSC.JSGlobalObject,
         value: anytype,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return JSValue.jsNumber(value);
     }
 };
@@ -468,14 +478,13 @@ pub const json = struct {
     pub fn toJS(
         globalObject: *JSC.JSGlobalObject,
         value: *Data,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         defer value.deinit();
         var str = bun.String.fromUTF8(value.slice());
         defer str.deref();
         const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
-        if (parse_result.isAnyError()) {
-            globalObject.throwValue(parse_result);
-            return error.JSError;
+        if (parse_result.AnyPostgresError()) {
+            return globalObject.throwValue(parse_result);
         }
 
         return parse_result;
@@ -489,7 +498,7 @@ pub const @"bool" = struct {
     pub fn toJS(
         _: *JSC.JSGlobalObject,
         value: bool,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return JSValue.jsBoolean(value);
     }
 };
@@ -549,7 +558,7 @@ pub const bytea = struct {
     pub fn toJS(
         globalObject: *JSC.JSGlobalObject,
         value: *Data,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         defer value.deinit();
 
         // var slice = value.slice()[@min(1, value.len)..];

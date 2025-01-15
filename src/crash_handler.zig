@@ -1652,6 +1652,13 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stderr.writeAll(proc.stderr) catch return;
 }
 
+pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+    var addrs: [32]usize = undefined;
+    var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
+    std.debug.captureStackTrace(first_address, &stack);
+    dumpStackTrace(stack);
+}
+
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
 /// instead of being a pointer. This allows storing captured stack traces
 /// for later printing.

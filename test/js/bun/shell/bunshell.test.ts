@@ -781,7 +781,7 @@ booga"
 
     test("error without recursive option", async () => {
       const { stderr } = await $`rm -v ${temp_dir}`;
-      expect(stderr.toString()).toEqual(`rm: ${temp_dir}: is a directory\n`);
+      expect(stderr.toString()).toEqual(`rm: ${temp_dir}: Is a directory\n`);
     });
 
     test("recursive", async () => {

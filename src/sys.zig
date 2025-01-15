@@ -483,10 +483,9 @@ pub const Error = struct {
             label = libuv_error_map.get(system_errno);
         }
 
-        // enough bytes for a path alongside an error message and code.
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
-        var message_buf: [bun.MAX_PATH_BYTES + 2048]u8 = undefined;
+        var message_buf: [4096]u8 = undefined;
         const message = message: {
             var stream = std.io.fixedBufferStream(&message_buf);
             const writer = stream.writer();
@@ -757,7 +756,6 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
-
     _ = close(dir_to_make.result);
     return .{ .result = {} };
 }
@@ -2871,6 +2869,9 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        if (rc == .OBJECT_NAME_INVALID) {
+            bun.Output.warn("internal error: invalid object name: {}", .{bun.fmt.fmtOSPath(path, .{})});
+        }
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err, rc });
             return err;

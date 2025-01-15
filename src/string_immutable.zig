@@ -1941,6 +1941,10 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];
     }
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_maxpath_prefix)) {
+        // Replace prefix
+        return addNTPathPrefix(wbuf, utf16[bun.windows.nt_maxpath_prefix.len..]);
+    }
     return addNTPathPrefix(wbuf, utf16);
 }
 

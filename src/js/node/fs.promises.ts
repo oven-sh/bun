@@ -160,13 +160,13 @@ const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
 const exports = {
-  access: asyncWrap(fs.access),
+  access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
-  close: asyncWrap(fs.close),
-  copyFile: asyncWrap(fs.copyFile),
+  close: asyncWrap(fs.close, "close"),
+  copyFile: asyncWrap(fs.copyFile, "copyFile"),
   cp,
   exists: async function exists() {
     try {
@@ -175,27 +175,27 @@ const exports = {
       return false;
     }
   },
-  chown: asyncWrap(fs.chown),
-  chmod: asyncWrap(fs.chmod),
-  fchmod: asyncWrap(fs.fchmod),
-  fchown: asyncWrap(fs.fchown),
-  fstat: asyncWrap(fs.fstat),
-  fsync: asyncWrap(fs.fsync),
-  fdatasync: asyncWrap(fs.fdatasync),
-  ftruncate: asyncWrap(fs.ftruncate),
-  futimes: asyncWrap(fs.futimes),
-  lchmod: asyncWrap(fs.lchmod),
-  lchown: asyncWrap(fs.lchown),
-  link: asyncWrap(fs.link),
-  lstat: asyncWrap(fs.lstat),
-  mkdir: asyncWrap(fs.mkdir),
-  mkdtemp: asyncWrap(fs.mkdtemp),
+  chown: asyncWrap(fs.chown, "chown"),
+  chmod: asyncWrap(fs.chmod, "chmod"),
+  fchmod: asyncWrap(fs.fchmod, "fchmod"),
+  fchown: asyncWrap(fs.fchown, "fchown"),
+  fstat: asyncWrap(fs.fstat, "fstat"),
+  fsync: asyncWrap(fs.fsync, "fsync"),
+  fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
+  ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
+  futimes: asyncWrap(fs.futimes, "futimes"),
+  lchmod: asyncWrap(fs.lchmod, "lchmod"),
+  lchown: asyncWrap(fs.lchown, "lchown"),
+  link: asyncWrap(fs.link, "link"),
+  lstat: asyncWrap(fs.lstat, "lstat"),
+  mkdir: asyncWrap(fs.mkdir, "mkdir"),
+  mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   open: async (path, flags = "r", mode = 0o666) => {
     return new FileHandle(await fs.open(path, flags, mode), flags);
   },
-  read: asyncWrap(fs.read),
-  write: asyncWrap(fs.write),
-  readdir: asyncWrap(fs.readdir),
+  read: asyncWrap(fs.read, "read"),
+  write: asyncWrap(fs.write, "write"),
+  readdir: asyncWrap(fs.readdir, "readdir"),
   readFile: function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
@@ -214,17 +214,17 @@ const exports = {
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
-  readlink: asyncWrap(fs.readlink),
-  realpath: asyncWrap(fs.realpath),
-  rename: asyncWrap(fs.rename),
-  stat: asyncWrap(fs.stat),
-  symlink: asyncWrap(fs.symlink),
-  truncate: asyncWrap(fs.truncate),
-  unlink: asyncWrap(fs.unlink),
-  utimes: asyncWrap(fs.utimes),
-  lutimes: asyncWrap(fs.lutimes),
-  rm: asyncWrap(fs.rm),
-  rmdir: asyncWrap(fs.rmdir),
+  readlink: asyncWrap(fs.readlink, "readlink"),
+  realpath: asyncWrap(fs.realpath, "realpath"),
+  rename: asyncWrap(fs.rename, "rename"),
+  stat: asyncWrap(fs.stat, "stat"),
+  symlink: asyncWrap(fs.symlink, "symlink"),
+  truncate: asyncWrap(fs.truncate, "truncate"),
+  unlink: asyncWrap(fs.unlink, "unlink"),
+  utimes: asyncWrap(fs.utimes, "utimes"),
+  lutimes: asyncWrap(fs.lutimes, "lutimes"),
+  rm: asyncWrap(fs.rm, "rm"),
+  rmdir: asyncWrap(fs.rmdir, "rmdir"),
   writev: async (fd, buffers, position) => {
     var bytesWritten = await fs.writev(fd, buffers, position);
     return {
@@ -250,10 +250,13 @@ const exports = {
 };
 export default exports;
 
-function asyncWrap(fn: any) {
-  return async function (...args) {
+function asyncWrap(fn: any, name: string) {
+  const wrapped = async function (...args) {
     return fn.$apply(fs, args);
   };
+  Object.defineProperty(wrapped, "name", { value: name });
+  Object.defineProperty(wrapped, "length", { value: fn.length });
+  return wrapped;
 }
 
 {
@@ -481,7 +484,6 @@ function asyncWrap(fn: any) {
       }
       try {
         this[kRef]();
-        console.log({ fd, buffer, offset, length, position });
         return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };
       } finally {
         this[kUnref]();

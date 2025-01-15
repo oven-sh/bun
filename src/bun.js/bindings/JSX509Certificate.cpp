@@ -1165,7 +1165,7 @@ void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init)
 
 extern "C" EncodedJSValue Bun__X509__toJSLegacyEncoding(X509* cert, JSGlobalObject* globalObject)
 {
-    ncrypto::X509Pointer cert_ptr(X509_dup(cert));
+    ncrypto::X509Pointer cert_ptr(cert);
     return JSValue::encode(JSX509Certificate::toLegacyObject(cert_ptr.view(), globalObject));
 }
 extern "C" EncodedJSValue Bun__X509__toJS(X509* cert, JSGlobalObject* globalObject)

@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions";
 
 function generate(ssl) {
   return define({
-    name: ssl ? "TCPSocket" : "TLSSocket",
+    name: !ssl ? "TCPSocket" : "TLSSocket",
     JSType: "0b11101110",
     hasPendingActivity: true,
     noConstructor: true,

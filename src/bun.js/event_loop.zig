@@ -787,13 +787,13 @@ pub const EventLoop = struct {
     waker: ?Waker = null,
     forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
-    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null else {},
+    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null,
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
-    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null else {},
+    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
@@ -1431,7 +1431,7 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
-            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
+            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
             loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);

@@ -1494,10 +1494,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             cached_package_dir: std.fs.Dir = undefined,
             walker: Walker = undefined,
             subdir: std.fs.Dir = if (Environment.isWindows) std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE } else undefined,
-            buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
-            buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
-            to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
-            to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
+            buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined,
+            buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined,
+            to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined,
+            to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined,
 
             pub fn deinit(this: *@This()) void {
                 if (!Environment.isWindows) {
@@ -1888,7 +1888,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     head2: if (Environment.isWindows) []u16 else void,
                 ) !u32 {
                     var real_file_count: u32 = 0;
-                    var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue() else {};
+                    var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue();
 
                     while (try walker.next()) |entry| {
                         if (comptime Environment.isPosix) {
@@ -14998,7 +14998,7 @@ pub const PackageManager = struct {
                 // added/removed/updated direct dependencies.
                 Output.pretty(
                     \\
-                    \\Saved <green>{s}<r> ({d} package{s}) 
+                    \\Saved <green>{s}<r> ({d} package{s})
                 , .{
                     switch (save_format) {
                         .text => "bun.lock",

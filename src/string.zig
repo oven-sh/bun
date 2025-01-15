@@ -1375,7 +1375,7 @@ pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice = ZigString.Slice.empty,
     underlying: String = String.dead,
 
-    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false else {},
+    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false,
 
     pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
         if (comptime bun.Environment.allow_assert) {

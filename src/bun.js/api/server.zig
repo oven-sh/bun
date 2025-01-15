@@ -182,6 +182,13 @@ pub const AnyStaticRoute = union(enum) {
     StaticRoute: *StaticRoute,
     HTMLBundleRoute: *HTMLBundleRoute,
 
+    pub fn memoryCost(this: AnyStaticRoute) usize {
+        return switch (this) {
+            .StaticRoute => |static_route| static_route.memoryCost(),
+            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.memoryCost(),
+        };
+    }
+
     pub fn setServer(this: AnyStaticRoute, server: ?AnyServer) void {
         switch (this) {
             .StaticRoute => |static_route| static_route.server = server,
@@ -268,9 +275,23 @@ pub const ServerConfig = struct {
 
     bake: ?bun.bake.UserOptions = null,
 
+    pub fn memoryCost(this: *const ServerConfig) usize {
+        // ignore @sizeOf(ServerConfig), assume already included.
+        var cost: usize = 0;
+        for (this.static_routes.items) |*entry| {
+            cost += entry.memoryCost();
+        }
+        cost += this.id.len;
+        cost += this.base_url.href.len;
+        return cost;
+    }
     pub const StaticRouteEntry = struct {
         path: []const u8,
         route: AnyStaticRoute,
+
+        pub fn memoryCost(this: *const StaticRouteEntry) usize {
+            return this.path.len + this.route.memoryCost();
+        }
 
         /// Clone the path buffer and increment the ref count
         /// This doesn't actually clone the route, it just increments the ref count
@@ -5873,6 +5894,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 )
             else
                 JSValue.jsNull();
+        }
+
+        pub fn memoryCost(this: *ThisServer) usize {
+            return @sizeOf(ThisServer) +
+                this.base_url_string_for_joining.len +
+                this.config.memoryCost();
         }
 
         pub fn timeout(this: *ThisServer, request: *JSC.WebCore.Request, seconds: JSValue) bun.JSError!JSC.JSValue {

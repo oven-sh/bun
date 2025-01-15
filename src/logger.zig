@@ -116,6 +116,15 @@ pub const Location = struct {
     // TODO: document or remove
     offset: usize = 0,
 
+    pub fn memoryCost(this: *const Location) usize {
+        var cost: usize = 0;
+        cost += this.file.len;
+        cost += this.namespace.len;
+        if (this.line_text) |text| cost += text.len;
+        if (this.suggestion) |text| cost += text.len;
+        return cost;
+    }
+
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
@@ -213,6 +222,15 @@ pub const Location = struct {
 pub const Data = struct {
     text: string,
     location: ?Location = null,
+
+    pub fn memoryCost(this: *const Data) usize {
+        var cost: usize = 0;
+        cost += this.text.len;
+        if (this.location) |*loc| {
+            cost += loc.memoryCost();
+        }
+        return cost;
+    }
 
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
         if (d.location) |*loc| {
@@ -398,6 +416,15 @@ pub const Msg = struct {
     metadata: Metadata = .build,
     notes: []Data = &.{},
     redact_sensitive_information: bool = false,
+
+    pub fn memoryCost(this: *const Msg) usize {
+        var cost: usize = 0;
+        cost += this.data.memoryCost();
+        for (this.notes) |*note| {
+            cost += note.memoryCost();
+        }
+        return cost;
+    }
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
@@ -607,6 +634,14 @@ pub const Log = struct {
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     clone_line_text: bool = false,
+
+    pub fn memoryCost(this: *const Log) usize {
+        var cost: usize = 0;
+        for (this.msgs.items) |msg| {
+            cost += msg.memoryCost();
+        }
+        return cost;
+    }
 
     pub inline fn hasErrors(this: *const Log) bool {
         return this.errors > 0;

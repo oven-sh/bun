@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions";
 function generate(name) {
   return define({
     name,
+    memoryCost: true,
     proto: {
       fetch: {
         fn: "doFetch",

@@ -3483,6 +3483,10 @@ pub const Headers = struct {
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
 
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
     pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
         var offset: u32 = @truncate(this.buf.items.len);
         try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);

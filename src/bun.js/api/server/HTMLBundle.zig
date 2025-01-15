@@ -47,6 +47,14 @@ pub const HTMLBundleRoute = struct {
     server: ?AnyServer = null,
     value: Value = .pending,
 
+    pub fn memoryCost(this: *const HTMLBundleRoute) usize {
+        var cost: usize = 0;
+        cost += @sizeOf(HTMLBundleRoute);
+        cost += this.pending_responses.items.len * @sizeOf(PendingResponse);
+        cost += this.value.memoryCost();
+        return cost;
+    }
+
     pub fn init(html_bundle: *HTMLBundle) *HTMLBundleRoute {
         return HTMLBundleRoute.new(.{
             .html_bundle = html_bundle,
@@ -76,6 +84,15 @@ pub const HTMLBundleRoute = struct {
                 },
                 .pending => {},
             }
+        }
+
+        pub fn memoryCost(this: *const Value) usize {
+            return switch (this.*) {
+                .pending => 0,
+                .building => 0,
+                .err => |log| log.memoryCost(),
+                .html => |html| html.memoryCost(),
+            };
         }
     };
 

@@ -19,6 +19,10 @@ fn deinit(this: *StaticRoute) void {
     this.destroy();
 }
 
+pub fn memoryCost(this: *const StaticRoute) usize {
+    return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
+}
+
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!*StaticRoute {
     if (argument.as(JSC.WebCore.Response)) |response| {
 

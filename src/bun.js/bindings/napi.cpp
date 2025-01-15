@@ -1634,13 +1634,7 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     NAPI_CHECK_ARG(env, cbinfo);
     NAPI_CHECK_ARG(env, result);
 
-    JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
-
-    if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        *result = toNapi(frame->newTarget(), toJS(env));
-        NAPI_RETURN_SUCCESS(env);
-    }
-
+    auto* callFrame = reinterpret_cast<NAPICallFrame*>(cbinfo);
     JSC::JSValue newTarget = callFrame->newTarget();
     *result = toNapi(newTarget, toJS(env));
     NAPI_RETURN_SUCCESS(env);

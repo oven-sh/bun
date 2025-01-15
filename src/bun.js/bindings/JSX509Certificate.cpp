@@ -29,6 +29,7 @@
 #include "JSBuffer.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include <wtf/SIMDUTF.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 RefPtr<WebCore::CryptoKey> toCryptoKey(EVP_PKEY* pkey)
 {

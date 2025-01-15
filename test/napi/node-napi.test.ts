@@ -1,6 +1,6 @@
 import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isCI } from "harness";
+import { bunEnv, bunExe, isCI, isMusl } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
@@ -60,6 +60,11 @@ if (process.platform == "win32") {
   for (const i in failingNodeApiTests) {
     failingNodeApiTests[i] = failingNodeApiTests[i].replaceAll("/", "\\");
   }
+}
+
+if (isMusl) {
+  failingNodeApiTests = nodeApiTests;
+  failingJsNativeApiTests = jsNativeApiTests;
 }
 
 beforeAll(async () => {

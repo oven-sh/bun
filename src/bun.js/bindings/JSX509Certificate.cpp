@@ -1166,11 +1166,13 @@ void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init)
 extern "C" EncodedJSValue Bun__X509__toJSLegacyEncoding(X509* cert, JSGlobalObject* globalObject)
 {
     ncrypto::X509Pointer cert_ptr(cert);
+    X509_up_ref(cert);
     return JSValue::encode(JSX509Certificate::toLegacyObject(cert_ptr.view(), globalObject));
 }
 extern "C" EncodedJSValue Bun__X509__toJS(X509* cert, JSGlobalObject* globalObject)
 {
     ncrypto::X509Pointer cert_ptr(cert);
+    X509_up_ref(cert);
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     return JSValue::encode(JSX509Certificate::create(zigGlobalObject->vm(), zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject), globalObject, WTFMove(cert_ptr)));
 }

@@ -3,39 +3,6 @@ const { errorOrDestroy } = require("internal/streams/destroy");
 
 const ProcessNextTick = process.nextTick;
 
-var closer = [false];
-var handleNumberResult = function (nativeReadable, result, view, isClosed) {
-  if (result > 0) {
-    const slice = view.subarray(0, result);
-    view = slice.byteLength < view.byteLength ? view.subarray(result) : undefined;
-    if (slice.byteLength > 0) {
-      nativeReadable.push(slice);
-    }
-  }
-
-  if (isClosed) {
-    ProcessNextTick(() => {
-      nativeReadable.push(null);
-    });
-  }
-
-  return view;
-};
-
-var handleArrayBufferViewResult = function (nativeReadable, result, view, isClosed) {
-  if (result.byteLength > 0) {
-    nativeReadable.push(result);
-  }
-
-  if (isClosed) {
-    ProcessNextTick(() => {
-      nativeReadable.push(null);
-    });
-  }
-
-  return view;
-};
-
 var DYNAMICALLY_ADJUST_CHUNK_SIZE = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
 const MIN_BUFFER_SIZE = 512;
@@ -56,6 +23,39 @@ const _internalRead = Symbol("_internalRead");
 
 export default function () {
   const Readable = require("internal/streams/readable");
+
+  var closer = [false];
+  var handleNumberResult = function (nativeReadable, result, view, isClosed) {
+    if (result > 0) {
+      const slice = view.subarray(0, result);
+      view = slice.byteLength < view.byteLength ? view.subarray(result) : undefined;
+      if (slice.byteLength > 0) {
+        nativeReadable.push(slice);
+      }
+    }
+
+    if (isClosed) {
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
+    }
+
+    return view;
+  };
+
+  var handleArrayBufferViewResult = function (nativeReadable, result, view, isClosed) {
+    if (result.byteLength > 0) {
+      nativeReadable.push(result);
+    }
+
+    if (isClosed) {
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
+    }
+
+    return view;
+  };
 
   function NativeReadable(ptr, options) {
     if (!(this instanceof NativeReadable)) return Reflect.construct(NativeReadable, [ptr, options]);

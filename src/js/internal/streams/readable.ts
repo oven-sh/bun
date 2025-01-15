@@ -22,10 +22,7 @@ const {
   kConstructed,
 } = require("internal/streams/utils");
 const { AbortError, aggregateTwoErrors } = require("internal/errors");
-
-// const { AbortError, aggregateTwoErrors } = require("internal/errors");
 const { validateObject } = require("internal/validators");
-
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
@@ -80,6 +77,56 @@ function makeBitMapDescriptor(bit) {
       else this[kState] &= ~bit;
     },
   };
+}
+
+function ReadableState(options, stream, isDuplex) {
+  // Bit map field to store ReadableState more efficiently with 1 bit per field
+  // instead of a V8 slot per field.
+  this[kState] = kEmitClose | kAutoDestroy | kConstructed | kSync;
+
+  // Object stream flag. Used to make read(n) ignore n and to
+  // make all the buffer merging and length checks go away.
+  if (options?.objectMode) this[kState] |= kObjectMode;
+
+  if (isDuplex && options?.readableObjectMode) this[kState] |= kObjectMode;
+
+  // The point at which it stops calling _read() to fill the buffer
+  // Note: 0 is a valid value, means "don't call _read preemptively ever"
+  this.highWaterMark = options
+    ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
+    : getDefaultHighWaterMark(false);
+
+  this.buffer = [];
+  this.bufferIndex = 0;
+  this.length = 0;
+  this.pipes = [];
+
+  // Should close be emitted on destroy. Defaults to true.
+  if (options && options.emitClose === false) this[kState] &= ~kEmitClose;
+
+  // Should .destroy() be called after 'end' (and potentially 'finish').
+  if (options && options.autoDestroy === false) this[kState] &= ~kAutoDestroy;
+
+  // Crypto is kind of old and crusty.  Historically, its default string
+  // encoding is 'binary' so we have to make this configurable.
+  // Everything else in the universe uses 'utf8', though.
+  const defaultEncoding = options?.defaultEncoding;
+  if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
+    this[kState] |= kDefaultUTF8Encoding;
+  } else if (Buffer.isEncoding(defaultEncoding)) {
+    this.defaultEncoding = defaultEncoding;
+  } else {
+    throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
+  }
+
+  // Ref the piped dest which we need a drain event on it
+  // type: null | Writable | Set<Writable>.
+  this.awaitDrainWriters = null;
+
+  if (options?.encoding) {
+    this.decoder = new StringDecoder(options.encoding);
+    this.encoding = options.encoding;
+  }
 }
 ReadableState.prototype = {};
 ObjectDefineProperties(ReadableState.prototype, {
@@ -205,56 +252,6 @@ ObjectDefineProperties(ReadableState.prototype, {
     },
   },
 });
-
-function ReadableState(options, stream, isDuplex) {
-  // Bit map field to store ReadableState more efficiently with 1 bit per field
-  // instead of a V8 slot per field.
-  this[kState] = kEmitClose | kAutoDestroy | kConstructed | kSync;
-
-  // Object stream flag. Used to make read(n) ignore n and to
-  // make all the buffer merging and length checks go away.
-  if (options?.objectMode) this[kState] |= kObjectMode;
-
-  if (isDuplex && options?.readableObjectMode) this[kState] |= kObjectMode;
-
-  // The point at which it stops calling _read() to fill the buffer
-  // Note: 0 is a valid value, means "don't call _read preemptively ever"
-  this.highWaterMark = options
-    ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
-    : getDefaultHighWaterMark(false);
-
-  this.buffer = [];
-  this.bufferIndex = 0;
-  this.length = 0;
-  this.pipes = [];
-
-  // Should close be emitted on destroy. Defaults to true.
-  if (options && options.emitClose === false) this[kState] &= ~kEmitClose;
-
-  // Should .destroy() be called after 'end' (and potentially 'finish').
-  if (options && options.autoDestroy === false) this[kState] &= ~kAutoDestroy;
-
-  // Crypto is kind of old and crusty.  Historically, its default string
-  // encoding is 'binary' so we have to make this configurable.
-  // Everything else in the universe uses 'utf8', though.
-  const defaultEncoding = options?.defaultEncoding;
-  if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
-    this[kState] |= kDefaultUTF8Encoding;
-  } else if (Buffer.isEncoding(defaultEncoding)) {
-    this.defaultEncoding = defaultEncoding;
-  } else {
-    throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
-  }
-
-  // Ref the piped dest which we need a drain event on it
-  // type: null | Writable | Set<Writable>.
-  this.awaitDrainWriters = null;
-
-  if (options?.encoding) {
-    this.decoder = new StringDecoder(options.encoding);
-    this.encoding = options.encoding;
-  }
-}
 
 ReadableState.prototype[kOnConstructed] = function onConstructed(stream) {
   if ((this[kState] & kNeedReadable) !== 0) {

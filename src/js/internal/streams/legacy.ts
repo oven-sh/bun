@@ -90,7 +90,7 @@ Stream.prototype.pipe = function (dest, options) {
 };
 
 Stream.prototype.eventNames = function eventNames() {
-  const names: (string | symbol)[] = [];
+  const names = [];
   for (const key of ReflectOwnKeys(this._events)) {
     if (typeof this._events[key] === "function" || (ArrayIsArray(this._events[key]) && this._events[key].length > 0)) {
       names.push(key);

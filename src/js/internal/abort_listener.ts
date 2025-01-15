@@ -3,12 +3,7 @@ const { kResistStopPropagation } = require("internal/shared");
 
 const SymbolDispose = Symbol.dispose;
 
-/**
- * @param {AbortSignal} signal
- * @param {EventListener} listener
- * @returns {Disposable}
- */
-function addAbortListener(signal, listener) {
+function addAbortListener(signal: AbortSignal, listener: EventListener): Disposable {
   if (signal === undefined) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }

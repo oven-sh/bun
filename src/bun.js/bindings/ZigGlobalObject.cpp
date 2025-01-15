@@ -3507,14 +3507,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionisBlob, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto value = callFrame->argument(0);
-    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
-    auto cell = value.asCell();
-    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSBlob>()));
-}
-
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     JSC::VM& vm = this->vm();

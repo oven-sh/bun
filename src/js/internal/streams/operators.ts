@@ -9,8 +9,8 @@ const { addAbortSignalNoValidate } = require("internal/streams/add-abort-signal"
 const { isWritable, isNodeStream } = require("internal/streams/utils");
 
 const MathFloor = Math.floor;
-const PromiseResolve = Promise.resolve;
-const PromiseReject = Promise.reject;
+const PromiseResolve = Promise.resolve.bind(Promise);
+const PromiseReject = Promise.reject.bind(Promise);
 const PromisePrototypeThen = Promise.prototype.then;
 const ArrayPrototypePush = Array.prototype.push;
 const NumberIsNaN = Number.isNaN;
@@ -315,11 +315,12 @@ async function toArray(options) {
 
 function flatMap(fn, options) {
   const values = map.$call(this, fn, options);
-  return async function* flatMap() {
+  async function* flatMapInner() {
     for await (const val of values) {
       yield* val;
     }
-  }.$call(this);
+  }
+  return flatMapInner.$call(this);
 }
 
 function toIntegerOrInfinity(number) {
@@ -335,7 +336,7 @@ function toIntegerOrInfinity(number) {
   return number;
 }
 
-function drop(number, options?: { signal: AbortSignal }) {
+function drop(number, options = undefined) {
   if (options != null) {
     validateObject(options, "options");
   }

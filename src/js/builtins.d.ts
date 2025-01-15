@@ -617,10 +617,3 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
-
-/**
- * Determine if {value} is an instanceof {Blob} in a safe cross-Realm way.
- *
- * @param value {any}
- */
-declare function $isBlob(value: any): boolean;

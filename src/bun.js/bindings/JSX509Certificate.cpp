@@ -820,6 +820,22 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
 
+                    // Add pubkey field for EC keys
+                    const EC_POINT* point = EC_KEY_get0_public_key(ec);
+                    if (point) {
+                        point_conversion_form_t form = EC_KEY_get_conv_form(ec);
+                        size_t size = EC_POINT_point2oct(group, point, form, nullptr, 0, nullptr);
+                        if (size > 0) {
+                            auto* buffer = Bun::createUninitializedBuffer(globalObject, size);
+                            RETURN_IF_EXCEPTION(scope, nullptr);
+                            uint8_t* data = buffer->typedVector();
+                            size_t result_size = EC_POINT_point2oct(group, point, form, data, size, nullptr);
+                            if (result_size == size) {
+                                object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                            }
+                        }
+                    }
+
                     // Set curve info
                     int nid = EC_GROUP_get_curve_name(group);
                     if (nid != 0) {
@@ -971,6 +987,22 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                     if (bits > 0) {
                         object->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(bits));
                         RETURN_IF_EXCEPTION(scope, nullptr);
+                    }
+
+                    // Add pubkey field for EC keys
+                    const EC_POINT* point = EC_KEY_get0_public_key(ec);
+                    if (point) {
+                        point_conversion_form_t form = EC_KEY_get_conv_form(ec);
+                        size_t size = EC_POINT_point2oct(group, point, form, nullptr, 0, nullptr);
+                        if (size > 0) {
+                            auto* buffer = Bun::createUninitializedBuffer(globalObject, size);
+                            RETURN_IF_EXCEPTION(scope, nullptr);
+                            uint8_t* data = buffer->typedVector();
+                            size_t result_size = EC_POINT_point2oct(group, point, form, data, size, nullptr);
+                            if (result_size == size) {
+                                object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                            }
+                        }
                     }
 
                     // Set curve info

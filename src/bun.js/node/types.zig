@@ -231,14 +231,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn getErrno(this: @This()) posix.E {
+        pub fn getErrno(this: @This()) posix.E {
             return switch (this) {
                 .result => posix.E.SUCCESS,
                 .err => |e| @enumFromInt(e.errno),
             };
         }
 
-        pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+        pub fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -256,7 +256,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+        pub fn errno(err: anytype, syscall: Syscall.Tag) @This() {
             return @This(){
                 // always truncate
                 .err = .{
@@ -266,7 +266,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
+        pub fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -285,7 +285,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
+        pub fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
             if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
@@ -302,6 +302,49 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .errno = translateToErrInt(e),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
+        pub fn errnoSysFP(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor, path: anytype) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .fd = fd,
+                        .path = bun.asByteSlice(path),
+                    },
+                },
+            };
+        }
+
+        pub fn errnoSysPD(rc: anytype, syscall: Syscall.Tag, path: anytype, dest: anytype) ?@This() {
+            if (bun.meta.Item(@TypeOf(path)) == u16) {
+                @compileError("Do not pass WString path to errnoSysPD, it needs the path encoded as utf8");
+            }
+            if (comptime Environment.isWindows) {
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
+            }
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |e| @This(){
+                    // Always truncate
+                    .err = .{
+                        .errno = translateToErrInt(e),
+                        .syscall = syscall,
+                        .path = bun.asByteSlice(path),
+                        .dest = bun.asByteSlice(dest),
                     },
                 },
             };
@@ -1123,7 +1166,7 @@ pub const ArgumentsSlice = struct {
     arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
-    protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
     will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
@@ -1132,7 +1175,7 @@ pub const ArgumentsSlice = struct {
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
-        this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
+        this.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
     }
 
     pub fn deinit(this: *ArgumentsSlice) void {
@@ -2081,34 +2124,34 @@ pub const Process = struct {
         if (to.len == 0) {
             return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
         }
+        const vm = globalObject.bunVM();
+        const fs = vm.transpiler.fs;
 
         var buf: bun.PathBuffer = undefined;
-        const slice = to.sliceZBuf(&buf) catch {
-            return globalObject.throw("Invalid path", .{});
-        };
+        const slice = to.sliceZBuf(&buf) catch return globalObject.throw("Invalid path", .{});
 
-        switch (Syscall.chdir(slice)) {
+        switch (Syscall.chdir(fs.top_level_dir, slice)) {
             .result => {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                const fs = JSC.VirtualMachine.get().bundler.fs;
                 const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
                     .err => |err| {
-                        _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
+                        _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
                         return globalObject.throwValue(err.toJSC(globalObject));
                     },
                 };
                 @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
-                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
+                fs.top_level_dir_buf[into_cwd_buf.len] = 0;
+                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len :0];
 
                 const len = fs.top_level_dir.len;
                 // Ensure the path ends with a slash
                 if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
                     fs.top_level_dir_buf[len] = std.fs.path.sep;
                     fs.top_level_dir_buf[len + 1] = 0;
-                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1 :0];
                 }
                 const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
                 var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
@@ -2133,6 +2176,46 @@ pub const Process = struct {
         vm.globalExit();
     }
 
+    // TODO: switch this to using *bun.wtf.String when it is added
+    pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+        if (k.tag == .Empty) return;
+        const wtf1 = k.value.WTFStringImpl;
+        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
+        const allocator = fixed_stack_allocator.get();
+        var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf1);
+        var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        const len1: usize = switch (wtf1.is8Bit()) {
+            true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,
+            false => b: {
+                @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
+                break :b wtf1.length();
+            },
+        };
+        buf1[len1] = 0;
+        const str2: ?[*:0]const u16 = if (v.tag != .Dead) str: {
+            if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
+            const wtf2 = v.value.WTFStringImpl;
+            const len2: usize = switch (wtf2.is8Bit()) {
+                true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, []const u8, wtf2.latin1Slice()).written,
+                false => b: {
+                    @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
+                    break :b wtf2.length();
+                },
+            };
+            buf2[len2] = 0;
+            break :str buf2[0..len2 :0].ptr;
+        } else null;
+        _ = bun.windows.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
+    }
+
+    comptime {
+        if (Environment.export_cpp_apis and Environment.isWindows) {
+            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+        }
+    }
+
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
     pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
     pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
@@ -2151,6 +2234,31 @@ pub const Process = struct {
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
     pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
+};
+
+pub const PathOrBlob = union(enum) {
+    path: JSC.Node.PathOrFileDescriptor,
+    blob: Blob,
+
+    const Blob = JSC.WebCore.Blob;
+
+    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
+            return PathOrBlob{
+                .path = path,
+            };
+        }
+
+        const arg = args.nextEat() orelse {
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+        };
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.*,
+            };
+        }
+        return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
+    }
 };
 
 comptime {

@@ -40,7 +40,6 @@ const kStateSymbol = Symbol("state symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { ERR_SOCKET_BAD_TYPE } = require("internal/errors");
 const {
   validateString,
   validateNumber,
@@ -48,15 +47,6 @@ const {
   validatePort,
   validateAbortSignal,
 } = require("internal/validators");
-
-const {
-  FunctionPrototypeBind,
-  ObjectSetPrototypeOf,
-  SymbolAsyncDispose,
-  SymbolDispose,
-  StringPrototypeTrim,
-  NumberIsNaN,
-} = require("internal/primordials");
 
 const EventEmitter = require("node:events");
 
@@ -101,39 +91,15 @@ class ERR_SOCKET_BAD_BUFFER_SIZE extends Error {
     this.code = "ERR_SOCKET_BAD_BUFFER_SIZE";
   }
 }
+const SymbolDispose = Symbol.dispose;
+const SymbolAsyncDispose = Symbol.asyncDispose;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const FunctionPrototypeBind = Function.prototype.bind;
 
 class ERR_SOCKET_BUFFER_SIZE extends Error {
   constructor(ctx) {
     super(`Invalid buffer size: ${ctx}`);
     this.code = "ERR_SOCKET_BUFFER_SIZE";
-  }
-}
-
-class ERR_SOCKET_DGRAM_IS_CONNECTED extends Error {
-  constructor() {
-    super("Socket is connected");
-    this.code = "ERR_SOCKET_DGRAM_IS_CONNECTED";
-  }
-}
-
-class ERR_SOCKET_DGRAM_NOT_CONNECTED extends Error {
-  constructor() {
-    super("Socket is not connected");
-    this.code = "ERR_SOCKET_DGRAM_NOT_CONNECTED";
-  }
-}
-
-class ERR_SOCKET_BAD_PORT extends Error {
-  constructor(name, port, allowZero) {
-    super(`Invalid ${name}: ${port}. Ports must be >= 0 and <= 65535. ${allowZero ? "0" : ""}`);
-    this.code = "ERR_SOCKET_BAD_PORT";
-  }
-}
-
-class ERR_SOCKET_DGRAM_NOT_RUNNING extends Error {
-  constructor() {
-    super("Socket is not running");
-    this.code = "ERR_SOCKET_DGRAM_NOT_RUNNING";
   }
 }
 
@@ -169,11 +135,11 @@ function newHandle(type, lookup) {
 
   const handle = {};
   if (type === "udp4") {
-    handle.lookup = FunctionPrototypeBind(lookup4, handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
-    handle.lookup = FunctionPrototypeBind(lookup6, handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup6, handle, lookup);
   } else {
-    throw ERR_SOCKET_BAD_TYPE();
+    throw $ERR_SOCKET_BAD_TYPE();
   }
 
   return handle;
@@ -248,7 +214,7 @@ function createSocket(type, listener) {
 }
 
 function bufferSize(self, size, buffer) {
-  if (size >>> 0 !== size) throw new ERR_SOCKET_BAD_BUFFER_SIZE();
+  if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
 
   const ctx = {};
   // const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
@@ -265,7 +231,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   const state = this[kStateSymbol];
 
   if (state.bindState !== BIND_STATE_UNBOUND) {
-    this.emit("error", new ERR_SOCKET_ALREADY_BOUND());
+    this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
     return;
   }
 
@@ -422,13 +388,13 @@ Socket.prototype.connect = function (port, address, callback) {
 
   const state = this[kStateSymbol];
 
-  if (state.connectState !== CONNECT_STATE_DISCONNECTED) throw new ERR_SOCKET_DGRAM_IS_CONNECTED();
+  if (state.connectState !== CONNECT_STATE_DISCONNECTED) throw $ERR_SOCKET_DGRAM_IS_CONNECTED();
 
   state.connectState = CONNECT_STATE_CONNECTING;
   if (state.bindState === BIND_STATE_UNBOUND) this.bind({ port: 0, exclusive: true }, null);
 
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, FunctionPrototypeBind(_connect, this, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(_connect, this, port, address, callback));
     return;
   }
 
@@ -480,7 +446,7 @@ const disconnectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsDisconnect",
 
 Socket.prototype.disconnect = function () {
   const state = this[kStateSymbol];
-  if (state.connectState !== CONNECT_STATE_CONNECTED) throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
+  if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
   disconnectFn.$call(state.handle.socket);
   state.connectState = CONNECT_STATE_DISCONNECTED;
@@ -500,17 +466,17 @@ function sliceBuffer(buffer, offset, length) {
   if (typeof buffer === "string") {
     buffer = Buffer.from(buffer);
   } else if (!ArrayBuffer.isView(buffer)) {
-    throw new ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
   }
 
   offset = offset >>> 0;
   length = length >>> 0;
   if (offset > buffer.byteLength) {
-    throw new ERR_BUFFER_OUT_OF_BOUNDS("offset");
+    throw $ERR_BUFFER_OUT_OF_BOUNDS("offset");
   }
 
   if (offset + length > buffer.byteLength) {
-    throw new ERR_BUFFER_OUT_OF_BOUNDS("length");
+    throw $ERR_BUFFER_OUT_OF_BOUNDS("length");
   }
 
   return Buffer.from(buffer.buffer, buffer.byteOffset + offset, length);
@@ -599,19 +565,19 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
       callback = offset;
     }
 
-    if (port || address) throw new ERR_SOCKET_DGRAM_IS_CONNECTED();
+    if (port || address) throw $ERR_SOCKET_DGRAM_IS_CONNECTED();
   }
 
   if (!Array.isArray(buffer)) {
     if (typeof buffer === "string") {
       list = [Buffer.from(buffer)];
     } else if (!ArrayBuffer.isView(buffer)) {
-      throw new ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
     } else {
       list = [buffer];
     }
   } else if (!(list = fixBufferList(buffer))) {
-    throw new ERR_INVALID_ARG_TYPE("buffer list arguments", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer list arguments", ["Buffer", "TypedArray", "DataView", "string"], buffer);
   }
 
   if (!connected) port = validatePort(port, "Port", false);
@@ -634,7 +600,7 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
   // If the socket hasn't been bound yet, push the outbound packet onto the
   // send queue and send after binding is complete.
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, FunctionPrototypeBind(this.send, this, list, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(this.send, this, list, port, address, callback));
     return;
   }
 
@@ -745,7 +711,7 @@ Socket.prototype.close = function (callback) {
   if (typeof callback === "function") this.on("close", callback);
 
   if (queue !== undefined) {
-    queue.push(FunctionPrototypeBind(this.close, this));
+    queue.push(FunctionPrototypeBind.$call(this.close, this));
     return this;
   }
 
@@ -779,7 +745,7 @@ function socketCloseNT(self) {
 
 Socket.prototype.address = function () {
   const addr = this[kStateSymbol].handle.socket?.address;
-  if (!addr) throw new ERR_SOCKET_DGRAM_NOT_RUNNING();
+  if (!addr) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   return addr;
 };
 
@@ -787,11 +753,11 @@ Socket.prototype.remoteAddress = function () {
   const state = this[kStateSymbol];
   const socket = state.handle.socket;
 
-  if (!socket) throw new ERR_SOCKET_DGRAM_NOT_RUNNING();
+  if (!socket) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
 
-  if (state.connectState !== CONNECT_STATE_CONNECTED) throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
+  if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  if (!socket.remoteAddress) throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
+  if (!socket.remoteAddress) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
   return socket.remoteAddress;
 };

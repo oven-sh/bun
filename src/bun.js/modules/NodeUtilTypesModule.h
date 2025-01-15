@@ -1,6 +1,8 @@
 #pragma once
 
 #include "BunClientData.h"
+#include "JSDOMWrapper.h"
+#include "JSEventTarget.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "_NativeModule.h"
 
@@ -452,89 +454,67 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsCryptoKey,
     GET_FIRST_CELL
     return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSCryptoKey>()));
 }
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    GET_FIRST_CELL
+    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>()));
+}
 
 namespace Zig {
+
+// Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE(NodeUtilTypes)
 {
-    INIT_NATIVE_MODULE(43);
+    INIT_NATIVE_MODULE(44);
 
     putNativeFn(Identifier::fromString(vm, "isExternal"_s), jsFunctionIsExternal);
     putNativeFn(Identifier::fromString(vm, "isDate"_s), jsFunctionIsDate);
-    putNativeFn(Identifier::fromString(vm, "isArgumentsObject"_s),
-        jsFunctionIsArgumentsObject);
-    putNativeFn(Identifier::fromString(vm, "isBigIntObject"_s),
-        jsFunctionIsBigIntObject);
-    putNativeFn(Identifier::fromString(vm, "isBooleanObject"_s),
-        jsFunctionIsBooleanObject);
-    putNativeFn(Identifier::fromString(vm, "isNumberObject"_s),
-        jsFunctionIsNumberObject);
-    putNativeFn(Identifier::fromString(vm, "isStringObject"_s),
-        jsFunctionIsStringObject);
-    putNativeFn(Identifier::fromString(vm, "isSymbolObject"_s),
-        jsFunctionIsSymbolObject);
-    putNativeFn(Identifier::fromString(vm, "isNativeError"_s),
-        jsFunctionIsNativeError);
+    putNativeFn(Identifier::fromString(vm, "isArgumentsObject"_s), jsFunctionIsArgumentsObject);
+    putNativeFn(Identifier::fromString(vm, "isBigIntObject"_s), jsFunctionIsBigIntObject);
+    putNativeFn(Identifier::fromString(vm, "isBooleanObject"_s), jsFunctionIsBooleanObject);
+    putNativeFn(Identifier::fromString(vm, "isNumberObject"_s), jsFunctionIsNumberObject);
+    putNativeFn(Identifier::fromString(vm, "isStringObject"_s), jsFunctionIsStringObject);
+    putNativeFn(Identifier::fromString(vm, "isSymbolObject"_s), jsFunctionIsSymbolObject);
+    putNativeFn(Identifier::fromString(vm, "isNativeError"_s), jsFunctionIsNativeError);
     putNativeFn(Identifier::fromString(vm, "isRegExp"_s), jsFunctionIsRegExp);
-    putNativeFn(Identifier::fromString(vm, "isAsyncFunction"_s),
-        jsFunctionIsAsyncFunction);
-    putNativeFn(Identifier::fromString(vm, "isGeneratorFunction"_s),
-        jsFunctionIsGeneratorFunction);
-    putNativeFn(Identifier::fromString(vm, "isGeneratorObject"_s),
-        jsFunctionIsGeneratorObject);
+    putNativeFn(Identifier::fromString(vm, "isAsyncFunction"_s), jsFunctionIsAsyncFunction);
+    putNativeFn(Identifier::fromString(vm, "isGeneratorFunction"_s), jsFunctionIsGeneratorFunction);
+    putNativeFn(Identifier::fromString(vm, "isGeneratorObject"_s), jsFunctionIsGeneratorObject);
     putNativeFn(Identifier::fromString(vm, "isPromise"_s), jsFunctionIsPromise);
     putNativeFn(Identifier::fromString(vm, "isMap"_s), jsFunctionIsMap);
     putNativeFn(Identifier::fromString(vm, "isSet"_s), jsFunctionIsSet);
-    putNativeFn(Identifier::fromString(vm, "isMapIterator"_s),
-        jsFunctionIsMapIterator);
-    putNativeFn(Identifier::fromString(vm, "isSetIterator"_s),
-        jsFunctionIsSetIterator);
+    putNativeFn(Identifier::fromString(vm, "isMapIterator"_s), jsFunctionIsMapIterator);
+    putNativeFn(Identifier::fromString(vm, "isSetIterator"_s), jsFunctionIsSetIterator);
     putNativeFn(Identifier::fromString(vm, "isWeakMap"_s), jsFunctionIsWeakMap);
     putNativeFn(Identifier::fromString(vm, "isWeakSet"_s), jsFunctionIsWeakSet);
-    putNativeFn(Identifier::fromString(vm, "isArrayBuffer"_s),
-        jsFunctionIsArrayBuffer);
+    putNativeFn(Identifier::fromString(vm, "isArrayBuffer"_s), jsFunctionIsArrayBuffer);
     putNativeFn(Identifier::fromString(vm, "isDataView"_s), jsFunctionIsDataView);
-    putNativeFn(Identifier::fromString(vm, "isSharedArrayBuffer"_s),
-        jsFunctionIsSharedArrayBuffer);
+    putNativeFn(Identifier::fromString(vm, "isSharedArrayBuffer"_s), jsFunctionIsSharedArrayBuffer);
     putNativeFn(Identifier::fromString(vm, "isProxy"_s), jsFunctionIsProxy);
-    putNativeFn(Identifier::fromString(vm, "isModuleNamespaceObject"_s),
-        jsFunctionIsModuleNamespaceObject);
-    putNativeFn(Identifier::fromString(vm, "isAnyArrayBuffer"_s),
-        jsFunctionIsAnyArrayBuffer);
-    putNativeFn(Identifier::fromString(vm, "isBoxedPrimitive"_s),
-        jsFunctionIsBoxedPrimitive);
-    putNativeFn(Identifier::fromString(vm, "isArrayBufferView"_s),
-        jsFunctionIsArrayBufferView);
-    putNativeFn(Identifier::fromString(vm, "isTypedArray"_s),
-        jsFunctionIsTypedArray);
-    putNativeFn(Identifier::fromString(vm, "isUint8Array"_s),
-        jsFunctionIsUint8Array);
-    putNativeFn(Identifier::fromString(vm, "isUint8ClampedArray"_s),
-        jsFunctionIsUint8ClampedArray);
-    putNativeFn(Identifier::fromString(vm, "isUint16Array"_s),
-        jsFunctionIsUint16Array);
-    putNativeFn(Identifier::fromString(vm, "isUint32Array"_s),
-        jsFunctionIsUint32Array);
-    putNativeFn(Identifier::fromString(vm, "isInt8Array"_s),
-        jsFunctionIsInt8Array);
-    putNativeFn(Identifier::fromString(vm, "isInt16Array"_s),
-        jsFunctionIsInt16Array);
-    putNativeFn(Identifier::fromString(vm, "isInt32Array"_s),
-        jsFunctionIsInt32Array);
-    putNativeFn(Identifier::fromString(vm, "isFloat16Array"_s),
-        jsFunctionIsFloat16Array);
-    putNativeFn(Identifier::fromString(vm, "isFloat32Array"_s),
-        jsFunctionIsFloat32Array);
-    putNativeFn(Identifier::fromString(vm, "isFloat64Array"_s),
-        jsFunctionIsFloat64Array);
-    putNativeFn(Identifier::fromString(vm, "isBigInt64Array"_s),
-        jsFunctionIsBigInt64Array);
-    putNativeFn(Identifier::fromString(vm, "isBigUint64Array"_s),
-        jsFunctionIsBigUint64Array);
-    putNativeFn(Identifier::fromString(vm, "isKeyObject"_s),
-        jsFunctionIsKeyObject);
-    putNativeFn(Identifier::fromString(vm, "isCryptoKey"_s),
-        jsFunctionIsCryptoKey);
+    putNativeFn(Identifier::fromString(vm, "isModuleNamespaceObject"_s), jsFunctionIsModuleNamespaceObject);
+    putNativeFn(Identifier::fromString(vm, "isAnyArrayBuffer"_s), jsFunctionIsAnyArrayBuffer);
+    putNativeFn(Identifier::fromString(vm, "isBoxedPrimitive"_s), jsFunctionIsBoxedPrimitive);
+    putNativeFn(Identifier::fromString(vm, "isArrayBufferView"_s), jsFunctionIsArrayBufferView);
+    putNativeFn(Identifier::fromString(vm, "isTypedArray"_s), jsFunctionIsTypedArray);
+    putNativeFn(Identifier::fromString(vm, "isUint8Array"_s), jsFunctionIsUint8Array);
+    putNativeFn(Identifier::fromString(vm, "isUint8ClampedArray"_s), jsFunctionIsUint8ClampedArray);
+    putNativeFn(Identifier::fromString(vm, "isUint16Array"_s), jsFunctionIsUint16Array);
+    putNativeFn(Identifier::fromString(vm, "isUint32Array"_s), jsFunctionIsUint32Array);
+    putNativeFn(Identifier::fromString(vm, "isInt8Array"_s), jsFunctionIsInt8Array);
+    putNativeFn(Identifier::fromString(vm, "isInt16Array"_s), jsFunctionIsInt16Array);
+    putNativeFn(Identifier::fromString(vm, "isInt32Array"_s), jsFunctionIsInt32Array);
+    putNativeFn(Identifier::fromString(vm, "isFloat16Array"_s), jsFunctionIsFloat16Array);
+    putNativeFn(Identifier::fromString(vm, "isFloat32Array"_s), jsFunctionIsFloat32Array);
+    putNativeFn(Identifier::fromString(vm, "isFloat64Array"_s), jsFunctionIsFloat64Array);
+    putNativeFn(Identifier::fromString(vm, "isBigInt64Array"_s), jsFunctionIsBigInt64Array);
+    putNativeFn(Identifier::fromString(vm, "isBigUint64Array"_s), jsFunctionIsBigUint64Array);
+    putNativeFn(Identifier::fromString(vm, "isKeyObject"_s), jsFunctionIsKeyObject);
+    putNativeFn(Identifier::fromString(vm, "isCryptoKey"_s), jsFunctionIsCryptoKey);
+    putNativeFn(Identifier::fromString(vm, "isEventTarget"_s), jsFunctionIsEventTarget);
 
     RETURN_NATIVE_MODULE();
 }
+
 } // namespace Zig

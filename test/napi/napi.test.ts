@@ -115,6 +115,7 @@ describe("napi", () => {
           outdir: dir,
           target,
           format,
+          throw: true,
         });
 
         expect(build.logs).toBeEmpty();
@@ -375,6 +376,12 @@ describe("napi", () => {
   describe("create_bigint_words", () => {
     it("works", () => {
       checkSameOutput("test_create_bigint_words", []);
+    });
+  });
+
+  describe("napi_get_last_error_info", () => {
+    it("returns information from the most recent call", () => {
+      checkSameOutput("test_extended_error_messages", []);
     });
   });
 });

@@ -315,6 +315,13 @@ describe("Bun.Transpiler", () => {
       exp("f<{}>()\nfunction f<T>() {}", "let f = function() {\n};\nf()");
     });
 
+    it("malformed enums", () => {
+      const err = ts.expectParseError;
+
+      err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
+      err("enum [] { a }", 'Expected identifier but found "["');
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;
@@ -3440,4 +3447,20 @@ it("does not crash with 9 comments and typescript type skipping", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toContain("success!");
   expect(exitCode).toBe(0);
+});
+
+it("runtime transpiler stack overflows", async () => {
+  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transformSync stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transform stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });

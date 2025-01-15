@@ -214,9 +214,9 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    // page("bundler/intro", "How bundlers work", {
-    //   description: "A visual introduction to bundling",
-    // }),
+    page("bundler/html", "HTML", {
+      description: `Bundle html files with Bun's native bundler.`,
+    }),
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),
@@ -226,6 +226,7 @@ export default {
     page("bundler/macros", "Macros", {
       description: `Run JavaScript functions at bundle-time and inline the results into your bundle`,
     }),
+
     page("bundler/vs-esbuild", "vs esbuild", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),
@@ -310,6 +311,9 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/s3", "S3 Object Storage", {
+      description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
+    }),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),

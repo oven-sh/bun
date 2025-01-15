@@ -2,12 +2,16 @@
 'use strict';
 const common = require('../common');
 const assert = require('assert');
-const { internalBinding } = require('internal/test/binding');
-// const cares = internalBinding('cares_wrap');
 
 // Stub `getaddrinfo` to *always* error. This has to be done before we load the
 // `dns` module to guarantee that the `dns` module uses the stub.
-// cares.getaddrinfo = () => internalBinding('uv').UV_ENOMEM;
+if (typeof Bun === "undefined") {
+  const { internalBinding } = require('internal/test/binding');
+  const cares = internalBinding('cares_wrap');
+  cares.getaddrinfo = () => internalBinding('uv').UV_ENOMEM;
+} else {
+  Bun.dns.lookup = (hostname) => Promise.reject(Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
+}
 
 const dns = require('dns');
 const dnsPromises = dns.promises;
@@ -26,9 +30,11 @@ const dnsPromises = dns.promises;
 // This also verifies different expectWarning notations.
 common.expectWarning({
   // For 'internal/test/binding' module.
-  // 'internal/test/binding': [
-  //   'These APIs are for internal testing only. Do not use them.',
-  // ],
+  ...(typeof Bun === "undefined"? {
+    'internal/test/binding': [
+      'These APIs are for internal testing only. Do not use them.',
+    ]
+  } : {}),
   // For calling `dns.lookup` with falsy `hostname`.
   'DeprecationWarning': {
     DEP0118: 'The provided hostname "false" is not a valid ' +
@@ -54,7 +60,7 @@ assert.throws(() => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The (argument 'hints'|"hints" option) is invalid\. Received:? 100/
+    message: /The argument 'hints' is invalid\. Received:? 100/
   };
   const options = {
     hints: 100,
@@ -73,7 +79,7 @@ assert.throws(() => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /^The (property 'options.family' must be one of: 0, 4, 6|"family" option must be one of 0, 4 or 6)\. Received:? 20$/
+    message: /^The (property 'options.family' must be one of: 0, 4, 6|argument 'family' must be one of 0, 4 or 6)\. Received:? 20$/
   };
   const options = {
     hints: 0,
@@ -199,7 +205,6 @@ dns.lookup('127.0.0.1', {
 
 let tickValue = 0;
 
-/*
 // Should fail due to stub.
 dns.lookup('example.com', common.mustCall((error, result, addressType) => {
   assert(error);
@@ -215,5 +220,4 @@ tickValue = 1;
 
 // Should fail due to stub.
 assert.rejects(dnsPromises.lookup('example.com'),
-               { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());
-*/
+              { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());

@@ -62,7 +62,7 @@ pub const InternalLoopData = extern struct {
     low_prio_budget: i32,
     dns_ready_head: *ConnectingSocket,
     closed_connecting_head: *ConnectingSocket,
-    mutex: u32, // this is actually a bun.Lock
+    mutex: bun.Mutex.ReleaseImpl.Type,
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
     iteration_nr: usize,

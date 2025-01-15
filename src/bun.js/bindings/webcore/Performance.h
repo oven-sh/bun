@@ -111,6 +111,8 @@ public:
 
     // void reportFirstContentfulPaint();
 
+    size_t memoryCost() const;
+
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);

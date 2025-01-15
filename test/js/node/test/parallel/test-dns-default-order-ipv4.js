@@ -4,6 +4,12 @@ const common = require('../common');
 const assert = require('assert');
 const { promisify } = require('util');
 
+// Test that --dns-result-order=ipv4first works as expected.
+
+if (!process.execArgv.includes("--dns-result-order=ipv4first")) {
+  process.exit(0);
+}
+
 const originalLookup = Bun.dns.lookup;
 const calls = [];
 Bun.dns.lookup = common.mustCallAtLeast((...args) => {
@@ -14,7 +20,7 @@ Bun.dns.lookup = common.mustCallAtLeast((...args) => {
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
-// We want to test the parameter of order only so that we
+// We want to test the parameter of ipv4first only so that we
 // ignore possible errors here.
 function allowFailed(fn) {
   return fn.catch((_err) => {

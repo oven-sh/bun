@@ -3,6 +3,7 @@ const content = Buffer.alloc(3 * 15360000, "Bun").toString();
 
 const server = Bun.serve({
   port: 0,
+  idleTimeout: 0,
   fetch: async req => {
     const data = await req.formData();
     return new Response(data.get("name") === content ? "OK" : "NO");

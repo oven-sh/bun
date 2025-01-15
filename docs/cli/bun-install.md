@@ -57,12 +57,15 @@ frozenLockfile = false
 dryRun = true
 
 # Install optionalDependencies (default: true)
+# Setting this to false is equivalent to the `--omit=optional` CLI argument
 optional = true
 
 # Install local devDependencies (default: true)
+# Setting this to false is equivalent to the `--omit=dev` CLI argument
 dev = true
 
 # Install peerDependencies (default: true)
+# Setting this to false is equivalent to the `--omit=peer` CLI argument
 peer = true
 
 # Max number of concurrent lifecycle scripts (default: (cpu count or GOMAXPROCS) x2)

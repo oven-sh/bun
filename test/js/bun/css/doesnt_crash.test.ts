@@ -35,6 +35,7 @@ describe("doesnt_crash", async () => {
           experimentalCss: true,
           minify: minify,
           target,
+          throw: true,
         });
         console.timeEnd(timeLog);
 
@@ -56,6 +57,7 @@ describe("doesnt_crash", async () => {
             experimentalCss: true,
             target,
             minify: minify,
+            throw: true,
           });
 
           if (logs?.length) {

@@ -61,7 +61,9 @@ exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
 "{
   "lockfileVersion": 0,
   "workspaces": {
-    "": {},
+    "": {
+      "name": "foo",
+    },
     "packages/pkg1": {
       "name": "pkg-one",
       "version": "1.0.0",

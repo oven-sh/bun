@@ -1,6 +1,5 @@
 const Glob = @This();
 const globImpl = @import("../../glob.zig");
-const globImplAscii = @import("../../glob_ascii.zig");
 const GlobWalker = globImpl.BunGlobWalker;
 const PathLike = @import("../node/types.zig").PathLike;
 const ArgumentsSlice = @import("../node/types.zig").ArgumentsSlice;
@@ -407,7 +406,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var str = str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImplAscii.match(this.pattern, str.slice()));
+    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImpl.Ascii.match(this.pattern, str.slice()).matches());
 
     const codepoints = codepoints: {
         if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];
@@ -422,7 +421,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
 
-    return if (globImpl.matchImpl(codepoints, str.slice()).matches()) .true else .false;
+    return if (globImpl.walk.matchImpl(codepoints, str.slice()).matches()) .true else .false;
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

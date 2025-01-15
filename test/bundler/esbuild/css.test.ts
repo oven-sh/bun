@@ -1470,10 +1470,9 @@ c {
     outfile: "/out.css",
   });
 
+  // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     experimentalCss: true,
-
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import shared from './shared.js'
@@ -1497,7 +1496,14 @@ c {
     entryPoints: ["/a.js", "/b.js", "/c.css", "/d.css"],
     format: "esm",
     splitting: true,
+    onAfterBundle(api) {
+      const files = ["/a.js", "/b.js", "/c.css", "/d.css"];
+      for (const file of files) {
+        api.expectFile(file).toMatchSnapshot(file);
+      }
+    },
   });
+
   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
     experimentalCss: true,
 

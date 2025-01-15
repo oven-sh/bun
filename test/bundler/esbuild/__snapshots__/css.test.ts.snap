@@ -2329,3 +2329,23 @@ exports[`esbuild-bundler css/CSSAtImportConditionsChainExternal 1`] = `
 
 "
 `;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /a.js 1`] = `
+"import shared from './shared.js'
+console.log(shared() + 1)"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /b.js 1`] = `
+"import shared from './shared.js'
+console.log(shared() + 2)"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /c.css 1`] = `
+"@import "./shared.css";
+body { color: red }"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /d.css 1`] = `
+"@import "./shared.css";
+body { color: blue }"
+`;

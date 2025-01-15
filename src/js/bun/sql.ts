@@ -875,8 +875,11 @@ function SQL(o) {
       values = v.value;
     }
     if (!allowUnsafeTransaction) {
-      if (sqlString.length === 5 && connectionInfo.max !== 1 && sqlString.toUpperCase() === "BEGIN") {
-        throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+      if (connectionInfo.max !== 1) {
+        const upperCaseSqlString = sqlString.toUpperCase().trim();
+        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
+          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+        }
       }
     }
     return createQuery(sqlString, values, new SQLResultArray(), columns);
@@ -1151,12 +1154,13 @@ function SQL(o) {
     };
     let needs_rollback = false;
     try {
+      //TODO: this works well for MySQL and POSTGRES but not for SQLite or MSSQL
       if (options) {
         //@ts-ignore
-        await transaction_sql(`BEGIN ${options}`);
+        await transaction_sql(`START TRANSACTION ${options}`);
       } else {
         //@ts-ignore
-        await transaction_sql("BEGIN");
+        await transaction_sql("START TRANSACTION");
       }
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
@@ -1215,7 +1219,8 @@ function SQL(o) {
 
   sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
     /*
-    BEGIN; -- works on POSTGRES, MySQL, and SQLite (need to change to BEGIN TRANSACTION on MSSQL)
+    BEGIN; -- works on POSTGRES, MySQL (autocommit is true, no options accepted), and SQLite (no options accepted) (need to change to BEGIN TRANSACTION on MSSQL)
+    START TRANSACTION; -- works on POSTGRES, MySQL (autocommit is false, options accepted), (need to change to BEGIN TRANSACTION on MSSQL and BEGIN on SQLite)
 
     -- Create a SAVEPOINT
     SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to SAVE TRANSACTION on MSSQL)

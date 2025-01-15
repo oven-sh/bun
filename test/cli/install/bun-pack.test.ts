@@ -764,7 +764,7 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
-  test.todo("scoped names", async () => {
+  test("scoped names", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),

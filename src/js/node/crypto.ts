@@ -25,11 +25,15 @@ const {
   X509Certificate,
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
+const statelessDH = $newCppFunction("KeyObject.cpp", "jsStatelessDH", 2);
+
 const {
   randomInt: _randomInt,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+
+const { validateObject } = require("internal/validators");
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -1621,7 +1625,12 @@ var require_algos = __commonJS({
   },
 });
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest);
+  if (typeof digest === "function") {
+    callback = digest;
+    digest = undefined;
+  }
+
+  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -5515,6 +5524,39 @@ var require_browser7 = __commonJS({
     }
     exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
+
+    exports.diffieHellman = function diffieHellman(options) {
+      validateObject(options);
+
+      const { privateKey, publicKey } = options;
+
+      if (!(privateKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.privateKey", privateKey);
+      }
+
+      if (!(publicKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.publicKey", publicKey);
+      }
+
+      if (privateKey.type !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(privateKey.type, "private");
+      }
+
+      const publicKeyType = publicKey.type;
+      if (publicKeyType !== "public" && publicKeyType !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(publicKeyType, "private or public");
+      }
+
+      const privateType = privateKey.asymmetricKeyType;
+      const publicType = publicKey.asymmetricKeyType;
+      if (privateType !== publicType || !["dh", "ec", "x448", "x25519"].includes(privateType)) {
+        throw $ERR_CRYPTO_INCOMPATIBLE_KEY(
+          `Incompatible key types for Diffie-Hellman: ${privateType} and ${publicType}`,
+        );
+      }
+
+      return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);
+    };
   },
 });
 
@@ -11532,6 +11574,7 @@ var require_crypto_browserify2 = __commonJS({
     exports.getDiffieHellman = dh.getDiffieHellman;
     exports.createDiffieHellman = dh.createDiffieHellman;
     exports.DiffieHellman = dh.DiffieHellman;
+    exports.diffieHellman = dh.diffieHellman;
     var sign = require_browser8();
     exports.createSign = sign.createSign;
     exports.Sign = sign.Sign;

@@ -2780,6 +2780,56 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexi
     }
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "requires 2 arguments"_s);
+    }
+
+    auto* privateKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    auto* publicKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(1));
+
+    if (!privateKeyObj || !publicKeyObj) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "diffieHellman"_s, "CryptoKey"_s, !privateKeyObj ? callFrame->argument(0) : callFrame->argument(1));
+    }
+
+    auto& privateKey = privateKeyObj->wrapped();
+    auto& publicKey = publicKeyObj->wrapped();
+
+    // Create AsymmetricKeyValue objects to access the EVP_PKEY pointers
+    WebCore::AsymmetricKeyValue ourKeyValue(privateKey);
+    WebCore::AsymmetricKeyValue theirKeyValue(publicKey);
+
+    // Get the EVP_PKEY from both keys
+    EVP_PKEY* ourKey = ourKeyValue.key;
+    EVP_PKEY* theirKey = theirKeyValue.key;
+
+    if (!ourKey || !theirKey) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key"_s, jsUndefined(), "is invalid"_s);
+    }
+
+    // Create EVPKeyPointers to wrap the keys
+    ncrypto::EVPKeyPointer ourKeyPtr(ourKey);
+    ncrypto::EVPKeyPointer theirKeyPtr(theirKey);
+
+    // Use DHPointer::stateless to compute the shared secret
+    auto secret = ncrypto::DHPointer::stateless(ourKeyPtr, theirKeyPtr).release();
+
+    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(secret.data), secret.len }, createSharedTask<void(void*)>([](void* p) {
+        OPENSSL_free(p);
+    }));
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, secret.len);
+    if (!result) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "failed to allocate result buffer"_s);
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(KeyObject__AsymmetricKeyType, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;

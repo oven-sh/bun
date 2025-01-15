@@ -6,6 +6,8 @@
 
 namespace WebCore {
 
+JSC_DECLARE_HOST_FUNCTION(jsStatelessDH);
+
 JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

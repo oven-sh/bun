@@ -11,7 +11,7 @@ const jsNativeApiTests = Array.from(new Glob("**/*.js").scanSync(jsNativeApiRoot
 const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
 
 // These js-native-api tests are known to fail and will be fixed in later PRs
-const failingJsNativeApiTests = [
+let failingJsNativeApiTests = [
   // Fails because Bun doesn't implement node_api_create_property_key_latin1
   "test_string/test.js",
   // Fails because Bun doesn't implement node_api_create_property_key_latin1
@@ -22,7 +22,7 @@ const failingJsNativeApiTests = [
 // passed in Bun v1.1.34. It'll take some time to get all these to work, as we've been focusing more
 // on js-native-api tests so far, and we don't want these tests to pollute CI. But we do want to
 // know if we regressed any of the other tests.
-const failingNodeApiTests = [
+let failingNodeApiTests = [
   "test_uv_threadpool_size/test.js",
   "test_uv_threadpool_size/node-options.js",
   "test_uv_loop/test.js",

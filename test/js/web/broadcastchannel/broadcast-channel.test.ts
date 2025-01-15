@@ -178,7 +178,7 @@ test("Closing a channel in onmessage prevents already queued tasks from firing o
   c1.postMessage("done");
 });
 
-test.only("broadcast channel used with workers", async () => {
+test("broadcast channel used with workers", async () => {
   const batchSize = 1;
   for (let total = 0; total < 100; total++) {
     let bc = new BroadcastChannel("hello test");

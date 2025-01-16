@@ -795,8 +795,6 @@ describe("HEAD requests #16431", () => {
             return new Response(null, { status: 307 });
           case "/308":
             return new Response(null, { status: 308 });
-          case "/200-with-body":
-            return new Response(null, { status: 200 });
           default:
             return new Response(null, { status: 200 });
         }
@@ -871,14 +869,6 @@ describe("HEAD requests #16431", () => {
     {
       const response = await fetch(server.url + "/308", { method: "HEAD" });
       expect(response.status).toBe(308);
-      expect(await response.text()).toBe("");
-      expect(response.headers.get("content-length")).toBe("0");
-    }
-
-    // Test 200-with-body response
-    {
-      const response = await fetch(server.url + "/200-with-body", { method: "HEAD" });
-      expect(response.status).toBe(200);
       expect(await response.text()).toBe("");
       expect(response.headers.get("content-length")).toBe("0");
     }

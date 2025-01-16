@@ -452,12 +452,16 @@ pub const UDPSocket = struct {
     }
 
     fn getSetsockoptError(res: c_int) ?bun.JSC.Maybe(void) {
-        if (res == 0) {
+        if (comptime bun.Environment.isWindows) {
             // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows
-            return null;
-        }
+            if (res == 0) {
+                return null;
+            }
 
-        return bun.JSC.Maybe(void).errnoSys(res, .setsockopt);
+            return bun.JSC.Maybe(void).errnoSys(0, .setsockopt);
+        } else {
+            return bun.JSC.Maybe(void).errnoSys(res, .setsockopt);
+        }
     }
 
     fn setAnyTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime function: fn (*uws.udp.Socket, i32) c_int) bun.JSError!JSValue {

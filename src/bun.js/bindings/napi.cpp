@@ -444,33 +444,25 @@ static void defineNapiProperty(napi_env env, JSC::JSObject* to, napi_property_de
     if (property.getter != nullptr || property.setter != nullptr) {
         JSC::JSObject* getter = nullptr;
         JSC::JSObject* setter = nullptr;
-        auto getterProperty = reinterpret_cast<CFFIFunction>(property.getter);
-        auto setterProperty = reinterpret_cast<CFFIFunction>(property.setter);
 
-        if (getterProperty) {
+        if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
             getter = NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr);
         } else {
             JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 0, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    return JSC::JSValue::encode(JSC::jsUndefined());
+                    return JSValue::encode(JSC::jsUndefined());
                 });
             getter = getterFunction;
         }
 
-        if (setterProperty) {
+        if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
             setter = NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr);
-            // } else {
-            //     JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
-            //         globalObject->vm(), globalObject, 1, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            //             return JSC::JSValue::encode(JSC::jsBoolean(true));
-            //         });
-            //     setter = setterFunction;
         }
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
-        to->putDirectAccessor(globalObject, propertyName, getterSetter, JSC::PropertyAttribute::Accessor | getPropertyAttributes(property));
+        to->putDirectAccessor(globalObject, propertyName, getterSetter, PropertyAttribute::Accessor | getPropertyAttributes(property));
     } else {
         JSC::JSValue value = toJS(property.value);
 

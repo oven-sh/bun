@@ -125,6 +125,7 @@ export default [
   }),
   define({
     name: "Blob",
+    final: false,
     construct: true,
     finalize: true,
     JSType: "0b11101110",
@@ -167,17 +168,12 @@ export default [
 
       // Non-standard, s3 + BunFile support
       unlink: { fn: "doUnlink", length: 0 },
+      delete: { fn: "doUnlink", length: 0 },
       write: { fn: "doWrite", length: 2 },
-      // Non-standard, s3 support
-      bucket: {
-        cache: true,
-        getter: "getBucket",
-      },
-      presign: { fn: "getPresignUrl", length: 1 },
-
       size: {
         getter: "getSize",
       },
+      stat: { fn: "getStat", length: 0 },
 
       writer: {
         fn: "getWriter",

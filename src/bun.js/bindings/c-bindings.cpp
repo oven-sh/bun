@@ -870,3 +870,13 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 }
 
 #endif
+
+#if OS(LINUX) || OS(DARWIN)
+#include <paths.h>
+
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#elif OS(WINDOWS)
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
+#else
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif

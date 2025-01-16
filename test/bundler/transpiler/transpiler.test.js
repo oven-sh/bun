@@ -315,6 +315,13 @@ describe("Bun.Transpiler", () => {
       exp("f<{}>()\nfunction f<T>() {}", "let f = function() {\n};\nf()");
     });
 
+    it("malformed enums", () => {
+      const err = ts.expectParseError;
+
+      err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
+      err("enum [] { a }", 'Expected identifier but found "["');
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;

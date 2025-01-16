@@ -8856,12 +8856,12 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        var extends_type = if (get_metadata) TypeScript.Metadata.default else {};
+                        var extends_type = if (get_metadata) TypeScript.Metadata.default;
                         try p.skipTypeScriptTypeWithOpts(
                             .lowest,
                             TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types),
                             get_metadata,
-                            if (get_metadata) &extends_type else {},
+                            if (get_metadata) &extends_type,
                         );
 
                         if (comptime get_metadata) {
@@ -11259,8 +11259,7 @@ fn NewParser_(
             var is_single_line = !p.lexer.has_newline_before;
             // this variable should not exist if we're not in a typescript file
             var had_type_only_imports = if (comptime is_typescript_enabled)
-                false
-            else {};
+                false;
 
             while (p.lexer.token != .t_close_brace) {
                 // The alias may be a keyword;
@@ -11917,6 +11916,8 @@ fn NewParser_(
                     needs_symbol = true;
                 } else {
                     try p.lexer.expect(.t_identifier);
+                    // error early, name is still `undefined`
+                    return error.SyntaxError;
                 }
                 try p.lexer.next();
 
@@ -18861,22 +18862,20 @@ fn NewParser_(
                     }
                 },
                 .e_import_meta => {
-                    // Make `import.meta.url` side effect free.
-                    if (strings.eqlComptime(name, "url")) {
-                        return p.newExpr(
-                            E.Dot{
-                                .target = target,
-                                .name = name,
-                                .name_loc = name_loc,
-                                .can_be_removed_if_unused = true,
-                            },
-                            target.loc,
-                        );
-                    }
-
                     if (strings.eqlComptime(name, "main")) {
                         return p.valueForImportMetaMain(false, target.loc);
                     }
+
+                    // Make all property accesses on `import.meta.url` side effect free.
+                    return p.newExpr(
+                        E.Dot{
+                            .target = target,
+                            .name = name,
+                            .name_loc = name_loc,
+                            .can_be_removed_if_unused = true,
+                        },
+                        target.loc,
+                    );
                 },
                 .e_require_call_target => {
                     if (strings.eqlComptime(name, "main")) {
@@ -22103,7 +22102,7 @@ fn NewParser_(
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
 
-            const initial_scope = if (comptime Environment.allow_assert) p.current_scope else {};
+            const initial_scope = if (comptime Environment.allow_assert) p.current_scope;
 
             {
                 // Save the current control-flow liveness. This represents if we are
@@ -23747,8 +23746,11 @@ fn NewParser_(
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
                 .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
                 .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
-                .uses_require_ref = p.runtime_imports.__require != null and
-                    p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0,
+                .uses_require_ref = if (p.options.bundle)
+                    p.runtime_imports.__require != null and
+                        p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0
+                else
+                    p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,

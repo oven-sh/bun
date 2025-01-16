@@ -17,7 +17,7 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
-const s3 = @import("./s3.zig");
+const s3 = bun.S3;
 
 const DotEnvFileSuffix = enum {
     development,
@@ -46,7 +46,7 @@ pub const Loader = struct {
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
 
-    aws_credentials: ?s3.AWSCredentials = null,
+    aws_credentials: ?s3.S3Credentials = null,
 
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
@@ -115,7 +115,7 @@ pub const Loader = struct {
         }
     }
 
-    pub fn getAWSCredentials(this: *Loader) s3.AWSCredentials {
+    pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
         if (this.aws_credentials) |credentials| {
             return credentials;
         }
@@ -125,6 +125,7 @@ pub const Loader = struct {
         var region: []const u8 = "";
         var endpoint: []const u8 = "";
         var bucket: []const u8 = "";
+        var session_token: []const u8 = "";
 
         if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
@@ -152,12 +153,18 @@ pub const Loader = struct {
         } else if (this.get("AWS_BUCKET")) |bucket_| {
             bucket = bucket_;
         }
+        if (this.get("S3_SESSION_TOKEN")) |token| {
+            session_token = token;
+        } else if (this.get("AWS_SESSION_TOKEN")) |token| {
+            session_token = token;
+        }
         this.aws_credentials = .{
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,
             .endpoint = endpoint,
             .bucket = bucket,
+            .sessionToken = session_token,
         };
 
         return this.aws_credentials.?;

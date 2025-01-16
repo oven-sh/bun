@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
@@ -427,12 +427,7 @@ pub const FSWatcher = struct {
             };
         }
 
-        pub fn createFSWatcher(this: Arguments) JSC.Maybe(JSC.JSValue) {
-            return switch (FSWatcher.init(this)) {
-                .result => |result| .{ .result = result.js_this },
-                .err => |err| .{ .err = err },
-            };
-        }
+        pub const createFSWatcher = FSWatcher.init;
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {

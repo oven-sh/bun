@@ -25,7 +25,7 @@ esac
 
 export BUN_DEBUG_QUIET_LOGS=1
 
-for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js")
+for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js" | sort)
 do
   i=$((i+1))
   echo ./$x

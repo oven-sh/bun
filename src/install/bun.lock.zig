@@ -556,7 +556,9 @@ pub const Stringifier = struct {
 
                     try writer.writeByte('"');
                     // relative_path is empty string for root resolutions
-                    try writer.writeAll(relative_path);
+                    try writer.print("{}", .{
+                        bun.fmt.formatJSONStringUTF8(relative_path, .{ .quote = false }),
+                    });
 
                     if (depth != 0) {
                         try writer.writeByte('/');
@@ -565,8 +567,8 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
                     const dep_name = dep.name.slice(buf);
 
-                    try writer.print("{s}\": ", .{
-                        dep_name,
+                    try writer.print("{}\": ", .{
+                        bun.fmt.formatJSONStringUTF8(dep_name, .{ .quote = false }),
                     });
 
                     const pkg_name = pkg_names[pkg_id];
@@ -624,7 +626,7 @@ pub const Stringifier = struct {
                                 res.value.folder.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
@@ -634,7 +636,7 @@ pub const Stringifier = struct {
                                 res.value.local_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
@@ -644,7 +646,7 @@ pub const Stringifier = struct {
                                 res.value.remote_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
@@ -654,7 +656,7 @@ pub const Stringifier = struct {
                                 res.value.symlink.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
@@ -672,7 +674,7 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
@@ -684,7 +686,7 @@ pub const Stringifier = struct {
                                 res.value.workspace.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.writeByte(']');
                         },
@@ -695,7 +697,7 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageInfoObject(writer, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
 
                             try writer.print(", {}]", .{
                                 repo.resolved.fmtJson(buf, .{}),
@@ -720,6 +722,7 @@ pub const Stringifier = struct {
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageInfoObject(
         writer: anytype,
+        dep_behavior: Dependency.Behavior,
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
         meta: *const Meta,
@@ -759,9 +762,9 @@ pub const Stringifier = struct {
                     try writer.writeAll(", ");
                 }
 
-                try writer.print("\"{s}\": \"{s}\"", .{
-                    dep.name.slice(buf),
-                    dep.version.literal.slice(buf),
+                try writer.print("{}: {}", .{
+                    bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
+                    bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
             }
 
@@ -778,15 +781,27 @@ pub const Stringifier = struct {
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\{s}"{s}"{s}
+                    \\{s}{}{s}
                 , .{
                     if (i != 0) " " else "",
-                    optional_peer.slice(buf),
+                    bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
                     if (i != optional_peers_buf.items.len - 1) "," else "",
                 });
             }
 
             try writer.writeByte(']');
+        }
+
+        if (dep_behavior.isBundled()) {
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+
+            try writer.writeAll(
+                \\ "bundled": true
+            );
         }
 
         // TODO(dylan-conway)
@@ -860,14 +875,25 @@ pub const Stringifier = struct {
         // need a way to detect new/deleted workspaces
         if (pkg_id == 0) {
             try writer.writeAll("\"\": {");
+            const root_name = pkg_names[0].slice(buf);
+            if (root_name.len > 0) {
+                try writer.writeByte('\n');
+                try incIndent(writer, indent);
+                try writer.print("\"name\": {}", .{
+                    bun.fmt.formatJSONStringUTF8(root_name, .{}),
+                });
+
+                // TODO(dylan-conway) should we save version?
+                any = true;
+            }
         } else {
             try writer.print("{}: {{", .{
                 bun.fmt.formatJSONStringUTF8(res.slice(buf), .{}),
             });
             try writer.writeByte('\n');
             try incIndent(writer, indent);
-            try writer.print("\"name\": \"{s}\"", .{
-                pkg_names[pkg_id].slice(buf),
+            try writer.print("\"name\": {}", .{
+                bun.fmt.formatJSONStringUTF8(pkg_names[pkg_id].slice(buf), .{}),
             });
 
             if (workspace_versions.get(pkg_name_hashes[pkg_id])) |version| {
@@ -916,7 +942,10 @@ pub const Stringifier = struct {
                 const name = dep.name.slice(buf);
                 const version = dep.version.literal.slice(buf);
 
-                try writer.print("\"{s}\": \"{s}\"", .{ name, version });
+                try writer.print("{}: {}", .{
+                    bun.fmt.formatJSONStringUTF8(name, .{}),
+                    bun.fmt.formatJSONStringUTF8(version, .{}),
+                });
             }
 
             if (!first) {
@@ -940,9 +969,11 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\"{s}",
+                    \\{},
                     \\
-                , .{optional_peer.slice(buf)});
+                , .{
+                    bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
+                });
             }
             try decIndent(writer, indent);
             try writer.writeByte(']');
@@ -977,7 +1008,7 @@ pub const Stringifier = struct {
 };
 
 const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
-    .{ "dependencies", Dependency.Behavior.normal },
+    .{ "dependencies", Dependency.Behavior.prod },
     .{ "devDependencies", Dependency.Behavior.dev },
     .{ "optionalDependencies", Dependency.Behavior.optional },
     .{ "peerDependencies", Dependency.Behavior.peer },
@@ -1242,14 +1273,15 @@ pub fn parseIntoBinaryLockfile(
                 const name = value.get("name").?.asString(allocator).?;
                 const name_hash = String.Builder.stringHash(name);
 
-                var dep: Dependency = .{};
-                dep.name = try string_buf.appendWithHash(name, name_hash);
-                dep.name_hash = name_hash;
-                dep.behavior = Dependency.Behavior.workspace;
-                dep.version = .{
-                    .tag = .workspace,
-                    .value = .{
-                        .workspace = try string_buf.append(path),
+                const dep: Dependency = .{
+                    .name = try string_buf.appendWithHash(name, name_hash),
+                    .name_hash = name_hash,
+                    .behavior = Dependency.Behavior.workspace,
+                    .version = .{
+                        .tag = .workspace,
+                        .value = .{
+                            .workspace = try string_buf.append(path),
+                        },
                     },
                 };
 
@@ -1267,7 +1299,11 @@ pub fn parseIntoBinaryLockfile(
         try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
-    var pkg_map = bun.StringArrayHashMap(PackageID).init(allocator);
+    const PkgMapEntry = struct {
+        pkg_id: PackageID,
+        bundled: bool,
+    };
+    var pkg_map = bun.StringArrayHashMap(PkgMapEntry).init(allocator);
     defer pkg_map.deinit();
 
     if (root.get("packages")) |pkgs_expr| {
@@ -1355,6 +1391,8 @@ pub fn parseIntoBinaryLockfile(
 
             var pkg: BinaryLockfile.Package = .{};
 
+            var bundled = false;
+
             // dependencies, os, cpu, libc
             switch (res.tag) {
                 .npm, .folder, .git, .github, .local_tarball, .remote_tarball, .symlink, .workspace => {
@@ -1363,29 +1401,38 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    const deps_os_cpu_libc_bin_obj = pkg_info.at(i);
+                    const deps_os_cpu_libc_bin_bundle_obj = pkg_info.at(i);
                     i += 1;
-                    if (!deps_os_cpu_libc_bin_obj.isObject()) {
-                        try log.addError(source, deps_os_cpu_libc_bin_obj.loc, "Expected an object");
+                    if (!deps_os_cpu_libc_bin_bundle_obj.isObject()) {
+                        try log.addError(source, deps_os_cpu_libc_bin_bundle_obj.loc, "Expected an object");
                         return error.InvalidPackageInfo;
                     }
 
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_bin_obj, &string_buf, log, source, &optional_peers_buf);
+                    if (deps_os_cpu_libc_bin_bundle_obj.get("bundled")) |bundled_expr| {
+                        if (!bundled_expr.isBoolean()) {
+                            try log.addError(source, bundled_expr.loc, "Expected a boolean");
+                            return error.InvalidPackageInfo;
+                        }
+
+                        bundled = bundled_expr.data.e_boolean.value;
+                    }
+
+                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_bin_bundle_obj, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
 
-                    if (deps_os_cpu_libc_bin_obj.get("bin")) |bin| {
+                    if (deps_os_cpu_libc_bin_bundle_obj.get("bin")) |bin| {
                         pkg.bin = try Bin.parseAppend(allocator, bin, &string_buf, &lockfile.buffers.extern_strings);
-                    } else if (deps_os_cpu_libc_bin_obj.get("binDir")) |bin_dir| {
+                    } else if (deps_os_cpu_libc_bin_bundle_obj.get("binDir")) |bin_dir| {
                         pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_dir, &string_buf);
                     }
 
                     if (res.tag != .workspace) {
-                        if (deps_os_cpu_libc_bin_obj.get("os")) |os| {
+                        if (deps_os_cpu_libc_bin_bundle_obj.get("os")) |os| {
                             pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
                         }
-                        if (deps_os_cpu_libc_bin_obj.get("cpu")) |arch| {
+                        if (deps_os_cpu_libc_bin_bundle_obj.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
                         // TODO(dylan-conway)
@@ -1464,7 +1511,10 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackageKey;
             }
 
-            entry.value_ptr.* = pkg_id;
+            entry.value_ptr.* = .{
+                .pkg_id = pkg_id,
+                .bundled = bundled,
+            };
         }
 
         try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
@@ -1485,7 +1535,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                const res_pkg_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
+                const entry = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
                     }
@@ -1493,7 +1543,8 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
+                lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
+                lockfile.buffers.dependencies.items[dep_id].behavior.bundled = entry.bundled;
             }
 
             // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
@@ -1508,14 +1559,14 @@ pub fn parseIntoBinaryLockfile(
 
             const pkg_path = key.asString(allocator).?;
 
-            const pkg_id = pkg_map.get(pkg_path) orelse {
+            const pkg_id = (pkg_map.get(pkg_path) orelse {
                 return error.InvalidPackagesObject;
-            };
+            }).pkg_id;
 
             // find resolutions. iterate up to root through the pkg path.
             deps: for (pkg_deps[pkg_id].begin()..pkg_deps[pkg_id].end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
-                const dep = lockfile.buffers.dependencies.items[dep_id];
+                var dep = &lockfile.buffers.dependencies.items[dep_id];
                 const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
 
                 @memcpy(path_buf[0..pkg_path.len], pkg_path);
@@ -1527,8 +1578,9 @@ pub fn parseIntoBinaryLockfile(
                     @memcpy(path_buf[offset..][0..dep_name.len], dep_name);
                     const res_path = path_buf[0 .. offset + dep_name.len];
 
-                    if (pkg_map.get(res_path)) |res_pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
+                    if (pkg_map.get(res_path)) |entry| {
+                        lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
+                        dep.behavior.bundled = entry.bundled;
                         continue :deps;
                     }
 
@@ -1536,7 +1588,7 @@ pub fn parseIntoBinaryLockfile(
                         if (dep.behavior.optional) {
                             continue :deps;
                         }
-                        try dependencyResolutionFailure(&dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
+                        try dependencyResolutionFailure(dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
                         return error.InvalidPackageInfo;
                     }
 
@@ -1584,7 +1636,7 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
-        lockfile.hoist(log, .resolvable, {}) catch |err| {
+        lockfile.resolve(log) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {
@@ -1600,11 +1652,11 @@ pub fn parseIntoBinaryLockfile(
 }
 
 fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
-    const behavior_str = if (dep.behavior.isDev())
+    const behavior_str = if (dep.behavior.dev)
         "dev"
-    else if (dep.behavior.isOptional())
+    else if (dep.behavior.optional)
         "optional"
-    else if (dep.behavior.isPeer())
+    else if (dep.behavior.peer)
         "peer"
     else if (dep.behavior.isWorkspaceOnly())
         "workspace"
@@ -1681,10 +1733,13 @@ fn parseAppendDependencies(
                 const version = try buf.append(version_str);
                 const version_sliced = version.sliced(buf.bytes.items);
 
-                var dep: Dependency = .{
+                const dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
-                    .behavior = group_behavior,
+                    .behavior = if (group_behavior.peer and optional_peers_buf.contains(name.hash))
+                        group_behavior.add(.optional)
+                    else
+                        group_behavior,
                     .version = Dependency.parse(
                         allocator,
                         name.value,
@@ -1698,10 +1753,6 @@ fn parseAppendDependencies(
                         return error.InvalidDependencyVersion;
                     },
                 };
-
-                if (dep.behavior.isPeer() and optional_peers_buf.contains(name.hash)) {
-                    dep.behavior.optional = true;
-                }
 
                 try lockfile.buffers.dependencies.append(allocator, dep);
             }

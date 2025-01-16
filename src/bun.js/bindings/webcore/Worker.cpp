@@ -418,18 +418,26 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
 
+    worker->ref();
     worker->dispatchExit(exitCode);
+    worker->deref();
 
     if (globalObject) {
         JSC::VM& vm = globalObject->vm();
         vm.setHasTerminationRequest();
 
-        // clang-tidy is smart enough to realize that deref() leads to freeing
-        // but it's not smart enough to realize that `hasOneRef()` ensures its safety
-        while (!vm.hasOneRef()) // NOLINT
-            vm.deref(); // NOLINT
+        {
+            globalObject->esmRegistryMap()->clear(globalObject);
+            globalObject->requireMap()->clear(globalObject);
+            vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+            gcUnprotect(globalObject);
+            globalObject = nullptr;
+        }
 
-        vm.deref(); // NOLINT
+        vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+
+        vm.derefSuppressingSaferCPPChecking(); // NOLINT
+        vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

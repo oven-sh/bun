@@ -13,7 +13,7 @@ pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
-    root: []const u8,
+    root: [:0]const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
@@ -761,11 +761,9 @@ fn onRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8(dev.relativePath(name));
-                defer str.deref();
-                const js = str.toJS(dev.vm.global);
-                router_type.server_file_string = JSC.Strong.create(js, dev.vm.global);
-                break :str js;
+                const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
+                break :str str;
             },
             // routeModules
             route_bundle.cached_module_list.get() orelse arr: {
@@ -4446,7 +4444,7 @@ pub const EntryPointList = struct {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Mutex = std.Thread.Mutex;
+const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
@@ -4485,5 +4483,5 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
-const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Chunk = bun.bundle_v2.Chunk;

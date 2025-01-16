@@ -36,7 +36,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../mimalloc_arena.zig");
+const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -338,7 +338,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 return globalObject.throwInvalidArguments("define must be an object", .{});
             }
 
-            var define_iter = JSC.JSPropertyIterator(.{
+            var define_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
 
                 .include_value = true,
@@ -351,7 +351,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
             var values = map_entries[define_iter.len..];
 
-            while (define_iter.next()) |prop| {
+            while (try define_iter.next()) |prop| {
                 const property_value = define_iter.value;
                 const value_type = property_value.jsType();
 
@@ -462,10 +462,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     transpiler.runtime.allow_runtime = false;
-    transpiler.runtime.use_import_meta_require = switch (transpiler.transform.target orelse .browser) {
-        .bun, .bun_macro => true,
-        else => false,
-    };
 
     if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
@@ -624,26 +620,25 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 return globalObject.throwInvalidArguments("replace must be an object", .{});
             }
 
-            var iter = JSC.JSPropertyIterator(.{
+            var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
             }).init(globalThis, replace);
+            defer iter.deinit();
 
             if (iter.len > 0) {
-                errdefer iter.deinit();
                 try replacements.ensureUnusedCapacity(bun.default_allocator, iter.len);
 
                 // We cannot set the exception before `try` because it could be
                 // a double free with the `errdefer`.
                 defer if (globalThis.hasException()) {
-                    iter.deinit();
                     for (replacements.keys()) |key| {
                         bun.default_allocator.free(@constCast(key));
                     }
                     replacements.clearAndFree(bun.default_allocator);
                 };
 
-                while (iter.next()) |key_| {
+                while (try iter.next()) |key_| {
                     const value = iter.value;
                     if (value == .zero) continue;
 

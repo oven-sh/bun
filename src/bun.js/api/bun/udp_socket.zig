@@ -458,7 +458,7 @@ pub const UDPSocket = struct {
                 return null;
             }
 
-            return bun.JSC.Maybe(void).errnoSys(0, .setsockopt);
+            return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), .setsockopt);
         } else {
             return bun.JSC.Maybe(void).errnoSys(res, .setsockopt);
         }

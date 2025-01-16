@@ -1,6 +1,6 @@
-Bun aims for complete Node.js API compatibility. Most `npm` packages intended for `Node.js` environments will work with Bun out of the box; the best way to know for certain is to try it.
+Every day, Bun gets closer to 100% Node.js API compatibility. Popular projects like Next.js, Express, and millions of `npm` packages intended for Node.js just work with Bun out of the box.
 
-This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v20_. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
+This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v23_. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
 
 ## Built-in modules
 
@@ -45,7 +45,7 @@ Some methods are not optimized yet.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟡 Missing `cancel` `setServers` `getDefaultResultOrder`
+🟢 Fully implemented. > 90% of Node.js's test suite passes.
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
@@ -53,7 +53,7 @@ Some methods are not optimized yet.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath.
+🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath. > 90% of Node.js's test suite passes.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -85,11 +85,11 @@ Some methods are not optimized yet.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. 100% of Node.js's test suite passes.
 
 ### [`node:path`](https://nodejs.org/api/path.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. 100% of Node.js's test suite passes.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
@@ -101,11 +101,11 @@ Some methods are not optimized yet.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
-🟢 Fully implemented. _Deprecated by Node.js._
+🟢 Fully implemented. 100% of Node.js's test suite passes, _deprecated by Node.js_.
 
 ### [`node:querystring`](https://nodejs.org/api/querystring.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. 100% of Node.js's test suite passes.
 
 ### [`node:readline`](https://nodejs.org/api/readline.html)
 
@@ -121,7 +121,7 @@ Some methods are not optimized yet.
 
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. 100% of Node.js's test suite passes.
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
@@ -173,7 +173,7 @@ Some methods are not optimized yet.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Partially optimized, but brotli uses too much memory right now.
+🟢 Fully implemented. 98% of Node.js's test suite passes.
 
 ## Globals
 

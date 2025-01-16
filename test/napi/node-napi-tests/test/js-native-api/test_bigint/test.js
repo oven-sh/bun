@@ -48,5 +48,5 @@ assert.throws(() => CreateTooBigBigInt(), {
 // Test that we correctly forward exceptions from the engine.
 assert.throws(() => MakeBigIntWordsThrow(), {
   name: 'RangeError',
-  message: /BigInt.*(size exceeded|too big)/,
+  message: /Maximum BigInt size exceeded|Out of memory/,
 });

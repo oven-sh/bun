@@ -293,7 +293,7 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   // create bigints by passing weird parameters to napi_create_bigint_words
   napi_env env = info.Env();
 
-  std::array<napi_value, 5> bigints;
+  std::array<napi_value, 6> bigints;
   std::array<uint64_t, 4> words{{123, 0, 0, 0}};
 
   NODE_API_CALL(env, napi_create_bigint_int64(env, 0, &bigints[0]));
@@ -307,6 +307,9 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   // zero
   NODE_API_CALL(env,
                 napi_create_bigint_words(env, 1, 0, words.data(), &bigints[4]));
+  // zero, another way
+  NODE_API_CALL(
+      env, napi_create_bigint_words(env, 1, 3, words.data() + 1, &bigints[5]));
 
   napi_value array;
   NODE_API_CALL(env,

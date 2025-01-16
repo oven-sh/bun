@@ -928,7 +928,7 @@ pub const PathLike = union(enum) {
 
     pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
-            return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u14, buf)), this.slice());
+            return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
         }
 
         return sliceZWithForceCopy(this, buf, false);

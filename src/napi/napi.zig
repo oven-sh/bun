@@ -375,8 +375,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: 
     const globalObject = env.toJS();
     const string = bun.String.createUTF8ForJS(globalObject, slice);
     if (globalObject.hasException()) {
-        env.setLastError(.pending_exception);
-        return @intFromEnum(NapiStatus.pending_exception);
+        return env.setLastError(.pending_exception);
     }
     result.set(env, string);
     return env.ok();

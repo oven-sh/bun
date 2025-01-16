@@ -1,4 +1,4 @@
-Every day, Bun gets closer to 100% Node.js API compatibility. Popular projects like Next.js, Express, and millions of `npm` packages intended for Node.js just work with Bun out of the box. On every commit of Bun, we run thousands of Node.js tests to ensure compatibility.
+Every day, Bun gets closer to 100% Node.js API compatibility. Popular projects like Next.js, Express, and millions of `npm` packages intended for Node.js just work with Bun out of the box. To ensure compatibility, we run thousands of Node.js tests on every commit of Bun.
 
 This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v23_. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
 

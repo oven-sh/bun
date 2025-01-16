@@ -416,7 +416,7 @@ pub const UDPSocket = struct {
         const enabled = arguments[0].toBoolean();
         const res = this.socket.setBroadcast(enabled);
 
-        if (getSetsockoptError(res)) |err| {
+        if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
@@ -436,7 +436,7 @@ pub const UDPSocket = struct {
         const enabled = arguments[0].toBoolean();
         const res = this.socket.setMulticastLoopback(enabled);
 
-        if (getSetsockoptError(res)) |err| {
+        if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
@@ -451,16 +451,25 @@ pub const UDPSocket = struct {
         return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setMulticastTTL);
     }
 
-    fn getSetsockoptError(res: c_int) ?bun.JSC.Maybe(void) {
+    fn getUSError(res: c_int, tag: bun.sys.Tag, comptime use_wsa: bool) ?bun.JSC.Maybe(void) {
         if (comptime bun.Environment.isWindows) {
-            // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows
+            // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
+            // This applies to some other usockets functions too.
             if (res == 0) {
                 return null;
             }
 
-            return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), .setsockopt);
+            if (comptime use_wsa) {
+                if (bun.windows.WSAGetLastError()) |wsa| {
+                    return bun.JSC.Maybe(void).errno(wsa.toE(), tag);
+                } else {
+                    @panic("WSAGetLastError was expected to return an error code but didn't");
+                }
+            } else {
+                return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), tag);
+            }
         } else {
-            return bun.JSC.Maybe(void).errnoSys(res, .setsockopt);
+            return bun.JSC.Maybe(void).errnoSys(res, tag);
         }
     }
 
@@ -477,7 +486,7 @@ pub const UDPSocket = struct {
         const ttl = arguments[0].coerceToInt32(globalThis);
         const res = function(this.socket, ttl);
 
-        if (getSetsockoptError(res)) |err| {
+        if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
@@ -555,7 +564,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
         }
         const res = this.socket.send(payloads, lens, addr_ptrs);
-        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+        if (getUSError(res, .send, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsNumber(res);
@@ -613,7 +622,7 @@ pub const UDPSocket = struct {
         };
 
         const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
-        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+        if (getUSError(res, .send, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsBoolean(res > 0);

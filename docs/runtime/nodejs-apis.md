@@ -1,4 +1,4 @@
-Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node just work with Bun out of the box. To ensure compatibility, we run thousands of Node.js tests on every commit of Bun.
+Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node just work with Bun out of the box. To ensure compatibility, we run thousands of Node.js tests before every release of Bun.
 
 **If a package works in Node.js but doesn't work in Bun, we consider it a bug in Bun.** Please [open an issue](https://bun.sh/issues) and we'll fix it.
 
@@ -80,7 +80,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
+🟡 `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`. v8 hooks are stubbed.
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
@@ -335,7 +335,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
 
@@ -343,7 +343,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `initgroups` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled`. `process.binding` is partially implemented.
+🟡 `process.binding` (internal Node.js bindings) is partially implemented. `process.title` is a currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

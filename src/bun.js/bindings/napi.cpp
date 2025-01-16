@@ -402,14 +402,11 @@ private:
     bool m_isConstructorCall = false;
 };
 
-static void defineNapiProperty(napi_env env, JSC::JSObject* to, void* inheritedDataPtr, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
+static void defineNapiProperty(napi_env env, JSC::JSObject* to, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
     JSC::VM& vm = globalObject->vm();
     void* dataPtr = property.data;
-    if (!dataPtr) {
-        dataPtr = inheritedDataPtr;
-    }
 
     auto getPropertyName = [&]() -> JSC::Identifier {
         if (property.utf8name != nullptr) {
@@ -1096,15 +1093,8 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    void* inheritedDataPtr = nullptr;
-    if (NapiPrototype* proto = jsDynamicCast<NapiPrototype*>(objectValue)) {
-        inheritedDataPtr = proto->napiRef ? proto->napiRef->nativeObject : nullptr;
-    } else if (NapiClass* proto = jsDynamicCast<NapiClass*>(objectValue)) {
-        inheritedDataPtr = proto->dataPtr();
-    }
-
     for (size_t i = 0; i < property_count; i++) {
-        defineNapiProperty(env, objectObject, inheritedDataPtr, properties[i], true, throwScope);
+        defineNapiProperty(env, objectObject, properties[i], true, throwScope);
 
         RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
     }
@@ -1823,9 +1813,9 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const Strin
         const napi_property_descriptor& property = properties[i];
 
         if (property.attributes & napi_static) {
-            defineNapiProperty(m_env, this, nullptr, property, true, throwScope);
+            defineNapiProperty(m_env, this, property, true, throwScope);
         } else {
-            defineNapiProperty(m_env, prototype, nullptr, property, false, throwScope);
+            defineNapiProperty(m_env, prototype, property, false, throwScope);
         }
 
         if (throwScope.exception())

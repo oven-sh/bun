@@ -169,6 +169,10 @@ Some methods are not optimized yet.
 
 🔴 Not implemented.
 
+### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
+
+🔴 Not implemented.
+
 ### [`node:test`](https://nodejs.org/api/test.html)
 
 🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.

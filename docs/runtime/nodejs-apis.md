@@ -8,36 +8,13 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented.
 
-### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
-
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
-
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 
 🟢 Fully implemented.
 
-### [`node:child_process`](https://nodejs.org/api/child_process.html)
-
-🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
-
-### [`node:cluster`](https://nodejs.org/api/cluster.html)
-
-🟡 Handles and file descriptors cannot be passed between workers, which means load-balancing HTTP requests across processes is only supported on Linux at this time (via `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
-
 ### [`node:console`](https://nodejs.org/api/console.html)
 
 🟢 Fully implemented.
-
-### [`node:crypto`](https://nodejs.org/api/crypto.html)
-
-🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
-
-Some methods are not optimized yet.
-
-### [`node:dgram`](https://nodejs.org/api/dgram.html)
-
-🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
-`addSourceSpecificMembership` `dropSourceSpecificMembership`
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
@@ -47,41 +24,17 @@ Some methods are not optimized yet.
 
 🟢 Fully implemented. > 90% of Node.js's test suite passes.
 
-### [`node:domain`](https://nodejs.org/api/domain.html)
-
-🟡 Missing `Domain` `active`
-
 ### [`node:events`](https://nodejs.org/api/events.html)
 
 🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath. > 90% of Node.js's test suite passes.
-
-### [`node:fs`](https://nodejs.org/api/fs.html)
-
-🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
 🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
 
-### [`node:http2`](https://nodejs.org/api/http2.html)
-
-🟡 Client & server are implemented (95.25% of gRPC's test suite passes). Missing `options.allowHTTP1`, `options.enableConnectProtocol`, ALTSVC extension, and `http2stream.pushStream`.
-
 ### [`node:https`](https://nodejs.org/api/https.html)
 
 🟢 APIs are implemented, but `Agent` is not always used yet.
-
-### [`node:inspector`](https://nodejs.org/api/inspector.html)
-
-🔴 Not implemented.
-
-### [`node:module`](https://nodejs.org/api/module.html)
-
-🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
-
-### [`node:net`](https://nodejs.org/api/net.html)
-
-🟡 `SocketAddress` class not exposed (but implemented). `BlockList` exists but is a no-op.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -90,14 +43,6 @@ Some methods are not optimized yet.
 ### [`node:path`](https://nodejs.org/api/path.html)
 
 🟢 Fully implemented. 100% of Node.js's test suite passes.
-
-### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
-
-🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
-
-### [`node:process`](https://nodejs.org/api/process.html)
-
-🟡 See [`process`](#process) Global.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
@@ -111,37 +56,13 @@ Some methods are not optimized yet.
 
 🟢 Fully implemented.
 
-### [`node:repl`](https://nodejs.org/api/repl.html)
-
-🔴 Not implemented.
-
-### [`node:stream`](https://nodejs.org/api/stream.html)
-
-🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark` `toWeb`
-
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
 🟢 Fully implemented. 100% of Node.js's test suite passes.
 
-### [`node:sys`](https://nodejs.org/api/util.html)
-
-🟡 See [`node:util`](#node-util).
-
-### [`node:test`](https://nodejs.org/api/test.html)
-
-🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
-
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
 🟢 Recommended to use global `setTimeout`, et. al. instead.
-
-### [`node:tls`](https://nodejs.org/api/tls.html)
-
-🟡 Missing `tls.createSecurePair`.
-
-### [`node:trace_events`](https://nodejs.org/api/tracing.html)
-
-🔴 Not implemented.
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
@@ -150,6 +71,77 @@ Some methods are not optimized yet.
 ### [`node:url`](https://nodejs.org/api/url.html)
 
 🟢 Fully implemented.
+
+### [`node:zlib`](https://nodejs.org/api/zlib.html)
+
+🟢 Fully implemented. 98% of Node.js's test suite passes.
+
+### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
+
+🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
+
+### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
+
+🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
+
+### [`node:child_process`](https://nodejs.org/api/child_process.html)
+
+🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
+
+### [`node:cluster`](https://nodejs.org/api/cluster.html)
+
+🟡 Handles and file descriptors cannot be passed between workers, which means load-balancing HTTP requests across processes is only supported on Linux at this time (via `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
+
+### [`node:crypto`](https://nodejs.org/api/crypto.html)
+
+🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
+
+Some methods are not optimized yet.
+
+### [`node:dgram`](https://nodejs.org/api/dgram.html)
+
+🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
+`addSourceSpecificMembership` `dropSourceSpecificMembership`
+
+### [`node:domain`](https://nodejs.org/api/domain.html)
+
+🟡 Missing `Domain` `active`
+
+### [`node:fs`](https://nodejs.org/api/fs.html)
+
+🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
+
+### [`node:http2`](https://nodejs.org/api/http2.html)
+
+🟡 Client & server are implemented (95.25% of gRPC's test suite passes). Missing `options.allowHTTP1`, `options.enableConnectProtocol`, ALTSVC extension, and `http2stream.pushStream`.
+
+### [`node:module`](https://nodejs.org/api/module.html)
+
+🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
+
+### [`node:net`](https://nodejs.org/api/net.html)
+
+🟡 `SocketAddress` class not exposed (but implemented). `BlockList` exists but is a no-op.
+
+### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
+
+🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+
+### [`node:process`](https://nodejs.org/api/process.html)
+
+🟡 See [`process`](#process) Global.
+
+### [`node:stream`](https://nodejs.org/api/stream.html)
+
+🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark` `toWeb`
+
+### [`node:sys`](https://nodejs.org/api/util.html)
+
+🟡 See [`node:util`](#node-util).
+
+### [`node:tls`](https://nodejs.org/api/tls.html)
+
+🟡 Missing `tls.createSecurePair`.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
@@ -171,9 +163,21 @@ Some methods are not optimized yet.
 
 🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
-### [`node:zlib`](https://nodejs.org/api/zlib.html)
+### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
-🟢 Fully implemented. 98% of Node.js's test suite passes.
+🔴 Not implemented.
+
+### [`node:repl`](https://nodejs.org/api/repl.html)
+
+🔴 Not implemented.
+
+### [`node:test`](https://nodejs.org/api/test.html)
+
+🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+
+### [`node:trace_events`](https://nodejs.org/api/tracing.html)
+
+🔴 Not implemented.
 
 ## Globals
 

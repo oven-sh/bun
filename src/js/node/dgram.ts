@@ -763,13 +763,11 @@ Socket.prototype.remoteAddress = function () {
 };
 
 Socket.prototype.setBroadcast = function (arg) {
-  throwNotImplemented("setBroadcast", 10381);
-  /*
-  const err = this[kStateSymbol].handle.setBroadcast(arg ? 1 : 0);
-  if (err) {
-    throw new ErrnoException(err, 'setBroadcast');
+  const handle = this[kStateSymbol].handle;
+  if (!handle?.socket) {
+    throw new Error("setBroadcast EBADF");
   }
-  */
+  return handle.socket.setBroadcast(!!arg);
 };
 
 Socket.prototype.setTTL = function (ttl) {

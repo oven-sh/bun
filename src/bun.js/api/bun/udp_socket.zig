@@ -383,6 +383,26 @@ pub const UDPSocket = struct {
         return true;
     }
 
+    pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throw("TODO: setBroadcast on a closed UDP socket", .{});
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const enabled = arguments[0].toBoolean();
+        const res = this.socket.setBroadcast(enabled);
+
+        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .undefined;
+    }
+
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         if (this.closed) {
             return globalThis.throw("Socket is closed", .{});

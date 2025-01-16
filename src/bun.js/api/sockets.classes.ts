@@ -319,6 +319,10 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      setBroadcast: {
+        fn: "setBroadcast",
+        length: 1,
+      },
     },
     klass: {},
   }),

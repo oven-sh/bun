@@ -157,6 +157,8 @@ struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(str
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
+int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
+
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
 

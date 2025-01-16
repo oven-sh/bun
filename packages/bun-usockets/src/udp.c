@@ -91,9 +91,7 @@ void us_udp_socket_remote_ip(struct us_udp_socket_t *s, char *buf, int *length) 
   }
 }
 
-void *us_udp_socket_user(struct us_udp_socket_t *s) {
-    struct us_udp_socket_t *udp = (struct us_udp_socket_t *) s;
-
+void *us_udp_socket_user(struct us_udp_socket_t *udp) {
     return udp->user;
 }
 
@@ -106,6 +104,10 @@ void us_udp_socket_close(struct us_udp_socket_t *s) {
     s->next = loop->data.closed_udp_head;
     loop->data.closed_udp_head = s;
     s->on_close(s);
+}
+
+int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
+    return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {

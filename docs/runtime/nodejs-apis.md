@@ -131,7 +131,7 @@ Some methods are not optimized yet.
 
 ### [`node:stream`](https://nodejs.org/api/stream.html)
 
-🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark` `toWeb`
+🟡 Missing `toWeb`
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 

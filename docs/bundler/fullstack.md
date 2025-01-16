@@ -68,19 +68,53 @@ Bun.serve({
 
 When you make a request to `/dashboard` or `/`, Bun automatically bundles the `<script>` and `<link>` tags in the HTML files, exposes them as static routes, and serves the result.
 
+An index.html file like this:
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="./reset.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./sentry-and-preloads.ts"></script>
+    <script type="module" src="./my-app.tsx"></script>
+  </body>
+</html>
+```
+
+Becomes something like this:
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="/index-[hash].css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index-[hash].js"></script>
+  </body>
+</html>
+```
+
 ### How to use with React
 
 To use React in your client-side code, import `react-dom/client` and render your app.
 
 {% codetabs %}
 
-```ts#backend.ts
+```ts#src/backend.ts
 import dashboard from "./dashboard.html";
 import { serve } from "bun";
 
 serve({
   static: {
-    "/": homepage,
+    "/": dashboard,
   },
 
   async fetch(req) {
@@ -90,7 +124,7 @@ serve({
 });
 ```
 
-```ts#frontend.tsx
+```ts#src/frontend.tsx
 import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
 
@@ -100,23 +134,29 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 ```
 
-```html#dashboard.html
+```html#public/dashboard.html
 <!DOCTYPE html>
 <html>
   <head>
     <title>Dashboard</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="../src/styles.css" />
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./dashboard.tsx"></script>
+    <script type="module" src="../src/dashboard.tsx"></script>
   </body>
 </html>
 ```
 
-```css#styles.css
+```css#src/styles.css
 body {
   background-color: red;
+}
+```
+
+```tsx#src/app.tsx
+export function App() {
+  return <div>Hello World</div>;
 }
 ```
 

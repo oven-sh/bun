@@ -22,8 +22,9 @@ Bun.serve({
 
   // Handle API requests
   async fetch(req) {
+    // ...your API code
     if (req.url.endsWith("/api/users")) {
-      const users = await sql`SELECT * FROM users`;
+      const users = await Bun.sql`SELECT * FROM users`;
       return Response.json(users);
     }
 

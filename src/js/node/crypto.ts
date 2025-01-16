@@ -26,6 +26,11 @@ const {
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const statelessDH = $newCppFunction("KeyObject.cpp", "jsStatelessDH", 2);
+const ecdhConvertKey = $newCppFunction("KeyObject.cpp", "jsConvertKey", 1);
+const getCurves = $newCppFunction("KeyObject.cpp", "jsGetCurves", 0);
+
+const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
+  $processBindingConstants.crypto;
 
 const {
   randomInt: _randomInt,
@@ -33,7 +38,7 @@ const {
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
-const { validateObject } = require("internal/validators");
+const { validateObject, validateString } = require("internal/validators");
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -11398,9 +11403,6 @@ var require_browser9 = __commonJS({
   "node_modules/create-ecdh/browser.js"(exports, module) {
     var elliptic = require_elliptic(),
       BN = require_bn6();
-    module.exports = function (curve) {
-      return new ECDH(curve);
-    };
     var aliases = {
       secp256k1: {
         name: "secp256k1",
@@ -11473,6 +11475,29 @@ var require_browser9 = __commonJS({
       (enc = enc || "utf8"), Buffer.isBuffer(priv) || (priv = new Buffer(priv, enc));
       var _priv = new BN(priv);
       return (_priv = _priv.toString(16)), (this.keys = this.curve.genKeyPair()), this.keys._importPrivate(_priv), this;
+    };
+    function getFormat(format) {
+      if (format) {
+        if (format === "compressed") return POINT_CONVERSION_COMPRESSED;
+        if (format === "hybrid") return POINT_CONVERSION_HYBRID;
+        if (format !== "uncompressed") throw $ERR_CRYPTO_ECDH_INVALID_FORMAT("Invalid ECDH format: " + format);
+      }
+      return POINT_CONVERSION_UNCOMPRESSED;
+    }
+    function encode(buffer, encoding) {
+      if (encoding && encoding !== "buffer") buffer = buffer.toString(encoding);
+      return buffer;
+    }
+    ECDH.convertKey = function convertKey(key, curve, inEnc, outEnc, format) {
+      validateString(curve, "curve");
+      key = getArrayBufferOrView(key, "key", inEnc);
+      const f = getFormat(format);
+      const convertedKey = ecdhConvertKey(key, curve, f);
+      return encode(convertedKey, outEnc);
+    };
+    module.exports.ECDH = ECDH;
+    module.exports.createECDH = function (curve) {
+      return new ECDH(curve);
     };
     function formatReturnValue(bn, enc, len) {
       Array.isArray(bn) || (bn = bn.toArray());
@@ -11580,7 +11605,9 @@ var require_crypto_browserify2 = __commonJS({
     exports.Sign = sign.Sign;
     exports.createVerify = sign.createVerify;
     exports.Verify = sign.Verify;
-    exports.createECDH = require_browser9();
+    const ecdh = require_browser9();
+    exports.ECDH = ecdh.ECDH;
+    exports.createECDH = ecdh.createECDH;
     exports.getRandomValues = values => crypto.getRandomValues(values);
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
@@ -11649,26 +11676,6 @@ timingSafeEqual &&
   Object.defineProperty(scryptSync, "name", {
     value: "::bunternal::",
   }));
-
-const harcoded_curves = [
-  "p192",
-  "p224",
-  "p256",
-  "p384",
-  "p521",
-  "curve25519",
-  "ed25519",
-  "secp256k1",
-  "secp224r1",
-  "prime256v1",
-  "prime192v1",
-  "secp384r1",
-  "secp521r1",
-];
-
-function getCurves() {
-  return harcoded_curves;
-}
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it

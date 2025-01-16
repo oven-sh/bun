@@ -254,6 +254,8 @@ class PooledConnection {
   onFinish: ((err: Error | null) => void) | null = null;
   canBeConnected: boolean = false;
   connectionInfo: any;
+  reserved: boolean = false;
+  queriesUsing: number = 0;
   #onConnected(err, _) {
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
@@ -449,11 +451,21 @@ class ConnectionPool {
       }
     }
   }
-  close() {
+  async close(options?: { timeout?: number }) {
     if (this.closed) {
       return Promise.reject(connectionClosedError());
     }
-    this.closed = true;
+    let timeout = options?.timeout;
+    if (timeout) {
+      timeout = Number(timeout);
+      if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
+        throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+      }
+      this.closed = true;
+      await Bun.sleep(timeout * 1000);
+    } else {
+      this.closed = true;
+    }
     let pending;
     while ((pending = this.waitingQueue.shift())) {
       pending(connectionClosedError(), null);
@@ -490,7 +502,12 @@ class ConnectionPool {
     this.waitingQueue.length = 0;
     return Promise.all(promises);
   }
-  connect(onConnected: (err: Error | null, result: any) => void) {
+
+  /**
+   * @param {function} onConnected - The callback function to be called when the connection is established.
+   * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queriesUsing counter
+   */
+  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
     if (this.closed) {
       return onConnected(connectionClosedError(), null);
     }
@@ -1098,12 +1115,23 @@ function SQL(o) {
       }
       return pooledConnection.flush();
     };
-    reserved_sql.close = async () => {
+    reserved_sql.close = async (options?: { timeout?: number }) => {
       if (state.closed) {
         return Promise.reject(connectionClosedError());
       }
-      // close will release the connection back to the pool but will actually close the connection if its open
-      state.closed = true;
+      let timeout = options?.timeout;
+      if (timeout) {
+        timeout = Number(timeout);
+        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
+          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+        }
+        state.closed = true;
+        // no new queries will be allowed
+        await Bun.sleep(timeout * 1000);
+      } else {
+        // close will release the connection back to the pool but will actually close the connection if its open
+        state.closed = true;
+      }
       pooledConnection.queries.delete(onClose);
 
       pooledConnection.close();
@@ -1123,6 +1151,9 @@ function SQL(o) {
     reserved_sql[Symbol.dispose] = () => reserved_sql.release();
 
     reserved_sql.options = sql.options;
+    reserved_sql.transaction = reserved_sql.begin;
+    reserved_sql.distributed = reserved_sql.beginDistributed;
+    reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
   }
   async function onTransactionConnected(
@@ -1226,7 +1257,10 @@ function SQL(o) {
           break;
 
         case "sqlite":
-          // do not support options just use defaults
+          if (options) {
+            // sqlite supports DEFERRED, IMMEDIATE, EXCLUSIVE
+            BEGIN_COMMAND = `BEGIN ${options}`;
+          }
           break;
         case "mssql":
           BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
@@ -1328,19 +1362,33 @@ function SQL(o) {
       }
       return pooledConnection.flush();
     };
-    transaction_sql.close = async function () {
+    transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
       if (state.closed) {
         return Promise.reject(connectionClosedError());
       }
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+      let timeout = options?.timeout;
+      if (timeout) {
+        timeout = Number(timeout);
+        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
+          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+        }
+        await Bun.sleep(timeout * 1000);
       }
-      await transaction_sql(ROLLBACK_COMMAND);
-      state.closed = true;
+      if (!state.closed) {
+        if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+          await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        }
+        await transaction_sql(ROLLBACK_COMMAND);
+        state.closed = true;
+      }
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;
+
+    transaction_sql.transaction = transaction_sql.begin;
+    transaction_sql.distributed = transaction_sql.beginDistributed;
+    transaction_sql.end = transaction_sql.close;
 
     if (distributed) {
       transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
@@ -1444,7 +1492,7 @@ function SQL(o) {
     }
 
     const promiseWithResolvers = Promise.withResolvers();
-    pool.connect(onReserveConnected.bind(promiseWithResolvers));
+    pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
     return promiseWithResolvers.promise;
   };
   sql.rollbackDistributed = async function (name: string) {
@@ -1506,7 +1554,7 @@ function SQL(o) {
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     // lets just reuse the same code path as the transaction begin
-    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true));
+    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), true);
     return promise;
   };
 
@@ -1526,10 +1574,9 @@ function SQL(o) {
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false));
+    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), true);
     return promise;
   };
-
   sql.connect = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
@@ -1554,8 +1601,8 @@ function SQL(o) {
     return promise;
   };
 
-  sql.close = async () => {
-    await pool.close();
+  sql.close = async (options?: { timeout?: number }) => {
+    await pool.close(options);
   };
 
   sql[Symbol.asyncDispose] = () => sql.close();
@@ -1563,6 +1610,9 @@ function SQL(o) {
   sql.flush = () => pool.flush();
   sql.options = connectionInfo;
 
+  sql.transaction = sql.begin;
+  sql.distributed = sql.beginDistributed;
+  sql.end = sql.close;
   return sql;
 }
 

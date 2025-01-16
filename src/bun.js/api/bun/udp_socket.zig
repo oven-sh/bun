@@ -416,7 +416,7 @@ pub const UDPSocket = struct {
         const enabled = arguments[0].toBoolean();
         const res = this.socket.setBroadcast(enabled);
 
-        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+        if (getSetsockoptError(res)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
@@ -436,7 +436,7 @@ pub const UDPSocket = struct {
         const enabled = arguments[0].toBoolean();
         const res = this.socket.setMulticastLoopback(enabled);
 
-        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+        if (getSetsockoptError(res)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
@@ -449,6 +449,15 @@ pub const UDPSocket = struct {
 
     pub fn setMulticastTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setMulticastTTL);
+    }
+
+    fn getSetsockoptError(res: c_int) ?bun.JSC.Maybe(void) {
+        if (res == 0) {
+            // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows
+            return null;
+        }
+
+        return bun.JSC.Maybe(void).errnoSys(res, .setsockopt);
     }
 
     fn setAnyTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime function: fn (*uws.udp.Socket, i32) c_int) bun.JSError!JSValue {
@@ -464,7 +473,7 @@ pub const UDPSocket = struct {
         const ttl = arguments[0].coerceToInt32(globalThis);
         const res = function(this.socket, ttl);
 
-        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+        if (getSetsockoptError(res)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 

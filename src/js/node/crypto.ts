@@ -5944,7 +5944,7 @@ var require_base = __commonJS({
         return res;
       } else if ((bytes[0] === 2 || bytes[0] === 3) && bytes.length - 1 === len)
         return this.pointFromX(bytes.slice(1, 1 + len), bytes[0] === 3);
-      throw new Error("Unknown point format");
+      throw $ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY("Public key is not valid for specified curve");
     };
     BasePoint.prototype.encodeCompressed = function (enc) {
       return this.encode(enc, !0);

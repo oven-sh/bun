@@ -278,10 +278,11 @@ void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* con
     weakValue->callFinalizer();
 }
 
-static Napi::NapiRefWeakHandleOwner& weakValueHandleOwner()
+void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
-    static NeverDestroyed<Napi::NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
+    auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    weakValue->callFinalizer();
+    delete weakValue;
 }
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
@@ -747,7 +748,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
-extern "C" napi_status
+extern "C" JS_EXPORT napi_status
 node_api_create_external_string_latin1(napi_env env,
     char* str,
     size_t length,
@@ -762,6 +763,8 @@ node_api_create_external_string_latin1(napi_env env,
     NAPI_CHECK_ARG(env, result);
 
     length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
+    // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
+    NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         if (finalize_callback) {
             NAPI_LOG("latin1 string finalizer");
@@ -782,7 +785,7 @@ node_api_create_external_string_latin1(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" napi_status
+extern "C" JS_EXPORT napi_status
 node_api_create_external_string_utf16(napi_env env,
     char16_t* str,
     size_t length,
@@ -797,6 +800,8 @@ node_api_create_external_string_utf16(napi_env env,
     NAPI_CHECK_ARG(env, result);
 
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
+    // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
+    NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         if (finalize_callback) {
             NAPI_LOG("utf16 string finalizer");
@@ -2772,6 +2777,7 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
 extern "C" JS_EXPORT napi_status node_api_create_property_key_latin1(napi_env env, const char* str, size_t length, napi_value* result)
 {
     // EXPERIMENTAL
+    // This is semantically correct but it may not have the performance benefit intended for node_api_create_property_key_latin1
     // TODO(@190n) use jsAtomString or something
     NAPI_LOG_CURRENT_FUNCTION;
     return napi_create_string_latin1(env, str, length, result);
@@ -2780,6 +2786,7 @@ extern "C" JS_EXPORT napi_status node_api_create_property_key_latin1(napi_env en
 extern "C" JS_EXPORT napi_status node_api_create_property_key_utf16(napi_env env, const char16_t* str, size_t length, napi_value* result)
 {
     // EXPERIMENTAL
+    // This is semantically correct but it may not have the performance benefit intended for node_api_create_property_key_utf16
     // TODO(@190n) use jsAtomString or something
     NAPI_LOG_CURRENT_FUNCTION;
     return napi_create_string_utf16(env, str, length, result);
@@ -2788,6 +2795,7 @@ extern "C" JS_EXPORT napi_status node_api_create_property_key_utf16(napi_env env
 extern "C" JS_EXPORT napi_status node_api_create_property_key_utf8(napi_env env, const char* str, size_t length, napi_value* result)
 {
     // EXPERIMENTAL
+    // This is semantically correct but it may not have the performance benefit intended for node_api_create_property_key_utf8
     // TODO(@190n) use jsAtomString or something
     NAPI_LOG_CURRENT_FUNCTION;
     return napi_create_string_utf8(env, str, length, result);

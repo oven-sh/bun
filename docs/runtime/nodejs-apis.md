@@ -80,10 +80,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
 
-### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
-
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
-
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
 🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.

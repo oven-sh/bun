@@ -5186,10 +5186,7 @@ pub const NodeFS = struct {
     }
 
     pub fn realpathNonNative(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
-        // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
-        // `fs.realpath.native`. In Bun, the system call is the default, but the error
-        // code must be changed to make it seem like it is using lstat (tests expect this)
-        return switch (this.realpathInner(args)) {
+        return switch (this.realpathInner(args, .emulated)) {
             .result => |res| .{ .result = res },
             .err => |err| .{ .err = .{
                 .errno = err.errno,
@@ -5200,8 +5197,7 @@ pub const NodeFS = struct {
     }
 
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
-        // Native realpath needs to force `realpath` as the name
-        return switch (this.realpathInner(args)) {
+        return switch (this.realpathInner(args, .native)) {
             .result => |res| .{ .result = res },
             .err => |err| .{
                 .err = .{
@@ -5213,7 +5209,11 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn realpathInner(this: *NodeFS, args: Arguments.Realpath) Maybe(Return.Realpath) {
+    // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
+    // `fs.realpath.native`. In Bun, the system call is the default, but the error
+    // code must be changed to make it seem like it is using lstat (tests expect this),
+    // in addition, some more subtle things depend on the variant.
+    pub fn realpathInner(this: *NodeFS, args: Arguments.Realpath, variant: enum { native, emulated }) Maybe(Return.Realpath) {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
@@ -5226,9 +5226,15 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } };
 
-            // Seems like `rc` does not contain the errno?
-            bun.assert(rc.errEnum() == null);
-            const buf = bun.span(req.ptrAs([*:0]u8));
+            var buf = bun.span(req.ptrAs([*:0]u8));
+
+            if (variant == .emulated) {
+                // remove the trailing slash
+                if (buf[buf.len - 1] == '\\') {
+                    buf[buf.len - 1] = 0;
+                    buf.len -= 1;
+                }
+            }
 
             return .{
                 .result = switch (args.encoding) {

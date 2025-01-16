@@ -563,7 +563,7 @@ register_command(
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS
-    clone-zig
+    ${BUN_ZIG_TARGETS}
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -614,27 +614,29 @@ register_repository(
     picohttpparser.c
 )
 
-set(NODEJS_HEADERS_PATH ${VENDOR_PATH}/nodejs)
+if(NOT NODEJS_HEADERS_PATH)
+  set(NODEJS_HEADERS_PATH ${VENDOR_PATH}/nodejs)
 
-register_command(
-  TARGET
-    bun-node-headers
-  COMMENT
-    "Download node ${NODEJS_VERSION} headers"
-  COMMAND
-    ${CMAKE_COMMAND}
-      -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
-      -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
-      -P ${CWD}/cmake/scripts/DownloadUrl.cmake
-  OUTPUTS
-    ${NODEJS_HEADERS_PATH}/include/node/node_version.h
-)
+  register_command(
+    TARGET
+      bun-node-headers
+    COMMENT
+      "Download node ${NODEJS_VERSION} headers"
+    COMMAND
+      ${CMAKE_COMMAND}
+        -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
+        -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
+        -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+    OUTPUTS
+      ${NODEJS_HEADERS_PATH}/include/node/node_version.h
+  )
+endif()
 
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
   ${BUN_ERROR_CODE_OUTPUTS}
-  ${VENDOR_PATH}/picohttpparser/picohttpparser.c
+  ${PICOHTTPPARSER_PATH}/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}

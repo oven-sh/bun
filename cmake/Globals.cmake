@@ -579,20 +579,22 @@ function(register_bun_install)
     message(FATAL_ERROR "register_bun_install: ${NPM_CWD}/package.json does not have dependencies?")
   endif()
 
-  register_command(
-    COMMENT
-      ${NPM_COMMENT}
-    CWD
-      ${NPM_CWD}
-    COMMAND
-      ${BUN_EXECUTABLE}
-        install
-        --frozen-lockfile
-    SOURCES
-      ${NPM_CWD}/package.json
-    OUTPUTS
-      ${NPM_NODE_MODULES}
-  )
+  if(NOT DONT_BUN_INSTALL)
+    register_command(
+      COMMENT
+        ${NPM_COMMENT}
+      CWD
+        ${NPM_CWD}
+      COMMAND
+        ${BUN_EXECUTABLE}
+          install
+          --frozen-lockfile
+      SOURCES
+        ${NPM_CWD}/package.json
+      OUTPUTS
+        ${NPM_NODE_MODULES}
+    )
+  endif()
 
   set(${NPM_NODE_MODULES_VARIABLE} ${NPM_NODE_MODULES} PARENT_SCOPE)
 endfunction()
@@ -602,6 +604,7 @@ endfunction()
 #   Registers a git repository.
 # Arguments:
 #   NAME       string - The name of the repository
+#   VARNAME    string - The prefix for the variable name to bind the path to
 #   REPOSITORY string - The repository to clone
 #   BRANCH     string - The branch to clone
 #   TAG        string - The tag to clone
@@ -609,7 +612,7 @@ endfunction()
 #   PATH       string - The path to clone the repository to
 #   OUTPUTS    string - The outputs of the repository
 function(register_repository)
-  set(args NAME REPOSITORY BRANCH TAG COMMIT PATH)
+  set(args NAME VARNAME REPOSITORY BRANCH TAG COMMIT PATH)
   set(multiArgs OUTPUTS)
   cmake_parse_arguments(GIT "" "${args}" "${multiArgs}" ${ARGN})
 
@@ -625,29 +628,50 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  set(GIT_EFFECTIVE_OUTPUTS)
-  foreach(output ${GIT_OUTPUTS})
-    list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
-  endforeach()
+  if(NOT GIT_VARNAME)
+    string(TOUPPER ${GIT_NAME} GIT_VARNAME)
+  endif()
 
-  register_command(
-    TARGET
-      clone-${GIT_NAME}
-    COMMENT
-      "Cloning ${GIT_NAME}"
-    COMMAND
-      ${CMAKE_COMMAND}
-        -DGIT_PATH=${GIT_PATH}
-        -DGIT_REPOSITORY=${GIT_REPOSITORY}
-        -DGIT_NAME=${GIT_NAME}
-        -DGIT_COMMIT=${GIT_COMMIT}
-        -DGIT_TAG=${GIT_TAG}
-        -DGIT_BRANCH=${GIT_BRANCH}
-        -P ${CWD}/cmake/scripts/GitClone.cmake
-    OUTPUTS
-      ${GIT_PATH}
-      ${GIT_EFFECTIVE_OUTPUTS}
-  )
+  if(NOT ${GIT_VARNAME}_PATH)
+    set(${GIT_VARNAME}_PATH ${GIT_PATH})
+    set(GIT_EFFECTIVE_OUTPUTS)
+    foreach(output ${GIT_OUTPUTS})
+      list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
+    endforeach()
+
+    register_command(
+      TARGET
+        clone-${GIT_NAME}
+      COMMENT
+        "Cloning ${GIT_NAME}"
+      COMMAND
+        ${CMAKE_COMMAND}
+          -DGIT_PATH=${GIT_PATH}
+          -DGIT_REPOSITORY=${GIT_REPOSITORY}
+          -DGIT_NAME=${GIT_NAME}
+          -DGIT_COMMIT=${GIT_COMMIT}
+          -DGIT_TAG=${GIT_TAG}
+          -DGIT_BRANCH=${GIT_BRANCH}
+          -P ${CWD}/cmake/scripts/GitClone.cmake
+      OUTPUTS
+        ${GIT_PATH}
+        ${GIT_EFFECTIVE_OUTPUTS}
+    )
+  else()
+    register_command(
+      TARGET
+        clone-${GIT_NAME}
+      COMMENT
+        "Copying ${${GIT_VARNAME}_PATH} to ${GIT_PATH}"
+      COMMAND
+        ${CMAKE_COMMAND} -E copy_directory
+        ${${GIT_VARNAME}_PATH}
+        ${GIT_PATH}
+      OUTPUTS
+        ${GIT_PATH}
+        ${GIT_EFFECTIVE_OUTPUTS}
+    )
+  endif()
 endfunction()
 
 # register_cmake_command()

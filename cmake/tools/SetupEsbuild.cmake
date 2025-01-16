@@ -8,13 +8,15 @@ if(CMAKE_COLOR_DIAGNOSTICS)
   set(ESBUILD_ARGS --color)
 endif()
 
-register_command(
-  COMMAND
-    ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-  SOURCES
-    ${CWD}/package.json
-  OUTPUTS
-    ${ESBUILD_EXECUTABLE}
-)
+if(NOT DONT_BUN_INSTALL)
+  register_command(
+    COMMAND
+      ${BUN_EXECUTABLE}
+        install
+        --frozen-lockfile
+    SOURCES
+      ${CWD}/package.json
+    OUTPUTS
+      ${ESBUILD_EXECUTABLE}
+  )
+endif()

@@ -7,7 +7,7 @@ register_repository(
     4f8becea13a0021c8b71abd2dcc5899384973b66
 )
 
-set(LOLHTML_CWD ${VENDOR_PATH}/lolhtml/c-api)
+set(LOLHTML_CWD ${LOLHTML_PATH}/c-api)
 set(LOLHTML_BUILD_PATH ${BUILD_PATH}/lolhtml)
 
 if(DEBUG)
@@ -42,6 +42,7 @@ register_command(
     ${CARGO_EXECUTABLE}
       build
       ${LOLHTML_BUILD_ARGS}
+      ${CARGO_ARGS}
   ARTIFACTS
     ${LOLHTML_LIBRARY}
   ENVIRONMENT

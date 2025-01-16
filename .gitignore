@@ -44,7 +44,6 @@
 **/*.pdb
 **/*.sln*
 **/*.vcxproj*
-**/package-lock.json
 /.cache
 /.webkit-cache
 /build-*/
@@ -179,3 +178,7 @@ test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
+
+# Nix results
+result
+result-*

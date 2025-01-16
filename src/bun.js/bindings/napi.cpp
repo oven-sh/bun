@@ -339,8 +339,6 @@ public:
         return m_callFrame->thisValue();
     }
 
-    static constexpr uintptr_t NAPICallFramePtrTag = static_cast<uint64_t>(1) << 63;
-
     napi_callback_info toNapi()
     {
         return reinterpret_cast<napi_callback_info>(this);
@@ -378,22 +376,6 @@ public:
                 argv[i] = ::toNapi(m_callFrame->argument(i), globalObject);
             }
         }
-    }
-
-    static std::optional<NAPICallFrame*> get(JSC::CallFrame* callFrame)
-    {
-        uintptr_t ptr = reinterpret_cast<uintptr_t>(callFrame);
-        if (!isNAPICallFramePtr(ptr)) {
-            return std::nullopt;
-        }
-
-        ptr &= ~NAPICallFramePtrTag;
-        return { reinterpret_cast<NAPICallFrame*>(ptr) };
-    }
-
-    static bool isNAPICallFramePtr(uintptr_t ptr)
-    {
-        return ptr & NAPICallFramePtrTag;
     }
 
     JSValue newTarget()

@@ -222,6 +222,8 @@ pub const O = struct {
         if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
+        if (c_flags & FILEMAP != 0) flags |= FILEMAP;
 
         return flags;
     }

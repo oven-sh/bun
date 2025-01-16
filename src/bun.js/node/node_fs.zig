@@ -151,6 +151,7 @@ pub const Async = struct {
         if (!Environment.isWindows) {
             return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum)));
         }
+
         switch (FunctionEnum) {
             .open,
             .close,
@@ -159,10 +160,9 @@ pub const Async = struct {
             .readv,
             .writev,
             => {},
-            else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
+            else => @compileError("UVFSRequest type not implemented"),
         }
 
-        comptime bun.assert(Environment.isWindows);
         return struct {
             promise: JSC.JSPromise.Strong,
             args: ArgumentType,
@@ -178,10 +178,10 @@ pub const Async = struct {
 
             pub usingnamespace bun.New(@This());
 
-            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
+            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, task_args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
                 var task = Task.new(.{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
-                    .args = args,
+                    .args = task_args,
                     .result = undefined,
                     .globalObject = globalObject,
                     .tracker = JSC.AsyncTaskTracker.init(vm),
@@ -196,22 +196,22 @@ pub const Async = struct {
                 task.req.data = task;
                 switch (comptime FunctionEnum) {
                     .open => {
-                        const args_: Arguments.Open = task.args;
-                        const path = if (bun.strings.eqlComptime(args_.path.slice(), "/dev/null")) "\\\\.\\NUL" else args_.path.sliceZ(&this.node_fs.sync_error_buf);
+                        const args: Arguments.Open = task.args;
+                        const path = if (bun.strings.eqlComptime(args.path.slice(), "/dev/null")) "\\\\.\\NUL" else args.path.sliceZ(&this.node_fs.sync_error_buf);
 
-                        var flags: c_int = @intFromEnum(args_.flags);
+                        var flags: c_int = @intFromEnum(args.flags);
                         flags = uv.O.fromBunO(flags);
 
-                        var mode: c_int = args_.mode;
+                        var mode: c_int = args.mode;
                         if (mode == 0) mode = 0o644;
 
                         const rc = uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv open({s}, {d}, {d}) = ~~", .{ path, flags, mode });
+                        log("uv open({s}, {d}, {d}) = scheduled", .{ path, flags, mode });
                     },
                     .close => {
-                        const args_: Arguments.Close = task.args;
-                        const fd = args_.fd.impl().uv();
+                        const args: Arguments.Close = task.args;
+                        const fd = args.fd.impl().uv();
 
                         if (fd == 1 or fd == 2) {
                             log("uv close({}) SKIPPED", .{fd});
@@ -222,38 +222,46 @@ pub const Async = struct {
 
                         const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv close({d}) = ~~", .{fd});
+                        log("uv close({d}) = scheduled", .{fd});
                     },
                     .read => {
-                        const args_: Arguments.Read = task.args;
+                        const args: Arguments.Read = task.args;
                         const B = uv.uv_buf_t.init;
-                        const fd = args_.fd.impl().uv();
+                        const fd = args.fd.impl().uv();
 
-                        const rc = uv.uv_fs_read(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        var buf = args.buffer.slice();
+                        buf = buf[@min(buf.len, args.offset)..];
+                        buf = buf[0..@min(buf.len, args.length)];
+
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, &.{B(buf)}, 1, args.position orelse -1, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv read({d}) = ~~", .{fd});
+                        log("uv read({d}) = scheduled", .{fd});
                     },
                     .write => {
-                        const args_: Arguments.Write = task.args;
+                        const args: Arguments.Write = task.args;
                         const B = uv.uv_buf_t.init;
-                        const fd = args_.fd.impl().uv();
+                        const fd = args.fd.impl().uv();
 
-                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        var buf = args.buffer.slice();
+                        buf = buf[@min(buf.len, args.offset)..];
+                        buf = buf[0..@min(buf.len, args.length)];
+
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(buf)}, 1, args.position orelse -1, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv write({d}) = ~~", .{fd});
+                        log("uv write({d}) = scheduled", .{fd});
                     },
                     .readv => {
-                        const args_: Arguments.Readv = task.args;
-                        const fd = args_.fd.impl().uv();
-                        const bufs = args_.buffers.buffers.items;
-                        const pos: i64 = args_.position orelse -1;
+                        const args: Arguments.Readv = task.args;
+                        const fd = args.fd.impl().uv();
+                        const bufs = args.buffers.buffers.items;
+                        const pos: i64 = args.position orelse -1;
 
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
                         const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
+                        log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     .writev => {
                         const args_: Arguments.Writev = task.args;
@@ -266,7 +274,7 @@ pub const Async = struct {
 
                         const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
                         bun.debugAssert(rc == .zero);
-                        log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
+                        log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     else => comptime unreachable,
                 }
@@ -3704,7 +3712,10 @@ pub const NodeFS = struct {
         const to = args.new_path.sliceZ(&to_buf);
 
         if (Environment.isWindows) {
-            return Syscall.link(from, to);
+            return switch (Syscall.link(from, to)) {
+                .err => |err| .{ .err = err.withPathDest(args.old_path.slice(), args.new_path.slice()) },
+                .result => |result| .{ .result = result },
+            };
         }
 
         return Maybe(Return.Link).errnoSysPD(system.link(from, to, 0), .link, args.old_path.slice(), args.new_path.slice()) orelse
@@ -3718,7 +3729,7 @@ pub const NodeFS = struct {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                 }
-                break :brk Maybe(Return.Lstat){ .err = err };
+                break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
             },
         };
     }

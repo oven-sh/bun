@@ -98,7 +98,7 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (simdutf::validate_utf8(ptr, length)) {
+    if (simdutf::validate_ascii(ptr, length)) {
         std::span<LChar> destination;
 
         auto impl = WTF::StringImpl::tryCreateUninitialized(length, destination);

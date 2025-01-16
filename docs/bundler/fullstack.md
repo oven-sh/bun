@@ -109,7 +109,7 @@ To use React in your client-side code, import `react-dom/client` and render your
 {% codetabs %}
 
 ```ts#src/backend.ts
-import dashboard from "./dashboard.html";
+import dashboard from "./public/dashboard.html";
 import { serve } from "bun";
 
 serve({
@@ -125,6 +125,7 @@ serve({
 ```
 
 ```ts#src/frontend.tsx
+import "./styles.css";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
 
@@ -139,11 +140,10 @@ document.addEventListener("DOMContentLoaded", () => {
 <html>
   <head>
     <title>Dashboard</title>
-    <link rel="stylesheet" href="../src/styles.css" />
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="../src/dashboard.tsx"></script>
+    <script type="module" src="../src/frontend.tsx"></script>
   </body>
 </html>
 ```

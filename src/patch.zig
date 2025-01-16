@@ -1285,7 +1285,7 @@ pub fn spawnOpts(
         .windows = if (bun.Environment.isWindows) .{ .loop = switch (loop.*) {
             .js => |x| .{ .js = x },
             .mini => |*x| .{ .mini = x },
-        } } else {},
+        } },
     };
 }
 

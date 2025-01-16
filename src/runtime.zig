@@ -153,7 +153,7 @@ pub const Runtime = struct {
         return if (Environment.codegen_embed)
             @embedFile("runtime.out.js")
         else
-            bun.runtimeEmbedFile(.src, "runtime.out.js");
+            bun.runtimeEmbedFile(.codegen, "runtime.out.js");
     }
 
     pub fn versionHash() u32 {

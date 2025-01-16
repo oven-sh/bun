@@ -1629,6 +1629,7 @@ class Http2Stream extends Duplex {
     }
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
+    delete headers[sensitiveHeaders];
     if (sensitives) {
       if (!$isJSArray(sensitives)) {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
@@ -2039,6 +2040,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
@@ -2090,6 +2092,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
@@ -3082,6 +3085,7 @@ class ClientHttp2Session extends Http2Session {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {

@@ -5697,7 +5697,7 @@ pub const NodeFS = struct {
             defer bun.OSPathBufferPool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
-        } else {}
+        }
     }
 
     fn cpSyncInner(

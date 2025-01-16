@@ -372,3 +372,31 @@ it("bun pm migrate", async () => {
 
   expect(hash).toMatchSnapshot();
 });
+
+it("should prefer bunfig.toml over .npmrc", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await Promise.all([
+    writeFile(join(package_dir, ".npmrc"), "cache = /tmp/npm/cache"),
+    writeFile(join(package_dir, "bunfig.toml"), '[install.cache]\ndir = "/tmp/bun/cache"'),
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "cache"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).toBe("");
+  expect(await new Response(stdout).text()).toBe("/tmp/bun/cache");
+  expect(await exited).toBe(0);
+});

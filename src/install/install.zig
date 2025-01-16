@@ -8865,7 +8865,6 @@ pub const PackageManager = struct {
         };
 
         try bun.sys.chdir(fs.top_level_dir, fs.top_level_dir).unwrap();
-        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = 0;
         fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
@@ -8911,6 +8910,9 @@ pub const PackageManager = struct {
                 break :brk install_;
             }, env, true, &[_][:0]const u8{".npmrc"});
         }
+
+        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+        
         const cpu_count = bun.getThreadCount();
 
         const options = Options{

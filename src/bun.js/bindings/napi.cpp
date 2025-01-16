@@ -2575,18 +2575,18 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
         NAPI_RETURN_SUCCESS(env);
     }
 
-    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
-    // passed an array containing leading zeroes. so we have to cut those off.
-    while (word_count > 0 && words[word_count - 1] == 0) {
-        word_count--;
-    }
-
     // throws RangeError if size is larger than JSC's limit
     auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
     NAPI_RETURN_IF_EXCEPTION(env);
     ASSERT(bigint);
 
     bigint->setSign(sign_bit != 0);
+
+    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
+    // passed an array containing leading zeroes. so we have to cut those off.
+    while (word_count > 0 && words[word_count - 1] == 0) {
+        word_count--;
+    }
 
     const uint64_t* current_word = words;
     // TODO: add fast path that uses memcpy here instead of setDigit

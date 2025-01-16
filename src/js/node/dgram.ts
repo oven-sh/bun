@@ -51,9 +51,12 @@ const {
 
 const EventEmitter = require("node:events");
 
+const { deprecate } = require("node:util");
+
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
 
 class ERR_SOCKET_BUFFER_SIZE extends Error {
@@ -905,71 +908,123 @@ Socket.prototype.getSendQueueCount = function () {
 };
 
 // Deprecated private APIs.
+ObjectDefineProperty(Socket.prototype, "_handle", {
+  get: deprecate(
+    function () {
+      return this[kStateSymbol].handle;
+    },
+    "Socket.prototype._handle is deprecated",
+    "DEP0112",
+  ),
+  set: deprecate(
+    function (val) {
+      this[kStateSymbol].handle = val;
+    },
+    "Socket.prototype._handle is deprecated",
+    "DEP0112",
+  ),
+});
+
+ObjectDefineProperty(Socket.prototype, "_receiving", {
+  get: deprecate(
+    function () {
+      return this[kStateSymbol].receiving;
+    },
+    "Socket.prototype._receiving is deprecated",
+    "DEP0112",
+  ),
+  set: deprecate(
+    function (val) {
+      this[kStateSymbol].receiving = val;
+    },
+    "Socket.prototype._receiving is deprecated",
+    "DEP0112",
+  ),
+});
+
+ObjectDefineProperty(Socket.prototype, "_bindState", {
+  get: deprecate(
+    function () {
+      return this[kStateSymbol].bindState;
+    },
+    "Socket.prototype._bindState is deprecated",
+    "DEP0112",
+  ),
+  set: deprecate(
+    function (val) {
+      this[kStateSymbol].bindState = val;
+    },
+    "Socket.prototype._bindState is deprecated",
+    "DEP0112",
+  ),
+});
+
+ObjectDefineProperty(Socket.prototype, "_queue", {
+  get: deprecate(
+    function () {
+      return this[kStateSymbol].queue;
+    },
+    "Socket.prototype._queue is deprecated",
+    "DEP0112",
+  ),
+  set: deprecate(
+    function (val) {
+      this[kStateSymbol].queue = val;
+    },
+    "Socket.prototype._queue is deprecated",
+    "DEP0112",
+  ),
+});
+
+ObjectDefineProperty(Socket.prototype, "_reuseAddr", {
+  get: deprecate(
+    function () {
+      return this[kStateSymbol].reuseAddr;
+    },
+    "Socket.prototype._reuseAddr is deprecated",
+    "DEP0112",
+  ),
+  set: deprecate(
+    function (val) {
+      this[kStateSymbol].reuseAddr = val;
+    },
+    "Socket.prototype._reuseAddr is deprecated",
+    "DEP0112",
+  ),
+});
+
+function healthCheck(socket) {
+  if (!socket[kStateSymbol].handle) {
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+  }
+}
+
+Socket.prototype._healthCheck = deprecate(
+  function () {
+    healthCheck(this);
+  },
+  "Socket.prototype._healthCheck() is deprecated",
+  "DEP0112",
+);
+
+function stopReceiving(socket) {
+  const state = socket[kStateSymbol];
+
+  if (!state.receiving) return;
+
+  // state.handle.recvStop();
+  state.receiving = false;
+}
+
+Socket.prototype._stopReceiving = deprecate(
+  function () {
+    stopReceiving(this);
+  },
+  "Socket.prototype._stopReceiving() is deprecated",
+  "DEP0112",
+);
+
 /*
-ObjectDefineProperty(Socket.prototype, '_handle', {
-  __proto__: null,
-  get: deprecate(function() {
-    return this[kStateSymbol].handle;
-  }, 'Socket.prototype._handle is deprecated', 'DEP0112'),
-  set: deprecate(function(val) {
-    this[kStateSymbol].handle = val;
-  }, 'Socket.prototype._handle is deprecated', 'DEP0112'),
-});
-
-
-ObjectDefineProperty(Socket.prototype, '_receiving', {
-  __proto__: null,
-  get: deprecate(function() {
-    return this[kStateSymbol].receiving;
-  }, 'Socket.prototype._receiving is deprecated', 'DEP0112'),
-  set: deprecate(function(val) {
-    this[kStateSymbol].receiving = val;
-  }, 'Socket.prototype._receiving is deprecated', 'DEP0112'),
-});
-
-
-ObjectDefineProperty(Socket.prototype, '_bindState', {
-  __proto__: null,
-  get: deprecate(function() {
-    return this[kStateSymbol].bindState;
-  }, 'Socket.prototype._bindState is deprecated', 'DEP0112'),
-  set: deprecate(function(val) {
-    this[kStateSymbol].bindState = val;
-  }, 'Socket.prototype._bindState is deprecated', 'DEP0112'),
-});
-
-
-ObjectDefineProperty(Socket.prototype, '_queue', {
-  __proto__: null,
-  get: deprecate(function() {
-    return this[kStateSymbol].queue;
-  }, 'Socket.prototype._queue is deprecated', 'DEP0112'),
-  set: deprecate(function(val) {
-    this[kStateSymbol].queue = val;
-  }, 'Socket.prototype._queue is deprecated', 'DEP0112'),
-});
-
-
-ObjectDefineProperty(Socket.prototype, '_reuseAddr', {
-  __proto__: null,
-  get: deprecate(function() {
-    return this[kStateSymbol].reuseAddr;
-  }, 'Socket.prototype._reuseAddr is deprecated', 'DEP0112'),
-  set: deprecate(function(val) {
-    this[kStateSymbol].reuseAddr = val;
-  }, 'Socket.prototype._reuseAddr is deprecated', 'DEP0112'),
-});
-
-
-Socket.prototype._healthCheck = deprecate(function() {
-  healthCheck(this);
-}, 'Socket.prototype._healthCheck() is deprecated', 'DEP0112');
-
-
-Socket.prototype._stopReceiving = deprecate(function() {
-  stopReceiving(this);
-}, 'Socket.prototype._stopReceiving() is deprecated', 'DEP0112');
-
 function _createSocketHandle(address, port, addressType, fd, flags) {
   const handle = newHandle(addressType);
   let err;

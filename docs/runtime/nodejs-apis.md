@@ -4,7 +4,7 @@ Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular fra
 
 This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v23_.
 
-## Built-in modules
+## Built-in Node.js modules
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
@@ -177,7 +177,7 @@ Some methods are not optimized yet.
 
 🔴 Not implemented.
 
-## Globals
+## Node.js globals
 
 The table below lists all globals implemented by Node.js and Bun's current compatibility status.
 

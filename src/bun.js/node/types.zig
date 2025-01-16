@@ -494,12 +494,7 @@ pub const StringOrBuffer = union(enum) {
     pub fn toJS(this: *StringOrBuffer, ctx: JSC.C.JSContextRef) JSC.JSValue {
         return switch (this.*) {
             inline .threadsafe_string, .string => |*str| {
-                defer {
-                    str.deinit();
-                    str.* = .{};
-                }
-
-                return str.toJS(ctx);
+                return str.transferToJS(ctx);
             },
             .encoded_slice => {
                 defer {
@@ -507,9 +502,7 @@ pub const StringOrBuffer = union(enum) {
                     this.encoded_slice = .{};
                 }
 
-                const str = bun.String.createUTF8(this.encoded_slice.slice());
-                defer str.deref();
-                return str.toJS(ctx);
+                return bun.String.createUTF8ForJS(ctx, this.encoded_slice.slice());
             },
             .buffer => {
                 if (this.buffer.buffer.value != .zero) {
@@ -769,10 +762,9 @@ pub const Encoding = enum(u8) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded_len = bun.base64.encode(&base64_buf, input);
-                const encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
-                defer encoded.deref();
+                var encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
                 @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
-                return encoded.toJS(globalObject);
+                return encoded.transferToJS(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -924,25 +916,6 @@ pub const PathLike = union(enum) {
         }
 
         return sliceZWithForceCopy(this, buf, false);
-    }
-
-    pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return switch (this.*) {
-            .string => this.string.toJS(globalObject, null),
-            .buffer => this.buffer.toJS(globalObject),
-            inline .threadsafe_string, .slice_with_underlying_string => |*str| str.toJS(globalObject),
-            .encoded_slice => |encoded| {
-                if (this.encoded_slice.allocator.get()) |allocator| {
-                    // Is this a globally-allocated slice?
-                    if (allocator.vtable == bun.default_allocator.vtable) {}
-                }
-
-                const str = bun.String.createUTF8(encoded.slice());
-                defer str.deref();
-                return str.toJS(globalObject);
-            },
-            else => unreachable,
-        };
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!?PathLike {

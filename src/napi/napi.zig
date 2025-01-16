@@ -440,13 +440,12 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.createUTF8(slice);
-    if (string.tag == .Dead) {
-        return env.genericFailure();
+    const globalObject = env.toJS();
+    const string = bun.String.createUTF8ForJS(globalObject, slice);
+    if (globalObject.hasException()) {
+        return env.setLastError(.pending_exception);
     }
-
-    defer string.deref();
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string);
     return env.ok();
 }
 pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, length: usize, result_: ?*napi_value) napi_status {
@@ -484,11 +483,9 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
-    defer string.deref();
-
     @memcpy(chars, slice);
 
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()));
     return env.ok();
 }
 

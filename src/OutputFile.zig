@@ -535,5 +535,5 @@ const Fs = bun.fs;
 const Loader = @import("./options.zig").Loader;
 const resolver = @import("./resolver/resolver.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
-const Output = @import("./global.zig").Output;
+const Output = @import("./Global.zig").Output;
 const Environment = bun.Environment;

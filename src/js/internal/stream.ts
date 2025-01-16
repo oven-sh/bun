@@ -3,7 +3,7 @@
 const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
 
-const customPromisify = require("node:util").promisify.custom;
+const customPromisify = Symbol.for("nodejs.util.promisify.custom");
 const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
 const compose = require("internal/streams/compose");
 const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");

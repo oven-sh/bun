@@ -26,8 +26,8 @@ do
   if timeout 2 $PWD/build/debug/bun-debug ./$x
   then
     j=$((j+1))
+    git add $x
   fi
-  echo
 done
 
 echo $i tests tested

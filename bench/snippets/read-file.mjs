@@ -43,6 +43,3 @@ bench(`${longUTF16.length} utf8`, () => {
 });
 
 await run();
-Bun.gc(true);
-console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
-console.log(require("bun:jsc").heapStats());

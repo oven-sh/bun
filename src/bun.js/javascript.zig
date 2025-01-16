@@ -2983,6 +2983,7 @@ pub const VirtualMachine = struct {
                 .quote_strings = false,
                 .single_line = false,
                 .stack_check = bun.StackCheck.init(),
+                .error_display_level = .full,
             };
             defer formatter.deinit();
             switch (Output.enable_ansi_colors) {
@@ -4185,13 +4186,13 @@ pub const VirtualMachine = struct {
 
                 break :brk .{ String.empty, message };
             } else .{ name, message };
-            try writer.print(comptime Output.prettyFmt("{}<b>{s}<r>\n", allow_ansi_color), .{ error_display_level.formatter(display_name, allow_ansi_color), display_message });
+            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(display_name, allow_ansi_color, .include_colon), display_message });
         } else if (!name.isEmpty()) {
-            try writer.print("{}\n", .{error_display_level.formatter(name, allow_ansi_color)});
+            try writer.print("{}\n", .{error_display_level.formatter(name, allow_ansi_color, .include_colon)});
         } else if (!message.isEmpty()) {
-            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(bun.String.empty, allow_ansi_color), message });
+            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(bun.String.empty, allow_ansi_color, .include_colon), message });
         } else {
-            try writer.print(comptime Output.prettyFmt("{}\n", allow_ansi_color), .{error_display_level.formatter(bun.String.empty, allow_ansi_color)});
+            try writer.print(comptime Output.prettyFmt("{}\n", allow_ansi_color), .{error_display_level.formatter(bun.String.empty, allow_ansi_color, .exclude_colon)});
         }
     }
 

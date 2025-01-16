@@ -102,6 +102,4 @@ template<> struct JSDOMWrapperConverterTraits<EventTarget> {
 
 } // namespace WebCore
 
-JSC_DECLARE_HOST_FUNCTION(jsEventTargetGetEventListenersCount);
-
 #include "JSEventTargetCustom.h"

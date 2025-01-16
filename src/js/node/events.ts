@@ -665,18 +665,21 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
 }
 Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });
 
-const jsEventTargetGetEventListenersCount = $newCppFunction(
-  "JSEventTarget.cpp",
-  "jsEventTargetGetEventListenersCount",
-  2,
-);
-
 function listenerCount(emitter, type) {
   if ($isCallable(emitter.listenerCount)) {
     return emitter.listenerCount(type);
   }
 
-  return jsEventTargetGetEventListenersCount(emitter, type);
+  const events = emitter._events;
+  if (events !== undefined) {
+    const evlistener = events[type];
+    if (typeof evlistener === "function") {
+      return 1;
+    } else if (evlistener !== undefined) {
+      return evlistener.length;
+    }
+  }
+  return 0;
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 

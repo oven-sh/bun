@@ -47,12 +47,37 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
+ALWAYS_INLINE bool isPosixAbsolutePathOnWindows(WTF::String input)
+{
+#if OS(WINDOWS)
+    if (input.is8Bit()) {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        const auto bytes = input.span8().data();
+        if (bytes[0] == '/')
+            return true;
+        return false;
+    } else {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        const auto bytes = input.span16().data();
+        if (bytes[0] == '/')
+            return true;
+        return false;
+    }
+#else // OS(WINDOWS)
+    return false;
+#endif
+}
+
 extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, BunString);
 
 /// CWD is determined by the global object's current cwd.
 ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetCwdFrom, WTF::String input)
 {
-    if (isAbsolutePath(input))
+    if (isAbsolutePath(input) && !isPosixAbsolutePathOnWindows(input))
         return input;
     BunString in = Bun::toString(input);
     BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, in);

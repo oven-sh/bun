@@ -124,11 +124,11 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
+    if (UNLIKELY(bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead)) {
         return JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (bunString->tag == BunStringTag::WTFStringImpl) {
+    if (LIKELY(bunString->tag == BunStringTag::WTFStringImpl)) {
         auto str = bunString->toWTFString();
         bunString->impl.wtf->deref();
         *bunString = { .tag = BunStringTag::Dead };

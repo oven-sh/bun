@@ -10,14 +10,26 @@ const os = require('os');
 const { isWindows } = common;
 
 function linklocal() {
+  const candidates = [];
+
   for (const [ifname, entries] of Object.entries(os.networkInterfaces())) {
     for (const { address, family, scopeid } of entries) {
       if (family === 'IPv6' && address.startsWith('fe80:') && !ifname.match(/tailscale/i)) {
-        return { address, ifname, scopeid };
+        candidates.push({ address, ifname, scopeid });
       }
     }
   }
+
+  // Prefer non-loopback interfaces
+  for (const candidate of candidates) {
+    if (!candidate.ifname.startsWith("lo")) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
 }
+
 const iface = linklocal();
 
 if (!iface)

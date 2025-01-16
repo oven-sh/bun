@@ -508,6 +508,7 @@ class ConnectionPool {
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queriesUsing counter
    */
   connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
+    // TODO: this always reserve a connection, we should only reserve if reserved is true
     if (this.closed) {
       return onConnected(connectionClosedError(), null);
     }

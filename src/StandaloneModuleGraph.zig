@@ -953,7 +953,7 @@ pub const StandaloneModuleGraph = struct {
                 const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
-                const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
+                const nt_path = bun.strings.addNTPathPrefixIfNeeded(&nt_path_buf, image_path);
 
                 const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
                     return error.FileNotFound;

@@ -2234,7 +2234,7 @@ pub const Arguments = struct {
 
     pub const Open = struct {
         path: PathLike,
-        flags: FileSystemFlags = FileSystemFlags.r,
+        flags: FileSystemFlags = .r,
         mode: Mode = default_permission,
 
         pub fn deinit(this: Open) void {
@@ -3191,7 +3191,7 @@ pub const NodeFS = struct {
 
     pub fn access(this: *NodeFS, args: Arguments.Access, _: Flavor) Maybe(Return.Access) {
         const path = args.path.osPathKernel32(&this.sync_error_buf);
-        return switch (Syscall.access(path, @intFromEnum(args.mode))) {
+        return switch (Syscall.access(path, args.mode.asInt())) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .{ .result = .{} },
         };
@@ -3362,7 +3362,7 @@ pub const NodeFS = struct {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    fn copyFileInner(this: *NodeFS, args: Arguments.CopyFile) Maybe(Return.CopyFile) {
+    fn copyFileInner(fs: *NodeFS, args: Arguments.CopyFile) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
         // TODO: do we need to fchown?
@@ -3567,12 +3567,11 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isWindows) {
-            const src_buf = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(src_buf);
             const dest_buf = bun.OSPathBufferPool.get();
             defer bun.OSPathBufferPool.put(dest_buf);
-            const src = strings.toWPathNormalizeAutoExtend(src_buf, args.src.sliceZ(&this.sync_error_buf));
-            const dest = strings.toWPathNormalizeAutoExtend(dest_buf, args.dest.sliceZ(&this.sync_error_buf));
+
+            const src = bun.strings.toKernel32Path(bun.reinterpretSlice(u16, &fs.sync_error_buf), args.src.slice());
+            const dest = bun.strings.toKernel32Path(dest_buf, args.dest.slice());
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
                     return shouldIgnoreEbusy(args.src, args.dest, rest);
@@ -3582,7 +3581,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        return Maybe(Return.CopyFile).todo();
+        @compileError(unreachable);
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
@@ -3733,7 +3732,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
             .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(path) },
+            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(args.path.slice()) },
         };
     }
 
@@ -3981,7 +3980,7 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
-        return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
+        return switch (Syscall.open(path, args.flags.asInt(), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
@@ -4499,10 +4498,9 @@ pub const NodeFS = struct {
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         .NOENT, .NOTDIR, .PERM => continue,
                         else => {
-                            const path_parts = [_]string{ args.path.slice(), basename };
-                            return .{
-                                .err = err.withPath(bun.default_allocator.dupe(u8, bun.path.joinZBuf(buf, &path_parts, .auto)) catch ""),
-                            };
+                            // const path_parts = [_]string{ args.path.slice(), basename };
+                            // TODO: propagate file path (removed previously because it leaked the path)
+                            return .{ .err = err };
                         },
                     }
                 },
@@ -4580,7 +4578,7 @@ pub const NodeFS = struct {
                     bun.String => {
                         entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
                     },
-                    else => @compileError("Impossible"),
+                    else => @compileError(unreachable),
                 }
             }
         }
@@ -4763,11 +4761,11 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    args.flag.asInt() | bun.O.NOCTTY,
                     default_permission,
                 )) {
                     .err => |err| return .{
-                        .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
+                        .err = err.withPath(args.path.path.slice()),
                     },
                     .result => |fd| fd,
                 };
@@ -5066,10 +5064,10 @@ pub const NodeFS = struct {
             .path => brk: {
                 const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
 
-                const open_result = Syscall.openat(
+                const open_result = bun.sys.openat(
                     args.dirfd,
                     path,
-                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    args.flag.asInt(),
                     args.mode,
                 );
 

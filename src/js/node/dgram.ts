@@ -37,6 +37,7 @@ const LIBUS_SOCKET_REUSE_PORT = 4;
 const LIBUS_SOCKET_IPV6_ONLY = 8;
 
 const kStateSymbol = Symbol("state symbol");
+const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
@@ -50,47 +51,6 @@ const {
 
 const EventEmitter = require("node:events");
 
-class ERR_OUT_OF_RANGE extends Error {
-  constructor(argumentName, range, received) {
-    super(`The value of "${argumentName}" is out of range. It must be ${range}. Received ${received}`);
-    this.code = "ERR_OUT_OF_RANGE";
-  }
-}
-
-class ERR_BUFFER_OUT_OF_BOUNDS extends Error {
-  constructor() {
-    super("Buffer offset or length is out of bounds");
-    this.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-  }
-}
-
-class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor(argName, expected, actual) {
-    super(`The "${argName}" argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
-class ERR_MISSING_ARGS extends Error {
-  constructor(argName) {
-    super(`The "${argName}" argument is required`);
-    this.code = "ERR_MISSING_ARGS";
-  }
-}
-
-class ERR_SOCKET_ALREADY_BOUND extends Error {
-  constructor() {
-    super("Socket is already bound");
-    this.code = "ERR_SOCKET_ALREADY_BOUND";
-  }
-}
-
-class ERR_SOCKET_BAD_BUFFER_SIZE extends Error {
-  constructor() {
-    super("Buffer size must be a number");
-    this.code = "ERR_SOCKET_BAD_BUFFER_SIZE";
-  }
-}
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -142,7 +102,24 @@ function newHandle(type, lookup) {
     throw $ERR_SOCKET_BAD_TYPE();
   }
 
+  handle.onmessage = onMessage;
+
   return handle;
+}
+
+function onMessage(nread, handle, buf, rinfo) {
+  const self = handle[kOwnerSymbol];
+  if (nread < 0) {
+    return self.emit(
+      "error",
+      Object.assign(new Error("recvmsg"), {
+        syscall: "recvmsg",
+        errno: nread,
+      }),
+    );
+  }
+  rinfo.size = buf.length; // compatibility
+  self.emit("message", buf, rinfo);
 }
 
 let udpSocketChannel;
@@ -163,6 +140,7 @@ function Socket(type, listener) {
   }
 
   const handle = newHandle(type, lookup);
+  handle[kOwnerSymbol] = this;
 
   // this[async_id_symbol] = handle.getAsyncId();
   this.type = type;
@@ -1022,8 +1000,8 @@ function _createSocketHandle(address, port, addressType, fd, flags) {
 // want to runtime-deprecate it at some point. There's no hurry, though.
 ObjectDefineProperty(UDP.prototype, 'owner', {
   __proto__: null,
-  get() { return this[owner_symbol]; },
-  set(v) { return this[owner_symbol] = v; },
+  get() { return this[kOwnerSymbol]; },
+  set(v) { return this[kOwnerSymbol] = v; },
 });
 */
 

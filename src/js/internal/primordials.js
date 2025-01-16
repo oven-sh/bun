@@ -8,11 +8,9 @@ const ObjectFreeze = Object.freeze;
 const createSafeIterator = (factory, next_) => {
   class SafeIterator {
     constructor(iterable) {
-      console.log("SafeIterator +", factory, next_);
       this._iterator = factory(iterable);
     }
     next() {
-      console.log("SafeIterator.next +", next_, this._iterator);
       return next_(this._iterator);
     }
     [Symbol.iterator]() {

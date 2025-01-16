@@ -571,8 +571,6 @@ export default [
       mkdtempSync: { fn: "mkdtempSync", length: 2 },
       open: { fn: "open", length: 4 },
       openSync: { fn: "openSync", length: 3 },
-      opendir: { fn: "opendir", length: 3 },
-      opendirSync: { fn: "opendirSync", length: 2 },
       readdir: { fn: "readdir", length: 3 },
       readdirSync: { fn: "readdirSync", length: 2 },
       read: { fn: "read", length: 6 },
@@ -610,6 +608,8 @@ export default [
       writeSync: { fn: "writeSync", length: 5 },
       writev: { fn: "writev", length: 4 },
       writevSync: { fn: "writevSync", length: 3 },
+      realpathNative: { fn: "realpathNative", length: 3 },
+      realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
       // TODO:
       // Dir: { fn: 'Dir', length: 3 },
       Dirent: { getter: "getDirent" },

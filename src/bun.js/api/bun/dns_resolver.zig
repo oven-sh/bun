@@ -1248,7 +1248,7 @@ pub const InternalDNS = struct {
 
         valid: bool = true,
 
-        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{},
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
             if (this.refcount > 0 or this.result == null) {

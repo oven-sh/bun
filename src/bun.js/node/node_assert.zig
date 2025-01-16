@@ -10,8 +10,6 @@ const JSValue = JSC.JSValue;
 
 const StringDiffList = MyersDiff.DiffList([]const u8);
 
-const print = std.debug.print;
-
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
 ///

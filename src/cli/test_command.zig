@@ -820,7 +820,6 @@ pub const CommandLineReporter = struct {
                     },
                     .always_return_none = true,
                 },
-                .sync,
             );
 
             // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds

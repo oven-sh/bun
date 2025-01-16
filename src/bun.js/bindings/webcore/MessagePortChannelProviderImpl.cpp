@@ -22,7 +22,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
-
+#include "root.h"
 #include "config.h"
 #include "MessagePortChannelProviderImpl.h"
 
@@ -32,9 +32,7 @@
 
 namespace WebCore {
 
-MessagePortChannelProviderImpl::MessagePortChannelProviderImpl()
-{
-}
+MessagePortChannelProviderImpl::MessagePortChannelProviderImpl() = default;
 
 MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 {
@@ -48,7 +46,7 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didEntangleLocalToRemote(local, remote, WebCore::Process::identifier());
+    m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)

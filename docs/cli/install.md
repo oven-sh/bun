@@ -93,7 +93,7 @@ $ bun install --filter '!pkg-c'
 $ bun install --filter './packages/pkg-a'
 ```
 
-For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/install#bun-install-and-bun-outdated)
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/filter#bun-install-and-bun-outdated)
 
 ## Overrides and resolutions
 

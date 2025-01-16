@@ -686,7 +686,7 @@ pub const UpgradeCommand = struct {
 
                         .windows = if (Environment.isWindows) .{
                             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                        } else {},
+                        },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);

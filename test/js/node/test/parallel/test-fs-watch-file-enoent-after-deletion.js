@@ -21,7 +21,6 @@
 
 'use strict';
 const common = require('../common');
-<<<<<<<< HEAD:test/js/node/test/parallel/test-fs-watch-file-enoent-after-deletion.js
 
 // Make sure the deletion event gets reported in the following scenario:
 // 1. Watch a file.
@@ -32,10 +31,6 @@ const common = require('../common');
 // The second stat() translates into the first 'change' event but a logic error
 // stopped it from getting emitted.
 // https://github.com/nodejs/node-v0.x-archive/issues/4027
-========
-if (!common.isWindows)
-  common.skip('this test is Windows-specific.');
->>>>>>>> 7e819cd9b (add all these passing tests):test/js/node/test/parallel/test-fs-long-path.js
 
 const fs = require('fs');
 

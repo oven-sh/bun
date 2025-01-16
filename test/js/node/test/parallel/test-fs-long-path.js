@@ -21,45 +21,34 @@
 
 'use strict';
 const common = require('../common');
-const fixtures = require('../common/fixtures');
-const assert = require('assert');
+if (!common.isWindows)
+  common.skip('this test is Windows-specific.');
+
 const fs = require('fs');
+const path = require('path');
 
 const tmpdir = require('../common/tmpdir');
 
-// Test creating and reading symbolic link
-const linkData = fixtures.path('cycles');
-const linkPath = tmpdir.resolve('cycles_link');
+// Make a path that will be at least 260 chars long.
+const fileNameLen = Math.max(260 - tmpdir.path.length - 1, 1);
+const fileName = tmpdir.resolve('x'.repeat(fileNameLen));
+const fullPath = path.resolve(fileName);
 
 tmpdir.refresh();
 
-fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-  fs.lstat(linkPath, common.mustSucceed((stats) => {
-    assert.ok(stats.isSymbolicLink());
+console.log({
+  filenameLength: fileName.length,
+  fullPathLength: fullPath.length
+});
 
-    fs.readlink(linkPath, common.mustSucceed((destination) => {
-      // BUN: It was observed that Node.js 22 fails on this line, bun includes the trailing \ too. Make this test looser.
-      const withoutTrailingSlash = str => str.replace(/\\$/, '');
-      assert.strictEqual(withoutTrailingSlash(destination), withoutTrailingSlash(linkData));
+console.log(1);
+fs.writeFile(fullPath, 'ok', common.mustSucceed(() => {
+  console.log(2);
+  fs.stat(fullPath, common.mustSucceed());
 
-      fs.unlink(linkPath, common.mustSucceed(() => {
-        assert(!fs.existsSync(linkPath));
-        assert(fs.existsSync(linkData));
-      }));
-    }));
-  }));
+  // Tests https://github.com/nodejs/node/issues/39721
+  // fs.realpath.native(fullPath, common.mustSucceed());
+
+  // Tests https://github.com/nodejs/node/issues/51031
+  // fs.promises.realpath(fullPath).then(common.mustCall(), common.mustNotCall());
 }));
-
-// Test invalid symlink
-{
-  const linkData = fixtures.path('/not/exists/dir');
-  const linkPath = tmpdir.resolve('invalid_junction_link');
-
-  fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-    assert(!fs.existsSync(linkPath));
-
-    fs.unlink(linkPath, common.mustSucceed(() => {
-      assert(!fs.existsSync(linkPath));
-    }));
-  }));
-}

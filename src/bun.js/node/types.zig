@@ -880,6 +880,13 @@ pub const PathLike = union(enum) {
 
         if (Environment.isWindows) {
             if (std.fs.path.isAbsolute(sliced)) {
+                if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
+                    // Add the long path syntax. This affects most of node:fs
+                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(@ptrCast(buf[4..]), sliced) catch @panic("Error while resolving path.");
+                    buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    bun.path.dangerouslyConvertPathToWindowsInPlace(u8, buf[4..][0..rest.len]);
+                    return buf[0 .. 4 + rest.len :0];
+                }
                 return path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
             }
         }
@@ -920,7 +927,7 @@ pub const PathLike = union(enum) {
 
     pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
-            return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
+            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
         }
 
         return sliceZWithForceCopy(this, buf, false);
@@ -1372,9 +1379,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-pub const FileSystemFlags = enum(Mode) {
+/// On windows, this uses the libuv specific mode flags.
+pub const FileSystemFlags = enum(c_int) {
+    const O = bun.O;
+
     /// Open file for appending. The file is created if it does not exist.
-    a = bun.O.APPEND | bun.O.WRONLY | bun.O.CREAT,
+    a = O.APPEND | O.WRONLY | O.CREAT,
     /// Like 'a' but fails if the path exists.
     // @"ax" = bun.O.APPEND | bun.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
@@ -1386,7 +1396,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
     // @"as+" = bun.O.APPEND | bun.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    r = bun.O.RDONLY,
+    r = O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
     // @"r+" = bun.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
@@ -1394,7 +1404,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
     // @"rs+" = bun.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    w = bun.O.WRONLY | bun.O.CREAT,
+    w = O.WRONLY | O.CREAT,
     /// Like 'w' but fails if the path exists.
     // @"wx" = bun.O.WRONLY | bun.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
@@ -1404,69 +1414,60 @@ pub const FileSystemFlags = enum(Mode) {
 
     _,
 
-    const O_RDONLY: Mode = bun.O.RDONLY;
-    const O_RDWR: Mode = bun.O.RDWR;
-    const O_APPEND: Mode = bun.O.APPEND;
-    const O_CREAT: Mode = bun.O.CREAT;
-    const O_WRONLY: Mode = bun.O.WRONLY;
-    const O_EXCL: Mode = bun.O.EXCL;
-    const O_SYNC: Mode = 0;
-    const O_TRUNC: Mode = bun.O.TRUNC;
-
     const map = bun.ComptimeStringMap(Mode, .{
-        .{ "r", O_RDONLY },
-        .{ "rs", O_RDONLY | O_SYNC },
-        .{ "sr", O_RDONLY | O_SYNC },
-        .{ "r+", O_RDWR },
-        .{ "rs+", O_RDWR | O_SYNC },
-        .{ "sr+", O_RDWR | O_SYNC },
+        .{ "r", O.RDONLY },
+        .{ "rs", O.RDONLY | O.SYNC },
+        .{ "sr", O.RDONLY | O.SYNC },
+        .{ "r+", O.RDWR },
+        .{ "rs+", O.RDWR | O.SYNC },
+        .{ "sr+", O.RDWR | O.SYNC },
 
-        .{ "R", O_RDONLY },
-        .{ "RS", O_RDONLY | O_SYNC },
-        .{ "SR", O_RDONLY | O_SYNC },
-        .{ "R+", O_RDWR },
-        .{ "RS+", O_RDWR | O_SYNC },
-        .{ "SR+", O_RDWR | O_SYNC },
+        .{ "R", O.RDONLY },
+        .{ "RS", O.RDONLY | O.SYNC },
+        .{ "SR", O.RDONLY | O.SYNC },
+        .{ "R+", O.RDWR },
+        .{ "RS+", O.RDWR | O.SYNC },
+        .{ "SR+", O.RDWR | O.SYNC },
 
-        .{ "w", O_TRUNC | O_CREAT | O_WRONLY },
-        .{ "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "w", O.TRUNC | O.CREAT | O.WRONLY },
+        .{ "wx", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "xw", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
 
-        .{ "W", O_TRUNC | O_CREAT | O_WRONLY },
-        .{ "WX", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "XW", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "W", O.TRUNC | O.CREAT | O.WRONLY },
+        .{ "WX", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "XW", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
 
-        .{ "w+", O_TRUNC | O_CREAT | O_RDWR },
-        .{ "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-        .{ "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "w+", O.TRUNC | O.CREAT | O.RDWR },
+        .{ "wx+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
+        .{ "xw+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
 
-        .{ "W+", O_TRUNC | O_CREAT | O_RDWR },
-        .{ "WX+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-        .{ "XW+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "W+", O.TRUNC | O.CREAT | O.RDWR },
+        .{ "WX+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
+        .{ "XW+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
 
-        .{ "a", O_APPEND | O_CREAT | O_WRONLY },
-        .{ "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-        .{ "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "a", O.APPEND | O.CREAT | O.WRONLY },
+        .{ "ax", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "xa", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "as", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
+        .{ "sa", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
 
-        .{ "A", O_APPEND | O_CREAT | O_WRONLY },
-        .{ "AX", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "XA", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "AS", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-        .{ "SA", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "A", O.APPEND | O.CREAT | O.WRONLY },
+        .{ "AX", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "XA", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "AS", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
+        .{ "SA", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
 
-        .{ "a+", O_APPEND | O_CREAT | O_RDWR },
-        .{ "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-        .{ "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "a+", O.APPEND | O.CREAT | O.RDWR },
+        .{ "ax+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "xa+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "as+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
+        .{ "sa+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
 
-        .{ "A+", O_APPEND | O_CREAT | O_RDWR },
-        .{ "AX+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "XA+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "AS+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-        .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "A+", O.APPEND | O.CREAT | O.RDWR },
+        .{ "AX+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "XA+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "AS+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
+        .{ "SA+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
     });
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
@@ -1545,6 +1546,14 @@ pub const FileSystemFlags = enum(Mode) {
             }
             return @enumFromInt(@as(i32, @intFromFloat(float)));
         }
+    }
+
+    /// On Windows this is a libuv-styled O_* flags, on posix it is libc-style.
+    ///
+    /// On Windows, this does not perfectly line up with bun.O, as libuv doesnt
+    /// define O_DIRECTORY for example.
+    pub fn asInt(flags: FileSystemFlags) c_int {
+        return @intFromEnum(flags);
     }
 };
 

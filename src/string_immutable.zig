@@ -1916,19 +1916,7 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
-pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
-    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
-        @memcpy(buf[0..utf8.len], utf8);
-        buf[utf8.len] = 0;
-        return buf[0..utf8.len :0];
-    }
-
-    const prefix = bun.windows.nt_maxpath_prefix_u8;
-    buf[0..prefix.len].* = prefix;
-    return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
-}
-
-pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
+fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
     wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
@@ -2041,7 +2029,7 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
 
-pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
     const path = if (hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
         utf8[bun.windows.nt_object_prefix_u8.len..]
     else
@@ -2049,9 +2037,12 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     if (hasPrefixComptime(path, bun.windows.nt_maxpath_prefix_u8)) {
         return toWPath(wbuf, path);
     }
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
-    const wpath = toWPath(wbuf[4..], path);
-    return wbuf[0 .. wpath.len + 4 :0];
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
 }
 
 fn isUNCPath(comptime T: type, path: []const T) bool {
@@ -2087,6 +2078,15 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
+
+    // Many Windows APIs expect normalized path slashes, particularly when the
+    // long path prefix is added or the nt object prefix. To make this easier,
+    // but a little redundant, this function always normalizes the slashes here.
+    //
+    // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
+    // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
+    if (Environment.isWindows)
+        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';

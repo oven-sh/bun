@@ -1,4 +1,5 @@
 // Hardcoded module "node:fs"
+import type { Stats as StatsType } from "fs";
 var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
@@ -266,11 +267,14 @@ var access = function access(path, mode, callback) {
 
     fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
-  lchmod = constants.O_SYMLINK !== undefined ? function lchmod(path, mode, callback) {
-    ensureCallback(callback);
+  lchmod =
+    constants.O_SYMLINK !== undefined
+      ? function lchmod(path, mode, callback) {
+          ensureCallback(callback);
 
-    fs.lchmod(path, mode).then(nullcallback(callback), callback);
-  } : undefined, // lchmod is only available on macOS
+          fs.lchmod(path, mode).then(nullcallback(callback), callback);
+        }
+      : undefined, // lchmod is only available on macOS
   lchown = function lchown(path, uid, gid, callback) {
     ensureCallback(callback);
 
@@ -407,7 +411,7 @@ var access = function access(path, mode, callback) {
 
     fs.writeFile(path, data, options).then(nullcallback(callback), callback);
   },
-  readlink = function readlink(path, options, callback) {
+  readlink = function readlink(path, options, callback?) {
     if ($isCallable(options)) {
       callback = options;
       options = undefined;
@@ -419,24 +423,12 @@ var access = function access(path, mode, callback) {
       callback(null, linkString);
     }, callback);
   },
-  realpath = function realpath(p, options, callback) {
-    if ($isCallable(options)) {
-      callback = options;
-      options = undefined;
-    }
-
-    ensureCallback(callback);
-
-    fs.realpath(p, options, false).then(function (resolvedPath) {
-      callback(null, resolvedPath);
-    }, callback);
-  },
   rename = function rename(oldPath, newPath, callback) {
     ensureCallback(callback);
 
     fs.rename(oldPath, newPath).then(nullcallback(callback), callback);
   },
-  lstat = function lstat(path, options, callback) {
+  lstat = function lstat(path, options, callback?) {
     if ($isCallable(options)) {
       callback = options;
       options = undefined;
@@ -448,7 +440,7 @@ var access = function access(path, mode, callback) {
       callback(null, stats);
     }, callback);
   },
-  stat = function stat(path, options, callback) {
+  stat = function stat(path, options, callback?) {
     if ($isCallable(options)) {
       callback = options;
       options = undefined;
@@ -534,7 +526,6 @@ var access = function access(path, mode, callback) {
   fdatasyncSync = fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
-  realpathSync = fs.realpathSync.bind(fs),
   renameSync = fs.renameSync.bind(fs),
   statSync = fs.statSync.bind(fs),
   symlinkSync = fs.symlinkSync.bind(fs),
@@ -616,11 +607,10 @@ readv[kCustomPromisifiedSymbol] = promises.readv;
 // listeners per StatWatcher with the current implementation in native code. the downside
 // of this means we need to do path validation in the js side of things
 const statWatchers = new Map();
-let _pathModule;
 function getValidatedPath(p) {
   if (p instanceof URL) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw new TypeError("Path must be a string or URL.");
-  return (_pathModule ??= require("node:path")).resolve(p);
+  return require("node:path").resolve(p);
 }
 function watchFile(filename, options, listener) {
   filename = getValidatedPath(filename);
@@ -1384,7 +1374,266 @@ Object.defineProperties(fs, {
   },
 });
 
-// @ts-ignore
+const splitRootWindowsRe = /^(?:[a-zA-Z]:|[\\/]{2}[^\\/]+[\\/][^\\/]+)?[\\/]*/;
+function splitRootWindows(str) {
+  return splitRootWindowsRe.exec(str)![0];
+}
+function nextPartWindows(p, i) {
+  for (; i < p.length; ++i) {
+    const ch = p.$charCodeAt(i);
+
+    // Check for a separator character
+    if (ch === "\\".charCodeAt(0) || ch === "/".charCodeAt(0)) return i;
+  }
+  return -1;
+}
+
+function encodeRealpathResult(result, encoding) {
+  if (!encoding || encoding === "utf8") return result;
+  const asBuffer = Buffer.from(result);
+  if (encoding === "buffer") {
+    return asBuffer;
+  }
+  return asBuffer.toString(encoding);
+}
+
+const realpathSync: any =
+  process.platform !== "win32"
+    ? fs.realpathSync.bind(fs)
+    : function (p, options) {
+        let encoding;
+        if (options) {
+          if (typeof options === "string") encoding = options;
+          else encoding = options?.encoding;
+        }
+        // This function is ported 1:1 from node.js, to emulate how it is unable to
+        // resolve subst drives to their underlying location. The native call is
+        // able to see through that.
+        p = getValidatedPath(p);
+        const knownHard = new Set();
+
+        // Current character position in p
+        let pos;
+        // The partial path so far, including a trailing slash if any
+        let current;
+        // The partial path without a trailing slash (except when pointing at a root)
+        let base;
+        // The partial path scanned in the previous round, with slash
+        let previous;
+
+        // Skip over roots
+        current = base = splitRootWindows(p);
+        pos = current.length;
+
+        // On windows, check that the root exists. On unix there is no need.
+        let lastStat: StatsType = lstatSync(base, { throwIfNoEntry: true });
+        if (lastStat === undefined) return;
+        knownHard.$add(base);
+
+        const pathModule = require("node:path");
+
+        // Walk down the path, swapping out linked path parts for their real
+        // values
+        // NB: p.length changes.
+        while (pos < p.length) {
+          // find the next part
+          const result = nextPartWindows(p, pos);
+          previous = current;
+          if (result === -1) {
+            const last = p.slice(pos);
+            current += last;
+            base = previous + last;
+            pos = p.length;
+          } else {
+            current += p.slice(pos, result + 1);
+            base = previous + p.slice(pos, result);
+            pos = result + 1;
+          }
+
+          // Continue if not a symlink, break if a pipe/socket
+          if (knownHard.$has(base)) {
+            if (lastStat.isFIFO() || lastStat.isSocket()) {
+              break;
+            }
+            continue;
+          }
+
+          let resolvedLink;
+          // const maybeCachedResolved = cache?.get(base);
+          // if (maybeCachedResolved) {
+          //   resolvedLink = maybeCachedResolved;
+          // } else {
+          lastStat = fs.lstatSync(base, true, undefined, true /* throwIfNoEntry */);
+          if (lastStat === undefined) return;
+
+          if (!lastStat.isSymbolicLink()) {
+            knownHard.$add(base);
+            // cache?.set(base, base);
+            continue;
+          }
+
+          // Read the link if it wasn't read before
+          // dev/ino always return 0 on windows, so skip the check.
+          let linkTarget = null;
+          if (linkTarget === null) {
+            lastStat = fs.statSync(base, { throwIfNoEntry: true });
+            linkTarget = fs.readlink(base);
+          }
+          resolvedLink = pathModule.resolve(previous, linkTarget);
+          // }
+
+          // Resolve the link, then start over
+          p = pathModule.resolve(resolvedLink, p.slice(pos));
+
+          // Skip over roots
+          current = base = splitRootWindows(p);
+          pos = current.length;
+
+          // On windows, check that the root exists. On unix there is no need.
+          if (!knownHard.$has(base)) {
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+            if (lastStat === undefined) return;
+            knownHard.$add(base);
+          }
+        }
+
+        return encodeRealpathResult(p, encoding);
+      };
+const realpath: any =
+  process.platform !== "win32"
+    ? function realpath(p, options, callback) {
+        if ($isCallable(options)) {
+          callback = options;
+          options = undefined;
+        }
+        ensureCallback(callback);
+
+        fs.realpath(p, options, false).then(function (resolvedPath) {
+          callback(null, resolvedPath);
+        }, callback);
+      }
+    : function (p, options, callback) {
+        if ($isCallable(options)) {
+          callback = options;
+          options = undefined;
+        }
+        ensureCallback(callback);
+        let encoding;
+        if (options) {
+          if (typeof options === "string") encoding = options;
+          else encoding = options?.encoding;
+        }
+        p = getValidatedPath(p);
+
+        const knownHard = new Set();
+        const pathModule = require("node:path");
+
+        // Current character position in p
+        let pos;
+        // The partial path so far, including a trailing slash if any
+        let current;
+        // The partial path without a trailing slash (except when pointing at a root)
+        let base;
+        // The partial path scanned in the previous round, with slash
+        let previous;
+
+        current = base = splitRootWindows(p);
+        pos = current.length;
+
+        let lastStat!: StatsType;
+
+        // On windows, check that the root exists. On unix there is no need.
+        if (!knownHard.has(base)) {
+          lstat(base, (err, s) => {
+            lastStat = s;
+            if (err) return callback(err);
+            knownHard.add(base);
+            LOOP();
+          });
+        } else {
+          process.nextTick(LOOP);
+        }
+
+        // Walk down the path, swapping out linked path parts for their real
+        // values
+        function LOOP() {
+          while (true) {
+            // Stop if scanned past end of path
+            if (pos >= p.length) {
+              return callback(null, encodeRealpathResult(p, encoding));
+            }
+
+            // find the next part
+            const result = nextPartWindows(p, pos);
+            previous = current;
+            if (result === -1) {
+              const last = p.slice(pos);
+              current += last;
+              base = previous + last;
+              pos = p.length;
+            } else {
+              current += p.slice(pos, result + 1);
+              base = previous + p.slice(pos, result);
+              pos = result + 1;
+            }
+
+            // Continue if not a symlink, break if a pipe/socket
+            if (knownHard.has(base)) {
+              if (lastStat.isFIFO() || lastStat.isSocket()) {
+                return callback(null, encodeRealpathResult(p, encoding));
+              }
+              continue;
+            }
+
+            return lstat(base, { bigint: true }, gotStat);
+          }
+        }
+
+        function gotStat(err, stats) {
+          if (err) return callback(err);
+
+          // If not a symlink, skip to the next path part
+          if (!stats.isSymbolicLink()) {
+            knownHard.add(base);
+            return process.nextTick(LOOP);
+          }
+
+          // Stat & read the link if not read before.
+          // Call `gotTarget()` as soon as the link target is known.
+          // `dev`/`ino` always return 0 on windows, so skip the check.
+          stat(base, (err, s) => {
+            if (err) return callback(err);
+            lastStat = s;
+
+            readlink(base, (err, target) => {
+              gotTarget(err, target);
+            });
+          });
+        }
+
+        function gotTarget(err, target) {
+          if (err) return callback(err);
+          gotResolvedLink(pathModule.resolve(previous, target));
+        }
+
+        function gotResolvedLink(resolvedLink) {
+          // Resolve the link, then start over
+          p = pathModule.resolve(resolvedLink, p.slice(pos));
+          current = base = splitRootWindows(p);
+          pos = current.length;
+
+          // On windows, check that the root exists. On unix there is no need.
+          if (!knownHard.has(base)) {
+            lstat(base, err => {
+              if (err) return callback(err);
+              knownHard.add(base);
+              LOOP();
+            });
+          } else {
+            process.nextTick(LOOP);
+          }
+        }
+      };
 realpath.native = function realpath(p, options, callback) {
   if ($isCallable(options)) {
     callback = options;

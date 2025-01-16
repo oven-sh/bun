@@ -34,6 +34,7 @@ pub const getFdPath = bun.sys.getFdPath;
 pub const setFileOffset = bun.sys.setFileOffset;
 pub const openatOSPath = bun.sys.openatOSPath;
 pub const mkdirOSPath = bun.sys.mkdirOSPath;
+pub const access = bun.sys.access;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
@@ -122,19 +123,6 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fchown, .fd = fd } }
-    else
-        .{ .result = {} };
-}
-
-pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
-    assertIsValidWindowsPath(u8, file_path);
-    var req: uv.fs_t = uv.fs_t.uninitialized;
-    defer req.deinit();
-    const rc = uv.uv_fs_access(uv.Loop.get(), &req, file_path.ptr, flags, null);
-
-    log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
-    return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .access, .path = file_path } }
     else
         .{ .result = {} };
 }

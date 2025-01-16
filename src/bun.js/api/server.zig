@@ -3106,19 +3106,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             const resp = this.resp.?;
             this.response_ptr = response;
+
+            this.doWriteStatus(response.statusCode());
+            this.flags.head_request_status_written = true;
+
             const server = this.server orelse {
                 // server detached?
-                this.doWriteStatus(response.statusCode());
-                this.flags.head_request_status_written = true;
-
                 resp.writeHeaderInt("content-length", 0);
                 this.renderMetadata();
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
-
-            this.doWriteStatus(response.statusCode());
-            this.flags.head_request_status_written = true;
 
             const globalThis = server.globalThis;
             var has_content_length_or_transfer_encoding = false;

@@ -430,8 +430,7 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
                 array->putDirectIndex(globalObject, 0, existing);
                 array->putDirectIndex(globalObject, 1, jsvalue);
                 result->putDirect(vm, Identifier::fromString(vm, key), array, 0);
-            }
-            if (array) {
+            } else {
                 array->putDirectIndex(globalObject, array->length(), jsvalue);
             }
         } else {

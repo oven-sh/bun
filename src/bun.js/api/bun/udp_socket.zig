@@ -461,13 +461,12 @@ pub const UDPSocket = struct {
 
             if (comptime use_wsa) {
                 if (bun.windows.WSAGetLastError()) |wsa| {
+                    std.os.windows.ws2_32.WSASetLastError(0);
                     return bun.JSC.Maybe(void).errno(wsa.toE(), tag);
-                } else {
-                    @panic("WSAGetLastError was expected to return an error code but didn't");
                 }
-            } else {
-                return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), tag);
             }
+
+            return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), tag);
         } else {
             return bun.JSC.Maybe(void).errnoSys(res, tag);
         }

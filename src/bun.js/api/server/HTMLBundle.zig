@@ -16,7 +16,7 @@ pub fn init(globalObject: *JSGlobalObject, path: []const u8) !*HTMLBundle {
     try config.public_path.appendChar('/');
     return HTMLBundle.new(.{
         .globalObject = globalObject,
-        .path = try bun.default_allocator.dupe(u8, path),
+        .path = try bun.heap.default_allocator.dupe(u8, path),
         .config = config,
         .plugins = null,
     });
@@ -27,8 +27,8 @@ pub fn finalize(this: *HTMLBundle) void {
 }
 
 pub fn deinit(this: *HTMLBundle) void {
-    bun.default_allocator.free(this.path);
-    this.config.deinit(bun.default_allocator);
+    bun.heap.default_allocator.free(this.path);
+    this.config.deinit(bun.heap.default_allocator);
     if (this.plugins) |plugin| {
         plugin.deinit();
     }
@@ -103,7 +103,7 @@ pub const HTMLBundleRoute = struct {
         for (this.pending_responses.items) |pending_response| {
             pending_response.deref();
         }
-        this.pending_responses.deinit(bun.default_allocator);
+        this.pending_responses.deinit(bun.heap.default_allocator);
         this.html_bundle.deref();
         this.value.deinit();
         this.destroy();
@@ -161,7 +161,7 @@ pub const HTMLBundleRoute = struct {
                 this.html_bundle.plugins,
                 globalThis,
                 vm.eventLoop(),
-                bun.default_allocator,
+                bun.heap.default_allocator,
             ) catch {
                 resp.endWithoutBody(true);
                 bun.outOfMemory();
@@ -193,7 +193,7 @@ pub const HTMLBundleRoute = struct {
                     .ref_count = 1,
                 });
 
-                this.pending_responses.append(bun.default_allocator, pending) catch {
+                this.pending_responses.append(bun.heap.default_allocator, pending) catch {
                     pending.deref();
                     resp.endWithoutBody(true);
                     bun.outOfMemory();
@@ -237,7 +237,7 @@ pub const HTMLBundleRoute = struct {
             .err => |err| {
                 if (bun.Environment.enable_logs)
                     debug("onComplete: err - {s}", .{@errorName(err)});
-                this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
+                this.value = .{ .err = bun.logger.Log.init(bun.heap.default_allocator) };
                 completion_task.log.cloneToWithRecycled(&this.value.err, true) catch bun.outOfMemory();
 
                 if (this.server) |server| {
@@ -280,8 +280,8 @@ pub const HTMLBundleRoute = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
-                    var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
+                    const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.heap.default_allocator, globalThis) catch bun.outOfMemory() };
+                    var headers = JSC.WebCore.Headers{ .allocator = bun.heap.default_allocator };
                     headers.append("Content-Type", blob.Blob.contentTypeOrMimeType() orelse output_file.loader.toMimeType().value) catch bun.outOfMemory();
                     // Do not apply etags to html.
                     if (output_file.loader != .html and output_file.value == .buffer) {
@@ -342,7 +342,7 @@ pub const HTMLBundleRoute = struct {
 
         // Handle pending responses
         var pending = this.pending_responses;
-        defer pending.deinit(bun.default_allocator);
+        defer pending.deinit(bun.heap.default_allocator);
         this.pending_responses = .{};
         for (pending.items) |pending_response| {
             // for the list of pending responses

@@ -10,7 +10,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const sync = @import("sync.zig");
 const Mutex = bun.Mutex;
@@ -113,7 +113,7 @@ pub const FileSystem = struct {
     }
 
     pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
-        const allocator = bun.fs_allocator;
+        const allocator = bun.heap.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
         _ = &top_level_dir;
 
@@ -122,8 +122,8 @@ pub const FileSystem = struct {
                 .top_level_dir = top_level_dir,
                 .fs = Implementation.init(top_level_dir),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
-                .dirname_store = DirnameStore.init(bun.default_allocator),
-                .filename_store = FilenameStore.init(bun.default_allocator),
+                .dirname_store = DirnameStore.init(bun.heap.default_allocator),
+                .filename_store = FilenameStore.init(bun.heap.default_allocator),
             };
             instance_loaded = true;
 
@@ -538,7 +538,7 @@ pub const FileSystem = struct {
                     const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
                         if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
                             break :brk bun.fmt.allocPrint(
-                                bun.default_allocator,
+                                bun.heap.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
                             ) catch bun.outOfMemory();
@@ -548,14 +548,14 @@ pub const FileSystem = struct {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
+                            break :brk bun.heap.default_allocator.dupe(u8, out) catch bun.outOfMemory();
                         }
 
                         var tmp_buf: bun.PathBuffer = undefined;
                         const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                         const root = bun.path.windowsFilesystemRoot(cwd);
                         break :brk bun.fmt.allocPrint(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},
                         ) catch bun.outOfMemory();
@@ -607,7 +607,7 @@ pub const FileSystem = struct {
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
                     var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        existing.entries.data.clearAndFree(bun.heap.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
@@ -623,10 +623,10 @@ pub const FileSystem = struct {
                         void,
                         void{},
                     ) catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        existing.entries.data.clearAndFree(bun.heap.fs_allocator);
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
-                    existing.entries.data.clearAndFree(bun.fs_allocator);
+                    existing.entries.data.clearAndFree(bun.heap.fs_allocator);
                     existing.entries.* = new_entry;
                 }
             }
@@ -713,7 +713,7 @@ pub const FileSystem = struct {
                 this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
                 var buf: bun.PathBuffer = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
-                this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
+                this.existing_path = try bun.heap.default_allocator.dupe(u8, existing_path);
             }
 
             pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
@@ -841,7 +841,7 @@ pub const FileSystem = struct {
             const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(bun.fs_allocator);
+                _entries_option_map = EntriesOption.Map.init(bun.heap.fs_allocator);
                 _entries_option_map_loaded = true;
             }
 
@@ -983,7 +983,7 @@ pub const FileSystem = struct {
 
             var iter = bun.iterateDir(handle);
             var dir = DirEntry.init(_dir, generation);
-            const allocator = bun.fs_allocator;
+            const allocator = bun.heap.fs_allocator;
             errdefer dir.deinit(allocator);
 
             if (store_fd) {
@@ -1102,14 +1102,14 @@ pub const FileSystem = struct {
                 Iterator,
                 iterator,
             ) catch |err| {
-                if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
+                if (in_place) |existing| existing.data.clearAndFree(bun.heap.fs_allocator);
                 return try fs.readDirectoryError(dir, err);
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
+                const entries_ptr = in_place orelse bun.heap.fs_allocator.create(DirEntry) catch bun.outOfMemory();
                 if (in_place) |original| {
-                    original.data.clearAndFree(bun.fs_allocator);
+                    original.data.clearAndFree(bun.heap.fs_allocator);
                 }
                 if (store_fd and entries.fd == .zero)
                     entries.fd = bun.toFD(handle.fd);
@@ -1142,7 +1142,7 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             return readFileWithHandleAndAllocator(
                 fs,
-                bun.fs_allocator,
+                bun.heap.fs_allocator,
                 path,
                 _size,
                 file,

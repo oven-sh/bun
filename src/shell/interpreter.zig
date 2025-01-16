@@ -181,7 +181,7 @@ const CowFd = struct {
     const debug = bun.Output.scoped(.CowFd, true);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
-        const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
+        const this = bun.heap.default_allocator.create(CowFd) catch bun.outOfMemory();
         this.* = .{
             .__fd = fd,
         };
@@ -230,7 +230,7 @@ const CowFd = struct {
     pub fn deinit(this: *CowFd) void {
         assert(this.refcount == 0);
         _ = bun.sys.close(this.__fd);
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 
@@ -469,7 +469,7 @@ pub const RefCountedStr = struct {
 
     fn init(slice: []const u8) *RefCountedStr {
         debug("init: {s}", .{slice});
-        const this = bun.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
+        const this = bun.heap.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
         this.* = .{
             .refcount = 1,
             .len = @intCast(slice.len),
@@ -497,12 +497,12 @@ pub const RefCountedStr = struct {
     fn deinit(this: *RefCountedStr) void {
         debug("deinit: {s}", .{this.byteSlice()});
         this.freeStr();
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     fn freeStr(this: *RefCountedStr) void {
         if (this.len == 0) return;
-        bun.default_allocator.free(this.ptr[0..this.len]);
+        bun.heap.default_allocator.free(this.ptr[0..this.len]);
     }
 };
 
@@ -632,7 +632,7 @@ pub const EnvMap = struct {
 pub const ShellArgs = struct {
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
-    __arena: *bun.ArenaAllocator,
+    __arena: *std.heap.ArenaAllocator,
     /// Root ast node
     script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
 
@@ -649,7 +649,7 @@ pub const ShellArgs = struct {
     }
 
     pub fn init() *ShellArgs {
-        const arena = bun.new(bun.ArenaAllocator, bun.ArenaAllocator.init(bun.default_allocator));
+        const arena = bun.new(std.heap.ArenaAllocator, std.heap.ArenaAllocator.init(bun.heap.default_allocator));
         return ShellArgs.new(.{
             .__arena = arena,
             .script_ast = undefined,
@@ -684,7 +684,7 @@ pub const ParsedShellScript = struct {
         out_export_env.* = this.export_env;
 
         this.args = null;
-        this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
+        this.jsobjs = std.ArrayList(JSValue).init(bun.heap.default_allocator);
         this.cwd = null;
         this.export_env = null;
     }
@@ -732,19 +732,19 @@ pub const ParsedShellScript = struct {
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
-        var env: EnvMap = EnvMap.init(bun.default_allocator);
+        var env: EnvMap = EnvMap.init(bun.heap.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
         while (try object_iter.next()) |key| {
-            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyslice = key.toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
 
             const value_str = value.getZigString(globalThis);
-            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = value_str.toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory();
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
             const valueref = EnvStr.initRefCounted(slice);
@@ -874,7 +874,7 @@ pub const Interpreter = struct {
         ///
         /// It changes when a cmd substitution is run.
         ///
-        /// These MUST use the `bun.default_allocator` Allocator
+        /// These MUST use the `bun.heap.default_allocator` Allocator
         _buffered_stdout: Bufio = .{ .owned = .{} },
         _buffered_stderr: Bufio = .{ .owned = .{} },
 
@@ -954,10 +954,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinitWithAllocator(bun.heap.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinitWithAllocator(bun.heap.default_allocator);
                 }
             }
 
@@ -968,7 +968,7 @@ pub const Interpreter = struct {
             this.__prev_cwd.deinit();
             closefd(this.cwd_fd);
 
-            if (comptime destroy_this) bun.default_allocator.destroy(this);
+            if (comptime destroy_this) bun.heap.default_allocator.destroy(this);
         }
 
         pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
@@ -1135,7 +1135,7 @@ pub const Interpreter = struct {
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
-                    bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+                    bufio.appendFmt(bun.heap.default_allocator, fmt, args) catch bun.outOfMemory();
                     ctx.parent.childDone(ctx, 1);
                 },
                 .ignore => {},
@@ -1165,7 +1165,7 @@ pub const Interpreter = struct {
     };
 
     pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         const arguments_ = callframe.arguments_old(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
@@ -1195,7 +1195,7 @@ pub const Interpreter = struct {
         );
 
         const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
-            break :brk c.toUTF8(bun.default_allocator);
+            break :brk c.toUTF8(bun.heap.default_allocator);
         } else null;
         defer if (cwd_string) |c| c.deinit();
 
@@ -1272,8 +1272,8 @@ pub const Interpreter = struct {
                 test_tokens.append(test_tok) catch @panic("OOPS");
             }
 
-            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
-            defer bun.default_allocator.free(str);
+            const str = std.json.stringifyAlloc(bun.heap.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            defer bun.heap.default_allocator.free(str);
             debug("Tokens: {s}", .{str});
         }
 
@@ -1320,8 +1320,8 @@ pub const Interpreter = struct {
         };
 
         // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
-        defer bun.default_allocator.destroy(pathbuf);
+        const pathbuf = bun.heap.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
+        defer bun.heap.default_allocator.destroy(pathbuf);
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
@@ -1336,7 +1336,7 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
+        var cwd_arr = std.ArrayList(u8).initCapacity(bun.heap.default_allocator, cwd.len + 1) catch bun.outOfMemory();
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
 
         if (comptime bun.Environment.allow_assert) {
@@ -1382,7 +1382,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.heap.default_allocator),
             .globalThis = undefined,
         };
 
@@ -1432,7 +1432,7 @@ pub const Interpreter = struct {
         var interp = switch (ThisInterpreter.init(
             ctx,
             .{ .mini = mini },
-            bun.default_allocator,
+            bun.heap.default_allocator,
             shargs,
             jsobjs,
             null,
@@ -1501,7 +1501,7 @@ pub const Interpreter = struct {
         var interp: *ThisInterpreter = switch (ThisInterpreter.init(
             ctx,
             .{ .mini = mini },
-            bun.default_allocator,
+            bun.heap.default_allocator,
             shargs,
             jsobjs,
             null,
@@ -1624,7 +1624,7 @@ pub const Interpreter = struct {
         const bytelist = buf.*;
         buf.* = .{};
         const buffer: JSC.Buffer = .{
-            .allocator = bun.default_allocator,
+            .allocator = bun.heap.default_allocator,
             .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };
         return buffer.toNodeBuffer(globalThis);
@@ -1722,10 +1722,10 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.heap.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.heap.default_allocator);
         }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
@@ -1756,7 +1756,7 @@ pub const Interpreter = struct {
         const value = callframe.argument(0);
         const str = bun.String.fromJS(value, globalThis);
 
-        const slice = str.toUTF8(bun.default_allocator);
+        const slice = str.toUTF8(bun.heap.default_allocator);
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
@@ -1786,12 +1786,12 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyslice = key.toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
 
             const value_str = value.getZigString(globalThis);
-            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = value_str.toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory();
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
             const valueref = EnvStr.initRefCounted(slice);
@@ -1871,7 +1871,7 @@ pub const Interpreter = struct {
         if (this.vm_args_utf8.items.len != argv.len) {
             this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
             for (argv) |arg| {
-                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+                this.vm_args_utf8.append(arg.toUTF8(bun.heap.default_allocator)) catch bun.outOfMemory();
             }
         }
         return this.vm_args_utf8.items[idx].slice();
@@ -2398,7 +2398,7 @@ pub const Interpreter = struct {
                     },
                     .unknown => |errtag| {
                         this.base.throw(&.{
-                            .custom = bun.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
+                            .custom = bun.heap.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
                         });
                     },
                 }
@@ -2415,7 +2415,7 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
+                const msg = std.fmt.allocPrint(bun.heap.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
                 this.state = .{
                     .err = bun.shell.ShellErr{
                         .custom = msg,
@@ -2839,7 +2839,7 @@ pub const Interpreter = struct {
                 this.base.shell.deinit();
             }
 
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         pub fn deinitFromInterpreter(this: *Script) void {
@@ -2847,7 +2847,7 @@ pub const Interpreter = struct {
             this.io.deinit();
             // Let the interpreter deinitialize the shell state
             // this.base.shell.deinitImpl(false, false);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
     };
 
@@ -2916,7 +2916,7 @@ pub const Interpreter = struct {
                 switch (this.state) {
                     .idle => {
                         this.state = .{ .expanding = .{
-                            .current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator),
+                            .current_expansion_result = std.ArrayList([:0]const u8).init(bun.heap.default_allocator),
                             .expansion = undefined,
                         } };
                         continue;
@@ -2968,7 +2968,7 @@ pub const Interpreter = struct {
                     const ref = EnvStr.initRefCounted(value);
                     defer ref.deref();
                     this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), ref, this.ctx);
-                    expanding.current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator);
+                    expanding.current_expansion_result = std.ArrayList([:0]const u8).init(bun.heap.default_allocator);
                 } else {
                     const size = brk: {
                         var total: usize = 0;
@@ -2984,7 +2984,7 @@ pub const Interpreter = struct {
                     };
 
                     const value = brk: {
-                        var merged = bun.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
+                        var merged = bun.heap.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
                         var i: usize = 0;
                         const last = expanding.current_expansion_result.items.len -| 1;
                         for (expanding.current_expansion_result.items, 0..) |slice, j| {
@@ -3002,7 +3002,7 @@ pub const Interpreter = struct {
 
                     this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), value_ref, this.ctx);
                     for (expanding.current_expansion_result.items) |slice| {
-                        bun.default_allocator.free(slice);
+                        bun.heap.default_allocator.free(slice);
                     }
                     expanding.current_expansion_result.clearRetainingCapacity();
                 }
@@ -3655,7 +3655,7 @@ pub const Interpreter = struct {
                 .node = node,
                 .parent = parent,
                 .io = io,
-                .redirection_file = std.ArrayList(u8).init(bun.default_allocator),
+                .redirection_file = std.ArrayList(u8).init(bun.heap.default_allocator),
             });
         }
 
@@ -3727,7 +3727,7 @@ pub const Interpreter = struct {
             if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
                 if (exit_code != 0) {
                     const err = this.state.expanding_redirect.expansion.state.err;
-                    defer err.deinit(bun.default_allocator);
+                    defer err.deinit(bun.heap.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
                     const buf = err.fmt();
                     this.writeFailingError("{s}", .{buf});
@@ -3995,7 +3995,7 @@ pub const Interpreter = struct {
                 .node = node,
                 .parent = parent,
                 .io = io,
-                .args = std.ArrayList([:0]const u8).init(bun.default_allocator),
+                .args = std.ArrayList([:0]const u8).init(bun.heap.default_allocator),
             });
         }
 
@@ -4145,7 +4145,7 @@ pub const Interpreter = struct {
             if (child.ptr.is(Expansion)) {
                 if (exit_code != 0) {
                     const err = this.state.expanding_args.expansion.state.err;
-                    defer err.deinit(bun.default_allocator);
+                    defer err.deinit(bun.heap.default_allocator);
                     this.state.expanding_args.expansion.deinit();
                     const buf = err.fmt();
                     this.writeFailingError("{s}", .{buf});
@@ -4391,7 +4391,7 @@ pub const Interpreter = struct {
         /// For Builtins:
         ///   - allocates argv, sometimes used by the builtin for small allocations.
         ///   - Freed when builtin is done (since it contains argv which might be used at any point)
-        spawn_arena: bun.ArenaAllocator,
+        spawn_arena: std.heap.ArenaAllocator,
         spawn_arena_freed: bool = false,
 
         /// This allocated by the above arena
@@ -4529,7 +4529,7 @@ pub const Interpreter = struct {
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                             if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
                                 const the_slice = readable.pipe.slice();
-                                cmd.base.shell.buffered_stdout().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
+                                cmd.base.shell.buffered_stdout().append(bun.heap.default_allocator, the_slice) catch bun.outOfMemory();
                             }
 
                             stdout.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
@@ -4542,7 +4542,7 @@ pub const Interpreter = struct {
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                             if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
                                 const the_slice = readable.pipe.slice();
-                                cmd.base.shell.buffered_stderr().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
+                                cmd.base.shell.buffered_stderr().append(bun.heap.default_allocator, the_slice) catch bun.outOfMemory();
                             }
 
                             stderr.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
@@ -4610,7 +4610,7 @@ pub const Interpreter = struct {
                 .node = node,
                 .parent = parent,
 
-                .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
+                .spawn_arena = std.heap.ArenaAllocator.init(interpreter.allocator),
                 .args = undefined,
                 .redirection_file = undefined,
 
@@ -4747,7 +4747,7 @@ pub const Interpreter = struct {
             if (child.ptr.is(Assigns)) {
                 if (exit_code != 0) {
                     const err = this.state.expanding_assigns.state.err;
-                    defer err.deinit(bun.default_allocator);
+                    defer err.deinit(bun.heap.default_allocator);
                     this.state.expanding_assigns.deinit();
                     const buf = err.fmt();
                     this.writeFailingError("{s}", .{buf});
@@ -4772,7 +4772,7 @@ pub const Interpreter = struct {
                         .expanding_args => this.state.expanding_args.expansion.state.err,
                         else => @panic("Invalid state"),
                     };
-                    defer err.deinit(bun.default_allocator);
+                    defer err.deinit(bun.heap.default_allocator);
                     const buf = err.fmt();
                     this.writeFailingError("{s}", .{buf});
                     return;
@@ -4998,7 +4998,7 @@ pub const Interpreter = struct {
                 .err => |*e| {
                     this.exec = .none;
                     const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
+                    defer bun.heap.default_allocator.free(msg);
                     this.writeFailingError("{s}", .{msg});
                     return;
                 },
@@ -5141,7 +5141,7 @@ pub const Interpreter = struct {
             if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
                 var buf = this.io.stdout.fd.captured.?;
                 const the_slice = this.exec.subproc.child.stdout.pipe.slice();
-                buf.append(bun.default_allocator, the_slice) catch bun.outOfMemory();
+                buf.append(bun.heap.default_allocator, the_slice) catch bun.outOfMemory();
             }
             this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
             this.exec.subproc.child.closeIO(.stdout);
@@ -5157,7 +5157,7 @@ pub const Interpreter = struct {
             }
             if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
                 var buf = this.io.stderr.fd.captured.?;
-                buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()) catch bun.outOfMemory();
+                buf.append(bun.heap.default_allocator, this.exec.subproc.child.stderr.pipe.slice()) catch bun.outOfMemory();
             }
             this.exec.subproc.buffered_closed.close(this, .{ .stderr = &this.exec.subproc.child.stderr });
             this.exec.subproc.child.closeIO(.stderr);
@@ -5174,7 +5174,7 @@ pub const Interpreter = struct {
         export_env: *EnvMap,
         cmd_local_env: *EnvMap,
 
-        arena: *bun.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
         /// The following are allocated with the above arena
         args: *const std.ArrayList(?[*:0]const u8),
         args_slice: ?[]const [:0]const u8 = null,
@@ -5461,7 +5461,7 @@ pub const Interpreter = struct {
             cmd: *Cmd,
             interpreter: *ThisInterpreter,
             kind: Kind,
-            arena: *bun.ArenaAllocator,
+            arena: *std.heap.ArenaAllocator,
             node: *const ast.Cmd,
             args: *const std.ArrayList(?[*:0]const u8),
             export_env: *EnvMap,
@@ -5476,12 +5476,12 @@ pub const Interpreter = struct {
             };
             const stdout: BuiltinIO.Output = switch (io.stdout) {
                 .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-                .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+                .pipe => .{ .buf = std.ArrayList(u8).init(bun.heap.default_allocator) },
                 .ignore => .ignore,
             };
             const stderr: BuiltinIO.Output = switch (io.stderr) {
                 .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-                .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+                .pipe => .{ .buf = std.ArrayList(u8).init(bun.heap.default_allocator) },
                 .ignore => .ignore,
             };
 
@@ -5701,11 +5701,11 @@ pub const Interpreter = struct {
 
             // Aggregate output data if shell state is piped and this cmd is piped
             if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
-                cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
+                cmd.base.shell.buffered_stdout().append(bun.heap.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
             }
             // Aggregate output data if shell state is piped and this cmd is piped
             if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
-                cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
+                cmd.base.shell.buffered_stderr().append(bun.heap.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
             }
 
             cmd.parent.childDone(cmd, this.exit_code.?);
@@ -6289,7 +6289,7 @@ pub const Interpreter = struct {
             pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
                 log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
 
-                defer bun.default_allocator.destroy(task);
+                defer bun.heap.default_allocator.destroy(task);
                 this.state.exec.tasks_done += 1;
                 const err = task.err;
 
@@ -6376,11 +6376,11 @@ pub const Interpreter = struct {
                     if (this.err) |e| {
                         e.deref();
                     }
-                    bun.default_allocator.destroy(this);
+                    bun.heap.default_allocator.destroy(this);
                 }
 
                 pub fn create(touch: *Touch, opts: Opts, filepath: [:0]const u8, cwd_path: [:0]const u8) *ShellTouchTask {
-                    const task = bun.default_allocator.create(ShellTouchTask) catch bun.outOfMemory();
+                    const task = bun.heap.default_allocator.create(ShellTouchTask) catch bun.outOfMemory();
                     task.* = ShellTouchTask{
                         .touch = touch,
                         .opts = opts,
@@ -6441,12 +6441,12 @@ pub const Interpreter = struct {
                                     break :out;
                                 },
                                 .err => |e| {
-                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                                    this.err = e.withPath(bun.heap.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                     break :out;
                                 },
                             }
                         }
-                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                        this.err = err.withPath(bun.heap.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                     }
 
                     if (this.event_loop == .js) {
@@ -6761,12 +6761,12 @@ pub const Interpreter = struct {
 
                 pub fn deinit(this: *ShellMkdirTask) void {
                     this.created_directories.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.heap.default_allocator.destroy(this);
                 }
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
-                    this.created_directories = ArrayList(u8).init(bun.default_allocator);
+                    this.created_directories = ArrayList(u8).init(bun.heap.default_allocator);
                     return out;
                 }
 
@@ -6782,14 +6782,14 @@ pub const Interpreter = struct {
                     filepath: [:0]const u8,
                     cwd_path: [:0]const u8,
                 ) *ShellMkdirTask {
-                    const task = bun.default_allocator.create(ShellMkdirTask) catch bun.outOfMemory();
+                    const task = bun.heap.default_allocator.create(ShellMkdirTask) catch bun.outOfMemory();
                     const evtloop = mkdir.bltn.parentCmd().base.eventLoop();
                     task.* = ShellMkdirTask{
                         .mkdir = mkdir,
                         .opts = opts,
                         .cwd_path = cwd_path,
                         .filepath = filepath,
-                        .created_directories = ArrayList(u8).init(bun.default_allocator),
+                        .created_directories = ArrayList(u8).init(bun.heap.default_allocator),
                         .event_loop = evtloop,
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
                     };
@@ -6839,7 +6839,7 @@ pub const Interpreter = struct {
                         switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                             .result => {},
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                                this.err = e.withPath(bun.heap.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -6857,7 +6857,7 @@ pub const Interpreter = struct {
                                 }
                             },
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                                this.err = e.withPath(bun.heap.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -7664,9 +7664,9 @@ pub const Interpreter = struct {
                 task_count: *std.atomic.Value(usize),
 
                 cwd: bun.FileDescriptor,
-                /// Should be allocated with bun.default_allocator
+                /// Should be allocated with bun.heap.default_allocator
                 path: [:0]const u8 = &[0:0]u8{},
-                /// Should use bun.default_allocator
+                /// Should use bun.heap.default_allocator
                 output: std.ArrayList(u8),
                 is_absolute: bool = false,
                 err: ?Syscall.Error = null,
@@ -7683,13 +7683,13 @@ pub const Interpreter = struct {
                 }
 
                 pub fn create(ls: *Ls, opts: Opts, task_count: *std.atomic.Value(usize), cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: JSC.EventLoopHandle) *@This() {
-                    const task = bun.default_allocator.create(@This()) catch bun.outOfMemory();
+                    const task = bun.heap.default_allocator.create(@This()) catch bun.outOfMemory();
                     task.* = @This(){
                         .ls = ls,
                         .opts = opts,
                         .cwd = cwd,
-                        .path = bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
-                        .output = std.ArrayList(u8).init(bun.default_allocator),
+                        .path = bun.heap.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
+                        .output = std.ArrayList(u8).init(bun.heap.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(event_loop),
                         .event_loop = event_loop,
                         .task_count = task_count,
@@ -7700,7 +7700,7 @@ pub const Interpreter = struct {
                 pub fn enqueue(this: *@This(), path: [:0]const u8) void {
                     debug("enqueue: {s}", .{path});
                     const new_path = this.join(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         &[_][]const u8{
                             this.path[0..this.path.len],
                             path[0..path.len],
@@ -7802,7 +7802,7 @@ pub const Interpreter = struct {
 
                 fn errorWithPath(this: *@This(), err: Syscall.Error, path: [:0]const u8) Syscall.Error {
                     _ = this;
-                    return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+                    return err.withPath(bun.heap.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
                 }
 
                 pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
@@ -7822,7 +7822,7 @@ pub const Interpreter = struct {
 
                 pub fn takeOutput(this: *@This()) std.ArrayList(u8) {
                     const ret = this.output;
-                    this.output = std.ArrayList(u8).init(bun.default_allocator);
+                    this.output = std.ArrayList(u8).init(bun.heap.default_allocator);
                     return ret;
                 }
 
@@ -7837,9 +7837,9 @@ pub const Interpreter = struct {
 
                 pub fn deinit(this: *@This(), comptime free_this: bool) void {
                     debug("deinit {s}", .{if (free_this) "free_this=true" else "free_this=false"});
-                    bun.default_allocator.free(this.path);
+                    bun.heap.default_allocator.free(this.path);
                     this.output.deinit();
-                    if (comptime free_this) bun.default_allocator.destroy(this);
+                    if (comptime free_this) bun.heap.default_allocator.destroy(this);
                 }
             };
 
@@ -8381,7 +8381,7 @@ pub const Interpreter = struct {
                                 ResolvePath.basename(src),
                             }, .auto);
 
-                            this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
+                            this.err = e.withPath(bun.heap.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
                             return false;
                         },
                         else => {},
@@ -8621,7 +8621,7 @@ pub const Interpreter = struct {
                     if (exec.err == null) {
                         exec.err = err;
                     } else {
-                        bun.default_allocator.free(err.path);
+                        bun.heap.default_allocator.free(err.path);
                     }
                 }
 
@@ -9330,7 +9330,7 @@ pub const Interpreter = struct {
                             if (this.parent_task == null) {
                                 var buf: bun.PathBuffer = undefined;
                                 const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
-                                    .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
+                                    .result => |p| bun.heap.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
                                     .err => |err| {
                                         debug("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                         this.task_manager.err_mutex.lock();
@@ -9357,7 +9357,7 @@ pub const Interpreter = struct {
                                     this.task_manager.err = err;
                                     this.task_manager.error_signal.store(true, .seq_cst);
                                 } else {
-                                    bun.default_allocator.free(err.path);
+                                    bun.heap.default_allocator.free(err.path);
                                 }
                             },
                             .result => {},
@@ -9372,7 +9372,7 @@ pub const Interpreter = struct {
                             this.task_manager.err = err;
                             this.task_manager.error_signal.store(true, .seq_cst);
                         } else {
-                            bun.default_allocator.free(err.path);
+                            bun.heap.default_allocator.free(err.path);
                         }
                     }
 
@@ -9431,7 +9431,7 @@ pub const Interpreter = struct {
                                 if (this.task_manager.err == null) {
                                     this.task_manager.err = e;
                                 } else {
-                                    bun.default_allocator.free(e.path);
+                                    bun.heap.default_allocator.free(e.path);
                                 }
                             },
                             .result => |deleted| {
@@ -9457,14 +9457,14 @@ pub const Interpreter = struct {
                         // The root's path string is from Rm's argv so don't deallocate it
                         // And the root task is actually a field on the struct of the AsyncRmTask so don't deallocate it either
                         if (this.parent_task != null) {
-                            bun.default_allocator.free(this.path);
-                            bun.default_allocator.destroy(this);
+                            bun.heap.default_allocator.free(this.path);
+                            bun.heap.default_allocator.destroy(this);
                         }
                     }
                 };
 
                 pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
-                    const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
+                    const task = bun.heap.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
                     task.* = ShellRmTask{
                         .rm = rm,
                         .opts = rm.opts,
@@ -9476,7 +9476,7 @@ pub const Interpreter = struct {
                             .path = root_path.sliceAssumeZ(),
                             .subtask_count = std.atomic.Value(usize).init(1),
                             .kind_hint = .idk,
-                            .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                            .deleted_entries = std.ArrayList(u8).init(bun.heap.default_allocator),
                             .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
                         },
                         .event_loop = rm.bltn.parentCmd().base.eventLoop(),
@@ -9497,7 +9497,7 @@ pub const Interpreter = struct {
                         return;
                     }
                     const new_path = this.join(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         &[_][]const u8{
                             parent_dir.path[0..parent_dir.path.len],
                             path[0..path.len],
@@ -9514,14 +9514,14 @@ pub const Interpreter = struct {
                         return;
                     }
 
-                    var subtask = bun.default_allocator.create(DirTask) catch bun.outOfMemory();
+                    var subtask = bun.heap.default_allocator.create(DirTask) catch bun.outOfMemory();
                     subtask.* = DirTask{
                         .task_manager = this,
                         .path = path,
                         .parent_task = parent_task,
                         .subtask_count = std.atomic.Value(usize).init(1),
                         .kind_hint = kind_hint,
-                        .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                        .deleted_entries = std.ArrayList(u8).init(bun.heap.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
 
@@ -9615,7 +9615,7 @@ pub const Interpreter = struct {
                     }
 
                     if (!this.opts.recursive) {
-                        return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
+                        return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.heap.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
                     }
 
                     const flags = bun.O.DIRECTORY | bun.O.RDONLY;
@@ -9766,14 +9766,14 @@ pub const Interpreter = struct {
 
                     pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         if (this.child_of_dir) {
-                            this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
+                            this.task.enqueueNoJoin(parent_dir_task, bun.heap.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
                             return Maybe(void).success;
                         }
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
 
                     pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-                        if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
+                        if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.heap.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
                 };
@@ -9928,7 +9928,7 @@ pub const Interpreter = struct {
 
                 fn errorWithPath(this: *ShellRmTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
                     _ = this;
-                    return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+                    return err.withPath(bun.heap.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
                 }
 
                 inline fn join(this: *ShellRmTask, alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
@@ -9958,7 +9958,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn deinit(this: *ShellRmTask) void {
-                    bun.default_allocator.destroy(this);
+                    bun.heap.default_allocator.destroy(this);
                 }
             };
         };
@@ -10248,7 +10248,7 @@ pub const Interpreter = struct {
 
             fn do(this: *@This()) Maybe(void) {
                 var current = this.start;
-                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
                 defer arena.deinit();
 
                 while (if (this.increment > 0) current <= this.end else current >= this.end) : (current += this.increment) {
@@ -10270,7 +10270,7 @@ pub const Interpreter = struct {
 
             fn print(this: *@This(), msg: string) Maybe(void) {
                 if (this.bltn.stdout.needsIO() != null) {
-                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    this.buf.appendSlice(bun.heap.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
                 const res = this.bltn.writeNoIO(.stdout, msg);
@@ -10294,7 +10294,7 @@ pub const Interpreter = struct {
             }
 
             pub fn deinit(this: *@This()) void {
-                this.buf.deinit(bun.default_allocator);
+                this.buf.deinit(bun.heap.default_allocator);
                 //seq
             }
         };
@@ -10326,7 +10326,7 @@ pub const Interpreter = struct {
             }
 
             pub fn deinit(this: *@This()) void {
-                this.buf.deinit(bun.default_allocator);
+                this.buf.deinit(bun.heap.default_allocator);
                 //dirname
             }
 
@@ -10343,7 +10343,7 @@ pub const Interpreter = struct {
 
             fn print(this: *@This(), msg: string) Maybe(void) {
                 if (this.bltn.stdout.needsIO() != null) {
-                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    this.buf.appendSlice(bun.heap.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
                 const res = this.bltn.writeNoIO(.stdout, msg);
@@ -10394,7 +10394,7 @@ pub const Interpreter = struct {
             }
 
             pub fn deinit(this: *@This()) void {
-                this.buf.deinit(bun.default_allocator);
+                this.buf.deinit(bun.heap.default_allocator);
                 //basename
             }
 
@@ -10411,7 +10411,7 @@ pub const Interpreter = struct {
 
             fn print(this: *@This(), msg: string) Maybe(void) {
                 if (this.bltn.stdout.needsIO() != null) {
-                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    this.buf.appendSlice(bun.heap.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
                 const res = this.bltn.writeNoIO(.stdout, msg);
@@ -10491,15 +10491,15 @@ pub const Interpreter = struct {
 
                 pub fn deinit(this: *EbusyState) void {
                     // The tasks themselves are freed in `ignoreEbusyErrorIfPossible()`
-                    this.tasks.deinit(bun.default_allocator);
+                    this.tasks.deinit(bun.heap.default_allocator);
                     for (this.absolute_targets.keys()) |tgt| {
-                        bun.default_allocator.free(tgt);
+                        bun.heap.default_allocator.free(tgt);
                     }
-                    this.absolute_targets.deinit(bun.default_allocator);
+                    this.absolute_targets.deinit(bun.heap.default_allocator);
                     for (this.absolute_srcs.keys()) |tgt| {
-                        bun.default_allocator.free(tgt);
+                        bun.heap.default_allocator.free(tgt);
                     }
-                    this.absolute_srcs.deinit(bun.default_allocator);
+                    this.absolute_srcs.deinit(bun.heap.default_allocator);
                 }
             };
 
@@ -10575,7 +10575,7 @@ pub const Interpreter = struct {
                                 if (this.state.exec.tasks_count <= 0 and this.state.exec.output_done >= this.state.exec.output_waiting) {
                                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                                     if (this.state.exec.err != null) {
-                                        this.state.exec.err.?.deinit(bun.default_allocator);
+                                        this.state.exec.err.?.deinit(bun.heap.default_allocator);
                                     }
                                     if (comptime bun.Environment.isWindows) {
                                         if (exec.ebusy.tasks.items.len > 0) {
@@ -10661,17 +10661,17 @@ pub const Interpreter = struct {
                             err.sys.path.eqlUTF8(task.src_absolute.?)))
                         {
                             log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
-                            this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+                            this.state.exec.ebusy.tasks.append(bun.heap.default_allocator, task) catch bun.outOfMemory();
                             this.next();
                             return;
                         }
                     } else {
                         const tgt_absolute = task.tgt_absolute;
                         task.tgt_absolute = null;
-                        if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+                        if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.heap.default_allocator, tgt, {}) catch bun.outOfMemory();
                         const src_absolute = task.src_absolute;
                         task.src_absolute = null;
-                        if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+                        if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.heap.default_allocator, tgt, {}) catch bun.outOfMemory();
                     }
                 }
 
@@ -10752,7 +10752,7 @@ pub const Interpreter = struct {
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
                 verbose_output_lock: bun.Mutex = .{},
-                verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
+                verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.heap.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
                 event_loop: JSC.EventLoopHandle,
@@ -10765,13 +10765,13 @@ pub const Interpreter = struct {
                     debug("deinit", .{});
                     this.verbose_output.deinit();
                     if (this.err) |e| {
-                        e.deinit(bun.default_allocator);
+                        e.deinit(bun.heap.default_allocator);
                     }
                     if (this.src_absolute) |sc| {
-                        bun.default_allocator.free(sc);
+                        bun.heap.default_allocator.free(sc);
                     }
                     if (this.tgt_absolute) |tc| {
-                        bun.default_allocator.free(tc);
+                        bun.heap.default_allocator.free(tc);
                     }
                     bun.destroy(this);
                 }
@@ -10804,7 +10804,7 @@ pub const Interpreter = struct {
 
                 fn takeOutput(this: *ShellCpTask) ArrayList(u8) {
                     const out = this.verbose_output;
-                    this.verbose_output = ArrayList(u8).init(bun.default_allocator);
+                    this.verbose_output = ArrayList(u8).init(bun.heap.default_allocator);
                     return out;
                 }
 
@@ -10912,12 +10912,12 @@ pub const Interpreter = struct {
 
                     // Any source directory without -R is an error
                     if (src_is_dir and !this.opts.recursive) {
-                        const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory();
+                        const errmsg = std.fmt.allocPrint(bun.heap.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory();
                         return .{ .custom = errmsg };
                     }
 
                     if (!src_is_dir and bun.strings.eql(src, tgt)) {
-                        const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch bun.outOfMemory();
+                        const errmsg = std.fmt.allocPrint(bun.heap.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch bun.outOfMemory();
                         return .{ .custom = errmsg };
                     }
 
@@ -10955,15 +10955,15 @@ pub const Interpreter = struct {
                         } else if (this.operands == 2) {
                             // source_dir -> new_target_dir
                         } else {
-                            const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
+                            const errmsg = std.fmt.allocPrint(bun.heap.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
                             return .{ .custom = errmsg };
                         }
                         copying_many = true;
                     }
                     // Handle the "3rd synopsis": source_files... -> target
                     else {
-                        if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory() };
-                        if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt}) catch bun.outOfMemory() };
+                        if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.heap.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory() };
+                        if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.heap.default_allocator, "{s} is not a directory", .{this.tgt}) catch bun.outOfMemory() };
                         const basename = ResolvePath.basename(src[0..src.len]);
                         const parts: []const []const u8 = &.{
                             tgt[0..tgt.len],
@@ -10973,8 +10973,8 @@ pub const Interpreter = struct {
                         copying_many = true;
                     }
 
-                    this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
-                    this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
+                    this.src_absolute = bun.heap.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
+                    this.tgt_absolute = bun.heap.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
 
                     const args = JSC.Node.Arguments.Cp{
                         .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
@@ -10996,7 +10996,7 @@ pub const Interpreter = struct {
                             vm.global,
                             args,
                             vm,
-                            bun.ArenaAllocator.init(bun.default_allocator),
+                            std.heap.ArenaAllocator.init(bun.heap.default_allocator),
                             this,
                             false,
                         );
@@ -11004,7 +11004,7 @@ pub const Interpreter = struct {
                         _ = JSC.Node.ShellAsyncCpTask.createMini(
                             args,
                             this.event_loop.mini,
-                            bun.ArenaAllocator.init(bun.default_allocator),
+                            std.heap.ArenaAllocator.init(bun.heap.default_allocator),
                             this,
                         );
                     }
@@ -11366,7 +11366,7 @@ pub const Interpreter = struct {
                     _ = bun.sys.close(this.fd);
                 }
             }
-            this.buf.deinit(bun.default_allocator);
+            this.buf.deinit(bun.heap.default_allocator);
             this.reader.disableKeepingProcessAlive({});
             this.reader.deinit();
             bun.destroy(this);
@@ -11681,7 +11681,7 @@ pub const Interpreter = struct {
             } else {
                 if (child.bytelist) |bl| {
                     const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
-                    bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+                    bl.append(bun.heap.default_allocator, written_slice) catch bun.outOfMemory();
                 }
                 this.total_bytes_written += amount;
                 child.written += amount;
@@ -11724,7 +11724,7 @@ pub const Interpreter = struct {
             const ee = err__.toShellSystemError();
             this.err = ee;
             log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
-            var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
+            var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.heap.default_allocator);
             var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
             defer seen.deinit();
             writer_loop: for (this.writers.slice()) |w| {
@@ -11749,7 +11749,7 @@ pub const Interpreter = struct {
             const result = this.getBufferImpl();
             if (comptime bun.Environment.isWindows) {
                 this.winbuf.clearRetainingCapacity();
-                this.winbuf.appendSlice(bun.default_allocator, result) catch bun.outOfMemory();
+                this.winbuf.appendSlice(bun.heap.default_allocator, result) catch bun.outOfMemory();
                 return this.winbuf.items;
             }
             log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
@@ -11847,7 +11847,7 @@ pub const Interpreter = struct {
                 .bytelist = bytelist,
             };
             log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
-            this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            this.buf.appendSlice(bun.heap.default_allocator, buf) catch bun.outOfMemory();
             this.writers.append(writer);
             this.write();
         }
@@ -11872,7 +11872,7 @@ pub const Interpreter = struct {
             comptime fmt: []const u8,
             args: anytype,
         ) void {
-            var buf_writer = this.buf.writer(bun.default_allocator);
+            var buf_writer = this.buf.writer(bun.heap.default_allocator);
             const start = this.buf.items.len;
             buf_writer.print(fmt, args) catch bun.outOfMemory();
             const end = this.buf.items.len;
@@ -11894,12 +11894,12 @@ pub const Interpreter = struct {
         pub fn __deinit(this: *This) void {
             debug("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) assert(this.ref_count == 0);
-            this.buf.deinit(bun.default_allocator);
+            this.buf.deinit(bun.heap.default_allocator);
             if (comptime bun.Environment.isPosix) {
                 if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
                     this.writer.handle.closeImpl(null, {}, false);
                 }
-            } else this.winbuf.deinit(bun.default_allocator);
+            } else this.winbuf.deinit(bun.heap.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             this.writer.disableKeepingProcessAlive(this.evtloop);
             this.destroy();
@@ -12289,7 +12289,7 @@ const ShellSyscall = struct {
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .err => |e| .{ .err = e.clone(bun.heap.default_allocator) catch bun.outOfMemory() },
                 .result => |s| .{ .result = s },
             };
         }
@@ -12458,7 +12458,7 @@ pub fn OutputTask(
     };
 }
 
-/// All owned memory is assumed to be allocated with `bun.default_allocator`
+/// All owned memory is assumed to be allocated with `bun.heap.default_allocator`
 pub const OutputSrc = union(enum) {
     arrlist: std.ArrayListUnmanaged(u8),
     owned_buf: []const u8,
@@ -12475,10 +12475,10 @@ pub const OutputSrc = union(enum) {
     pub fn deinit(this: *OutputSrc) void {
         switch (this.*) {
             .arrlist => {
-                this.arrlist.deinit(bun.default_allocator);
+                this.arrlist.deinit(bun.heap.default_allocator);
             },
             .owned_buf => {
-                bun.default_allocator.free(this.owned_buf);
+                bun.heap.default_allocator.free(this.owned_buf);
             },
             .borrowed_buf => {},
         }

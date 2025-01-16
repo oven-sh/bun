@@ -10,7 +10,7 @@ const strings = bun.strings;
 const Glob = bun.glob;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
@@ -51,7 +51,7 @@ const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
+const z_allocator = bun.heap.z_allocator;
 const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -1230,10 +1230,10 @@ pub fn clean(
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
-    var log = logger.Log.init(bun.default_allocator);
+    var log = logger.Log.init(bun.heap.default_allocator);
     defer {
         for (log.msgs.items) |*item| {
-            item.deinit(bun.default_allocator);
+            item.deinit(bun.heap.default_allocator);
         }
         log.deinit();
     }
@@ -2200,7 +2200,7 @@ pub const Printer = struct {
                             if (manager.track_installed_bin == .pending) {
                                 if (iterator.next() catch null) |bin_name| {
                                     manager.track_installed_bin = .{
-                                        .basename = bun.default_allocator.dupe(u8, bin_name) catch bun.outOfMemory(),
+                                        .basename = bun.heap.default_allocator.dupe(u8, bin_name) catch bun.outOfMemory(),
                                     };
 
                                     try writer.print(fmt, .{bin_name});
@@ -2469,11 +2469,11 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
     const bytes = bytes: {
         if (save_format == .text) {
-            var writer_buf = MutableString.initEmpty(bun.default_allocator);
+            var writer_buf = MutableString.initEmpty(bun.heap.default_allocator);
             var buffered_writer = writer_buf.bufferedWriter();
             const writer = buffered_writer.writer();
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.heap.default_allocator, this, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
@@ -2484,7 +2484,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             break :bytes writer_buf.list.items;
         }
 
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        var bytes = std.ArrayList(u8).init(bun.heap.default_allocator);
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
@@ -2496,7 +2496,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
         break :bytes bytes.items;
     };
-    defer bun.default_allocator.free(bytes);
+    defer bun.heap.default_allocator.free(bytes);
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
@@ -4445,7 +4445,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = pm.workspace_package_json_cache.getWithSource(bun.heap.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 var resolver: void = {};
                                 try workspace.parseWithJSON(

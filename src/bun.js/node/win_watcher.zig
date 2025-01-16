@@ -51,7 +51,7 @@ pub const PathWatcherManager = struct {
                     bun.assert(bun.strings.eql(this.watchers.keys()[index], path));
             }
 
-            bun.default_allocator.free(this.watchers.keys()[index]);
+            bun.heap.default_allocator.free(this.watchers.keys()[index]);
             _ = this.watchers.swapRemoveAt(index);
         }
     }
@@ -72,10 +72,10 @@ pub const PathWatcherManager = struct {
         }
 
         for (this.watchers.keys()) |path| {
-            bun.default_allocator.free(path);
+            bun.heap.default_allocator.free(path);
         }
 
-        this.watchers.deinit(bun.default_allocator);
+        this.watchers.deinit(bun.heap.default_allocator);
         this.destroy();
     }
 };
@@ -159,7 +159,7 @@ pub const PathWatcher = struct {
                 const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
                     .utf8 => .{ .string = bun.String.createUTF8(path) },
-                    else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
+                    else => .{ .bytes_to_free = bun.heap.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
                 }), is_file);
                 if (comptime bun.Environment.isDebug)
                     debug_count += 1;
@@ -195,7 +195,7 @@ pub const PathWatcher = struct {
             .result => |event_path| event_path,
         };
 
-        const watchers_entry = manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)) catch bun.outOfMemory();
+        const watchers_entry = manager.watchers.getOrPut(bun.heap.default_allocator, @as([]const u8, event_path)) catch bun.outOfMemory();
         if (watchers_entry.found_existing) {
             return .{ .result = watchers_entry.value_ptr.* };
         }
@@ -229,7 +229,7 @@ pub const PathWatcher = struct {
         uv.uv_unref(@ptrCast(&this.handle));
 
         watchers_entry.value_ptr.* = this;
-        watchers_entry.key_ptr.* = bun.default_allocator.dupeZ(u8, event_path) catch bun.outOfMemory();
+        watchers_entry.key_ptr.* = bun.heap.default_allocator.dupeZ(u8, event_path) catch bun.outOfMemory();
 
         return .{ .result = this };
     }
@@ -255,7 +255,7 @@ pub const PathWatcher = struct {
 
     fn deinit(this: *PathWatcher) void {
         log("deinit", .{});
-        this.handlers.clearAndFree(bun.default_allocator);
+        this.handlers.clearAndFree(bun.heap.default_allocator);
 
         if (this.manager) |manager| {
             this.manager = null;
@@ -304,6 +304,6 @@ pub fn watch(
         .err => |err| return .{ .err = err },
         .result => |watcher| watcher,
     };
-    watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
+    watcher.handlers.put(bun.heap.default_allocator, ctx, .{}) catch bun.outOfMemory();
     return .{ .result = watcher };
 }

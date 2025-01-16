@@ -36,7 +36,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
+const Arena = bun.heap.MimallocArena;
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -45,7 +45,7 @@ const JSTranspiler = @This();
 pub usingnamespace JSC.Codegen.JSTranspiler;
 
 transpiler: bun.transpiler.Transpiler,
-arena: bun.ArenaAllocator,
+arena: std.heap.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
 buffer_writer: ?JSPrinter.BufferWriter = null,
@@ -107,7 +107,7 @@ pub const TransformTask = struct {
             .global = globalThis,
             .macro_map = transpiler.transpiler_options.macro_map,
             .tsconfig = transpiler.transpiler_options.tsconfig,
-            .log = logger.Log.init(bun.default_allocator),
+            .log = logger.Log.init(bun.heap.default_allocator),
             .loader = loader,
             .replace_exports = transpiler.transpiler_options.runtime.replace_exports,
         });
@@ -116,8 +116,8 @@ pub const TransformTask = struct {
         transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver;
 
         transform_task.transpiler.setLog(&transform_task.log);
-        transform_task.transpiler.setAllocator(bun.default_allocator);
-        return try AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
+        transform_task.transpiler.setAllocator(bun.heap.default_allocator);
+        return try AsyncTransformTask.createOnJSThread(bun.heap.default_allocator, globalThis, transform_task);
     }
 
     pub fn run(this: *TransformTask) void {
@@ -130,7 +130,7 @@ pub const TransformTask = struct {
             JSAst.Expr.Data.Store.memory_allocator = prev_memory_allocators[1];
         }
 
-        var arena = Mimalloc.Arena.init() catch unreachable;
+        var arena = Arena.init() catch unreachable;
 
         const allocator = arena.allocator();
 
@@ -151,7 +151,7 @@ pub const TransformTask = struct {
 
         this.transpiler.setAllocator(allocator);
         this.transpiler.setLog(&this.log);
-        this.log.msgs.allocator = bun.default_allocator;
+        this.log.msgs.allocator = bun.heap.default_allocator;
 
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
@@ -214,7 +214,7 @@ pub const TransformTask = struct {
                     if (!this.log.hasAny()) {
                         break :brk JSC.BuildMessage.create(
                             this.global,
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             logger.Msg{
                                 .data = logger.Data{ .text = bun.asByteSlice(@errorName(err)) },
                             },
@@ -222,7 +222,7 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
+                break :brk this.log.toJS(this.global, bun.heap.default_allocator, "Transform failed");
             };
 
             promise.reject(this.global, error_value);
@@ -295,9 +295,9 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
+            .data = std.fmt.allocPrint(bun.heap.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
         };
-        const out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
+        const out = bun.heap.default_allocator.create(JSAst.E.String) catch unreachable;
         out.* = str;
         return Expr{
             .data = .{
@@ -573,7 +573,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
 
         var replacements = Runtime.Features.ReplaceableExport.Map{};
-        errdefer replacements.clearAndFree(bun.default_allocator);
+        errdefer replacements.clearAndFree(bun.heap.default_allocator);
 
         if (try exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
@@ -595,8 +595,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
 
             if (total_name_buf_len > 0) {
-                var buf = try std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, total_name_buf_len);
-                try replacements.ensureUnusedCapacity(bun.default_allocator, string_count);
+                var buf = try std.ArrayListUnmanaged(u8).initCapacity(bun.heap.default_allocator, total_name_buf_len);
+                try replacements.ensureUnusedCapacity(bun.heap.default_allocator, string_count);
                 {
                     var length_iter = iter;
                     while (length_iter.next()) |value| {
@@ -627,25 +627,25 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             defer iter.deinit();
 
             if (iter.len > 0) {
-                try replacements.ensureUnusedCapacity(bun.default_allocator, iter.len);
+                try replacements.ensureUnusedCapacity(bun.heap.default_allocator, iter.len);
 
                 // We cannot set the exception before `try` because it could be
                 // a double free with the `errdefer`.
                 defer if (globalThis.hasException()) {
                     for (replacements.keys()) |key| {
-                        bun.default_allocator.free(@constCast(key));
+                        bun.heap.default_allocator.free(@constCast(key));
                     }
-                    replacements.clearAndFree(bun.default_allocator);
+                    replacements.clearAndFree(bun.heap.default_allocator);
                 };
 
                 while (try iter.next()) |key_| {
                     const value = iter.value;
                     if (value == .zero) continue;
 
-                    const key = try key_.toOwnedSlice(bun.default_allocator);
+                    const key = try key_.toOwnedSlice(bun.heap.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
-                        bun.default_allocator.free(key);
+                        bun.heap.default_allocator.free(key);
                         return globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key});
                     }
 
@@ -660,7 +660,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
                         if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
-                            var slice = (try replacementKey.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator));
+                            var slice = (try replacementKey.toSlice(globalThis, bun.heap.default_allocator).cloneIfNeeded(bun.heap.default_allocator));
                             const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
@@ -702,7 +702,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSTranspiler {
-    var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
+    var temp = std.heap.ArenaAllocator.init(getAllocator(globalThis));
     const arguments = callframe.arguments_old(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
@@ -793,8 +793,8 @@ pub fn finalize(this: *JSTranspiler) void {
         this.buffer_writer.?.buffer.deinit();
     }
 
-    // bun.default_allocator.free(this.transpiler_options.tsconfig_buf);
-    // bun.default_allocator.free(this.transpiler_options.macros_buf);
+    // bun.heap.default_allocator.free(this.transpiler_options.tsconfig_buf);
+    // bun.heap.default_allocator.free(this.transpiler_options.macros_buf);
     this.arena.deinit();
     JSC.VirtualMachine.get().allocator.destroy(this);
 }
@@ -854,7 +854,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
         return .zero;
     }
 
-    var arena = Mimalloc.Arena.init() catch unreachable;
+    var arena = Arena.init() catch unreachable;
     const prev_allocator = this.transpiler.allocator;
     this.transpiler.setAllocator(arena.allocator());
     var log = logger.Log.init(arena.backingAllocator());
@@ -906,7 +906,7 @@ pub fn transform(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
 
-    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
+    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.heap.default_allocator, code_arg, .utf8, true) orelse {
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
     errdefer code.deinit();
@@ -954,7 +954,7 @@ pub fn transformSync(
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
     };
 
-    var arena = Mimalloc.Arena.init() catch unreachable;
+    var arena = Arena.init() catch unreachable;
     defer arena.deinit();
     const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg) orelse {
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
@@ -1140,7 +1140,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
         return globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
     }
 
-    var arena = Mimalloc.Arena.init() catch unreachable;
+    var arena = Arena.init() catch unreachable;
     const prev_allocator = this.transpiler.allocator;
     this.transpiler.setAllocator(arena.allocator());
     var log = logger.Log.init(arena.backingAllocator());

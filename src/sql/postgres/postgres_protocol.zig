@@ -195,7 +195,7 @@ pub fn NewWriterWrap(
                 return;
             }
 
-            var sliced = value.toUTF8(bun.default_allocator);
+            var sliced = value.toUTF8(bun.heap.default_allocator);
             defer sliced.deinit();
             const slice = sliced.slice();
 
@@ -311,7 +311,7 @@ pub const FieldMessage = union(FieldType) {
             defer message.deinit();
             if (message.slice().len == 0) break;
 
-            try messages.append(bun.default_allocator, FieldMessage.init(field, message.slice()) catch continue);
+            try messages.append(bun.heap.default_allocator, FieldMessage.init(field, message.slice()) catch continue);
         }
 
         return messages;
@@ -699,7 +699,7 @@ pub const ErrorResponse = struct {
         for (this.messages.items) |*message| {
             message.deinit();
         }
-        this.messages.deinit(bun.default_allocator);
+        this.messages.deinit(bun.heap.default_allocator);
     }
 
     pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -718,7 +718,7 @@ pub const ErrorResponse = struct {
 
     pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
         var b = bun.StringBuilder{};
-        defer b.deinit(bun.default_allocator);
+        defer b.deinit(bun.heap.default_allocator);
 
         // Pre-calculate capacity to avoid reallocations
         for (this.messages.items) |*msg| {
@@ -726,7 +726,7 @@ pub const ErrorResponse = struct {
                 inline else => |m| m.utf8ByteLength(),
             } + 1;
         }
-        b.allocate(bun.default_allocator) catch {};
+        b.allocate(bun.heap.default_allocator) catch {};
 
         // Build a more structured error message
         var severity: String = String.dead;
@@ -1052,7 +1052,7 @@ pub const RowDescription = struct {
             field.deinit();
         }
 
-        bun.default_allocator.free(this.fields);
+        bun.heap.default_allocator.free(this.fields);
     }
 
     pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -1060,7 +1060,7 @@ pub const RowDescription = struct {
         remaining_bytes -|= 4;
 
         const field_count: usize = @intCast(@max(try reader.short(), 0));
-        var fields = try bun.default_allocator.alloc(
+        var fields = try bun.heap.default_allocator.alloc(
             FieldDescription,
             field_count,
         );
@@ -1070,7 +1070,7 @@ pub const RowDescription = struct {
                 field.deinit();
             }
 
-            bun.default_allocator.free(fields);
+            bun.heap.default_allocator.free(fields);
         }
         while (remaining.len > 0) {
             try remaining[0].decodeInternal(Container, reader);
@@ -1092,7 +1092,7 @@ pub const ParameterDescription = struct {
         remaining_bytes -|= 4;
 
         const count = try reader.short();
-        const parameters = try bun.default_allocator.alloc(int4, @intCast(@max(count, 0)));
+        const parameters = try bun.heap.default_allocator.alloc(int4, @intCast(@max(count, 0)));
 
         var data = try reader.read(@as(usize, @intCast(@max(count, 0))) * @sizeOf((int4)));
         defer data.deinit();
@@ -1120,8 +1120,8 @@ pub const NotificationResponse = struct {
     payload: bun.ByteList = .{},
 
     pub fn deinit(this: *@This()) void {
-        this.channel.deinitWithAllocator(bun.default_allocator);
-        this.payload.deinitWithAllocator(bun.default_allocator);
+        this.channel.deinitWithAllocator(bun.heap.default_allocator);
+        this.payload.deinitWithAllocator(bun.heap.default_allocator);
     }
 
     pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -1449,12 +1449,12 @@ pub const NegotiateProtocolVersion = struct {
         };
 
         const unrecognized_options_count: u32 = @intCast(@max(try reader.int4(), 0));
-        try this.unrecognized_options.ensureTotalCapacity(bun.default_allocator, unrecognized_options_count);
+        try this.unrecognized_options.ensureTotalCapacity(bun.heap.default_allocator, unrecognized_options_count);
         errdefer {
             for (this.unrecognized_options.items) |*option| {
                 option.deinit();
             }
-            this.unrecognized_options.deinit(bun.default_allocator);
+            this.unrecognized_options.deinit(bun.heap.default_allocator);
         }
         for (0..unrecognized_options_count) |_| {
             var option = try reader.readZ();
@@ -1473,7 +1473,7 @@ pub const NoticeResponse = struct {
         for (this.messages.items) |*message| {
             message.deinit();
         }
-        this.messages.deinit(bun.default_allocator);
+        this.messages.deinit(bun.heap.default_allocator);
     }
     pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
         var remaining_bytes = try reader.length();
@@ -1489,18 +1489,18 @@ pub const NoticeResponse = struct {
 
     pub fn toJS(this: NoticeResponse, globalObject: *JSC.JSGlobalObject) JSValue {
         var b = bun.StringBuilder{};
-        defer b.deinit(bun.default_allocator);
+        defer b.deinit(bun.heap.default_allocator);
 
         for (this.messages.items) |msg| {
             b.cap += switch (msg) {
                 inline else => |m| m.utf8ByteLength(),
             } + 1;
         }
-        b.allocate(bun.default_allocator) catch {};
+        b.allocate(bun.heap.default_allocator) catch {};
 
         for (this.messages.items) |msg| {
             var str = switch (msg) {
-                inline else => |m| m.toUTF8(bun.default_allocator),
+                inline else => |m| m.toUTF8(bun.heap.default_allocator),
             };
             defer str.deinit();
             _ = b.append(str.slice());

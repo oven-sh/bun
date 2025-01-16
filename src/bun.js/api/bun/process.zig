@@ -739,7 +739,7 @@ const WaiterThreadPosix = struct {
     fn NewQueue(comptime T: type) type {
         return struct {
             queue: ConcurrentQueue = .{},
-            active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
+            active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.heap.default_allocator),
 
             const TaskQueueEntry = struct {
                 process: *T,
@@ -1001,7 +1001,7 @@ pub const WindowsSpawnResult = struct {
     stdin: StdioResult = .unavailable,
     stdout: StdioResult = .unavailable,
     stderr: StdioResult = .unavailable,
-    extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.default_allocator),
+    extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.heap.default_allocator),
     stream: bool = true,
     sync: bool = false,
 
@@ -1064,7 +1064,7 @@ pub const WindowsSpawnOptions = struct {
 
         pub fn deinit(this: *const Stdio) void {
             if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+                bun.heap.default_allocator.destroy(this.buffer);
             }
         }
     };
@@ -1086,7 +1086,7 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
     ipc: ?bun.FileDescriptor = null,
-    extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+    extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.heap.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1238,9 +1238,9 @@ pub fn spawnProcessPosix(
         actions.chdir(options.cwd) catch return error.ChangingDirectoryFailed;
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+    var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.heap.default_allocator);
     errdefer extra_fds.deinit();
-    var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+    var stack_fallback = std.heap.stackFallback(2048, bun.heap.default_allocator);
     const allocator = stack_fallback.get();
     var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
     var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
@@ -1460,7 +1460,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+            extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.heap.default_allocator);
 
             if (comptime Environment.isLinux) {
                 switch (spawned.pifdFromPid()) {
@@ -1503,7 +1503,7 @@ pub fn spawnProcessWindows(
     uv_process_options.env = envp;
     uv_process_options.file = options.argv0 orelse argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
-    var stack_allocator = std.heap.stackFallback(8192, bun.default_allocator);
+    var stack_allocator = std.heap.stackFallback(8192, bun.heap.default_allocator);
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
@@ -1580,7 +1580,7 @@ pub fn spawnProcessWindows(
             },
             .ipc => |my_pipe| {
                 // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+                bun.heap.default_allocator.destroy(my_pipe);
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {
@@ -1714,7 +1714,7 @@ pub fn spawnProcessWindows(
 
     var result = WindowsSpawnResult{
         .process_ = process,
-        .extra_pipes = try std.ArrayList(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
+        .extra_pipes = try std.ArrayList(WindowsSpawnResult.StdioResult).initCapacity(bun.heap.default_allocator, options.extra_fds.len),
     };
 
     const result_stdios = .{ &result.stdin, &result.stdout, &result.stderr };
@@ -1781,7 +1781,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                            bun.heap.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
                     },
                 };
             }
@@ -1806,8 +1806,8 @@ pub const sync = struct {
 
     pub const Result = struct {
         status: Status,
-        stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
-        stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.heap.default_allocator, .capacity = 0 },
+        stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.heap.default_allocator, .capacity = 0 },
 
         pub fn isOK(this: *const Result) bool {
             return this.status.isOK();
@@ -1820,7 +1820,7 @@ pub const sync = struct {
     };
 
     const SyncWindowsPipeReader = struct {
-        chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.heap.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
 
         err: bun.C.E = .SUCCESS,
@@ -1831,7 +1831,7 @@ pub const sync = struct {
         pub usingnamespace bun.New(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
-            return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
+            return bun.heap.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
         }
 
         fn onRead(this: *SyncWindowsPipeReader, data: []const u8) void {
@@ -1850,8 +1850,8 @@ pub const sync = struct {
             const err = if (this.err == .CANCELED) .SUCCESS else this.err;
             const tag = this.tag;
             const onDoneCallback = this.onDoneCallback;
-            bun.default_allocator.destroy(this.pipe);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this.pipe);
+            bun.heap.default_allocator.destroy(this);
             onDoneCallback(context, tag, chunks, err);
         }
 
@@ -1984,12 +1984,12 @@ pub const sync = struct {
         const result = Result{
             .status = this.status orelse @panic("Expected Process to have exited when waiting_count == 0"),
             .stdout = std.ArrayList(u8).fromOwnedSlice(
-                bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout) catch bun.outOfMemory(),
+                bun.heap.default_allocator,
+                flattenOwnedChunks(bun.heap.default_allocator, bun.heap.default_allocator, this.stdout) catch bun.outOfMemory(),
             ),
             .stderr = std.ArrayList(u8).fromOwnedSlice(
-                bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr) catch bun.outOfMemory(),
+                bun.heap.default_allocator,
+                flattenOwnedChunks(bun.heap.default_allocator, bun.heap.default_allocator, this.stderr) catch bun.outOfMemory(),
             ),
         };
         this.stdout = &.{};
@@ -2020,14 +2020,14 @@ pub const sync = struct {
         const envp = options.envp orelse std.c.environ;
         const argv = options.argv;
         var string_builder = bun.StringBuilder{};
-        defer string_builder.deinit(bun.default_allocator);
+        defer string_builder.deinit(bun.heap.default_allocator);
         for (argv) |arg| {
             string_builder.countZ(arg);
         }
 
-        try string_builder.allocate(bun.default_allocator);
+        try string_builder.allocate(bun.heap.default_allocator);
 
-        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1) catch bun.outOfMemory();
+        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.heap.default_allocator, argv.len + 1) catch bun.outOfMemory();
         defer args.deinit();
 
         for (argv) |arg| {
@@ -2070,8 +2070,8 @@ pub const sync = struct {
         Bun__sendPendingSignalIfNecessary();
 
         var out = [2]std.ArrayList(u8){
-            std.ArrayList(u8).init(bun.default_allocator),
-            std.ArrayList(u8).init(bun.default_allocator),
+            std.ArrayList(u8).init(bun.heap.default_allocator),
+            std.ArrayList(u8).init(bun.heap.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
         var success = false;
@@ -2187,7 +2187,7 @@ pub const sync = struct {
         if (comptime Environment.isLinux) {
             for (process.memfds[1..], &out, out_fds) |memfd, *bytes, out_fd| {
                 if (memfd) {
-                    bytes.* = bun.sys.File.from(out_fd).readToEnd(bun.default_allocator).bytes;
+                    bytes.* = bun.sys.File.from(out_fd).readToEnd(bun.heap.default_allocator).bytes;
                 }
             }
         }

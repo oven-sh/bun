@@ -2,7 +2,7 @@ const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
-const default_allocator = @import("../allocators/memory_allocator.zig").c_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
@@ -1322,7 +1322,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _plat
     var free_temp_buf = false;
     defer {
         if (free_temp_buf) {
-            bun.default_allocator.free(temp_buf);
+            bun.heap.default_allocator.free(temp_buf);
         }
     }
 
@@ -1333,7 +1333,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _plat
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
+        temp_buf = bun.heap.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
         free_temp_buf = true;
     }
 
@@ -2054,7 +2054,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     globalObject: *bun.JSC.JSGlobalObject,
     in: bun.String,
 ) bun.String {
-    const str = in.toUTF8WithoutRef(bun.default_allocator);
+    const str = in.toUTF8WithoutRef(bun.heap.default_allocator);
     defer str.deinit();
 
     const out_slice = joinAbsStringBuf(

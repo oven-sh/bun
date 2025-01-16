@@ -7,7 +7,7 @@ const strings = bun.strings;
 const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const use_mimalloc = bun.use_mimalloc;
+const use_mimalloc = bun.heap.use_mimalloc;
 const writeStream = std.json.writeStream;
 const WriteStream = std.json.WriteStream;
 
@@ -63,7 +63,7 @@ pub const Source = struct {
         if (comptime Environment.isDebug) {
             if (comptime use_mimalloc) {
                 if (!source_set) {
-                    const Mimalloc = @import("./allocators/mimalloc.zig");
+                    const Mimalloc = bun.heap.Mimalloc;
                     Mimalloc.mi_option_set(.show_errors, 1);
                 }
             }
@@ -1155,11 +1155,11 @@ pub fn initScopedDebugWriterAtStartup() void {
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
-            const pid = std.fmt.allocPrint(bun.default_allocator, "{d}", .{getpid()}) catch @panic("failed to allocate path");
-            defer bun.default_allocator.free(pid);
+            const pid = std.fmt.allocPrint(bun.heap.default_allocator, "{d}", .{getpid()}) catch @panic("failed to allocate path");
+            defer bun.heap.default_allocator.free(pid);
 
-            const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
-            defer bun.default_allocator.free(path_fmt);
+            const path_fmt = std.mem.replaceOwned(u8, bun.heap.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
+            defer bun.heap.default_allocator.free(path_fmt);
 
             const fd = std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,

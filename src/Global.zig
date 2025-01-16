@@ -2,9 +2,9 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
-const use_mimalloc = bun.use_mimalloc;
+const use_mimalloc = bun.heap.use_mimalloc;
 const StringTypes = @import("./string_types.zig");
-const Mimalloc = bun.Mimalloc;
+const Mimalloc = bun.heap.Mimalloc;
 const bun = @import("root").bun;
 
 const version_string = Environment.version_string;
@@ -87,7 +87,7 @@ const ExitFn = *const fn () callconv(.C) void;
 var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
 export fn Bun__atexit(function: ExitFn) void {
     if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
-        on_exit_callbacks.append(bun.default_allocator, function) catch {};
+        on_exit_callbacks.append(bun.heap.default_allocator, function) catch {};
     }
 }
 
@@ -163,7 +163,7 @@ pub const versions = @import("./generated_versions_list.zig");
 // 2. if I want to configure allocator later
 pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (comptime !use_mimalloc) return;
-    // const Mimalloc = @import("./allocators/mimalloc.zig");
+    // const Mimalloc = bun.heap.Mimalloc;
     // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);
     // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_large_os_pages, config.long_running);
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);

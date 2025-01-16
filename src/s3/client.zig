@@ -68,10 +68,10 @@ pub fn downloadSlice(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            break :brk std.fmt.allocPrint(bun.heap.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
         }
         if (offset == 0) break :brk null;
-        break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        break :brk std.fmt.allocPrint(bun.heap.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
     };
 
     S3SimpleRequest.executeSimpleS3Request(this, .{
@@ -155,9 +155,9 @@ pub fn writableStream(
     this.ref(); // ref the credentials
     const task = MultiPartUpload.new(.{
         .credentials = this,
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-        .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
-        .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+        .path = bun.heap.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+        .proxy = if (proxy_url.len > 0) bun.heap.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
+        .content_type = if (content_type) |ct| bun.heap.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
 
         .callback = @ptrCast(&Wrapper.callback),
         .callback_context = undefined,
@@ -324,9 +324,9 @@ pub fn uploadStream(
 
     const task = MultiPartUpload.new(.{
         .credentials = this,
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-        .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
-        .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+        .path = bun.heap.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+        .proxy = if (proxy_url.len > 0) bun.heap.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
+        .content_type = if (content_type) |ct| bun.heap.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
         .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
         .callback_context = undefined,
         .globalThis = globalThis,
@@ -475,19 +475,19 @@ pub fn downloadStream(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            break :brk std.fmt.allocPrint(bun.heap.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
         }
         if (offset == 0) break :brk null;
-        break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        break :brk std.fmt.allocPrint(bun.heap.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
     };
 
     var result = this.signRequest(.{
         .path = path,
         .method = .GET,
     }, null) catch |sign_err| {
-        if (range) |range_| bun.default_allocator.free(range_);
+        if (range) |range_| bun.heap.default_allocator.free(range_);
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
-        callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{
+        callback(.{ .allocator = bun.heap.default_allocator, .list = .{} }, false, .{
             .code = error_code_and_message.code,
             .message = error_code_and_message.message,
         }, callback_context);
@@ -498,13 +498,13 @@ pub fn downloadStream(
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.heap.default_allocator) catch bun.outOfMemory();
         } else {
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.heap.default_allocator) catch bun.outOfMemory();
         }
     };
     const proxy = proxy_url orelse "";
-    const owned_proxy = if (proxy.len > 0) bun.default_allocator.dupe(u8, proxy) catch bun.outOfMemory() else "";
+    const owned_proxy = if (proxy.len > 0) bun.heap.default_allocator.dupe(u8, proxy) catch bun.outOfMemory() else "";
     const task = S3HttpDownloadStreamingTask.new(.{
         .http = undefined,
         .sign_result = result,
@@ -522,7 +522,7 @@ pub fn downloadStream(
     task.signals = task.signal_store.to();
 
     task.http = bun.http.AsyncHTTP.init(
-        bun.default_allocator,
+        bun.heap.default_allocator,
         .GET,
         url,
         task.headers.entries,
@@ -546,7 +546,7 @@ pub fn downloadStream(
     // queue http request
     bun.http.HTTPThread.init(&.{});
     var batch = bun.ThreadPool.Batch{};
-    task.http.schedule(bun.default_allocator, &batch);
+    task.http.schedule(bun.heap.default_allocator, &batch);
     bun.http.http_thread.schedule(batch);
 }
 
@@ -584,7 +584,7 @@ pub fn readableStream(
                                     .JSValue = err.toJS(self.readable_stream_ref.globalThis().?, self.path),
                                 },
                             },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                         return;
                     }
@@ -593,7 +593,7 @@ pub fn readableStream(
                             .{
                                 .temporary = bun.ByteList.initConst(chunk.list.items),
                             },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                         return;
                     }
@@ -602,7 +602,7 @@ pub fn readableStream(
                         .{
                             .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
                         },
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     );
                     return;
                 }
@@ -611,7 +611,7 @@ pub fn readableStream(
 
         pub fn deinit(self: *@This()) void {
             self.readable_stream_ref.deinit();
-            bun.default_allocator.free(self.path);
+            bun.heap.default_allocator.free(self.path);
             self.destroy();
         }
     };
@@ -621,7 +621,7 @@ pub fn readableStream(
             .ptr = .{ .Bytes = &reader.context },
             .value = readable_value,
         }, globalThis),
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+        .path = bun.heap.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
     }));
     return readable_value;
 }

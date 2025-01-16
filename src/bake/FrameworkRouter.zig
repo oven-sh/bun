@@ -414,7 +414,7 @@ pub const Style = union(enum) {
     pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
         if (value.isString()) {
             const bun_string = try value.toBunString2(global);
-            var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+            var sfa = std.heap.stackFallback(4096, bun.heap.default_allocator);
             const utf8 = bun_string.toUTF8(sfa.get());
             defer utf8.deinit();
             if (map.get(utf8.slice())) |style| {
@@ -1021,7 +1021,7 @@ fn scanInner(
                             const pattern = if (has_dynamic_comptime)
                                 try EncodedPattern.initFromParts(parsed.parts, alloc)
                             else static_route: {
-                                const allocation = try bun.default_allocator.alloc(u8, static_total_len);
+                                const allocation = try bun.heap.default_allocator.alloc(u8, static_total_len);
                                 var s = std.io.fixedBufferStream(allocation);
                                 for (parsed.parts) |part|
                                     switch (part) {
@@ -1076,7 +1076,7 @@ pub const JSFrameworkRouter = struct {
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
     stored_parse_errors: std.ArrayListUnmanaged(struct {
-        // Owned by bun.default_allocator
+        // Owned by bun.heap.default_allocator
         rel_path: []const u8,
         log: TinyLog,
     }),
@@ -1102,12 +1102,12 @@ pub const JSFrameworkRouter = struct {
         var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .undefined, global);
         errdefer style.deinit();
 
-        const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
+        const abs_root = try bun.heap.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
             bun.path.joinAbs(bun.fs.FileSystem.instance.top_level_dir, .auto, root.slice()),
         ));
-        errdefer bun.default_allocator.free(abs_root);
+        errdefer bun.heap.default_allocator.free(abs_root);
 
-        const types = try bun.default_allocator.dupe(Type, &.{.{
+        const types = try bun.heap.default_allocator.dupe(Type, &.{.{
             .abs_root = abs_root,
             .ignore_underscores = false,
             .extensions = &.{ ".tsx", ".ts", ".jsx", ".js" },
@@ -1118,16 +1118,16 @@ pub const JSFrameworkRouter = struct {
             .server_file = undefined,
             .server_file_string = undefined,
         }});
-        errdefer bun.default_allocator.free(types);
+        errdefer bun.heap.default_allocator.free(types);
 
         const jsfr = bun.new(JSFrameworkRouter, .{
-            .router = try FrameworkRouter.initEmpty(abs_root, types, bun.default_allocator),
+            .router = try FrameworkRouter.initEmpty(abs_root, types, bun.heap.default_allocator),
             .files = .{},
             .stored_parse_errors = .{},
         });
 
         try jsfr.router.scan(
-            bun.default_allocator,
+            bun.heap.default_allocator,
             Type.Index.init(0),
             &global.bunVM().transpiler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
@@ -1157,12 +1157,12 @@ pub const JSFrameworkRouter = struct {
         const path_js = callframe.argumentsAsArray(1)[0];
         const path_str = try path_js.toBunString2(global);
         defer path_str.deref();
-        const path_slice = path_str.toSlice(bun.default_allocator);
+        const path_slice = path_str.toSlice(bun.heap.default_allocator);
         defer path_slice.deinit();
 
         var params_out: MatchedParams = undefined;
         if (jsfr.router.matchSlow(path_slice.slice(), &params_out)) |index| {
-            var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+            var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
             const alloc = sfb.get();
 
             return JSC.JSObject.create(.{
@@ -1185,7 +1185,7 @@ pub const JSFrameworkRouter = struct {
     pub fn toJSON(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe;
 
-        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
         const alloc = sfb.get();
 
         return jsfr.routeToJson(global, Route.Index.init(0), alloc);
@@ -1230,15 +1230,15 @@ pub const JSFrameworkRouter = struct {
     }
 
     pub fn finalize(this: *JSFrameworkRouter) void {
-        this.files.deinit(bun.default_allocator);
-        this.router.deinit(bun.default_allocator);
-        for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
-        this.stored_parse_errors.deinit(bun.default_allocator);
+        this.files.deinit(bun.heap.default_allocator);
+        this.router.deinit(bun.heap.default_allocator);
+        for (this.stored_parse_errors.items) |i| bun.heap.default_allocator.free(i.rel_path);
+        this.stored_parse_errors.deinit(bun.heap.default_allocator);
         bun.destroy(this);
     }
 
     pub fn parseRoutePattern(global: *JSGlobalObject, frame: *CallFrame) !JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
 
@@ -1288,14 +1288,14 @@ pub const JSFrameworkRouter = struct {
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
-        try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
+        try jsfr.files.append(bun.heap.default_allocator, bun.String.createUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }
 
     pub fn onRouterSyntaxError(jsfr: *JSFrameworkRouter, rel_path: []const u8, log: TinyLog) !void {
-        const rel_path_dupe = try bun.default_allocator.dupe(u8, rel_path);
-        errdefer bun.default_allocator.free(rel_path_dupe);
-        try jsfr.stored_parse_errors.append(bun.default_allocator, .{
+        const rel_path_dupe = try bun.heap.default_allocator.dupe(u8, rel_path);
+        errdefer bun.heap.default_allocator.free(rel_path_dupe);
+        try jsfr.stored_parse_errors.append(bun.heap.default_allocator, .{
             .rel_path = rel_path_dupe,
             .log = log,
         });

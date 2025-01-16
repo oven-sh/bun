@@ -172,7 +172,7 @@ pub const BunObject = struct {
 };
 
 const Bun = @This();
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
@@ -266,7 +266,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
-    var outbuf = std.ArrayList(u8).init(bun.default_allocator);
+    var outbuf = std.ArrayList(u8).init(bun.heap.default_allocator);
     defer outbuf.deinit();
 
     if (bun.shell.needsEscapeBunstr(bunstr)) {
@@ -284,10 +284,10 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 const gen = bun.gen.BunObject;
 
 pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.BracesOptions) bun.JSError!JSC.JSValue {
-    const brace_slice = brace_str.toUTF8(bun.default_allocator);
+    const brace_slice = brace_str.toUTF8(bun.heap.default_allocator);
     defer brace_slice.deinit();
 
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
 
     var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
@@ -601,7 +601,7 @@ pub fn getStdin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     var blob = JSC.WebCore.Blob.new(
         JSC.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
+    blob.allocator = bun.heap.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -612,7 +612,7 @@ pub fn getStderr(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
     var blob = JSC.WebCore.Blob.new(
         JSC.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
+    blob.allocator = bun.heap.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -623,7 +623,7 @@ pub fn getStdout(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
     var blob = JSC.WebCore.Blob.new(
         JSC.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
+    blob.allocator = bun.heap.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -1282,7 +1282,7 @@ pub const Crypto = struct {
                 pub fn runTask(task: *JSC.WorkPoolTask) void {
                     const job: *PBKDF2.Job = @fieldParentPtr("task", task);
                     defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
-                    job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
+                    job.output = bun.heap.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
                         job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;
                         return;
                     };
@@ -1290,7 +1290,7 @@ pub const Crypto = struct {
                         job.err = BoringSSL.ERR_get_error();
                         BoringSSL.ERR_clear_error();
 
-                        bun.default_allocator.free(job.output);
+                        bun.heap.default_allocator.free(job.output);
                         job.output = &[_]u8{};
                     }
                 }
@@ -1310,7 +1310,7 @@ pub const Crypto = struct {
 
                     const output_slice = this.output;
                     assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
-                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.heap.default_allocator);
                     if (buffer_value == .zero) {
                         promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
                         return;
@@ -1324,7 +1324,7 @@ pub const Crypto = struct {
                     this.poll.unref(this.vm);
                     this.pbkdf2.deinitAndUnprotect();
                     this.promise.deinit();
-                    bun.default_allocator.free(this.output);
+                    bun.heap.default_allocator.free(this.output);
                     this.destroy();
                 }
 
@@ -1394,7 +1394,7 @@ pub const Crypto = struct {
 
                     break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
                         if (!globalThis.hasException()) {
-                            const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
+                            const slice = arguments[4].toSlice(globalThis, bun.heap.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
                             return globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
@@ -1417,7 +1417,7 @@ pub const Crypto = struct {
                     }
                 }
 
-                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
+                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.heap.default_allocator, arguments[1], is_async) orelse {
                     return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
@@ -1425,7 +1425,7 @@ pub const Crypto = struct {
                     return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
-                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
+                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.heap.default_allocator, arguments[0], is_async) orelse {
                     if (!globalThis.hasException()) {
                         return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
@@ -1902,8 +1902,8 @@ pub const Crypto = struct {
                     hash: []const u8,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
-                        defer bun.default_allocator.free(error_code);
+                        const error_code = std.fmt.allocPrint(bun.heap.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
+                        defer bun.heap.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toJS(globalObject));
                         return instance;
@@ -1933,12 +1933,12 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *HashJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
+                bun.heap.default_allocator.free(this.password);
                 this.destroy();
             }
 
             pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
-                const value = PasswordObject.hash(bun.default_allocator, password, algorithm) catch |err| {
+                const value = PasswordObject.hash(bun.heap.default_allocator, password, algorithm) catch |err| {
                     return Result.Value{ .err = err };
                 };
                 return Result.Value{ .hash = value };
@@ -2044,13 +2044,13 @@ pub const Crypto = struct {
                 algorithm = try PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]);
             }
 
-            const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
+            const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.heap.default_allocator) catch {
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
                 }
                 return error.JSError;
             };
-            errdefer bun.default_allocator.free(password_to_hash);
+            errdefer bun.heap.default_allocator.free(password_to_hash);
 
             if (password_to_hash.len == 0) {
                 return globalObject.throwInvalidArguments("password must not be empty", .{});
@@ -2074,7 +2074,7 @@ pub const Crypto = struct {
                 algorithm = try PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]);
             }
 
-            var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+            var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.heap.default_allocator, arguments[0]) orelse {
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
                 }
@@ -2116,8 +2116,8 @@ pub const Crypto = struct {
                     pass: bool,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
-                        defer bun.default_allocator.free(error_code);
+                        const error_code = std.fmt.allocPrint(bun.heap.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
+                        defer bun.heap.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toJS(globalObject));
                         return instance;
@@ -2146,13 +2146,13 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *VerifyJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
-                bun.default_allocator.free(this.prev_hash);
+                bun.heap.default_allocator.free(this.password);
+                bun.heap.default_allocator.free(this.prev_hash);
                 this.destroy();
             }
 
             pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
-                const pass = PasswordObject.verify(bun.default_allocator, password, prev_hash, algorithm) catch |err| {
+                const pass = PasswordObject.verify(bun.heap.default_allocator, password, prev_hash, algorithm) catch |err| {
                     return Result.Value{ .err = err };
                 };
                 return Result.Value{ .pass = pass };
@@ -2202,24 +2202,24 @@ pub const Crypto = struct {
                 };
             }
 
-            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
+            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.heap.default_allocator) catch {
                 if (!globalObject.hasException()) return globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return error.JSError;
             };
 
-            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch {
-                bun.default_allocator.free(owned_password);
+            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.heap.default_allocator) catch {
+                bun.heap.default_allocator.free(owned_password);
                 if (!globalObject.hasException()) return globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return error.JSError;
             };
 
             if (owned_hash.len == 0) {
-                bun.default_allocator.free(owned_password);
+                bun.heap.default_allocator.free(owned_password);
                 return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
             }
 
             if (owned_password.len == 0) {
-                bun.default_allocator.free(owned_hash);
+                bun.heap.default_allocator.free(owned_hash);
                 return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
             }
 
@@ -2252,14 +2252,14 @@ pub const Crypto = struct {
                 };
             }
 
-            var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+            var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.heap.default_allocator, arguments[0]) orelse {
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 }
                 return .zero;
             };
 
-            var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
+            var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.heap.default_allocator, arguments[1]) orelse {
                 password.deinit();
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
@@ -2435,7 +2435,7 @@ pub const Crypto = struct {
             }
 
             if (!hmac_value.isEmptyOrUndefinedOrNull()) {
-                hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
+                hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.heap.default_allocator, hmac_value) orelse {
                     return globalThis.throwInvalidArguments("key must be a string or buffer", .{});
                 };
             }
@@ -2868,7 +2868,7 @@ pub const Crypto = struct {
                 if (output) |output_buf| {
                     return output_buf.value;
                 } else {
-                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
+                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.heap.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
                     return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
@@ -2904,7 +2904,7 @@ pub const Crypto = struct {
             }
 
             pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*@This() {
-                const this = try bun.default_allocator.create(@This());
+                const this = try bun.heap.default_allocator.create(@This());
                 this.* = .{ .hashing = Hasher.init() };
                 return this;
             }
@@ -2983,7 +2983,7 @@ pub const Crypto = struct {
                 if (output) |output_buf| {
                     return output_buf.value;
                 } else {
-                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
+                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.heap.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
                     return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
@@ -3378,7 +3378,7 @@ const HashObject = struct {
                                 input = array_buffer.byteSlice();
                             },
                             else => {
-                                input_slice = arg.toSlice(globalThis, bun.default_allocator);
+                                input_slice = arg.toSlice(globalThis, bun.heap.default_allocator);
                                 input = input_slice.slice();
                             },
                         }
@@ -3433,7 +3433,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.J
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    var sort_indices = std.ArrayList(u32).initCapacity(bun.heap.default_allocator, unsorted_files.len) catch bun.outOfMemory();
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -3452,7 +3452,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.J
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         const input_blob = file.blob(globalThis);
         const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
-        blob.allocator = bun.default_allocator;
+        blob.allocator = bun.heap.default_allocator;
         blob.name = input_blob.name.dupeRef();
         array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
@@ -3553,7 +3553,7 @@ const TOMLObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var arena = bun.ArenaAllocator.init(globalThis.allocator());
+        var arena = std.heap.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
@@ -3562,7 +3562,7 @@ const TOMLObject = struct {
             return globalThis.throwInvalidArguments("Expected a string to parse", .{});
         }
 
-        var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
+        var input_slice = arguments[0].toSlice(globalThis, bun.heap.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
         const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
@@ -4291,8 +4291,8 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.Mimalloc.mi_free(ctx);
+        comptime assert(bun.heap.use_mimalloc);
+        bun.heap.Mimalloc.mi_free(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -4318,7 +4318,7 @@ pub const JSZlib = struct {
             return globalThis.throwInvalidArguments("Expected options to be an object", .{});
         } else null;
 
-        if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
+        if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.heap.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };
         }
 
@@ -4507,7 +4507,7 @@ pub const JSZlib = struct {
         if (globalThis.hasException()) return .zero;
 
         const compressed = buffer.slice();
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
 
         switch (library) {
             .zlib => {
@@ -4585,7 +4585,7 @@ const InternalTestingAPIs = struct {
 
         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
         defer code.deinit();
-        var buffer = MutableString.initEmpty(bun.default_allocator);
+        var buffer = MutableString.initEmpty(bun.heap.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
         const formatter = bun.fmt.fmtJavaScript(code.slice(), .{

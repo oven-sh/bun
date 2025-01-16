@@ -162,7 +162,7 @@ pub const FSWatcher = struct {
 
         pub fn dupe(event: Event) !Event {
             return switch (event) {
-                inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
+                inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.heap.default_allocator.dupe(u8, path)),
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }
@@ -170,7 +170,7 @@ pub const FSWatcher = struct {
         pub fn deinit(event: *Event) void {
             switch (event.*) {
                 .rename, .change => |*path| switch (Environment.os) {
-                    else => bun.default_allocator.free(path.*),
+                    else => bun.heap.default_allocator.free(path.*),
                     .windows => path.deinit(),
                 },
                 else => {},
@@ -212,7 +212,7 @@ pub const FSWatcher = struct {
                 switch (this.*) {
                     .string => this.string.deref(),
                     .bytes_to_free => {
-                        bun.default_allocator.free(this.bytes_to_free);
+                        bun.heap.default_allocator.free(this.bytes_to_free);
                         this.bytes_to_free = "";
                     },
                 }
@@ -248,7 +248,7 @@ pub const FSWatcher = struct {
                         const bytes = path.bytes_to_free;
                         path.bytes_to_free = "";
                         ctx.emit(bytes, event_type);
-                        bun.default_allocator.free(bytes);
+                        bun.heap.default_allocator.free(bytes);
                     }
                 },
                 .@"error" => |err| {

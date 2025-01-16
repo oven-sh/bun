@@ -2375,7 +2375,7 @@ pub const bindings = struct {
         const tarball_path_str = args[0].toBunString(global);
         defer tarball_path_str.deref();
 
-        const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);
+        const tarball_path = tarball_path_str.toUTF8(bun.heap.default_allocator);
         defer tarball_path.deinit();
 
         const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
@@ -2383,10 +2383,10 @@ pub const bindings = struct {
         });
         defer tarball_file.close();
 
-        const tarball = tarball_file.readToEnd(bun.default_allocator).unwrap() catch |err| {
+        const tarball = tarball_file.readToEnd(bun.heap.default_allocator).unwrap() catch |err| {
             return global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         };
-        defer bun.default_allocator.free(tarball);
+        defer bun.heap.default_allocator.free(tarball);
 
         var sha1_digest: sha.SHA1.Digest = undefined;
         var sha1 = sha.SHA1.init();
@@ -2411,7 +2411,7 @@ pub const bindings = struct {
             size: ?usize = null,
             contents: ?String = null,
         };
-        var entries_info = std.ArrayList(EntryInfo).init(bun.default_allocator);
+        var entries_info = std.ArrayList(EntryInfo).init(bun.heap.default_allocator);
         defer entries_info.deinit();
 
         const archive = Archive.readNew();
@@ -2452,7 +2452,7 @@ pub const bindings = struct {
         var archive_entry: *Archive.Entry = undefined;
         var header_status = archive.readNextHeader(&archive_entry);
 
-        var read_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var read_buf = std.ArrayList(u8).init(bun.heap.default_allocator);
         defer read_buf.deinit();
 
         while (header_status != .eof) : (header_status = archive.readNextHeader(&archive_entry)) {

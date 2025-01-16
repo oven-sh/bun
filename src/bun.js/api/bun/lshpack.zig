@@ -13,7 +13,7 @@ const lshpack_header = extern struct {
 pub const HPACK = extern struct {
     self: *anyopaque,
 
-    const mimalloc = @import("../../../allocators/mimalloc.zig");
+    const mimalloc = bun.heap.Mimalloc;
 
     pub const DecodeResult = struct {
         name: []const u8,

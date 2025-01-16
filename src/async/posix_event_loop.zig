@@ -552,7 +552,7 @@ pub const FilePoll = struct {
 
         pub fn init() Store {
             return .{
-                .hive = HiveArray.init(bun.typedAllocator(FilePoll)),
+                .hive = HiveArray.init(bun.heap.typedAllocator(FilePoll)),
             };
         }
 

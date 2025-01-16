@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
@@ -615,7 +615,7 @@ pub const PackageJSON = struct {
 
         // DirInfo cache is reused globally
         // So we cannot free these
-        const allocator = bun.fs_allocator;
+        const allocator = bun.heap.fs_allocator;
 
         var entry = r.caches.fs.readFileWithAllocator(
             allocator,
@@ -783,13 +783,13 @@ pub const PackageJSON = struct {
             }
 
             if (json.asProperty("exports")) |exports_prop| {
-                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
+                if (ExportsMap.parse(bun.heap.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
                     package_json.exports = exports_map;
                 }
             }
 
             if (json.asProperty("imports")) |imports_prop| {
-                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
+                if (ExportsMap.parse(bun.heap.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
                     package_json.imports = imports_map;
                 }
             }
@@ -880,7 +880,7 @@ pub const PackageJSON = struct {
                         var array = array_const;
                         var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
-                            if (item.asString(bun.default_allocator)) |str| {
+                            if (item.asString(bun.heap.default_allocator)) |str| {
                                 arch.apply(str);
                             }
                         }
@@ -894,7 +894,7 @@ pub const PackageJSON = struct {
                     if (tmp) |*array| {
                         var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
-                            if (item.asString(bun.default_allocator)) |str| {
+                            if (item.asString(bun.heap.default_allocator)) |str| {
                                 os.apply(str);
                             }
                         }

@@ -203,6 +203,10 @@ pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translat
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
 
 const std = @import("std");
+const bun = @import("root").bun;
+const Environment = bun.Environment;
+const assert = bun.assert;
+const log = bun.Output.scoped(.mimalloc, true);
 pub fn canUseAlignedAlloc(len: usize, alignment: usize) bool {
     return alignment > 0 and std.math.isPowerOfTwo(alignment) and !mi_malloc_satisfies_alignment(alignment, len);
 }
@@ -210,4 +214,27 @@ const MI_MAX_ALIGN_SIZE = 16;
 inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
     return (alignment == @sizeOf(*anyopaque) or
         (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
+}
+
+pub fn free(
+    _: *anyopaque,
+    buf: []u8,
+    buf_align: u8,
+    _: usize,
+) void {
+    if (comptime Environment.enable_logs)
+        log("mi_free({d})", .{buf.len});
+    // mi_free_size internally just asserts the size
+    // so it's faster if we don't pass that value through
+    // but its good to have that assertion
+    // let's only enable it in debug mode
+    if (comptime Environment.isDebug) {
+        assert(mi_is_in_heap_region(buf.ptr));
+        if (canUseAlignedAlloc(buf.len, buf_align))
+            mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+        else
+            mi_free_size(buf.ptr, buf.len);
+    } else {
+        mi_free(buf.ptr);
+    }
 }

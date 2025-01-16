@@ -1,5 +1,5 @@
 const bun = @import("root").bun;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const Global = bun.Global;
 const json_parser = bun.JSON;
 const logger = bun.logger;
@@ -472,7 +472,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.toFD(cache_dir.fd),
             bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
-            bun.default_allocator,
+            bun.heap.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {
                 // allow git dependencies without package.json

@@ -301,7 +301,7 @@ pub const PatchTask = struct {
             );
             return;
         };
-        defer patchfile.deinit(bun.default_allocator);
+        defer patchfile.deinit(bun.heap.default_allocator);
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
@@ -320,7 +320,7 @@ pub const PatchTask = struct {
 
         // 3. copy the unpatched files into temp dir
         var pkg_install = PreparePatchPackageInstall{
-            .allocator = bun.default_allocator,
+            .allocator = bun.heap.default_allocator,
             .cache_dir = this.callback.apply.cache_dir,
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,

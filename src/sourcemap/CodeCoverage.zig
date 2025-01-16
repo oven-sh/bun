@@ -33,8 +33,8 @@ pub const CodeCoverageReport = struct {
     total_lines: u32 = 0,
 
     pub fn linesCoverageFraction(this: *const CodeCoverageReport) f64 {
-        var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
-        defer intersected.deinit(bun.default_allocator);
+        var intersected = this.executable_lines.clone(bun.heap.default_allocator) catch bun.outOfMemory();
+        defer intersected.deinit(bun.heap.default_allocator);
         intersected.setIntersection(this.lines_which_have_executed);
 
         const total_count: f64 = @floatFromInt(this.executable_lines.count());
@@ -160,8 +160,8 @@ pub const CodeCoverageReport = struct {
 
             try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
-            var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
-            defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+            var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.heap.default_allocator) catch bun.outOfMemory();
+            defer executable_lines_that_havent_been_executed.deinit(bun.heap.default_allocator);
             executable_lines_that_havent_been_executed.toggleAll();
 
             // This sets statements in executed scopes
@@ -244,8 +244,8 @@ pub const CodeCoverageReport = struct {
 
             // ** Track all executable lines **
             // Executable lines that were not hit should be marked as 0
-            var executable_lines = report.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
-            defer executable_lines.deinit(bun.default_allocator);
+            var executable_lines = report.executable_lines.clone(bun.heap.default_allocator) catch bun.outOfMemory();
+            defer executable_lines.deinit(bun.heap.default_allocator);
             var iter = executable_lines.iterator(.{});
 
             // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
@@ -374,7 +374,7 @@ pub const ByteRangeMapping = struct {
     pub const HashMap = std.HashMap(u64, ByteRangeMapping, bun.IdentityContext(u64), std.hash_map.default_max_load_percentage);
 
     pub fn deinit(this: *ByteRangeMapping) void {
-        this.line_offset_table.deinit(bun.default_allocator);
+        this.line_offset_table.deinit(bun.heap.default_allocator);
     }
 
     pub threadlocal var map: ?*HashMap = null;
@@ -384,14 +384,14 @@ pub const ByteRangeMapping = struct {
             map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
             break :brk map.?;
         };
-        var slice = str.toUTF8(bun.default_allocator);
+        var slice = str.toUTF8(bun.heap.default_allocator);
         const hash = bun.hash(slice.slice());
         var entry = _map.getOrPut(hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             entry.value_ptr.deinit();
         }
 
-        var source_contents = source_contents_str.toUTF8(bun.default_allocator);
+        var source_contents = source_contents_str.toUTF8(bun.heap.default_allocator);
         defer source_contents.deinit();
 
         entry.value_ptr.* = compute(source_contents.slice(), source_id, slice);
@@ -402,7 +402,7 @@ pub const ByteRangeMapping = struct {
     }
 
     pub fn find(path: bun.String) callconv(.C) ?*ByteRangeMapping {
-        var slice = path.toUTF8(bun.default_allocator);
+        var slice = path.toUTF8(bun.heap.default_allocator);
         defer slice.deinit();
 
         var map_ = map orelse return null;
@@ -670,16 +670,16 @@ pub const ByteRangeMapping = struct {
         if (function_blocks.len > 1) {
             function_blocks = function_blocks[1..];
         }
-        var url_slice = source_url.toUTF8(bun.default_allocator);
+        var url_slice = source_url.toUTF8(bun.heap.default_allocator);
         defer url_slice.deinit();
-        var report = this.generateReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
+        var report = this.generateReportFromBlocks(bun.heap.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        defer report.deinit(bun.default_allocator);
+        defer report.deinit(bun.heap.default_allocator);
 
         var coverage_fraction = CoverageFraction{};
 
-        var mutable_str = bun.MutableString.initEmpty(bun.default_allocator);
+        var mutable_str = bun.MutableString.initEmpty(bun.heap.default_allocator);
         defer mutable_str.deinit();
         var buffered_writer = mutable_str.bufferedWriter();
         var writer = buffered_writer.writer();

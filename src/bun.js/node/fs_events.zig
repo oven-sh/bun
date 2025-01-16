@@ -311,13 +311,13 @@ pub const FSEventsLoop = struct {
             var iter = concurrent.iterator();
             while (iter.next()) |task| {
                 task.task.run();
-                if (task.auto_delete) bun.default_allocator.destroy(task);
+                if (task.auto_delete) bun.heap.default_allocator.destroy(task);
             }
         }
     }
 
     pub fn init() !*FSEventsLoop {
-        const this = bun.default_allocator.create(FSEventsLoop) catch unreachable;
+        const this = bun.heap.default_allocator.create(FSEventsLoop) catch unreachable;
 
         const CF = CoreFoundation.get();
 
@@ -343,7 +343,7 @@ pub const FSEventsLoop = struct {
 
     fn enqueueTaskConcurrent(this: *FSEventsLoop, task: Task) void {
         const CF = CoreFoundation.get();
-        var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
+        var concurrent = bun.heap.default_allocator.create(ConcurrentTask) catch unreachable;
         this.tasks.push(concurrent.from(task, true));
         CF.RunLoopSourceSignal(this.signal_source);
         CF.RunLoopWakeUp(this.loop);
@@ -437,7 +437,7 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
-            bun.default_allocator.free(p);
+            bun.heap.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
             this.cf_paths = null;
@@ -448,7 +448,7 @@ pub const FSEventsLoop = struct {
             return;
         }
 
-        const paths = bun.default_allocator.alloc(?*anyopaque, watcher_count) catch unreachable;
+        const paths = bun.heap.default_allocator.alloc(?*anyopaque, watcher_count) catch unreachable;
         var count: u32 = 0;
         for (watchers) |w| {
             if (w) |watcher| {
@@ -489,7 +489,7 @@ pub const FSEventsLoop = struct {
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {
             //clean in case of failure
-            bun.default_allocator.free(paths);
+            bun.heap.default_allocator.free(paths);
             CF.Release(cf_paths);
             CS.FSEventStreamInvalidate(ref);
             CS.FSEventStreamRelease(ref);
@@ -505,7 +505,7 @@ pub const FSEventsLoop = struct {
         defer this.mutex.unlock();
         if (this.watcher_count == this.watchers.len) {
             this.watcher_count += 1;
-            this.watchers.push(bun.default_allocator, watcher) catch unreachable;
+            this.watchers.push(bun.heap.default_allocator, watcher) catch unreachable;
         } else {
             var watchers = this.watchers.slice();
             for (watchers, 0..) |w, i| {
@@ -567,9 +567,9 @@ pub const FSEventsLoop = struct {
             }
         }
 
-        this.watchers.deinitWithAllocator(bun.default_allocator);
+        this.watchers.deinitWithAllocator(bun.heap.default_allocator);
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 
@@ -585,7 +585,7 @@ pub const FSEventsWatcher = struct {
     pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
-        const this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
+        const this = bun.heap.default_allocator.create(FSEventsWatcher) catch unreachable;
 
         this.* = FSEventsWatcher{
             .path = path,
@@ -612,7 +612,7 @@ pub const FSEventsWatcher = struct {
         if (this.loop) |loop| {
             loop.unregisterWatcher(this);
         }
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 

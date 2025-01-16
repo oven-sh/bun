@@ -539,17 +539,17 @@ pub fn WindowsPipeReader(
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
             handle.deinit();
-            bun.default_allocator.destroy(file);
+            bun.heap.default_allocator.destroy(file);
         }
 
         fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
             const this = bun.cast(*uv.Pipe, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
             const this = bun.cast(*uv.uv_tty_t, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
@@ -672,7 +672,7 @@ const BufferedReaderVTable = struct {
 
 const PosixBufferedReader = struct {
     handle: PollOrFd = .{ .closed = {} },
-    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
     _offset: usize = 0,
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
@@ -719,7 +719,7 @@ const PosixBufferedReader = struct {
                 .parent = parent_,
             },
         };
-        other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+        other.buffer().* = std.ArrayList(u8).init(bun.heap.default_allocator);
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         other._offset = 0;
@@ -965,7 +965,7 @@ pub const WindowsBufferedReader = struct {
     /// It cannot change because we don't know what libuv will do with it.
     source: ?Source = null,
     _offset: usize = 0,
-    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
     // for compatibility with Linux
     flags: Flags = .{},
 

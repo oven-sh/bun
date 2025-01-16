@@ -261,7 +261,7 @@ pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) J
 const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create(SharedTempBuffer) catch unreachable;
+        shared_temp_buffer_ptr = bun.heap.default_allocator.create(SharedTempBuffer) catch unreachable;
         break :brk shared_temp_buffer_ptr.?;
     });
 }
@@ -275,7 +275,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     defer {
         if (shared_temp_buffer_ptr) |existing| {
             if (existing != chunk.ptr) {
-                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+                bun.heap.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
             }
         } else {
             shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
@@ -301,7 +301,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     defer {
         if (shared_temp_buffer_ptr) |existing| {
             if (existing != chunk.ptr) {
-                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+                bun.heap.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
             }
         } else {
             shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
@@ -466,7 +466,7 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
     defer {
         if (shared_temp_buffer_ptr) |existing| {
             if (existing != chunk.ptr) {
-                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+                bun.heap.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
             }
         } else {
             shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
@@ -1731,7 +1731,7 @@ pub const js_bindings = struct {
 
     /// Internal function for testing in highlighter.test.ts
     pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
-        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var buffer = bun.MutableString.initEmpty(bun.heap.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 

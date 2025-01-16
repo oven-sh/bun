@@ -27,7 +27,7 @@ const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
 const Progress = bun.Progress;
@@ -49,10 +49,10 @@ const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
-var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.heap.default_allocator);
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.heap.default_allocator);
 
 pub var max_http_header_size: usize = 16 * 1024;
 comptime {
@@ -255,12 +255,12 @@ const ProxyTunnel = struct {
                         temp_hostname[_hostname.len] = 0;
                         hostname = temp_hostname[0.._hostname.len :0];
                     } else {
-                        hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                        hostname = bun.heap.default_allocator.dupeZ(u8, _hostname) catch unreachable;
                         hostname_needs_free = true;
                     }
                 }
 
-                defer if (hostname_needs_free) bun.default_allocator.free(hostname);
+                defer if (hostname_needs_free) bun.heap.default_allocator.free(hostname);
                 ssl_ptr.configureHTTPClient(hostname);
             }
         }
@@ -617,7 +617,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         pub fn deinit(this: *@This()) void {
             this.us_socket_context.deinit(ssl);
             uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) InitError!void {
@@ -1147,7 +1147,7 @@ pub const HTTPThread = struct {
             return .{ .heap = bun.take(&this.lazy_request_body_buffer).? };
         }
         return .{
-            .stack = std.heap.stackFallback(request_body_send_stack_buffer_size, bun.default_allocator),
+            .stack = std.heap.stackFallback(request_body_send_stack_buffer_size, bun.heap.default_allocator),
         };
     }
 
@@ -1253,7 +1253,7 @@ pub const HTTPThread = struct {
                         // we free the callers config since we have a existing one
                         if (requested_config != client.tls_props) {
                             requested_config.deinit();
-                            bun.default_allocator.destroy(requested_config);
+                            bun.heap.default_allocator.destroy(requested_config);
                         }
                         client.tls_props = other_config;
                         if (client.http_proxy) |url| {
@@ -1264,13 +1264,13 @@ pub const HTTPThread = struct {
                     }
                 }
                 // we need the config so dont free it
-                var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+                var custom_context = try bun.heap.default_allocator.create(NewHTTPContext(is_ssl));
                 custom_context.initWithClientConfig(client) catch |err| {
                     client.tls_props = null;
 
                     requested_config.deinit();
-                    bun.default_allocator.destroy(requested_config);
-                    bun.default_allocator.destroy(custom_context);
+                    bun.heap.default_allocator.destroy(requested_config);
+                    bun.heap.default_allocator.destroy(custom_context);
 
                     // TODO: these error names reach js. figure out how they should be handled
                     return switch (err) {
@@ -1335,7 +1335,7 @@ pub const HTTPThread = struct {
                 const ended = write.flags.ended;
                 defer if (!strings.eqlComptime(write.data, end_of_chunked_http1_1_encoding_response_body) and write.data.len > 0) {
                     // "0\r\n\r\n" is always a static so no need to free
-                    bun.default_allocator.free(write.data);
+                    bun.heap.default_allocator.free(write.data);
                 };
                 if (socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
                     if (write.flags.is_tls) {
@@ -1453,7 +1453,7 @@ pub const HTTPThread = struct {
         {
             this.queued_shutdowns_lock.lock();
             defer this.queued_shutdowns_lock.unlock();
-            this.queued_shutdowns.append(bun.default_allocator, .{
+            this.queued_shutdowns.append(bun.heap.default_allocator, .{
                 .async_http_id = http.async_http_id,
                 .is_tls = http.client.isHTTPS(),
             }) catch bun.outOfMemory();
@@ -1466,7 +1466,7 @@ pub const HTTPThread = struct {
         {
             this.queued_writes_lock.lock();
             defer this.queued_writes_lock.unlock();
-            this.queued_writes.append(bun.default_allocator, .{
+            this.queued_writes.append(bun.heap.default_allocator, .{
                 .async_http_id = http.async_http_id,
                 .data = data,
                 .flags = .{
@@ -1482,7 +1482,7 @@ pub const HTTPThread = struct {
     pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
         // this is always called on the http thread
         {
-            this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+            this.queued_proxy_deref.append(bun.heap.default_allocator, proxy) catch bun.outOfMemory();
         }
         if (this.has_awoken.load(.monotonic))
             this.loop.loop.wakeup();
@@ -1531,7 +1531,7 @@ pub fn checkServerIdentity(
                 if (client.signals.get(.cert_errors)) {
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
-                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch bun.outOfMemory();
+                    const cert = bun.heap.default_allocator.alloc(u8, @intCast(cert_size)) catch bun.outOfMemory();
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
@@ -1545,11 +1545,11 @@ pub fn checkServerIdentity(
 
                     client.state.certificate_info = .{
                         .cert = cert,
-                        .hostname = bun.default_allocator.dupe(u8, hostname) catch bun.outOfMemory(),
+                        .hostname = bun.heap.default_allocator.dupe(u8, hostname) catch bun.outOfMemory(),
                         .cert_error = .{
                             .error_no = certError.error_no,
-                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch bun.outOfMemory(),
-                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch bun.outOfMemory(),
+                            .code = bun.heap.default_allocator.dupeZ(u8, certError.code) catch bun.outOfMemory(),
+                            .reason = bun.heap.default_allocator.dupeZ(u8, certError.reason) catch bun.outOfMemory(),
                         },
                     };
 
@@ -1636,12 +1636,12 @@ pub fn onOpen(
                     temp_hostname[_hostname.len] = 0;
                     hostname = temp_hostname[0.._hostname.len :0];
                 } else {
-                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                    hostname = bun.heap.default_allocator.dupeZ(u8, _hostname) catch unreachable;
                     hostname_needs_free = true;
                 }
             }
 
-            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
+            defer if (hostname_needs_free) bun.heap.default_allocator.free(hostname);
 
             ssl_ptr.configureHTTPClient(hostname);
         }
@@ -2063,7 +2063,7 @@ pub const InternalState = struct {
         // if exists we own this info
         if (this.certificate_info) |info| {
             this.certificate_info = null;
-            info.deinit(bun.default_allocator);
+            info.deinit(bun.heap.default_allocator);
         }
 
         this.original_request_body.deinit();
@@ -2259,7 +2259,7 @@ unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
-        bun.default_allocator.free(this.redirect);
+        bun.heap.default_allocator.free(this.redirect);
         this.redirect = &.{};
     }
     if (this.proxy_authorization) |auth| {
@@ -2517,7 +2517,7 @@ pub const AsyncHTTP = struct {
             this.async_http.clearData();
             this.async_http.client.deinit();
             if (this.is_url_owned) {
-                bun.default_allocator.free(this.url.href);
+                bun.heap.default_allocator.free(this.url.href);
             }
 
             this.destroy();
@@ -2530,7 +2530,7 @@ pub const AsyncHTTP = struct {
     ) void {
         if (!FeatureFlags.is_fetch_preconnect_supported) {
             if (is_url_owned) {
-                bun.default_allocator.free(url.href);
+                bun.heap.default_allocator.free(url.href);
             }
 
             return;
@@ -2543,7 +2543,7 @@ pub const AsyncHTTP = struct {
             .is_url_owned = is_url_owned,
         });
 
-        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http = AsyncHTTP.init(bun.heap.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
         this.async_http.client.flags.is_preconnect_only = true;
 
         http_thread.schedule(Batch.from(&this.async_http.task));
@@ -2778,7 +2778,7 @@ pub const AsyncHTTP = struct {
     pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
         HTTPThread.init(&.{});
 
-        var ctx = try bun.default_allocator.create(SingleHTTPChannel);
+        var ctx = try bun.heap.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();
         this.result_callback = HTTPClientResult.Callback.New(
             *SingleHTTPChannel,
@@ -2786,7 +2786,7 @@ pub const AsyncHTTP = struct {
         ).init(ctx);
 
         var batch = bun.ThreadPool.Batch{};
-        this.schedule(bun.default_allocator, &batch);
+        this.schedule(bun.heap.default_allocator, &batch);
         http_thread.schedule(batch);
 
         const result = ctx.channel.readItem() catch unreachable;
@@ -3443,7 +3443,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         .proxy_headers => {
             if (this.proxy_tunnel) |proxy| {
                 this.setTimeout(socket, 5);
-                var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
+                var stack_buffer = std.heap.stackFallback(1024 * 16, bun.heap.default_allocator);
                 const allocator = stack_buffer.get();
                 var temporary_send_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
                 temporary_send_buffer.items.len = 0;
@@ -4390,7 +4390,7 @@ pub fn handleResponseMetadata(
                     var is_same_origin = true;
 
                     {
-                        var url_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        var url_arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
                         defer url_arena.deinit();
                         var fba = std.heap.stackFallback(4096, url_arena.allocator());
                         const url_allocator = fba.get();
@@ -4439,7 +4439,7 @@ pub fn handleResponseMetadata(
                                 // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                                 return error.RedirectURLInvalid;
                             }
-                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.heap.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
@@ -4479,7 +4479,7 @@ pub fn handleResponseMetadata(
 
                             const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
-                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.heap.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
@@ -4498,7 +4498,7 @@ pub fn handleResponseMetadata(
                                 return error.InvalidRedirectURL;
                             }
 
-                            const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
+                            const new_url = new_url_.toOwnedSlice(bun.heap.default_allocator) catch {
                                 return error.RedirectURLTooLong;
                             };
                             this.url = URL.parse(new_url);

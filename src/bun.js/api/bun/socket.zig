@@ -1,4 +1,4 @@
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
@@ -72,7 +72,7 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
 
     if (written > 0) {
         const message = output_buf[0..written];
-        zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch bun.outOfMemory());
+        zig_str = ZigString.init(std.fmt.allocPrint(bun.heap.default_allocator, "OpenSSL {s}", .{message}) catch bun.outOfMemory());
         var encoded_str = zig_str.withEncoding();
         encoded_str.mark();
 
@@ -191,7 +191,7 @@ const Handlers = struct {
                 }
             } else {
                 this.unprotect();
-                bun.default_allocator.destroy(this);
+                bun.heap.default_allocator.destroy(this);
             }
         }
     }
@@ -353,15 +353,15 @@ pub const SocketConfig = struct {
             if (try opts.getStringish(globalObject, "unix")) |unix_socket| {
                 defer unix_socket.deref();
 
-                hostname_or_unix = try unix_socket.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
+                hostname_or_unix = try unix_socket.toUTF8WithoutRef(bun.heap.default_allocator).cloneIfNeeded(bun.heap.default_allocator);
 
                 if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
                     // The memory allocator relies on the pointer address to
                     // free it, so if we simply moved the pointer up it would
                     // cause an issue when freeing it later.
-                    const moved_bytes = try bun.default_allocator.dupeZ(u8, hostname_or_unix.slice()[7..]);
+                    const moved_bytes = try bun.heap.default_allocator.dupeZ(u8, hostname_or_unix.slice()[7..]);
                     hostname_or_unix.deinit();
-                    hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
+                    hostname_or_unix = ZigString.Slice.init(bun.heap.default_allocator, moved_bytes);
                 }
 
                 if (hostname_or_unix.len > 0) {
@@ -388,16 +388,16 @@ pub const SocketConfig = struct {
                 defer hostname.deref();
 
                 var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
-                hostname_or_unix = try hostname.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
+                hostname_or_unix = try hostname.toUTF8WithoutRef(bun.heap.default_allocator).cloneIfNeeded(bun.heap.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
                     const parsed_url = bun.URL.parse(hostname_or_unix.slice());
                     if (parsed_url.getPort()) |port_num| {
                         port_value = JSValue.jsNumber(port_num);
                         if (parsed_url.hostname.len > 0) {
-                            const moved_bytes = try bun.default_allocator.dupeZ(u8, parsed_url.hostname);
+                            const moved_bytes = try bun.heap.default_allocator.dupeZ(u8, parsed_url.hostname);
                             hostname_or_unix.deinit();
-                            hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
+                            hostname_or_unix = ZigString.Slice.init(bun.heap.default_allocator, moved_bytes);
                         }
                     }
                 }
@@ -540,13 +540,13 @@ pub const Listener = struct {
             switch (this) {
                 .unix => |u| {
                     return .{
-                        .unix = (bun.default_allocator.dupe(u8, u) catch bun.outOfMemory()),
+                        .unix = (bun.heap.default_allocator.dupe(u8, u) catch bun.outOfMemory()),
                     };
                 },
                 .host => |h| {
                     return .{
                         .host = .{
-                            .host = (bun.default_allocator.dupe(u8, h.host) catch bun.outOfMemory()),
+                            .host = (bun.heap.default_allocator.dupe(u8, h.host) catch bun.outOfMemory()),
                             .port = this.host.port,
                         },
                     };
@@ -558,10 +558,10 @@ pub const Listener = struct {
         pub fn deinit(this: UnixOrHost) void {
             switch (this) {
                 .unix => |u| {
-                    bun.default_allocator.free(u);
+                    bun.heap.default_allocator.free(u);
                 },
                 .host => |h| {
-                    bun.default_allocator.free(h.host);
+                    bun.heap.default_allocator.free(h.host);
                 },
                 .fd => {}, // this is an integer
             }
@@ -629,7 +629,7 @@ pub const Listener = struct {
                 const slice = hostname_or_unix.slice();
                 var buf: bun.PathBuffer = undefined;
                 if (normalizePipeName(slice, buf[0..])) |pipe_name| {
-                    const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
+                    const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.heap.default_allocator) catch bun.outOfMemory()).slice() };
                     if (ssl_enabled) {
                         if (ssl.?.protos) |p| {
                             protos = p[0..ssl.?.protos_len];
@@ -641,7 +641,7 @@ pub const Listener = struct {
                         .ssl = ssl_enabled,
                         .socket_context = null,
                         .listener = .none,
-                        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
+                        .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
                     };
 
                     vm.eventLoop().ensureWaker();
@@ -745,16 +745,16 @@ pub const Listener = struct {
         }
 
         var connection: Listener.UnixOrHost = if (port) |port_| .{
-            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
+            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.heap.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
         } else .{
-            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+            .unix = (hostname_or_unix.cloneIfNeeded(bun.heap.default_allocator) catch bun.outOfMemory()).slice(),
         };
         var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
                 .host => |c| {
-                    const host = bun.default_allocator.dupeZ(u8, c.host) catch bun.outOfMemory();
-                    defer bun.default_allocator.free(host);
+                    const host = bun.heap.default_allocator.dupeZ(u8, c.host) catch bun.outOfMemory();
+                    defer bun.heap.default_allocator.free(host);
 
                     const socket = uws.us_socket_context_listen(
                         @intFromBool(ssl_enabled),
@@ -772,8 +772,8 @@ pub const Listener = struct {
                     break :brk socket;
                 },
                 .unix => |u| {
-                    const host = bun.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
-                    defer bun.default_allocator.free(host);
+                    const host = bun.heap.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
+                    defer bun.heap.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
                 .fd => unreachable,
@@ -806,7 +806,7 @@ pub const Listener = struct {
             .ssl = ssl_enabled,
             .socket_context = socket_context,
             .listener = .{ .uws = listen_socket },
-            .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
+            .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
         };
 
         socket.handlers.protect();
@@ -908,11 +908,11 @@ pub const Listener = struct {
         }
         const host_str = hostname.toSlice(
             global,
-            bun.default_allocator,
+            bun.heap.default_allocator,
         );
         defer host_str.deinit();
-        const server_name = bun.default_allocator.dupeZ(u8, host_str.slice()) catch bun.outOfMemory();
-        defer bun.default_allocator.free(server_name);
+        const server_name = bun.heap.default_allocator.dupeZ(u8, host_str.slice()) catch bun.outOfMemory();
+        defer bun.heap.default_allocator.free(server_name);
         if (server_name.len == 0) {
             return global.throwInvalidArguments("hostname pattern cannot be empty", .{});
         }
@@ -1007,9 +1007,9 @@ pub const Listener = struct {
         this.connection.deinit();
         if (this.protos) |protos| {
             this.protos = null;
-            bun.default_allocator.free(protos);
+            bun.heap.default_allocator.free(protos);
         }
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn getConnectionsCount(this: *Listener, _: *JSC.JSGlobalObject) JSValue {
@@ -1083,10 +1083,10 @@ pub const Listener = struct {
                 }
             }
             if (port) |_| {
-                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port.? } };
+                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.heap.default_allocator) catch bun.outOfMemory()).slice(), .port = port.? } };
             }
 
-            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
+            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.heap.default_allocator) catch bun.outOfMemory()).slice() };
         };
 
         if (Environment.isWindows) {
@@ -1134,7 +1134,7 @@ pub const Listener = struct {
                         .this_value = .zero,
                         .socket = TLSSocket.Socket.detached,
                         .connection = connection,
-                        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
+                        .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
                         .server_name = server_name,
                         .socket_context = null,
                     });
@@ -1206,7 +1206,7 @@ pub const Listener = struct {
                 protos = p[0..ssl.?.protos_len];
             }
             if (ssl.?.server_name) |s| {
-                server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
+                server_name = bun.heap.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
             }
             uws.NewSocketHandler(true).configure(
                 socket_context,
@@ -1259,7 +1259,7 @@ pub const Listener = struct {
                     .this_value = .zero,
                     .socket = SocketType.Socket.detached,
                     .connection = connection,
-                    .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
+                    .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
                     .server_name = server_name,
                     .socket_context = socket_context, // owns the socket context
                 });
@@ -1593,7 +1593,7 @@ fn NewSocket(comptime ssl: bool) type {
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
 
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
@@ -1676,7 +1676,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
             const socket = this.socket;
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
 
             this.socket.detach();
             this.detachNativeCallback();
@@ -2168,7 +2168,7 @@ fn NewSocket(comptime ssl: bool) type {
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
                 return JSValue.jsBoolean(false);
             }
 
@@ -2186,7 +2186,7 @@ fn NewSocket(comptime ssl: bool) type {
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
                 return JSValue.jsBoolean(false);
             }
 
@@ -2214,7 +2214,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return this.writeOrEnd(globalObject, &values, true, is_end);
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.heap.default_allocator);
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
@@ -2250,7 +2250,7 @@ fn NewSocket(comptime ssl: bool) type {
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
-                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                            this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
                             this.buffered_data_for_node_net = .{};
                             break :brk rc;
                         }
@@ -2267,7 +2267,7 @@ fn NewSocket(comptime ssl: bool) type {
                         }
 
                         if (remaining_in_input_data.len > 0) {
-                            this.buffered_data_for_node_net.append(bun.default_allocator, remaining_in_input_data) catch bun.outOfMemory();
+                            this.buffered_data_for_node_net.append(bun.heap.default_allocator, remaining_in_input_data) catch bun.outOfMemory();
                         }
 
                         break :brk rc;
@@ -2275,14 +2275,14 @@ fn NewSocket(comptime ssl: bool) type {
                 }
 
                 // slower-path: clone the data, do one write.
-                this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
+                this.buffered_data_for_node_net.append(bun.heap.default_allocator, buffer.slice()) catch bun.outOfMemory();
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice(), is_end);
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                        this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
                         this.buffered_data_for_node_net = .{};
                     } else {
                         // Otherwise, let's move the temporary buffer back.
@@ -2325,7 +2325,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch .fail;
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.heap.default_allocator);
             const buffer: JSC.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 JSC.Node.BlobOrStringOrBuffer{ .string_or_buffer = JSC.Node.StringOrBuffer.empty }
             else
@@ -2407,7 +2407,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
-                    this.buffered_data_for_node_net.append(bun.default_allocator, remaining) catch bun.outOfMemory();
+                    this.buffered_data_for_node_net.append(bun.heap.default_allocator, remaining) catch bun.outOfMemory();
                 }
             }
 
@@ -2428,7 +2428,7 @@ fn NewSocket(comptime ssl: bool) type {
                         bun.C.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
                         this.buffered_data_for_node_net.len = @truncate(remaining.len);
                     } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                        this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
                         this.buffered_data_for_node_net = .{};
                     }
                 }
@@ -2520,7 +2520,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.markInactive();
             this.detachNativeCallback();
 
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinitWithAllocator(bun.heap.default_allocator);
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
@@ -2698,7 +2698,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const session_arg = args.ptr[0];
-            var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
+            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
 
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
@@ -2815,7 +2815,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (args.len > 2) {
                 const context_arg = args.ptr[2];
 
-                var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
+                var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
                 defer arena.deinit();
 
                 if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
@@ -3082,16 +3082,16 @@ fn NewSocket(comptime ssl: bool) type {
                 if (hash_str != null) {
                     const hash_str_len = bun.len(hash_str);
                     const hash_slice = hash_str[0..hash_str_len];
-                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch bun.outOfMemory();
-                    defer bun.default_allocator.free(buffer);
+                    const buffer = bun.heap.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch bun.outOfMemory();
+                    defer bun.heap.default_allocator.free(buffer);
 
                     bun.copy(u8, buffer, sig_with_md);
                     buffer[sig_with_md.len] = '+';
                     bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
                     array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
                 } else {
-                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
-                    defer bun.default_allocator.free(buffer);
+                    const buffer = bun.heap.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
+                    defer bun.heap.default_allocator.free(buffer);
 
                     bun.copy(u8, buffer, sig_with_md);
                     bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
@@ -3257,7 +3257,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"serverName\" to be a string", .{});
             }
 
-            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory();
             if (this.server_name) |old| {
                 this.server_name = slice;
                 default_allocator.free(old);
@@ -3374,7 +3374,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const is_server = this.handlers.is_server;
 
-            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = bun.heap.default_allocator.create(Handlers) catch bun.outOfMemory();
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
@@ -3384,8 +3384,8 @@ fn NewSocket(comptime ssl: bool) type {
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+                .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
+                .server_name = if (socket_config.server_name) |server_name| (bun.heap.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
                 .socket_context = null, // only set after the wrapTLS
                 .flags = .{
                     .is_active = false,
@@ -3432,7 +3432,7 @@ fn NewSocket(comptime ssl: bool) type {
                 tls.deref();
 
                 handlers_ptr.unprotect();
-                bun.default_allocator.destroy(handlers_ptr);
+                bun.heap.default_allocator.destroy(handlers_ptr);
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
@@ -3458,7 +3458,7 @@ fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = bun.heap.default_allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
                 .vm = vm,
                 .globalObject = globalObject,
@@ -4082,7 +4082,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         });
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-        this.named_pipe = uws.WindowsNamedPipe.from(bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
+        this.named_pipe = uws.WindowsNamedPipe.from(bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
             .ctx = this,
             .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
             .onData = @ptrCast(&WindowsNamedPipeContext.onData),
@@ -4258,8 +4258,8 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,
-        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-        .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+        .protos = if (protos) |p| (bun.heap.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
+        .server_name = if (socket_config.server_name) |server_name| (bun.heap.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);

@@ -1,6 +1,6 @@
 const Bun = @This();
 const root = @import("root");
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
@@ -253,7 +253,7 @@ pub const FFI = struct {
             }
             msg = msg[offset..];
 
-            this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
+            this.deferred_errors.append(bun.heap.default_allocator, bun.heap.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
         }
 
         pub const default_tcc_options: [:0]const u8 = "-std=c11 -Wl,--export-all-symbols -g -O2";
@@ -282,7 +282,7 @@ pub const FFI = struct {
                     if (process.result.isOK()) {
                         const stdout = process.result.stdout.items;
                         if (stdout.len > 0) {
-                            cached_default_system_include_dir = bun.default_allocator.dupeZ(u8, strings.trim(stdout, "\n\r")) catch return;
+                            cached_default_system_include_dir = bun.heap.default_allocator.dupeZ(u8, strings.trim(stdout, "\n\r")) catch return;
                         }
                     }
                 }
@@ -502,7 +502,7 @@ pub const FFI = struct {
                 return globalThis.throw("Unexpected: tcc_relocate returned a negative value", .{});
             }
 
-            const bytes: []u8 = try bun.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            const bytes: []u8 = try bun.heap.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             // We cannot free these bytes, evidently.
 
             if (comptime Environment.isAarch64 and Environment.isMac) {
@@ -518,8 +518,8 @@ pub const FFI = struct {
             }
 
             for (this.symbols.map.keys(), this.symbols.map.values()) |symbol, *function| {
-                const duped = bun.default_allocator.dupeZ(u8, symbol) catch bun.outOfMemory();
-                defer bun.default_allocator.free(duped);
+                const duped = bun.heap.default_allocator.dupeZ(u8, symbol) catch bun.outOfMemory();
+                defer bun.heap.default_allocator.free(duped);
                 if (TCC.tcc_get_symbol(state, duped)) |function_ptr| {
                     function.symbol_from_dynamic_library = function_ptr;
                 } else {
@@ -542,18 +542,18 @@ pub const FFI = struct {
             this.include_dirs.deinit();
 
             for (this.deferred_errors.items) |deferred_error| {
-                bun.default_allocator.free(deferred_error);
+                bun.heap.default_allocator.free(deferred_error);
             }
-            this.deferred_errors.clearAndFree(bun.default_allocator);
+            this.deferred_errors.clearAndFree(bun.heap.default_allocator);
 
             for (this.define.items) |define| {
-                bun.default_allocator.free(define[0]);
-                if (define[1].len > 0) bun.default_allocator.free(define[1]);
+                bun.heap.default_allocator.free(define[0]);
+                if (define[1].len > 0) bun.heap.default_allocator.free(define[1]);
             }
-            this.define.clearAndFree(bun.default_allocator);
+            this.define.clearAndFree(bun.heap.default_allocator);
 
-            this.source.deinit(bun.default_allocator);
-            if (this.flags.len > 0) bun.default_allocator.free(this.flags);
+            this.source.deinit(bun.heap.default_allocator);
+            if (this.flags.len > 0) bun.heap.default_allocator.free(this.flags);
             this.flags = "";
         }
     };
@@ -561,9 +561,9 @@ pub const FFI = struct {
         map: bun.StringArrayHashMapUnmanaged(Function) = .{},
         pub fn deinit(this: *SymbolsMap) void {
             for (this.map.keys()) |key| {
-                bun.default_allocator.free(@constCast(key));
+                bun.heap.default_allocator.free(@constCast(key));
             }
-            this.map.clearAndFree(bun.default_allocator);
+            this.map.clearAndFree(bun.heap.default_allocator);
         }
     };
 
@@ -574,28 +574,28 @@ pub const FFI = struct {
                 // Attempting to free an empty null-terminated slice will crash if it was a default value
                 bun.debugAssert(item.len > 0);
 
-                bun.default_allocator.free(@constCast(item));
+                bun.heap.default_allocator.free(@constCast(item));
             }
 
             if (this.items.len > 0)
-                bun.default_allocator.free(this.items);
+                bun.heap.default_allocator.free(this.items);
         }
 
         pub fn fromJSArray(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
             var iter = value.arrayIterator(globalThis);
-            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
+            var items = std.ArrayList([:0]const u8).init(bun.heap.default_allocator);
 
             while (iter.next()) |val| {
                 if (!val.isString()) {
                     for (items.items) |item| {
-                        bun.default_allocator.free(@constCast(item));
+                        bun.heap.default_allocator.free(@constCast(item));
                     }
                     items.deinit();
                     return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
                 }
                 const str = val.getZigString(globalThis);
                 if (str.isEmpty()) continue;
-                items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                items.append(str.toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
 
             return .{ .items = items.items };
@@ -608,8 +608,8 @@ pub const FFI = struct {
             }
             const str = value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
-            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
-            items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            var items = std.ArrayList([:0]const u8).init(bun.heap.default_allocator);
+            items.append(str.toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
             return .{ .items = items.items };
         }
 
@@ -669,7 +669,7 @@ pub const FFI = struct {
             if (flags_value.isArray()) {
                 var iter = flags_value.arrayIterator(globalThis);
 
-                var flags = std.ArrayList(u8).init(bun.default_allocator);
+                var flags = std.ArrayList(u8).init(bun.heap.default_allocator);
                 defer flags.deinit();
                 flags.appendSlice(CompileC.default_tcc_options) catch bun.outOfMemory();
 
@@ -677,7 +677,7 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    const slice = value.toSlice(globalThis, bun.heap.default_allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
                     flags.append(' ') catch bun.outOfMemory();
@@ -685,7 +685,7 @@ pub const FFI = struct {
                 }
                 flags.append(0) catch bun.outOfMemory();
                 compile_c.flags = flags.items[0 .. flags.items.len - 1 :0];
-                flags = std.ArrayList(u8).init(bun.default_allocator);
+                flags = std.ArrayList(u8).init(bun.heap.default_allocator);
             } else {
                 if (!flags_value.isString()) {
                     return globalThis.throwInvalidArgumentTypeValue("flags", "string", flags_value);
@@ -693,7 +693,7 @@ pub const FFI = struct {
 
                 const str = flags_value.getZigString(globalThis);
                 if (!str.isEmpty()) {
-                    compile_c.flags = str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                    compile_c.flags = str.toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory();
                 }
             }
         }
@@ -708,22 +708,22 @@ pub const FFI = struct {
                 var iter = try Iter.init(globalThis, define_value);
                 defer iter.deinit();
                 while (try iter.next()) |entry| {
-                    const key = entry.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                    const key = entry.toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory();
                     var owned_value: [:0]const u8 = "";
                     if (iter.value != .zero and iter.value != .undefined) {
                         if (iter.value.isString()) {
                             const value = iter.value.getZigString(globalThis);
                             if (value.len > 0) {
-                                owned_value = value.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                                owned_value = value.toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory();
                             }
                         }
                     }
                     if (globalThis.hasException()) {
-                        bun.default_allocator.free(key);
+                        bun.heap.default_allocator.free(key);
                         return error.JSError;
                     }
 
-                    compile_c.define.append(bun.default_allocator, .{ key, owned_value }) catch bun.outOfMemory();
+                    compile_c.define.append(bun.heap.default_allocator, .{ key, owned_value }) catch bun.outOfMemory();
                 }
             }
         }
@@ -748,12 +748,12 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
-                    compile_c.source.files.append(bun.default_allocator, value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    compile_c.source.files.append(bun.heap.default_allocator, value.getZigString(globalThis).toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 }
             } else if (!source_value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
             } else {
-                const source_path = source_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                const source_path = source_value.getZigString(globalThis).toOwnedSliceZ(bun.heap.default_allocator) catch bun.outOfMemory();
                 compile_c.source.file = source_path;
             }
         }
@@ -766,7 +766,7 @@ pub const FFI = struct {
         var tcc_state: ?*TCC.TCCState, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
             switch (err) {
                 error.DeferredErrors => {
-                    var combined = std.ArrayList(u8).init(bun.default_allocator);
+                    var combined = std.ArrayList(u8).init(bun.heap.default_allocator);
                     defer combined.deinit();
                     var writer = combined.writer();
                     writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, if (compile_c.current_file_for_errors.len > 0) compile_c.current_file_for_errors else compile_c.source.first() }) catch bun.outOfMemory();
@@ -793,7 +793,7 @@ pub const FFI = struct {
         var obj = JSC.JSValue.createEmptyObject(globalThis, compile_c.symbols.map.count());
         for (compile_c.symbols.map.values()) |*function| {
             const function_name = function.base_name.?;
-            const allocator = bun.default_allocator;
+            const allocator = bun.heap.default_allocator;
 
             function.compile(allocator, globalThis) catch |err| {
                 if (!globalThis.hasException()) {
@@ -830,7 +830,7 @@ pub const FFI = struct {
             }
         }
 
-        var lib = bun.default_allocator.create(FFI) catch bun.outOfMemory();
+        var lib = bun.heap.default_allocator.create(FFI) catch bun.outOfMemory();
         lib.* = .{
             .dylib = null,
             .shared_state = tcc_state,
@@ -848,7 +848,7 @@ pub const FFI = struct {
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         var function = ctx.asPtr(Function);
-        function.deinit(globalThis, bun.default_allocator);
+        function.deinit(globalThis, bun.heap.default_allocator);
         return JSValue.jsUndefined();
     }
 
@@ -888,7 +888,7 @@ pub const FFI = struct {
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
-                const function_ = bun.default_allocator.create(Function) catch unreachable;
+                const function_ = bun.heap.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
                 return JSValue.createObject2(
                     globalThis,
@@ -929,7 +929,7 @@ pub const FFI = struct {
         this.functions.deinit(allocator);
         if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
             this.relocated_bytes_to_free = null;
-            bun.default_allocator.free(relocated_bytes_to_free);
+            bun.heap.default_allocator.free(relocated_bytes_to_free);
         }
 
         return .undefined;
@@ -1045,7 +1045,7 @@ pub const FFI = struct {
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         const vm = VirtualMachine.get();
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
 
@@ -2420,7 +2420,7 @@ const CompilerRT = struct {
             }) catch {};
         }
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(bunCC, &path_buf) catch return) catch bun.outOfMemory();
+        compiler_rt_dir = bun.heap.default_allocator.dupeZ(u8, bun.getFdPath(bunCC, &path_buf) catch return) catch bun.outOfMemory();
     }
     var create_compiler_rt_dir_once = std.once(createCompilerRTDir);
 

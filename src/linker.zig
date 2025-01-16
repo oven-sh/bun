@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FileDescriptorType = bun.FileDescriptor;
 const C = bun.C;
 const Ref = @import("./ast/base.zig").Ref;
@@ -343,7 +343,7 @@ pub const Linker = struct {
                     //                     else => {},
                     //                     .react_refresh => {
                     //                         linker.tagged_resolutions.react_refresh = _resolved_import;
-                    //                         linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                    //                         linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.heap.default_allocator) catch unreachable;
                     //                     },
                     //                 }
 
@@ -371,7 +371,7 @@ pub const Linker = struct {
                     //                 else => {},
                     //                 .react_refresh => {
                     //                     linker.tagged_resolutions.react_refresh = _resolved_import;
-                    //                     linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                    //                     linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.heap.default_allocator) catch unreachable;
                     //                 },
                     //             }
 

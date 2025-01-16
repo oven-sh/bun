@@ -18,10 +18,10 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .undefined);
         }
         if (data.isString()) {
-            break :blk data.asString().toSlice(globalThis, bun.default_allocator);
+            break :blk data.asString().toSlice(globalThis, bun.heap.default_allocator);
         }
         const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
-            const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
+            const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.heap.default_allocator);
             defer ty_str.deinit();
             return globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
         };

@@ -145,7 +145,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
-            var list_ = this.listManaged(bun.default_allocator);
+            var list_ = this.listManaged(bun.heap.default_allocator);
             try list_.replaceRange(start, len_, new_items);
         }
 

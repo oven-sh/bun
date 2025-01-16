@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
-const heap_allocator = bun.default_allocator;
+const heap_allocator = bun.heap.default_allocator;
 const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
@@ -621,7 +621,7 @@ pub const StringOrBuffer = union(enum) {
             defer global.vm().reportExtraMemory(out.len);
 
             return .{
-                .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
+                .encoded_slice = JSC.ZigString.Slice.init(bun.heap.default_allocator, out),
             };
         }
 
@@ -919,7 +919,7 @@ pub const PathLike = union(enum) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!?PathLike {
-        return fromJSWithAllocator(ctx, arguments, bun.default_allocator);
+        return fromJSWithAllocator(ctx, arguments, bun.heap.default_allocator);
     }
 
     pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
@@ -1112,7 +1112,7 @@ pub const VectorArrayBuffer = struct {
 pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
     vm: *JSC.VirtualMachine,
-    arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
+    arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.heap.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
     protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
@@ -1153,16 +1153,16 @@ pub const ArgumentsSlice = struct {
             .remaining = arguments,
             .vm = vm,
             .all = arguments,
-            .arena = bun.ArenaAllocator.init(vm.allocator),
+            .arena = std.heap.ArenaAllocator.init(vm.allocator),
         };
     }
 
     pub fn initAsync(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
         return ArgumentsSlice{
-            .remaining = bun.default_allocator.dupe(JSC.JSValue, arguments),
+            .remaining = bun.heap.default_allocator.dupe(JSC.JSValue, arguments),
             .vm = vm,
             .all = arguments,
-            .arena = bun.ArenaAllocator.init(bun.default_allocator),
+            .arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator),
         };
     }
 
@@ -1489,7 +1489,7 @@ pub const FileSystemFlags = enum(Mode) {
                         if (std.ascii.isDigit(@as(u8, @truncate(chars[0])))) {
                             // node allows "0o644" as a string :(
                             if (is_16bit) {
-                                const slice = str.toSlice(bun.default_allocator);
+                                const slice = str.toSlice(bun.heap.default_allocator);
                                 defer slice.deinit();
 
                                 break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
@@ -2192,7 +2192,7 @@ pub const Process = struct {
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
-        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
+        var fixed_stack_allocator = std.heap.stackFallback(1025, bun.heap.default_allocator);
         const allocator = fixed_stack_allocator.get();
         var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
         defer allocator.free(buf1);
@@ -2255,7 +2255,7 @@ pub const PathOrBlob = union(enum) {
     const Blob = JSC.WebCore.Blob;
 
     pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
-        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.heap.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
             };

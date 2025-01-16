@@ -456,7 +456,7 @@ pub const String = extern struct {
             return String.static(fmt);
         }
 
-        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        var sba = std.heap.stackFallback(16384, bun.heap.default_allocator);
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
         defer alloc.free(buf);
@@ -677,7 +677,7 @@ pub const String = extern struct {
         bun.assert(bytes.len > 0);
 
         if (bytes.len > max_length()) {
-            bun.default_allocator.free(bytes);
+            bun.heap.default_allocator.free(bytes);
             return dead;
         }
 
@@ -913,7 +913,7 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
-        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
+        return self.toZigString().encodeWithAllocator(bun.heap.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {
@@ -1426,7 +1426,7 @@ pub const SliceWithUnderlyingString = struct {
     /// Assumes default allocator in use
     pub fn fromUTF8(utf8: []const u8) SliceWithUnderlyingString {
         return .{
-            .utf8 = ZigString.Slice.init(bun.default_allocator, utf8),
+            .utf8 = ZigString.Slice.init(bun.heap.default_allocator, utf8),
             .underlying = String.dead,
         };
     }
@@ -1487,7 +1487,7 @@ pub const SliceWithUnderlyingString = struct {
             }
 
             if (this.utf8.allocator.get()) |_| {
-                if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
+                if (bun.strings.toUTF16Alloc(bun.heap.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
                     this.utf8.deinit();
                     this.utf8 = .{};
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, globalObject);

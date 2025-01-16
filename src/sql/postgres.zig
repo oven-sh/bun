@@ -61,14 +61,14 @@ pub const Data = union(enum) {
     pub fn toOwned(this: @This()) !bun.ByteList {
         return switch (this) {
             .owned => this.owned,
-            .temporary => bun.ByteList.init(try bun.default_allocator.dupe(u8, this.temporary)),
+            .temporary => bun.ByteList.init(try bun.heap.default_allocator.dupe(u8, this.temporary)),
             .empty => bun.ByteList.init(&.{}),
         };
     }
 
     pub fn deinit(this: *@This()) void {
         switch (this.*) {
-            .owned => this.owned.deinitWithAllocator(bun.default_allocator),
+            .owned => this.owned.deinitWithAllocator(bun.heap.default_allocator),
             .temporary => {},
             .empty => {},
         }
@@ -83,7 +83,7 @@ pub const Data = union(enum) {
                 // Zero bytes before deinit
                 @memset(this.owned.slice(), 0);
 
-                this.owned.deinitWithAllocator(bun.default_allocator);
+                this.owned.deinitWithAllocator(bun.heap.default_allocator);
             },
             .temporary => {},
             .empty => {},
@@ -247,7 +247,7 @@ pub const PostgresSQLQuery = struct {
         }
         this.query.deref();
         this.cursor_name.deref();
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn finalize(this: *@This()) void {
@@ -501,7 +501,7 @@ pub const PostgresSQLQuery = struct {
             return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
         }
 
-        var ptr = try bun.default_allocator.create(PostgresSQLQuery);
+        var ptr = try bun.heap.default_allocator.create(PostgresSQLQuery);
 
         const this_value = ptr.toJS(globalThis);
         this_value.ensureStillAlive();
@@ -546,7 +546,7 @@ pub const PostgresSQLQuery = struct {
 
         const this_value = callframe.this();
         const binding_value = PostgresSQLQuery.bindingGetCached(this_value) orelse .zero;
-        var query_str = this.query.toUTF8(bun.default_allocator);
+        var query_str = this.query.toUTF8(bun.heap.default_allocator);
         defer query_str.deinit();
         const columns_value = PostgresSQLQuery.columnsGetCached(this_value) orelse .undefined;
 
@@ -558,7 +558,7 @@ pub const PostgresSQLQuery = struct {
 
         var writer = connection.writer();
 
-        const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
+        const entry = connection.statements.getOrPut(bun.heap.default_allocator, bun.hash(signature.name)) catch |err| {
             signature.deinit();
             return globalObject.throwError(err, "failed to allocate statement");
         };
@@ -613,7 +613,7 @@ pub const PostgresSQLQuery = struct {
             }
 
             {
-                const stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
+                const stmt = bun.heap.default_allocator.create(PostgresSQLStatement) catch |err| {
                     return globalObject.throwError(err, "failed to allocate statement");
                 };
 
@@ -741,7 +741,7 @@ pub const PostgresRequest = struct {
                     var str = bun.String.empty;
                     defer str.deref();
                     value.jsonStringify(globalObject, 0, &str);
-                    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                    const slice = str.toUTF8WithoutRef(bun.heap.default_allocator);
                     defer slice.deinit();
                     const l = try writer.length();
                     try writer.write(slice.slice());
@@ -787,7 +787,7 @@ pub const PostgresRequest = struct {
                 else => {
                     const str = try String.fromJSRef(value, globalObject);
                     defer str.deref();
-                    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                    const slice = str.toUTF8WithoutRef(bun.heap.default_allocator);
                     defer slice.deinit();
                     const l = try writer.length();
                     try writer.write(slice.slice());
@@ -970,7 +970,7 @@ pub const PostgresSQLConnection = struct {
 
     is_ready_for_query: bool = false,
 
-    backend_parameters: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
+    backend_parameters: bun.StringMap = bun.StringMap.init(bun.heap.default_allocator, true),
     backend_key_data: protocol.BackendKeyData = .{},
 
     pending_disconnect: bool = false,
@@ -1560,7 +1560,7 @@ pub const PostgresSQLConnection = struct {
                     this.read_buffer.head = 0;
                     this.last_message_start = 0;
                     this.read_buffer.byte_list.len = 0;
-                    this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                    this.read_buffer.write(bun.heap.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
                 } else {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -1572,7 +1572,7 @@ pub const PostgresSQLConnection = struct {
 
         {
             this.read_buffer.head = this.last_message_start;
-            this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+            this.read_buffer.write(bun.heap.default_allocator, data) catch @panic("failed to write to read buffer");
             PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
                 if (err != error.ShortRead) {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -1694,20 +1694,20 @@ pub const PostgresSQLConnection = struct {
             var b = bun.StringBuilder{};
             b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
 
-            b.allocate(bun.default_allocator) catch {};
-            var u = username_str.toUTF8WithoutRef(bun.default_allocator);
+            b.allocate(bun.heap.default_allocator) catch {};
+            var u = username_str.toUTF8WithoutRef(bun.heap.default_allocator);
             defer u.deinit();
             username = b.append(u.slice());
 
-            var p = password_str.toUTF8WithoutRef(bun.default_allocator);
+            var p = password_str.toUTF8WithoutRef(bun.heap.default_allocator);
             defer p.deinit();
             password = b.append(p.slice());
 
-            var d = database_str.toUTF8WithoutRef(bun.default_allocator);
+            var d = database_str.toUTF8WithoutRef(bun.heap.default_allocator);
             defer d.deinit();
             database = b.append(d.slice());
 
-            var o = options_str.toUTF8WithoutRef(bun.default_allocator);
+            var o = options_str.toUTF8WithoutRef(bun.heap.default_allocator);
             defer o.deinit();
             options = b.append(o.slice());
 
@@ -1720,7 +1720,7 @@ pub const PostgresSQLConnection = struct {
         const connection_timeout = arguments[11].toInt32();
         const max_lifetime = arguments[12].toInt32();
 
-        const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
+        const ptr: *PostgresSQLConnection = try bun.heap.default_allocator.create(PostgresSQLConnection);
 
         ptr.* = PostgresSQLConnection{
             .globalObject = globalObject,
@@ -1731,7 +1731,7 @@ pub const PostgresSQLConnection = struct {
             .options = options,
             .options_buf = options_buf,
             .socket = undefined,
-            .requests = PostgresRequest.Queue.init(bun.default_allocator),
+            .requests = PostgresRequest.Queue.init(bun.heap.default_allocator),
             .statements = PreparedStatementsMap{},
             .tls_config = tls_config,
             .tls_ctx = tls_ctx,
@@ -1752,7 +1752,7 @@ pub const PostgresSQLConnection = struct {
         PostgresSQLConnection.oncloseSetCached(js_value, globalObject, on_close);
 
         {
-            const hostname = hostname_str.toUTF8(bun.default_allocator);
+            const hostname = hostname_str.toUTF8(bun.heap.default_allocator);
             defer hostname.deinit();
 
             const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
@@ -1862,7 +1862,7 @@ pub const PostgresSQLConnection = struct {
     pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
         this.disconnect();
-        this.write_buffer.deinit(bun.default_allocator);
+        this.write_buffer.deinit(bun.heap.default_allocator);
 
         return .undefined;
     }
@@ -1883,13 +1883,13 @@ pub const PostgresSQLConnection = struct {
             var stmt = stmt_ptr.*;
             stmt.deref();
         }
-        this.statements.deinit(bun.default_allocator);
-        this.write_buffer.deinit(bun.default_allocator);
-        this.read_buffer.deinit(bun.default_allocator);
+        this.statements.deinit(bun.heap.default_allocator);
+        this.write_buffer.deinit(bun.heap.default_allocator);
+        this.read_buffer.deinit(bun.heap.default_allocator);
         this.backend_parameters.deinit();
-        bun.default_allocator.free(this.options_buf);
+        bun.heap.default_allocator.free(this.options_buf);
         this.tls_config.deinit();
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn disconnect(this: *@This()) void {
@@ -1915,7 +1915,7 @@ pub const PostgresSQLConnection = struct {
 
         pub fn write(this: Writer, data: []const u8) AnyPostgresError!void {
             var buffer = &this.connection.write_buffer;
-            try buffer.write(bun.default_allocator, data);
+            try buffer.write(bun.heap.default_allocator, data);
         }
 
         pub fn pwrite(this: Writer, data: []const u8, index: usize) AnyPostgresError!void {
@@ -2062,16 +2062,16 @@ pub const PostgresSQLConnection = struct {
                 .bytea => {
                     if (this.value.bytea[1] == 0) return;
                     const slice = @as([*]u8, @ptrFromInt(this.value.bytea[0]))[0..this.value.bytea[1]];
-                    bun.default_allocator.free(slice);
+                    bun.heap.default_allocator.free(slice);
                 },
                 .array => {
                     for (this.value.array.slice()) |*cell| {
                         cell.deinit();
                     }
-                    bun.default_allocator.free(this.value.array.slice());
+                    bun.heap.default_allocator.free(this.value.array.slice());
                 },
                 .typed_array => {
-                    bun.default_allocator.free(this.value.typed_array.byteSlice());
+                    bun.heap.default_allocator.free(this.value.typed_array.byteSlice());
                 },
 
                 else => {},
@@ -2185,8 +2185,8 @@ pub const PostgresSQLConnection = struct {
                         if (bun.strings.hasPrefixComptime(bytes, "\\x")) {
                             const hex = bytes[2..];
                             const len = hex.len / 2;
-                            const buf = try bun.default_allocator.alloc(u8, len);
-                            errdefer bun.default_allocator.free(buf);
+                            const buf = try bun.heap.default_allocator.alloc(u8, len);
+                            errdefer bun.heap.default_allocator.free(buf);
 
                             return DataCell{
                                 .tag = .bytea,
@@ -2433,9 +2433,9 @@ pub const PostgresSQLConnection = struct {
                 }
 
                 var free_cells = false;
-                defer if (free_cells) bun.default_allocator.free(cells);
+                defer if (free_cells) bun.heap.default_allocator.free(cells);
                 if (statement.fields.len >= 64) {
-                    cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
+                    cells = try bun.heap.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
                 putter.list = cells;
@@ -2570,17 +2570,17 @@ pub const PostgresSQLConnection = struct {
 
                         const iteration_count = try cont.iterationCount();
 
-                        const server_salt_decoded_base64 = bun.base64.decodeAlloc(bun.z_allocator, cont.s) catch |err| {
+                        const server_salt_decoded_base64 = bun.base64.decodeAlloc(bun.heap.z_allocator, cont.s) catch |err| {
                             return switch (err) {
                                 error.DecodingFailed => error.SASL_SIGNATURE_INVALID_BASE64,
                                 else => |e| e,
                             };
                         };
-                        defer bun.z_allocator.free(server_salt_decoded_base64);
+                        defer bun.heap.z_allocator.free(server_salt_decoded_base64);
                         try sasl.computeSaltedPassword(server_salt_decoded_base64, iteration_count, this);
 
                         const auth_string = try std.fmt.allocPrint(
-                            bun.z_allocator,
+                            bun.heap.z_allocator,
                             "n=*,r={s},r={s},s={s},i={s},c=biws,r={s}",
                             .{
                                 sasl.nonce(),
@@ -2590,7 +2590,7 @@ pub const PostgresSQLConnection = struct {
                                 cont.r,
                             },
                         );
-                        defer bun.z_allocator.free(auth_string);
+                        defer bun.heap.z_allocator.free(auth_string);
                         try sasl.computeServerSignature(auth_string);
 
                         const client_key = sasl.clientKey();
@@ -2604,11 +2604,11 @@ pub const PostgresSQLConnection = struct {
                         const xor_base64_len = bun.base64.encode(&client_key_xor_base64_buf, &client_key_xor_buffer);
 
                         const payload = try std.fmt.allocPrint(
-                            bun.z_allocator,
+                            bun.heap.z_allocator,
                             "c=biws,r={s},p={s}",
                             .{ cont.r, client_key_xor_base64_buf[0..xor_base64_len] },
                         );
-                        defer bun.z_allocator.free(payload);
+                        defer bun.heap.z_allocator.free(payload);
 
                         var response = protocol.SASLResponse{
                             .data = .{
@@ -2869,9 +2869,9 @@ pub const PostgresSQLStatement = struct {
         if (!this.needs_duplicate_check) return;
         this.needs_duplicate_check = false;
 
-        var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
+        var seen_numbers = std.ArrayList(u32).init(bun.heap.default_allocator);
         defer seen_numbers.deinit();
-        var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
+        var seen_fields = bun.StringHashMap(void).init(bun.heap.default_allocator);
         seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)) catch bun.outOfMemory();
         defer seen_fields.deinit();
 
@@ -2918,23 +2918,23 @@ pub const PostgresSQLStatement = struct {
         for (this.fields) |*field| {
             field.deinit();
         }
-        bun.default_allocator.free(this.fields);
-        bun.default_allocator.free(this.parameters);
+        bun.heap.default_allocator.free(this.fields);
+        bun.heap.default_allocator.free(this.parameters);
         this.cached_structure.deinit();
         this.error_response.deinit();
         this.signature.deinit();
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
         return this.cached_structure.get() orelse {
-            const ids = bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, this.fields.len) catch return .undefined;
+            const ids = bun.heap.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, this.fields.len) catch return .undefined;
             this.checkForDuplicateFields();
             defer {
                 for (ids) |*name| {
                     name.deinit();
                 }
-                bun.default_allocator.free(ids);
+                bun.heap.default_allocator.free(ids);
             }
 
             for (this.fields, ids) |*field, *id| {
@@ -3090,9 +3090,9 @@ const Signature = struct {
     query: []const u8,
 
     pub fn deinit(this: *Signature) void {
-        bun.default_allocator.free(this.fields);
-        bun.default_allocator.free(this.name);
-        bun.default_allocator.free(this.query);
+        bun.heap.default_allocator.free(this.fields);
+        bun.heap.default_allocator.free(this.name);
+        bun.heap.default_allocator.free(this.query);
     }
 
     pub fn hash(this: *const Signature) u64 {
@@ -3103,8 +3103,8 @@ const Signature = struct {
     }
 
     pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue) !Signature {
-        var fields = std.ArrayList(int4).init(bun.default_allocator);
-        var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
+        var fields = std.ArrayList(int4).init(bun.heap.default_allocator);
+        var name = try std.ArrayList(u8).initCapacity(bun.heap.default_allocator, query.len);
 
         name.appendSliceAssumeCapacity(query);
 
@@ -3160,7 +3160,7 @@ const Signature = struct {
         return Signature{
             .name = name.items,
             .fields = fields.items,
-            .query = try bun.default_allocator.dupe(u8, query),
+            .query = try bun.heap.default_allocator.dupe(u8, query),
         };
     }
 };

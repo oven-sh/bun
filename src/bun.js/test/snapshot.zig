@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const string = bun.string;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
@@ -218,7 +218,7 @@ pub const Snapshots = struct {
 
     const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, false);
     pub fn writeInlineSnapshots(this: *Snapshots) !bool {
-        var arena_backing = bun.ArenaAllocator.init(this.allocator);
+        var arena_backing = std.heap.ArenaAllocator.init(this.allocator);
         defer arena_backing.deinit();
         const arena = arena_backing.allocator();
 

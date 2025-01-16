@@ -71,14 +71,14 @@ pub const BunSpawn = struct {
 
         pub fn deinit(self: *Actions) void {
             if (self.chdir_buf) |buf| {
-                bun.default_allocator.free(bun.span(buf));
+                bun.heap.default_allocator.free(bun.span(buf));
             }
 
             for (self.actions.items) |*action| {
-                action.deinit(bun.default_allocator);
+                action.deinit(bun.heap.default_allocator);
             }
 
-            self.actions.deinit(bun.default_allocator);
+            self.actions.deinit(bun.heap.default_allocator);
         }
 
         pub fn open(self: *Actions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: i32) !void {
@@ -88,9 +88,9 @@ pub const BunSpawn = struct {
         }
 
         pub fn openZ(self: *Actions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: i32) !void {
-            try self.actions.append(bun.default_allocator, .{
+            try self.actions.append(bun.heap.default_allocator, .{
                 .kind = .open,
-                .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
+                .path = (try bun.heap.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
                 .fds = .{ fd, bun.toFD(0) },
@@ -98,14 +98,14 @@ pub const BunSpawn = struct {
         }
 
         pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
-            try self.actions.append(bun.default_allocator, .{
+            try self.actions.append(bun.heap.default_allocator, .{
                 .kind = .close,
                 .fds = .{ fd, bun.toFD(0) },
             });
         }
 
         pub fn dup2(self: *Actions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
-            try self.actions.append(bun.default_allocator, .{
+            try self.actions.append(bun.heap.default_allocator, .{
                 .kind = .dup2,
                 .fds = .{ fd, newfd },
             });
@@ -117,10 +117,10 @@ pub const BunSpawn = struct {
 
         pub fn chdir(self: *Actions, path: []const u8) !void {
             if (self.chdir_buf) |buf| {
-                bun.default_allocator.free(bun.span(buf));
+                bun.heap.default_allocator.free(bun.span(buf));
             }
 
-            self.chdir_buf = (try bun.default_allocator.dupeZ(u8, path)).ptr;
+            self.chdir_buf = (try bun.heap.default_allocator.dupeZ(u8, path)).ptr;
         }
     };
 

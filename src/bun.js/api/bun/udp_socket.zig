@@ -3,7 +3,7 @@ const uws = @import("../../../deps/uws.zig");
 const bun = @import("root").bun;
 
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const Output = bun.Output;
 const Async = bun.Async;
 const JSC = bun.JSC;
@@ -374,7 +374,7 @@ pub const UDPSocket = struct {
 
         const len = if (this.connect_info == null) array_len / 3 else array_len;
 
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
 
@@ -462,7 +462,7 @@ pub const UDPSocket = struct {
             if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
                 break :brk array_buffer.slice();
             } else if (payload_arg.isString()) {
-                payload_str = payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                payload_str = payload_arg.asString().toSlice(globalThis, bun.heap.default_allocator);
                 break :brk payload_str.slice();
             } else {
                 return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});

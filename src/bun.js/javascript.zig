@@ -9,10 +9,10 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ErrorableString = bun.JSC.ErrorableString;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const C = bun.C;
 
 const Exception = bun.JSC.Exception;
@@ -744,7 +744,7 @@ const AutoKiller = struct {
 
     pub fn clear(this: *AutoKiller) void {
         if (this.processes.capacity() > 256) {
-            this.processes.clearAndFree(bun.default_allocator);
+            this.processes.clearAndFree(bun.heap.default_allocator);
         }
 
         this.processes.clearRetainingCapacity();
@@ -752,7 +752,7 @@ const AutoKiller = struct {
 
     pub fn onSubprocessSpawn(this: *AutoKiller, process: *bun.spawn.Process) void {
         if (this.enabled)
-            this.processes.put(bun.default_allocator, process, {}) catch {};
+            this.processes.put(bun.heap.default_allocator, process, {}) catch {};
     }
 
     pub fn onSubprocessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
@@ -761,7 +761,7 @@ const AutoKiller = struct {
     }
 
     pub fn deinit(this: *AutoKiller) void {
-        this.processes.deinit(bun.default_allocator);
+        this.processes.deinit(bun.heap.default_allocator);
     }
 };
 
@@ -1050,7 +1050,7 @@ pub const VirtualMachine = struct {
         /// And, for now, we also store it in source_mappings like normal
         /// This is hideously expensive memory-wise...
         pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-            var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+            var temp_json_buffer = bun.MutableString.initEmpty(bun.heap.default_allocator);
             defer temp_json_buffer.deinit();
             temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
             const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
@@ -1288,7 +1288,7 @@ pub const VirtualMachine = struct {
         if (this.hot_reload == .watch) {
             Output.flush();
             bun.reloadProcess(
-                bun.default_allocator,
+                bun.heap.default_allocator,
                 should_clear_terminal,
                 false,
             );
@@ -1315,7 +1315,7 @@ pub const VirtualMachine = struct {
 
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
-            this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
+            this.node_fs = bun.heap.default_allocator.create(Node.NodeFS) catch unreachable;
             this.node_fs.?.* = Node.NodeFS{
                 // only used when standalone module graph is enabled
                 .vm = if (this.standalone_module_graph != null) this else null,
@@ -1413,7 +1413,7 @@ pub const VirtualMachine = struct {
 
         const rare_data = this.rare_data orelse return;
         var hooks = rare_data.cleanup_hooks;
-        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
+        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.heap.default_allocator);
         rare_data.cleanup_hooks = .{};
         for (hooks.items) |hook| {
             hook.execute();
@@ -1625,7 +1625,7 @@ pub const VirtualMachine = struct {
                 // TODO: remove this when tickWithTimeout actually works properly on Windows.
                 if (debugger.wait_for_connection == .shortly) {
                     uv.uv_update_time(this.uvLoop());
-                    var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+                    var timer = bun.heap.default_allocator.create(uv.Timer) catch bun.outOfMemory();
                     timer.* = std.mem.zeroes(uv.Timer);
                     timer.init(this.uvLoop());
                     const onDebuggerTimer = struct {
@@ -1636,7 +1636,7 @@ pub const VirtualMachine = struct {
                         }
 
                         fn deinitTimer(handle: *anyopaque) callconv(.C) void {
-                            bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                            bun.heap.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
                         }
                     }.call;
                     timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
@@ -1709,7 +1709,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
-            var arena = bun.MimallocArena.init() catch unreachable;
+            var arena = bun.heap.MimallocArena.init() catch unreachable;
             Output.Source.configureNamedThread("Debugger");
             log("startJSDebuggerThread", .{});
             JSC.markBinding(@src());
@@ -1907,7 +1907,7 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .origin = transpiler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.heap.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1963,7 +1963,7 @@ pub const VirtualMachine = struct {
         vm.jsc = vm.global.vm();
 
         vm.configureDebugger(opts.debugger);
-        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.heap.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -2024,7 +2024,7 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .origin = transpiler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.heap.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -2079,7 +2079,7 @@ pub const VirtualMachine = struct {
             is_smol_mode = opts.smol;
 
         vm.configureDebugger(opts.debugger);
-        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.heap.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -2178,7 +2178,7 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .origin = transpiler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.heap.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -2234,7 +2234,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.transpiler.setAllocator(allocator);
-        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.heap.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -2270,7 +2270,7 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .origin = transpiler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.heap.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -2315,7 +2315,7 @@ pub const VirtualMachine = struct {
             is_smol_mode = opts.smol;
 
         vm.configureDebugger(opts.debugger);
-        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.heap.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -2404,13 +2404,13 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        const display_specifier = _specifier.toUTF8(bun.default_allocator);
+        const display_specifier = _specifier.toUTF8(bun.heap.default_allocator);
         defer display_specifier.deinit();
-        const specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        const specifier_clone = _specifier.toUTF8(bun.heap.default_allocator);
         defer specifier_clone.deinit();
         var display_slice = display_specifier.slice();
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
-        const referrer_clone = referrer.toUTF8(bun.default_allocator);
+        const referrer_clone = referrer.toUTF8(bun.heap.default_allocator);
         defer referrer_clone.deinit();
         var path = Fs.Path.init(specifier_clone.slice());
 
@@ -2709,12 +2709,12 @@ pub const VirtualMachine = struct {
 
     fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String, query_string: ?*ZigString, is_esm: bool, comptime is_a_file_path: bool) bun.JSError!void {
         if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
-            const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+            const specifier_utf8 = specifier.toUTF8(bun.heap.default_allocator);
             defer specifier_utf8.deinit();
-            const source_utf8 = source.toUTF8(bun.default_allocator);
+            const source_utf8 = source.toUTF8(bun.heap.default_allocator);
             defer source_utf8.deinit();
             const printed = ResolveMessage.fmt(
-                bun.default_allocator,
+                bun.heap.default_allocator,
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
@@ -2732,10 +2732,10 @@ pub const VirtualMachine = struct {
 
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
-        const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+        const specifier_utf8 = specifier.toUTF8(bun.heap.default_allocator);
         defer specifier_utf8.deinit();
 
-        const source_utf8 = source.toUTF8(bun.default_allocator);
+        const source_utf8 = source.toUTF8(bun.heap.default_allocator);
         defer source_utf8.deinit();
         if (jsc_vm.plugin_runner) |plugin_runner| {
             if (PluginRunner.couldBePlugin(specifier_utf8.slice())) {
@@ -2772,7 +2772,7 @@ pub const VirtualMachine = struct {
 
         const old_log = jsc_vm.log;
         // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
-        var log = logger.Log.init(bun.default_allocator);
+        var log = logger.Log.init(bun.heap.default_allocator);
         defer log.deinit();
         jsc_vm.log = &log;
         jsc_vm.transpiler.resolver.log = &log;
@@ -2865,7 +2865,7 @@ pub const VirtualMachine = struct {
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.toUTF8(bun.default_allocator).slice(),
+                        referrer.toUTF8(bun.heap.default_allocator).slice(),
                     ).asVoid(),
                 });
                 return;
@@ -2884,7 +2884,7 @@ pub const VirtualMachine = struct {
                             globalThis,
                             globalThis.allocator(),
                             msg,
-                            referrer.toUTF8(bun.default_allocator).slice(),
+                            referrer.toUTF8(bun.heap.default_allocator).slice(),
                         ),
                     };
                 }
@@ -3463,9 +3463,9 @@ pub const VirtualMachine = struct {
             const dir = vm.transpiler.fs.top_level_dir;
 
             for (stack) |frame| {
-                const file_slice = frame.source_url.toUTF8(bun.default_allocator);
+                const file_slice = frame.source_url.toUTF8(bun.heap.default_allocator);
                 defer file_slice.deinit();
-                const func_slice = frame.function_name.toUTF8(bun.default_allocator);
+                const func_slice = frame.function_name.toUTF8(bun.heap.default_allocator);
                 defer func_slice.deinit();
 
                 const file = file_slice.slice();
@@ -3547,7 +3547,7 @@ pub const VirtualMachine = struct {
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
         for (frames[0..frames_count]) |*frame| {
             if (frame.position.isInvalid() or frame.remapped) continue;
-            var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
+            var sourceURL = frame.source_url.toUTF8(bun.heap.default_allocator);
             defer sourceURL.deinit();
 
             if (this.resolveSourceMapping(
@@ -3674,7 +3674,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        var top_source_url = top.source_url.toUTF8(bun.default_allocator);
+        var top_source_url = top.source_url.toUTF8(bun.heap.default_allocator);
         defer top_source_url.deinit();
 
         const maybe_lookup = if (top.remapped)
@@ -3726,12 +3726,12 @@ pub const VirtualMachine = struct {
                     break :code ZigString.Slice.empty;
                 }
 
-                var log = logger.Log.init(bun.default_allocator);
+                var log = logger.Log.init(bun.heap.default_allocator);
                 defer log.deinit();
 
                 var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
                 must_reset_parser_arena_later.* = true;
-                break :code original_source.source_code.toUTF8(bun.default_allocator);
+                break :code original_source.source_code.toUTF8(bun.heap.default_allocator);
             };
 
             if (enable_source_code_preview and code.len == 0) {
@@ -3778,7 +3778,7 @@ pub const VirtualMachine = struct {
         if (frames.len > 1) {
             for (frames) |*frame| {
                 if (frame == top or frame.position.isInvalid()) continue;
-                const source_url = frame.source_url.toUTF8(bun.default_allocator);
+                const source_url = frame.source_url.toUTF8(bun.heap.default_allocator);
                 defer source_url.deinit();
                 if (this.resolveSourceMapping(
                     source_url.slice(),
@@ -4205,7 +4205,7 @@ pub const VirtualMachine = struct {
         const frames = exception.stack.frames();
         const top_frame = if (frames.len > 0) frames[0] else null;
         const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         Output.flush();
 
         var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
@@ -4536,14 +4536,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *Watcher {
-            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            const reloader = bun.heap.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = ctx,
                 .verbose = Environment.enable_logs or verbose,
             };
 
             clear_screen = clear_screen_flag;
-            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
+            const watcher = Watcher.init(Reloader, reloader, fs, bun.heap.default_allocator) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
             };
@@ -4630,7 +4630,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         if (this.reloader.ctx.rare_data) |rare|
                             rare.closeAllListenSocketsForWatchMode();
                     }
-                    bun.reloadProcess(bun.default_allocator, clear_screen, false);
+                    bun.reloadProcess(bun.heap.default_allocator, clear_screen, false);
                     unreachable;
                 }
 
@@ -4663,7 +4663,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            var reloader = bun.heap.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
                 .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
@@ -4675,7 +4675,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         Reloader,
                         reloader,
                         this.transpiler.fs,
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
@@ -4685,7 +4685,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         Reloader,
                         reloader,
                         this.transpiler.fs,
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
@@ -4701,7 +4701,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     Reloader,
                     reloader,
                     this.transpiler.fs,
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
@@ -4715,7 +4715,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         }
 
         fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
-            this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
+            this.tombstones.put(bun.heap.default_allocator, key, value) catch unreachable;
         }
 
         fn getTombstone(this: *@This(), key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
@@ -4932,14 +4932,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 }
 
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());

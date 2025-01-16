@@ -693,7 +693,7 @@ pub const PublishCommand = struct {
 
         while ('\n' != Output.buffered_stdin.reader().readByte() catch return) {}
 
-        var child = std.process.Child.init(&.{ Open.opener, auth_url }, bun.default_allocator);
+        var child = std.process.Child.init(&.{ Open.opener, auth_url }, bun.heap.default_allocator);
         _ = child.spawnAndWait() catch return;
     }
 

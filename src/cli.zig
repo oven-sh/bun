@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const root = @import("root");
@@ -1769,17 +1769,17 @@ pub const Command = struct {
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
             if (bun.getenvZ("MI_VERBOSE") == null) {
-                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+                bun.heap.Mimalloc.mi_option_set_enabled(.verbose, false);
             }
         }
 
         // bun build --compile entry point
-        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+        if (try bun.StandaloneModuleGraph.fromExecutable(bun.heap.default_allocator)) |graph| {
             context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
             };
             global_cli_ctx = &context_data;
             var ctx = global_cli_ctx;
@@ -2002,7 +2002,7 @@ pub const Command = struct {
                                 'z' => FirstLetter.z,
                                 else => break :outer,
                             };
-                            AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                            AddCompletions.init(bun.heap.default_allocator) catch bun.outOfMemory();
                             const results = AddCompletions.getPackages(first_letter);
 
                             var prefilled_i: usize = 0;

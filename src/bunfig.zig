@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
@@ -280,7 +280,7 @@ pub const Bunfig = struct {
                     if (test_.get("coverageReporter")) |expr| brk: {
                         this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                         if (expr.data == .e_string) {
-                            const item_str = expr.asString(bun.default_allocator) orelse "";
+                            const item_str = expr.asString(bun.heap.default_allocator) orelse "";
                             if (bun.strings.eqlComptime(item_str, "text")) {
                                 this.ctx.test_options.coverage.reporters.text = true;
                             } else if (bun.strings.eqlComptime(item_str, "lcov")) {
@@ -296,7 +296,7 @@ pub const Bunfig = struct {
                         const items = expr.data.e_array.items.slice();
                         for (items) |item| {
                             try this.expectString(item);
-                            const item_str = item.asString(bun.default_allocator) orelse "";
+                            const item_str = item.asString(bun.heap.default_allocator) orelse "";
                             if (bun.strings.eqlComptime(item_str, "text")) {
                                 this.ctx.test_options.coverage.reporters.text = true;
                             } else if (bun.strings.eqlComptime(item_str, "lcov")) {
@@ -422,7 +422,7 @@ pub const Bunfig = struct {
                     if (install_obj.get("prefer")) |prefer_expr| {
                         try this.expectString(prefer_expr);
 
-                        if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
+                        if (Prefer.get(prefer_expr.asString(bun.heap.default_allocator) orelse "")) |setting| {
                             this.ctx.debug.offline_mode_setting = setting;
                         } else {
                             try this.addError(prefer_expr.loc, "Invalid prefer setting, must be one of online or offline");

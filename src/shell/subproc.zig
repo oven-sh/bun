@@ -1,4 +1,4 @@
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const NetworkThread = bun.http.NetworkThread;
@@ -594,11 +594,11 @@ pub const ShellSubprocess = struct {
     pub fn deinit(this: *@This()) void {
         this.finalizeSync();
         log("Deinit", .{});
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub const SpawnArgs = struct {
-        arena: *bun.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
         cmd_parent: ?*ShellCmd = null,
 
         override_env: bool = false,
@@ -673,7 +673,7 @@ pub const ShellSubprocess = struct {
             }
         };
 
-        pub fn default(arena: *bun.ArenaAllocator, event_loop: JSC.EventLoopHandle, comptime is_sync: bool) SpawnArgs {
+        pub fn default(arena: *std.heap.ArenaAllocator, event_loop: JSC.EventLoopHandle, comptime is_sync: bool) SpawnArgs {
             var out: SpawnArgs = .{
                 .arena = arena,
 
@@ -747,7 +747,7 @@ pub const ShellSubprocess = struct {
         spawn_args_: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
 
         var spawn_args = spawn_args_;
@@ -806,7 +806,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.heap.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
                     } };
                 },
             },
@@ -814,7 +814,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.heap.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
                     } };
                 },
             },
@@ -822,7 +822,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.heap.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
                     } };
                 },
             },
@@ -834,11 +834,11 @@ pub const ShellSubprocess = struct {
         };
 
         spawn_args.argv.append(allocator, null) catch {
-            return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = bun.heap.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
         spawn_args.env_array.append(allocator, null) catch {
-            return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = bun.heap.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
         var spawn_result = switch (bun.spawn.spawnProcess(
@@ -846,7 +846,7 @@ pub const ShellSubprocess = struct {
             @ptrCast(spawn_args.argv.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
-            return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = std.fmt.allocPrint(bun.heap.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {
             .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
@@ -997,7 +997,7 @@ pub const PipeReader = struct {
         pub fn append(this: *BufferedOutput, bytes: []const u8) void {
             switch (this.*) {
                 .bytelist => {
-                    this.bytelist.append(bun.default_allocator, bytes) catch bun.outOfMemory();
+                    this.bytelist.append(bun.heap.default_allocator, bytes) catch bun.outOfMemory();
                 },
                 .array_buffer => {
                     const array_buf_slice = this.array_buffer.buf.slice();
@@ -1013,7 +1013,7 @@ pub const PipeReader = struct {
         pub fn deinit(this: *BufferedOutput) void {
             switch (this.*) {
                 .bytelist => {
-                    this.bytelist.deinitWithAllocator(bun.default_allocator);
+                    this.bytelist.deinitWithAllocator(bun.heap.default_allocator);
                 },
                 .array_buffer => {},
             }
@@ -1284,7 +1284,7 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
+                const blob = JSC.WebCore.Blob.init(bytes, bun.heap.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
                 return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
             },
@@ -1301,7 +1301,7 @@ pub const PipeReader = struct {
         switch (this.state) {
             .done => |bytes| {
                 defer this.state = .{ .done = &.{} };
-                return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.heap.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSC.JSValue.undefined;
@@ -1312,7 +1312,7 @@ pub const PipeReader = struct {
     pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
         log("PipeReader(0x{x}) onReaderError {}", .{ @intFromPtr(this), err });
         if (this.state == .done) {
-            bun.default_allocator.free(this.state.done);
+            bun.heap.default_allocator.free(this.state.done);
         }
         this.state = .{ .err = err.toSystemError() };
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
@@ -1355,7 +1355,7 @@ pub const PipeReader = struct {
         }
 
         if (this.state == .done) {
-            bun.default_allocator.free(this.state.done);
+            bun.heap.default_allocator.free(this.state.done);
         }
 
         if (!this.captured_writer.dead) {

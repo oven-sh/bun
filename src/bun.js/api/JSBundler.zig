@@ -38,7 +38,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
+const Mimalloc = bun.heap.Mimalloc;
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -51,13 +51,13 @@ pub const JSBundler = struct {
 
     pub const Config = struct {
         target: Target = Target.browser,
-        entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        entry_points: bun.StringSet = bun.StringSet.init(bun.heap.default_allocator),
         hot: bool = false,
-        define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
+        define: bun.StringMap = bun.StringMap.init(bun.heap.default_allocator, false),
         loaders: ?Api.LoaderMap = null,
-        dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        dir: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
+        outdir: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
+        rootdir: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
@@ -66,23 +66,23 @@ pub const JSBundler = struct {
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
         names: Names = .{},
-        external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        external: bun.StringSet = bun.StringSet.init(bun.heap.default_allocator),
         source_map: options.SourceMapOption = .none,
-        public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        public_path: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
+        conditions: bun.StringSet = bun.StringSet.init(bun.heap.default_allocator),
         packages: options.PackagesOption = .bundle,
         format: options.Format = .esm,
         bytecode: bool = false,
-        banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        banner: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
+        footer: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
         experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
-        drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        drop: bun.StringSet = bun.StringSet.init(bun.heap.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
 
         env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
-        env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        env_prefix: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -252,7 +252,7 @@ pub const JSBundler = struct {
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
                         this.env_behavior = .load_all;
                     } else if (env.isString()) {
-                        const slice = try env.toSlice2(globalThis, bun.default_allocator);
+                        const slice = try env.toSlice2(globalThis, bun.heap.default_allocator);
                         defer slice.deinit();
                         if (strings.eqlComptime(slice.slice(), "inline")) {
                             this.env_behavior = .load_all;
@@ -473,10 +473,10 @@ pub const JSBundler = struct {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
 
-                    const key = try prop.toOwnedSlice(bun.default_allocator);
+                    const key = try prop.toOwnedSlice(bun.heap.default_allocator);
 
                     // value is always cloned
-                    const value = val.toSlice(bun.default_allocator);
+                    const value = val.toSlice(bun.heap.default_allocator);
                     defer value.deinit();
 
                     // .insert clones the value, but not the key
@@ -507,7 +507,7 @@ pub const JSBundler = struct {
                         Api.Loader,
                         options.Loader.api_names,
                     );
-                    loader_names[loader_iter.i] = try prop.toOwnedSlice(bun.default_allocator);
+                    loader_names[loader_iter.i] = try prop.toOwnedSlice(bun.heap.default_allocator);
                 }
 
                 this.loaders = Api.LoaderMap{
@@ -524,12 +524,12 @@ pub const JSBundler = struct {
         }
 
         pub const Names = struct {
-            owned_entry_point: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            owned_entry_point: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
             entry_point: options.PathTemplate = options.PathTemplate.file,
-            owned_chunk: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            owned_chunk: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
             chunk: options.PathTemplate = options.PathTemplate.chunk,
 
-            owned_asset: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            owned_asset: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
             asset: options.PathTemplate = options.PathTemplate.asset,
 
             pub fn deinit(self: *Names) void {
@@ -546,8 +546,8 @@ pub const JSBundler = struct {
         };
 
         pub const Serve = struct {
-            handler_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-            prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            handler_path: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
+            prefix: OwnedString = OwnedString.initEmpty(bun.heap.default_allocator),
 
             pub fn deinit(self: *Serve, allocator: std.mem.Allocator) void {
                 _ = allocator;
@@ -564,10 +564,10 @@ pub const JSBundler = struct {
             self.serve.deinit(allocator);
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
-                    bun.default_allocator.free(ext);
+                    bun.heap.default_allocator.free(ext);
                 }
-                bun.default_allocator.free(loaders.loaders);
-                bun.default_allocator.free(loaders.extensions);
+                bun.heap.default_allocator.free(loaders.loaders);
+                bun.heap.default_allocator.free(loaders.extensions);
             }
             self.names.deinit();
             self.outdir.deinit();
@@ -597,7 +597,7 @@ pub const JSBundler = struct {
             plugins,
             globalThis,
             globalThis.bunVM().eventLoop(),
-            bun.default_allocator,
+            bun.heap.default_allocator,
         );
     }
 
@@ -651,8 +651,8 @@ pub const JSBundler = struct {
                 external: bool = false,
 
                 pub fn deinit(this: *@This()) void {
-                    bun.default_allocator.free(this.path);
-                    bun.default_allocator.free(this.namespace);
+                    bun.heap.default_allocator.free(this.path);
+                    bun.heap.default_allocator.free(this.namespace);
                 }
             },
             no_match,
@@ -671,7 +671,7 @@ pub const JSBundler = struct {
                         success.deinit();
                     },
                     .err => |*err| {
-                        err.deinit(bun.default_allocator);
+                        err.deinit(bun.heap.default_allocator);
                     },
                     .no_match, .pending, .consumed => {},
                 }
@@ -681,7 +681,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Resolve) void {
             this.value.deinit();
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
@@ -712,8 +712,8 @@ pub const JSBundler = struct {
                 resolve.value = .{ .no_match = {} };
             } else {
                 const global = resolve.bv2.plugins.?.globalObject();
-                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(global, bun.heap.default_allocator) orelse @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.heap.default_allocator) orelse @panic("Unexpected: namespace is not a string");
                 resolve.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -786,10 +786,10 @@ pub const JSBundler = struct {
             pub fn deinit(this: *Value) void {
                 switch (this.*) {
                     .success => |success| {
-                        bun.default_allocator.free(success.source_code);
+                        bun.heap.default_allocator.free(success.source_code);
                     },
                     .err => |*err| {
-                        err.deinit(bun.default_allocator);
+                        err.deinit(bun.heap.default_allocator);
                     },
                     .no_match, .pending, .consumed => {},
                 }
@@ -878,7 +878,7 @@ pub const JSBundler = struct {
                 }
             } else {
                 const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
-                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.default_allocator) catch
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.heap.default_allocator) catch
                 // TODO:
                     @panic("Unexpected: source_code is not a string");
                 this.value = .{
@@ -1080,7 +1080,7 @@ pub const JSBundler = struct {
                     const resolve: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
                     resolve.value = .{
                         .err = logger.Msg.fromJS(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             plugin.globalObject(),
                             resolve.import_record.source_file,
                             exception,
@@ -1092,7 +1092,7 @@ pub const JSBundler = struct {
                     const load: *Load = bun.cast(*Load, ctx);
                     load.value = .{
                         .err = logger.Msg.fromJS(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             plugin.globalObject(),
                             load.path,
                             exception,
@@ -1133,7 +1133,7 @@ pub const BuildArtifact = struct {
         this.blob.deinit();
         this.sourcemap.deinit();
 
-        bun.default_allocator.free(this.path);
+        bun.heap.default_allocator.free(this.path);
     }
 
     pub fn getText(
@@ -1230,7 +1230,7 @@ pub const BuildArtifact = struct {
     pub fn finalize(this: *BuildArtifact) callconv(.C) void {
         this.deinit();
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn writeFormat(this: *BuildArtifact, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {

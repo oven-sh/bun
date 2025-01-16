@@ -387,7 +387,7 @@ pub fn PosixStreamingWriter(
 ) type {
     return struct {
         // TODO: replace buffer + head for StreamBuffer
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
         head: usize = 0,
@@ -520,9 +520,9 @@ pub fn PosixStreamingWriter(
             const had_buffered_data = this.buffer.items.len > 0;
             {
                 var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+                defer this.buffer = byte_list.listManaged(bun.heap.default_allocator);
 
-                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
+                _ = byte_list.writeUTF16(bun.heap.default_allocator, buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
             }
@@ -546,9 +546,9 @@ pub fn PosixStreamingWriter(
             const had_buffered_data = this.buffer.items.len > 0;
             {
                 var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+                defer this.buffer = byte_list.listManaged(bun.heap.default_allocator);
 
-                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
+                _ = byte_list.writeLatin1(bun.heap.default_allocator, buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
             }
@@ -776,17 +776,17 @@ fn BaseWindowsPipeWriter(
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
             handle.deinit();
-            bun.default_allocator.destroy(file);
+            bun.heap.default_allocator.destroy(file);
         }
 
         fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
             const this = bun.cast(*uv.Pipe, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
             const this = bun.cast(*uv.uv_tty_t, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
 
         pub fn close(this: *WindowsPipeWriter) void {
@@ -1025,7 +1025,7 @@ pub fn WindowsBufferedWriter(
 
 /// Basic std.ArrayList(u8) + u32 cursor wrapper
 pub const StreamBuffer = struct {
-    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
     // should cursor be usize?
     cursor: u32 = 0,
 

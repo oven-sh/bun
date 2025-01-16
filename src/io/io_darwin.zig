@@ -105,7 +105,7 @@ pub const Waker = struct {
     ) bool;
 
     pub fn init() !Waker {
-        return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());
+        return initWithFileDescriptor(bun.heap.default_allocator, try std.posix.kqueue());
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {

@@ -1248,7 +1248,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (arguments.len == 1) {
         return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
     }
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
@@ -1286,14 +1286,14 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const dep: Version = Dependency.parse(allocator, SlicedString.init(buf, alias).value(), null, buf, &sliced, &log, null) orelse {
         if (log.msgs.items.len > 0) {
-            return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
+            return globalThis.throwValue(log.toJS(globalThis, bun.heap.default_allocator, "Failed to parse dependency"));
         }
 
         return .undefined;
     };
 
     if (log.msgs.items.len > 0) {
-        return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
+        return globalThis.throwValue(log.toJS(globalThis, bun.heap.default_allocator, "Failed to parse dependency"));
     }
     log.deinit();
 

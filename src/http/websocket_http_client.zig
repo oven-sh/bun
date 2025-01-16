@@ -10,7 +10,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const BoringSSL = bun.BoringSSL;
 const uws = bun.uws;
@@ -292,7 +292,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .state = .initializing,
             });
 
-            var host_ = host.toSlice(bun.default_allocator);
+            var host_ = host.toSlice(bun.heap.default_allocator);
             defer host_.deinit();
 
             client.poll_ref.ref(vm);
@@ -320,7 +320,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                        out.hostname = bun.heap.default_allocator.dupeZ(u8, host_.slice()) catch "";
                     }
                 }
 
@@ -337,14 +337,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn clearInput(this: *HTTPClient) void {
-            if (this.input_body_buf.len > 0) bun.default_allocator.free(this.input_body_buf);
+            if (this.input_body_buf.len > 0) bun.heap.default_allocator.free(this.input_body_buf);
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
             this.poll_ref.unref(JSC.VirtualMachine.get());
 
             this.clearInput();
-            this.body.clearAndFree(bun.default_allocator);
+            this.body.clearAndFree(bun.heap.default_allocator);
         }
         pub fn cancel(this: *HTTPClient) callconv(.C) void {
             this.clearData();
@@ -450,7 +450,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
                     socket.getNativeHandle().?.configureHTTPClient(this.hostname);
-                    bun.default_allocator.free(this.hostname);
+                    bun.heap.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
             }
@@ -486,7 +486,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                this.body.appendSlice(bun.heap.default_allocator, data) catch bun.outOfMemory();
                 body = this.body.items;
             }
 
@@ -508,7 +508,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                            this.body.appendSlice(bun.heap.default_allocator, data) catch bun.outOfMemory();
                         }
                         return;
                     },
@@ -626,7 +626,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const overflow_len = remain_buf.len;
             var overflow: []u8 = &.{};
             if (overflow_len > 0) {
-                overflow = bun.default_allocator.alloc(u8, overflow_len) catch {
+                overflow = bun.heap.default_allocator.alloc(u8, overflow_len) catch {
                     this.terminate(ErrorCode.invalid_response);
                     return;
                 };
@@ -1177,7 +1177,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
-                    const utf16_bytes_ = strings.toUTF16Alloc(bun.default_allocator, data_, true, false) catch {
+                    const utf16_bytes_ = strings.toUTF16Alloc(bun.heap.default_allocator, data_, true, false) catch {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };
@@ -1900,7 +1900,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             pub fn deinit(this: *@This()) void {
-                bun.default_allocator.free(this.slice);
+                bun.heap.default_allocator.free(this.slice);
                 this.destroy();
             }
         };
@@ -1919,8 +1919,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = outgoing,
                 .globalThis = globalThis,
-                .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
-                .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+                .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.heap.default_allocator),
+                .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.heap.default_allocator),
                 .event_loop = globalThis.bunVM().eventLoop(),
             });
 

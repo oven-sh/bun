@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -2154,8 +2154,8 @@ pub const Query = struct {
         }
 
         pub fn jsonStringify(this: *const Group, writer: anytype) !void {
-            const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
-            defer bun.default_allocator.free(temp);
+            const temp = try std.fmt.allocPrint(bun.heap.default_allocator, "{}", .{this.fmt()});
+            defer bun.heap.default_allocator.free(temp);
             try std.json.encodeJsonString(temp, .{}, writer);
         }
 
@@ -2193,7 +2193,7 @@ pub const Query = struct {
 
         pub fn from(version: Version) Group {
             return .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
                 .head = .{
                     .head = .{
                         .range = .{
@@ -2793,7 +2793,7 @@ pub const SemverObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();
@@ -2839,7 +2839,7 @@ pub const SemverObject = struct {
     }
 
     pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();

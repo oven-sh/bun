@@ -44,7 +44,7 @@ pub const ProcessHandle = struct {
 
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
-    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
 
     process: ?struct {
         ptr: *bun.spawn.Process,
@@ -56,7 +56,7 @@ pub const ProcessHandle = struct {
     end_time: ?std.time.Instant = null,
 
     remaining_dependencies: usize = 0,
-    dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.default_allocator),
+    dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.heap.default_allocator),
     visited: bool = false,
     visiting: bool = false,
 
@@ -72,7 +72,7 @@ pub const ProcessHandle = struct {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a std.ArrayList shared
             // instead of creating a new one for each process
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
             const original_path = this.state.env.map.get("PATH") orelse "";
             this.state.env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
@@ -160,7 +160,7 @@ const State = struct {
     event_loop: *bun.JSC.MiniEventLoop,
     remaining_scripts: usize = 0,
     // buffer for batched output
-    draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.heap.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
     shell_bin: [:0]const u8,
@@ -554,8 +554,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .config = script,
             .options = .{
                 .stdin = .ignore,
-                .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
-                .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
+                .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.heap.default_allocator.create(bun.windows.libuv.Pipe) },
+                .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.heap.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
                 .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) },
                 .stream = true,

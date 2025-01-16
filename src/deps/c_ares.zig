@@ -394,7 +394,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.heap.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
             with_ttls.hostent = start.?;
             for (addrttls[0..@intCast(naddrttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -410,7 +410,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.heap.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
             with_ttls.hostent = start.?;
             for (addr6ttls[0..@intCast(naddr6ttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -423,7 +423,7 @@ pub const hostent_with_ttls = struct {
 
     pub fn deinit(this: *hostent_with_ttls) void {
         this.hostent.deinit();
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 
@@ -789,9 +789,9 @@ fn libraryInit() void {
 
     const rc = ares_library_init_mem(
         ARES_LIB_INIT_ALL,
-        bun.Mimalloc.mi_malloc,
-        bun.Mimalloc.mi_free,
-        bun.Mimalloc.mi_realloc,
+        bun.heap.Mimalloc.mi_malloc,
+        bun.heap.Mimalloc.mi_free,
+        bun.heap.Mimalloc.mi_realloc,
     );
     if (rc != ARES_SUCCESS) {
         std.debug.panic("ares_library_init_mem failed: {any}", .{rc});
@@ -874,7 +874,7 @@ pub const struct_ares_caa_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -952,7 +952,7 @@ pub const struct_ares_srv_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1035,7 +1035,7 @@ pub const struct_ares_mx_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1109,7 +1109,7 @@ pub const struct_ares_txt_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1211,7 +1211,7 @@ pub const struct_ares_naptr_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1303,7 +1303,7 @@ pub const struct_ares_soa_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1386,7 +1386,7 @@ pub const struct_any_reply = struct {
 
     pub fn toJSResponse(this: *struct_any_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
+        var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1474,7 +1474,7 @@ pub const struct_any_reply = struct {
 
                 var any_success = false;
                 var last_error: ?c_int = null;
-                var reply = bun.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
+                var reply = bun.heap.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
                 reply.* = .{};
 
                 switch (hostent_with_ttls.parse("a", buffer, buffer_length)) {
@@ -1569,7 +1569,7 @@ pub const struct_any_reply = struct {
             }
         }
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 pub extern fn ares_parse_a_reply(abuf: [*c]const u8, alen: c_int, host: [*c]?*struct_hostent, addrttls: [*c]struct_ares_addrttl, naddrttls: [*c]c_int) c_int;
@@ -1715,7 +1715,7 @@ pub const Error = enum(i32) {
                 }
             };
 
-            const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+            const context = bun.heap.default_allocator.create(Context) catch bun.outOfMemory();
             context.deferred = this;
             context.globalThis = globalThis;
             // TODO(@heimskr): new custom Task type
@@ -2012,7 +2012,7 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
         defer addr.deref();
-        const addr_slice = addr.toSlice(bun.default_allocator);
+        const addr_slice = addr.toSlice(bun.heap.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
             return .undefined;

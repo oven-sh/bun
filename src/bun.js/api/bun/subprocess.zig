@@ -1,4 +1,4 @@
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
@@ -117,7 +117,7 @@ pub const ResourceUsage = struct {
     }
 
     pub fn finalize(this: *ResourceUsage) callconv(.C) void {
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 
@@ -251,7 +251,7 @@ pub const Subprocess = struct {
             .rusage = pid_rusage,
         };
 
-        var result = bun.default_allocator.create(ResourceUsage) catch {
+        var result = bun.heap.default_allocator.create(ResourceUsage) catch {
             return globalObject.throwOutOfMemoryValue();
         };
         result.* = resource_usage;
@@ -521,7 +521,7 @@ pub const Subprocess = struct {
                         return JSC.WebCore.ReadableStream.empty(globalThis);
                     }
 
-                    const blob = JSC.WebCore.Blob.init(buffer, bun.default_allocator, globalThis);
+                    const blob = JSC.WebCore.Blob.init(buffer, bun.heap.default_allocator, globalThis);
                     return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
                 },
                 else => {
@@ -550,7 +550,7 @@ pub const Subprocess = struct {
                 .buffer => |buf| {
                     this.* = .{ .closed = {} };
 
-                    return JSC.MarkedArrayBuffer.fromBytes(buf, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                    return JSC.MarkedArrayBuffer.fromBytes(buf, bun.heap.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
                 },
                 else => {
                     return JSValue.jsUndefined();
@@ -1090,7 +1090,7 @@ pub const Subprocess = struct {
                     return stream;
                 },
                 .done => |bytes| {
-                    const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
+                    const blob = JSC.WebCore.Blob.init(bytes, bun.heap.default_allocator, globalObject);
                     this.state = .{ .done = &.{} };
                     return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
                 },
@@ -1107,7 +1107,7 @@ pub const Subprocess = struct {
             switch (this.state) {
                 .done => |bytes| {
                     defer this.state = .{ .done = &.{} };
-                    return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                    return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.heap.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
                 },
                 else => {
                     return JSC.JSValue.undefined;
@@ -1117,7 +1117,7 @@ pub const Subprocess = struct {
 
         pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
             if (this.state == .done) {
-                bun.default_allocator.free(this.state.done);
+                bun.heap.default_allocator.free(this.state.done);
             }
             this.state = .{ .err = err };
             if (this.process) |process|
@@ -1152,7 +1152,7 @@ pub const Subprocess = struct {
             }
 
             if (this.state == .done) {
-                bun.default_allocator.free(this.state.done);
+                bun.heap.default_allocator.free(this.state.done);
             }
 
             this.reader.deinit();
@@ -1581,7 +1581,7 @@ pub const Subprocess = struct {
 
     fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
         // safely free the pipes
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     // This must only be run once per Subprocess
@@ -1607,7 +1607,7 @@ pub const Subprocess = struct {
                     _ = bun.sys.close(item);
                 }
             }
-            this.stdio_pipes.clearAndFree(bun.default_allocator);
+            this.stdio_pipes.clearAndFree(bun.heap.default_allocator);
         }
 
         this.exit_promise.deinit();
@@ -1715,8 +1715,8 @@ pub const Subprocess = struct {
         var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
         defer arg0.deinit();
         // Heap allocate it to ensure we don't run out of stack space.
-        const path_buf: *bun.PathBuffer = try bun.default_allocator.create(bun.PathBuffer);
-        defer bun.default_allocator.destroy(path_buf);
+        const path_buf: *bun.PathBuffer = try bun.heap.default_allocator.create(bun.PathBuffer);
+        defer bun.heap.default_allocator.destroy(path_buf);
 
         var actual_argv0: [:0]const u8 = "";
 
@@ -1806,7 +1806,7 @@ pub const Subprocess = struct {
             }
         }
 
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         const allocator = arena.allocator();
 
@@ -1836,7 +1836,7 @@ pub const Subprocess = struct {
         var args = args_;
         var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
         var ipc_callback: JSValue = .zero;
-        var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+        var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.heap.default_allocator);
         var argv0: ?[*:0]const u8 = null;
         var ipc_channel: i32 = -1;
 

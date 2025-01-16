@@ -15,7 +15,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -29,7 +29,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
+const NullableAllocator = bun.heap.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -368,12 +368,12 @@ pub const Body = struct {
         };
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* == .WTFStringImpl) {
-                if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                if (this.WTFStringImpl.toUTF8IfNeeded(bun.heap.default_allocator)) |bytes| {
                     var str = this.WTFStringImpl;
                     defer str.deref();
                     this.* = .{
                         .InternalBlob = InternalBlob{
-                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.heap.default_allocator, @constCast(bytes.slice())),
                             .was_string = true,
                         },
                     };
@@ -597,11 +597,11 @@ pub const Body = struct {
                     return Body.Value{
                         .InternalBlob = .{
                             .bytes = std.ArrayList(u8){
-                                .items = bun.default_allocator.dupe(u8, bytes) catch {
+                                .items = bun.heap.default_allocator.dupe(u8, bytes) catch {
                                     return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                                 },
                                 .capacity = bytes.len,
-                                .allocator = bun.default_allocator,
+                                .allocator = bun.heap.default_allocator,
                             },
                             .was_string = false,
                         },
@@ -611,13 +611,13 @@ pub const Body = struct {
 
             if (value.as(JSC.DOMFormData)) |form_data| {
                 return Body.Value{
-                    .Blob = Blob.fromDOMFormData(globalThis, bun.default_allocator, form_data),
+                    .Blob = Blob.fromDOMFormData(globalThis, bun.heap.default_allocator, form_data),
                 };
             }
 
             if (value.as(JSC.URLSearchParams)) |search_params| {
                 return Body.Value{
-                    .Blob = Blob.fromURLSearchParams(globalThis, bun.default_allocator, search_params),
+                    .Blob = Blob.fromURLSearchParams(globalThis, bun.heap.default_allocator, search_params),
                 };
             }
 
@@ -749,13 +749,13 @@ pub const Body = struct {
                         },
                         .none, .getBlob => {
                             var blob = Blob.new(new.use());
-                            blob.allocator = bun.default_allocator;
+                            blob.allocator = bun.heap.default_allocator;
                             if (headers) |fetch_headers| {
                                 if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                                    var content_slice = content_type.toSlice(bun.default_allocator);
+                                    var content_slice = content_type.toSlice(bun.heap.default_allocator);
                                     defer content_slice.deinit();
                                     var allocated = false;
-                                    const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
+                                    const mimeType = MimeType.init(content_slice.slice(), bun.heap.default_allocator, &allocated);
                                     blob.content_type = mimeType.value;
                                     blob.content_type_allocated = allocated;
                                     blob.content_type_was_set = true;
@@ -803,7 +803,7 @@ pub const Body = struct {
                         // we will never resize it from here
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         JSC.VirtualMachine.get().global,
                     );
 
@@ -814,16 +814,16 @@ pub const Body = struct {
                     var new_blob: Blob = undefined;
                     var wtf = this.WTFStringImpl;
                     defer wtf.deref();
-                    if (wtf.toUTF8IfNeeded(bun.default_allocator)) |allocated_slice| {
+                    if (wtf.toUTF8IfNeeded(bun.heap.default_allocator)) |allocated_slice| {
                         new_blob = Blob.init(
                             @constCast(allocated_slice.slice()),
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             JSC.VirtualMachine.get().global,
                         );
                     } else {
                         new_blob = Blob.init(
-                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
-                            bun.default_allocator,
+                            bun.heap.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
+                            bun.heap.default_allocator,
                             JSC.VirtualMachine.get().global,
                         );
                     }
@@ -836,7 +836,7 @@ pub const Body = struct {
                 //     // keep same behavior as InternalBlob but clone the data
                 //     const new_blob = Blob.create(
                 //         cloned[0..this.InlineBlob.len],
-                //         bun.default_allocator,
+                //         bun.heap.default_allocator,
                 //         JSC.VirtualMachine.get().global,
                 //         false,
                 //     );
@@ -874,11 +874,11 @@ pub const Body = struct {
                 .Blob => .{ .Blob = this.Blob },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
                 .WTFStringImpl => |str| brk: {
-                    if (str.toUTF8IfNeeded(bun.default_allocator)) |utf8| {
+                    if (str.toUTF8IfNeeded(bun.heap.default_allocator)) |utf8| {
                         defer str.deref();
                         break :brk .{
                             .InternalBlob = InternalBlob{
-                                .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
+                                .bytes = std.ArrayList(u8).fromOwnedSlice(bun.heap.default_allocator, @constCast(utf8.slice())),
                                 .was_string = true,
                             },
                         };
@@ -942,7 +942,7 @@ pub const Body = struct {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
                             .{ .err = this.Error.toStreamError(global) },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                     } else {
                         readable.abort(global);
@@ -1497,7 +1497,7 @@ pub const BodyValueBufferer = struct {
                 log("onFinishedLoadingFile Data {}", .{data.buf.len});
                 sink.onFinishedBuffering(sink.ctx, data.buf, null, true);
                 if (data.is_temporary) {
-                    bun.default_allocator.free(@constCast(data.buf));
+                    bun.heap.default_allocator.free(@constCast(data.buf));
                 }
             },
         }

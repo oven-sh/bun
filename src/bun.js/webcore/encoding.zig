@@ -106,7 +106,7 @@ pub const TextEncoder = struct {
             return uint8array;
         } else {
             const bytes = strings.toUTF8AllocWithType(
-                bun.default_allocator,
+                bun.heap.default_allocator,
                 @TypeOf(slice),
                 slice,
             ) catch {
@@ -466,7 +466,7 @@ pub const TextEncoderStreamEncoder = struct {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {
+        var buffer = std.ArrayList(u8).initCapacity(bun.heap.default_allocator, input.len + prepend_replacement_len) catch {
             return globalObject.throwOutOfMemoryValue();
         };
         if (prepend_replacement_len > 0) {
@@ -550,7 +550,7 @@ pub const TextEncoderStreamEncoder = struct {
         const length = bun.simdutf.length.utf8.from.utf16.le(remain);
 
         var buf = std.ArrayList(u8).initCapacity(
-            bun.default_allocator,
+            bun.heap.default_allocator,
             length + @as(usize, if (prepend) |pre| pre.len else 0),
         ) catch {
             return globalObject.throwOutOfMemoryValue();
@@ -664,12 +664,12 @@ pub const TextDecoder = struct {
                 // TODO: why is this here?
                 // const code_point = strings.u16GetSupplementary(lead_surrogate, code_unit);
                 try output.appendSlice(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     &.{ lead_surrogate, code_unit },
                 );
                 return;
             }
-            try output.append(bun.default_allocator, strings.unicode_replacement);
+            try output.append(bun.heap.default_allocator, strings.unicode_replacement);
             saw_error.* = true;
         }
 
@@ -679,12 +679,12 @@ pub const TextDecoder = struct {
         }
 
         if (strings.u16IsTrail(code_unit)) {
-            try output.append(bun.default_allocator, strings.unicode_replacement);
+            try output.append(bun.heap.default_allocator, strings.unicode_replacement);
             saw_error.* = true;
             return;
         }
 
-        try output.append(bun.default_allocator, code_unit);
+        try output.append(bun.heap.default_allocator, code_unit);
         return;
     }
 
@@ -706,7 +706,7 @@ pub const TextDecoder = struct {
         comptime flush: bool,
     ) error{OutOfMemory}!struct { std.ArrayListUnmanaged(u16), bool } {
         var output: std.ArrayListUnmanaged(u16) = .{};
-        try output.ensureTotalCapacity(bun.default_allocator, @divFloor(bytes.len, 2));
+        try output.ensureTotalCapacity(bun.heap.default_allocator, @divFloor(bytes.len, 2));
 
         var remain = bytes;
         var saw_error = false;
@@ -745,7 +745,7 @@ pub const TextDecoder = struct {
             if (this.lead_byte != null or this.lead_surrogate != null) {
                 this.lead_byte = null;
                 this.lead_surrogate = null;
-                try output.append(bun.default_allocator, strings.unicode_replacement);
+                try output.append(bun.heap.default_allocator, strings.unicode_replacement);
                 saw_error = true;
                 return .{ output, saw_error };
             }
@@ -818,7 +818,7 @@ pub const TextDecoder = struct {
 
                     if (this.buffered.len > 0) {
                         defer this.buffered.len = 0;
-                        const joined = try bun.default_allocator.alloc(u8, maybe_without_bom.len + this.buffered.len);
+                        const joined = try bun.heap.default_allocator.alloc(u8, maybe_without_bom.len + this.buffered.len);
                         @memcpy(joined[0..this.buffered.len], this.buffered.slice());
                         @memcpy(joined[this.buffered.len..][0..maybe_without_bom.len], maybe_without_bom);
                         break :input .{ joined, true };
@@ -828,8 +828,8 @@ pub const TextDecoder = struct {
                 };
 
                 const maybe_decode_result = switch (this.fatal) {
-                    inline else => |fail_if_invalid| strings.toUTF16AllocMaybeBuffered(bun.default_allocator, input, fail_if_invalid, flush) catch |err| {
-                        if (deinit) bun.default_allocator.free(input);
+                    inline else => |fail_if_invalid| strings.toUTF16AllocMaybeBuffered(bun.heap.default_allocator, input, fail_if_invalid, flush) catch |err| {
+                        if (deinit) bun.heap.default_allocator.free(input);
                         if (comptime fail_if_invalid) {
                             if (err == error.InvalidByteSequence) {
                                 return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
@@ -842,7 +842,7 @@ pub const TextDecoder = struct {
                 };
 
                 if (maybe_decode_result) |decode_result| {
-                    if (deinit) bun.default_allocator.free(input);
+                    if (deinit) bun.heap.default_allocator.free(input);
                     const decoded, const leftover, const leftover_len = decode_result;
                     bun.assert(this.buffered.len == 0);
                     if (comptime !flush) {
@@ -870,7 +870,7 @@ pub const TextDecoder = struct {
                 var decoded, const saw_error = try this.decodeUTF16(input, utf16_encoding == .@"UTF-16BE", flush);
 
                 if (saw_error and this.fatal) {
-                    decoded.deinit(bun.default_allocator);
+                    decoded.deinit(bun.heap.default_allocator);
                     return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
                 }
 
@@ -892,7 +892,7 @@ pub const TextDecoder = struct {
         if (arguments.len > 0) {
             // encoding
             if (arguments[0].isString()) {
-                var str = arguments[0].toSlice(globalThis, bun.default_allocator);
+                var str = arguments[0].toSlice(globalThis, bun.heap.default_allocator);
                 defer if (str.isAllocated()) str.deinit();
 
                 if (EncodingLabel.which(str.slice())) |label| {
@@ -991,27 +991,27 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .hex => constructFromU8(input, len, bun.default_allocator, .hex),
-            .ascii => constructFromU8(input, len, bun.default_allocator, .ascii),
-            .base64url => constructFromU8(input, len, bun.default_allocator, .base64url),
-            .utf16le => constructFromU8(input, len, bun.default_allocator, .utf16le),
-            .ucs2 => constructFromU8(input, len, bun.default_allocator, .utf16le),
-            .utf8 => constructFromU8(input, len, bun.default_allocator, .utf8),
-            .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
+            .hex => constructFromU8(input, len, bun.heap.default_allocator, .hex),
+            .ascii => constructFromU8(input, len, bun.heap.default_allocator, .ascii),
+            .base64url => constructFromU8(input, len, bun.heap.default_allocator, .base64url),
+            .utf16le => constructFromU8(input, len, bun.heap.default_allocator, .utf16le),
+            .ucs2 => constructFromU8(input, len, bun.heap.default_allocator, .utf16le),
+            .utf8 => constructFromU8(input, len, bun.heap.default_allocator, .utf8),
+            .base64 => constructFromU8(input, len, bun.heap.default_allocator, .base64),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .base64 => constructFromU16(input, len, bun.default_allocator, .base64),
-            .hex => constructFromU16(input, len, bun.default_allocator, .hex),
-            .base64url => constructFromU16(input, len, bun.default_allocator, .base64url),
-            .utf16le => constructFromU16(input, len, bun.default_allocator, .utf16le),
-            .ucs2 => constructFromU16(input, len, bun.default_allocator, .utf16le),
-            .utf8 => constructFromU16(input, len, bun.default_allocator, .utf8),
-            .ascii => constructFromU16(input, len, bun.default_allocator, .ascii),
-            .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
+            .base64 => constructFromU16(input, len, bun.heap.default_allocator, .base64),
+            .hex => constructFromU16(input, len, bun.heap.default_allocator, .hex),
+            .base64url => constructFromU16(input, len, bun.heap.default_allocator, .base64url),
+            .utf16le => constructFromU16(input, len, bun.heap.default_allocator, .utf16le),
+            .ucs2 => constructFromU16(input, len, bun.heap.default_allocator, .utf16le),
+            .utf8 => constructFromU16(input, len, bun.heap.default_allocator, .utf8),
+            .ascii => constructFromU16(input, len, bun.heap.default_allocator, .ascii),
+            .latin1 => constructFromU16(input, len, bun.heap.default_allocator, .latin1),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
@@ -1067,7 +1067,7 @@ pub const Encoder = struct {
                 }
 
                 const str, const chars = bun.String.createUninitialized(.latin1, input.len);
-                defer bun.default_allocator.free(input);
+                defer bun.heap.default_allocator.free(input);
                 if (str.tag == .Dead) {
                     return str;
                 }
@@ -1078,13 +1078,13 @@ pub const Encoder = struct {
                 return bun.String.createExternalGloballyAllocated(.latin1, input);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch {
-                    bun.default_allocator.free(input);
+                const converted = strings.toUTF16Alloc(bun.heap.default_allocator, input, false, false) catch {
+                    bun.heap.default_allocator.free(input);
                     return bun.String.dead;
                 };
 
                 if (converted) |utf16| {
-                    defer bun.default_allocator.free(input);
+                    defer bun.heap.default_allocator.free(input);
                     return bun.String.createExternalGloballyAllocated(.utf16, utf16);
                 }
 
@@ -1094,7 +1094,7 @@ pub const Encoder = struct {
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
                 if (input.len / 2 == 0) {
-                    bun.default_allocator.free(input);
+                    bun.heap.default_allocator.free(input);
                     return bun.String.empty;
                 }
 
@@ -1103,7 +1103,7 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                defer bun.default_allocator.free(input);
+                defer bun.heap.default_allocator.free(input);
                 const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
 
                 if (str.tag == .Dead) {
@@ -1125,7 +1125,7 @@ pub const Encoder = struct {
             // be addressed separately because constructFromU8's base64url also
             // appears inconsistent with Node.js.
             .base64url => {
-                defer bun.default_allocator.free(input);
+                defer bun.heap.default_allocator.free(input);
                 const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
                 if (out.tag != .Dead) {
                     _ = bun.base64.encodeURLSafe(chars, input);
@@ -1134,9 +1134,9 @@ pub const Encoder = struct {
             },
 
             .base64 => {
-                defer bun.default_allocator.free(input);
+                defer bun.heap.default_allocator.free(input);
                 const to_len = bun.base64.encodeLen(input);
-                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const to = bun.heap.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
                 const wrote = bun.base64.encode(to, input);
                 return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
@@ -1234,7 +1234,7 @@ pub const Encoder = struct {
                 return str;
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                const converted = strings.toUTF16Alloc(bun.heap.default_allocator, input, false, false) catch return bun.String.dead;
                 if (converted) |utf16| {
                     return bun.String.createExternalGloballyAllocated(.utf16, utf16);
                 }
@@ -1271,7 +1271,7 @@ pub const Encoder = struct {
 
             .base64 => {
                 const to_len = bun.base64.encodeLen(input);
-                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const to = bun.heap.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
                 const wrote = bun.base64.encode(to, input);
                 return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
@@ -1423,8 +1423,8 @@ pub const Encoder = struct {
 
                 // very very slow case!
                 // shouldn't really happen though
-                const transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
-                defer bun.default_allocator.free(transcoded);
+                const transcoded = strings.toUTF8Alloc(bun.heap.default_allocator, input[0..len]) catch return 0;
+                defer bun.heap.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
             },
             // else => return &[_]u8{};

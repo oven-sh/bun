@@ -9,9 +9,9 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const C = bun.C;
 
 const Allocator = std.mem.Allocator;
@@ -160,13 +160,13 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
             defer mappings.deref();
-            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
-            defer bun.default_allocator.free(map_path);
+            const map_path = std.mem.concat(bun.heap.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            defer bun.heap.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
             defer file.close();
 
             const source_file = parent.readFileAlloc(
-                bun.default_allocator,
+                bun.heap.default_allocator,
                 specifier,
                 std.math.maxInt(u64),
             ) catch "";
@@ -218,7 +218,7 @@ pub const RuntimeTranspilerStore = struct {
 
     pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
+            .store = TranspilerJob.Store.init(bun.heap.typedAllocator(TranspilerJob)),
         };
     }
 
@@ -253,14 +253,14 @@ pub const RuntimeTranspilerStore = struct {
         referrer: []const u8,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
-        const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
+        const owned_path = Fs.Path.init(bun.heap.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
         job.* = TranspilerJob{
             .path = owned_path,
             .globalThis = globalObject,
-            .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
+            .referrer = bun.heap.default_allocator.dupe(u8, referrer) catch unreachable,
             .vm = vm,
-            .log = logger.Log.init(bun.default_allocator),
+            .log = logger.Log.init(bun.heap.default_allocator),
             .loader = vm.transpiler.options.loader(owned_path.name.ext),
             .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
@@ -304,8 +304,8 @@ pub const RuntimeTranspilerStore = struct {
         };
 
         pub fn deinit(this: *TranspilerJob) void {
-            bun.default_allocator.free(this.path.text);
-            bun.default_allocator.free(this.referrer);
+            bun.heap.default_allocator.free(this.path.text);
+            bun.heap.default_allocator.free(this.referrer);
 
             this.poll_ref.disable();
             this.fetcher.deinit();
@@ -332,7 +332,7 @@ pub const RuntimeTranspilerStore = struct {
 
             const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
-            this.log = logger.Log.init(bun.default_allocator);
+            this.log = logger.Log.init(bun.heap.default_allocator);
             var resolved_source = this.resolved_source;
             const specifier = brk: {
                 if (this.parse_error != null) {
@@ -379,7 +379,7 @@ pub const RuntimeTranspilerStore = struct {
         }
 
         pub fn run(this: *TranspilerJob) void {
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
             const allocator = arena.allocator();
 
@@ -390,7 +390,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
+                ast_memory_store = bun.heap.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -404,11 +404,11 @@ pub const RuntimeTranspilerStore = struct {
             const path = this.path;
             const specifier = this.path.text;
             const loader = this.loader;
-            this.log = logger.Log.init(bun.default_allocator);
+            this.log = logger.Log.init(bun.heap.default_allocator);
 
             var cache = JSC.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
-                .sourcemap_allocator = bun.default_allocator,
+                .sourcemap_allocator = bun.heap.default_allocator,
             };
 
             var vm = this.vm;
@@ -547,7 +547,7 @@ pub const RuntimeTranspilerStore = struct {
                 const duped = String.createUTF8(specifier);
                 vm.source_mappings.putMappings(parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                 }) catch {};
 
                 if (comptime Environment.dump_source) {
@@ -630,8 +630,8 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (source_code_printer == null) {
-                const writer = try js_printer.BufferWriter.init(bun.default_allocator);
-                source_code_printer = bun.default_allocator.create(js_printer.BufferPrinter) catch unreachable;
+                const writer = try js_printer.BufferWriter.init(bun.heap.default_allocator);
+                source_code_printer = bun.heap.default_allocator.create(js_printer.BufferPrinter) catch unreachable;
                 source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
                 source_code_printer.?.ctx.append_null_byte = false;
             }
@@ -694,7 +694,7 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 pub const ModuleLoader = struct {
-    transpile_source_code_arena: ?*bun.ArenaAllocator = null,
+    transpile_source_code_arena: ?*std.heap.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
 
     pub var is_allowed_to_use_internal_testing_apis = false;
@@ -768,7 +768,7 @@ pub const ModuleLoader = struct {
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
         globalThis: *JSC.JSGlobalObject = undefined,
-        arena: *bun.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
 
         // This is the specific state for making it async
         poll_ref: Async.KeepAlive = .{},
@@ -1073,7 +1073,7 @@ pub const ModuleLoader = struct {
             buf.count(opts.specifier);
             buf.count(opts.path.text);
 
-            try buf.allocate(bun.default_allocator);
+            try buf.allocate(bun.heap.default_allocator);
             opts.promise_ptr.?.* = this_promise.asInternalPromise().?;
             const referrer = buf.append(opts.referrer);
             const specifier = buf.append(opts.specifier);
@@ -1190,37 +1190,37 @@ pub const ModuleLoader = struct {
 
             const msg: []u8 = try switch (result.err) {
                 error.PackageManifestHTTP400 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 400 while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
                 error.PackageManifestHTTP401 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 401 while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
                 error.PackageManifestHTTP402 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 402 while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
                 error.PackageManifestHTTP403 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 403 while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
                 error.PackageManifestHTTP404 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "Package '{s}' was not found",
                     .{result.name},
                 ),
                 error.PackageManifestHTTP4xx => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 4xx while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
                 error.PackageManifestHTTP5xx => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 5xx while resolving package '{s}' at '{s}'",
                     .{ result.name, result.url },
                 ),
@@ -1233,13 +1233,13 @@ pub const ModuleLoader = struct {
                         "No match found";
 
                     break :brk std.fmt.allocPrint(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         "{s} '{s}' for package '{s}' (but package exists)",
                         .{ prefix, vm.packageManager().lockfile.str(&result.version.literal), result.name },
                     );
                 },
                 else => |err| std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "{s} resolving package '{s}' at '{s}'",
                     .{ bun.asByteSlice(@errorName(err)), result.name, result.url },
                 ),
@@ -1287,47 +1287,47 @@ pub const ModuleLoader = struct {
 
             const msg: []u8 = try switch (result.err) {
                 error.TarballHTTP400 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 400 downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP401 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 401 downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP402 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 402 downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP403 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 403 downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP404 => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 404 downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP4xx => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 4xx downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballHTTP5xx => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "HTTP 5xx downloading package '{s}@{any}'",
                     msg_args,
                 ),
                 error.TarballFailedToExtract => std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "Failed to extract tarball for package '{s}@{any}'",
                     msg_args,
                 ),
                 else => |err| std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "{s} downloading package '{s}@{any}'",
                     .{
                         bun.asByteSlice(@errorName(err)),
@@ -1460,10 +1460,10 @@ pub const ModuleLoader = struct {
             this.parse_result.deinit();
             this.arena.deinit();
             this.globalThis.bunVM().allocator.destroy(this.arena);
-            // bun.default_allocator.free(this.stmt_blocks);
-            // bun.default_allocator.free(this.expr_blocks);
+            // bun.heap.default_allocator.free(this.stmt_blocks);
+            // bun.heap.default_allocator.free(this.expr_blocks);
 
-            bun.default_allocator.free(this.string_buf);
+            bun.heap.default_allocator.free(this.string_buf);
         }
 
         extern "C" fn Bun__onFulfillAsyncModule(
@@ -1526,7 +1526,7 @@ pub const ModuleLoader = struct {
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
 
-                var arena_: ?*bun.ArenaAllocator = brk: {
+                var arena_: ?*std.heap.ArenaAllocator = brk: {
                     // Attempt to reuse the Arena from the parser when we can
                     // This code is potentially re-entrant, so only one Arena can be reused at a time
                     // That's why we have to check if the Arena is null
@@ -1538,8 +1538,8 @@ pub const ModuleLoader = struct {
                     }
 
                     // we must allocate the arena so that the pointer it points to is always valid.
-                    const arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
-                    arena.* = bun.ArenaAllocator.init(bun.default_allocator);
+                    const arena = try jsc_vm.allocator.create(std.heap.ArenaAllocator);
+                    arena.* = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
                     break :brk arena;
                 };
 
@@ -1579,7 +1579,7 @@ pub const ModuleLoader = struct {
 
                 var cache = JSC.RuntimeTranspilerCache{
                     .output_code_allocator = allocator,
-                    .sourcemap_allocator = bun.default_allocator,
+                    .sourcemap_allocator = bun.heap.default_allocator,
                 };
 
                 const old = jsc_vm.transpiler.log;
@@ -1803,7 +1803,7 @@ pub const ModuleLoader = struct {
                 if (cache.entry) |*entry| {
                     jsc_vm.source_mappings.putMappings(parse_result.source, .{
                         .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
-                        .allocator = bun.default_allocator,
+                        .allocator = bun.heap.default_allocator,
                     }) catch {};
 
                     if (comptime Environment.allow_assert) {
@@ -2447,7 +2447,7 @@ pub const ModuleLoader = struct {
         JSC.markBinding(@src());
         if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
-        const specifier_slice = specifier_ptr.toUTF8(bun.default_allocator);
+        const specifier_slice = specifier_ptr.toUTF8(bun.heap.default_allocator);
         defer specifier_slice.deinit();
         const specifier = specifier_slice.slice();
 
@@ -2578,7 +2578,7 @@ pub const ModuleLoader = struct {
                 .ws => return jsSyntheticModule(.ws, specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
-            const spec = specifier.toUTF8(bun.default_allocator);
+            const spec = specifier.toUTF8(bun.heap.default_allocator);
             defer spec.deinit();
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
                 return ResolvedSource{
@@ -2590,7 +2590,7 @@ pub const ModuleLoader = struct {
                 };
             }
         } else if (jsc_vm.standalone_module_graph) |graph| {
-            const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+            const specifier_utf8 = specifier.toUTF8(bun.heap.default_allocator);
             defer specifier_utf8.deinit();
             if (graph.files.getPtr(specifier_utf8.slice())) |file| {
                 if (file.loader == .sqlite or file.loader == .sqlite_embedded) {
@@ -3101,7 +3101,7 @@ pub const HardcodedModule = enum {
 export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
     if (vm.standalone_module_graph == null) return false;
 
-    const input_path = in_out_str.toUTF8(bun.default_allocator);
+    const input_path = in_out_str.toUTF8(bun.heap.default_allocator);
     defer input_path.deinit();
     const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.createUTF8(result);

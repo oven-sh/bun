@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
@@ -471,7 +471,7 @@ pub const NumberRenamer = struct {
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
-    arena: bun.ArenaAllocator,
+    arena: std.heap.ArenaAllocator,
     root: NumberScope = .{},
     name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
     name_temp_allocator: std.mem.Allocator = undefined,
@@ -539,7 +539,7 @@ pub const NumberRenamer = struct {
             .temp_allocator = temp_allocator,
             .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
-            .arena = bun.ArenaAllocator.init(temp_allocator),
+            .arena = std.heap.ArenaAllocator.init(temp_allocator),
         };
         renamer.name_stack_fallback = .{
             .buffer = undefined,

@@ -331,14 +331,14 @@ pub const Mapping = struct {
                 switch (bun.sys.File.readFrom(
                     std.fs.cwd(),
                     normalized,
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                 )) {
                     .result => |r| break :bytes r,
                     .err => return null,
                 }
             };
 
-            return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
+            return bun.JSC.ZigString.Slice.init(bun.heap.default_allocator, bytes);
         }
     };
 
@@ -660,7 +660,7 @@ pub const ParsedSourceMap = struct {
     }
 
     fn deinitFn(this: *ParsedSourceMap) void {
-        this.deinitWithAllocator(bun.default_allocator);
+        this.deinitWithAllocator(bun.heap.default_allocator);
     }
 
     fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
@@ -767,8 +767,8 @@ pub const SourceProviderMap = opaque {
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,
     ) ?SourceMap.ParseUrl {
-        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
-        var arena = bun.ArenaAllocator.init(sfb.get());
+        var sfb = std.heap.stackFallback(65536, bun.heap.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(sfb.get());
         defer arena.deinit();
         const allocator = arena.allocator();
 
@@ -791,7 +791,7 @@ pub const SourceProviderMap = opaque {
                 break :parsed .{
                     .is_inline_map,
                     parseUrl(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         allocator,
                         found_url.slice(),
                         result,
@@ -819,7 +819,7 @@ pub const SourceProviderMap = opaque {
                 break :parsed .{
                     .is_external_map,
                     parseJSON(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         allocator,
                         data,
                         result,
@@ -1007,7 +1007,7 @@ pub const SourceMapPieces = struct {
         // the joiner's node allocator contains string join nodes as well as some vlq encodings
         // it doesnt contain json payloads or source code, so 16kb is probably going to cover
         // most applications.
-        var sfb = std.heap.stackFallback(16384, bun.default_allocator);
+        var sfb = std.heap.stackFallback(16384, bun.heap.default_allocator);
         var j = StringJoiner{ .allocator = sfb.get() };
 
         j.pushStatic(this.prefix.items);

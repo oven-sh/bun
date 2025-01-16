@@ -1356,7 +1356,9 @@ for (const [filename, { functions, typedefs }] of files) {
 
       for (const arg of vari.args) {
         if (arg.type.kind === "UTF8String") {
-          zigInternal.line(`const ${arg.zigMappedName}_utf8 = ${arg.zigMappedName}.toUTF8(bun.default_allocator);`);
+          zigInternal.line(
+            `const ${arg.zigMappedName}_utf8 = ${arg.zigMappedName}.toUTF8(bun.heap.default_allocator);`,
+          );
           zigInternal.line(`defer ${arg.zigMappedName}_utf8.deinit();`);
         }
       }

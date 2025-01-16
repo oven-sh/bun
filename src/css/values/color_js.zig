@@ -151,7 +151,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         return globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
     }
 
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
     const allocator = stack_fallback.get();
@@ -232,7 +232,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             };
         }
 
-        input = args[0].toSlice(globalThis, bun.default_allocator);
+        input = args[0].toSlice(globalThis, bun.heap.default_allocator);
 
         var parser_input = css.ParserInput.new(allocator, input.slice());
         var parser = css.Parser.new(&parser_input, null);

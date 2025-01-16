@@ -1,7 +1,7 @@
 const Allocator = std.mem.Allocator;
 const uws = bun.uws;
 const std = @import("std");
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Async = bun.Async;
@@ -247,10 +247,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                    break :brk .{ .buffer = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                 },
-                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-                .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .ipc => .{ .ipc = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .capture, .pipe, .array_buffer => .{ .buffer = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },

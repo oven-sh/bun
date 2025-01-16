@@ -124,9 +124,9 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
     defer str.deref();
 
     return switch (str.encoding()) {
-        inline .utf16, .latin1 => |encoding| split(encoding, globalThis, bun.default_allocator, &str),
+        inline .utf16, .latin1 => |encoding| split(encoding, globalThis, bun.heap.default_allocator, &str),
         .utf8 => if (bun.strings.isAllASCII(str.byteSlice()))
-            return split(.utf8, globalThis, bun.default_allocator, &str)
+            return split(.utf8, globalThis, bun.heap.default_allocator, &str)
         else
             return JSC.JSValue.jsUndefined(),
     };

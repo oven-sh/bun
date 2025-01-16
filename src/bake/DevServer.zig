@@ -211,7 +211,7 @@ pub const RouteBundle = struct {
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) bun.JSOOM!*DevServer {
-    const allocator = bun.default_allocator;
+    const allocator = bun.heap.default_allocator;
     bun.analytics.Features.dev_server +|= 1;
 
     var dump_dir = if (bun.FeatureFlags.bake_debugging_features)
@@ -286,7 +286,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const fs = bun.fs.FileSystem.init(options.root) catch |err|
         return global.throwError(err, generic_action);
 
-    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
+    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.heap.default_allocator) catch |err|
         return global.throwError(err, "while initializing file watcher for development server");
 
     errdefer dev.bun_watcher.deinit(false);
@@ -1304,7 +1304,7 @@ pub fn finalizeBundle(
 
     var has_route_bits_set = false;
 
-    var hot_update_payload_sfa = std.heap.stackFallback(65536, bun.default_allocator);
+    var hot_update_payload_sfa = std.heap.stackFallback(65536, bun.heap.default_allocator);
     var hot_update_payload = std.ArrayList(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
         unreachable; // enough space
     defer hot_update_payload.deinit();
@@ -1552,7 +1552,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
 
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.items.len > 0) {
-        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
         const temp_alloc = sfb.get();
         var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
@@ -2087,7 +2087,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, key);
+                gop.key_ptr.* = try bun.heap.default_allocator.dupe(u8, key);
                 try g.first_dep.append(dev.allocator, .none);
                 try g.first_import.append(dev.allocator, .none);
             }
@@ -2102,7 +2102,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .client => {
                     if (gop.found_existing) {
                         if (kind == .js)
-                            bun.default_allocator.free(gop.value_ptr.code());
+                            bun.heap.default_allocator.free(gop.value_ptr.code());
 
                         if (gop.value_ptr.flags.failed) {
                             const kv = dev.bundling_failures.fetchSwapRemoveAdapted(
@@ -2509,7 +2509,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                gop.key_ptr.* = try bun.heap.default_allocator.dupe(u8, abs_path);
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
             } else {
@@ -2562,7 +2562,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                gop.key_ptr.* = try bun.heap.default_allocator.dupe(u8, abs_path);
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
             }
@@ -2597,7 +2597,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                gop.key_ptr.* = try bun.heap.default_allocator.dupe(u8, abs_path);
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
             }
@@ -3256,7 +3256,7 @@ pub const SerializedFailure = struct {
     data: []u8,
 
     pub fn deinit(f: SerializedFailure) void {
-        bun.default_allocator.free(f.data);
+        bun.heap.default_allocator.free(f.data);
     }
 
     /// The metaphorical owner of an incremental file error. The packed variant
@@ -3348,7 +3348,7 @@ pub const SerializedFailure = struct {
             @panic("TODO");
         }
         // Avoid small re-allocations without requesting so much from the heap
-        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var sfb = std.heap.stackFallback(65536, bun.heap.default_allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
             unreachable; // enough space
         const w = payload.writer();
@@ -3358,7 +3358,7 @@ pub const SerializedFailure = struct {
 
         // Avoid-recloning if it is was moved to the hap
         const data = if (payload.items.ptr == &sfb.buffer)
-            try bun.default_allocator.dupe(u8, payload.items)
+            try bun.heap.default_allocator.dupe(u8, payload.items)
         else
             payload.items;
 
@@ -3373,7 +3373,7 @@ pub const SerializedFailure = struct {
         assert(messages.len > 0);
 
         // Avoid small re-allocations without requesting so much from the heap
-        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var sfb = std.heap.stackFallback(65536, bun.heap.default_allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
             unreachable; // enough space
         const w = payload.writer();
@@ -3390,7 +3390,7 @@ pub const SerializedFailure = struct {
 
         // Avoid-recloning if it is was moved to the hap
         const data = if (payload.items.ptr == &sfb.buffer)
-            try bun.default_allocator.dupe(u8, payload.items)
+            try bun.heap.default_allocator.dupe(u8, payload.items)
         else
             payload.items;
 
@@ -3501,7 +3501,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
     if (!bun.FeatureFlags.bake_debugging_features) return;
     if (dev.emit_visualizer_events == 0) return;
 
-    var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+    var sfb = std.heap.stackFallback(65536, bun.heap.default_allocator);
     var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 65536);
     defer payload.deinit();
 
@@ -3857,7 +3857,7 @@ const c = struct {
 pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
     defer event.files.clearRetainingCapacity();
 
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
     const temp_alloc = sfb.get();
     var entry_points: EntryPointList = EntryPointList.empty;
     defer entry_points.deinit(temp_alloc);
@@ -3986,7 +3986,7 @@ pub const HotReloadEvent = struct {
 
         // defer event.files.clearRetainingCapacity();
 
-        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
         const temp_alloc = sfb.get();
         var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
@@ -4363,7 +4363,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll(start);
     try file.writeAll("\nlet inlinedData = Uint8Array.from(atob(\"");
 
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, bun.heap.default_allocator);
     var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 4096);
     defer payload.deinit();
     try dev.writeVisualizerMessage(&payload);
@@ -4483,5 +4483,5 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+const ThreadlocalArena = bun.heap.MimallocArena;
 const Chunk = bun.bundle_v2.Chunk;

@@ -21,7 +21,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
     response_buffer: bun.MutableString = .{
-        .allocator = bun.default_allocator,
+        .allocator = bun.heap.default_allocator,
         .list = .{
             .items = &.{},
             .capacity = 0,
@@ -29,7 +29,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     },
     mutex: bun.Mutex = .{},
     reported_response_buffer: bun.MutableString = .{
-        .allocator = bun.default_allocator,
+        .allocator = bun.heap.default_allocator,
         .list = .{
             .items = &.{},
             .capacity = 0,
@@ -67,10 +67,10 @@ pub const S3HttpDownloadStreamingTask = struct {
         this.sign_result.deinit();
         this.http.clearData();
         if (this.range) |range| {
-            bun.default_allocator.free(range);
+            bun.heap.default_allocator.free(range);
         }
         if (this.proxy_url.len > 0) {
-            bun.default_allocator.free(this.proxy_url);
+            bun.heap.default_allocator.free(this.proxy_url);
         }
 
         this.destroy();
@@ -126,7 +126,7 @@ pub const S3HttpDownloadStreamingTask = struct {
                         .message = message,
                     };
                 }
-                break :brk bun.MutableString{ .allocator = bun.default_allocator, .list = .{} };
+                break :brk bun.MutableString{ .allocator = bun.heap.default_allocator, .list = .{} };
             } else {
                 const buffer = this.reported_response_buffer;
                 break :brk buffer;
@@ -176,12 +176,12 @@ pub const S3HttpDownloadStreamingTask = struct {
             state.request_error = if (result.fail) |err| @intFromError(err) else 0;
             if (state.status_code == 0) {
                 if (result.certificate_info) |*certificate| {
-                    certificate.deinit(bun.default_allocator);
+                    certificate.deinit(bun.heap.default_allocator);
                 }
                 if (result.metadata) |m| {
                     var metadata = m;
                     state.status_code = metadata.response.status_code;
-                    metadata.deinit(bun.default_allocator);
+                    metadata.deinit(bun.heap.default_allocator);
                 }
             }
             switch (state.status_code) {

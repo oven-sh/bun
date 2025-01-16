@@ -644,14 +644,14 @@ pub const Loop = extern struct {
     }
 
     pub fn new() ?*Loop {
-        const ptr = bun.default_allocator.create(Loop) catch return null;
+        const ptr = bun.heap.default_allocator.create(Loop) catch return null;
         if (init(ptr) != null) return null;
         return ptr;
     }
 
     pub fn delete(ptr: *Loop) void {
         close(ptr);
-        bun.default_allocator.destroy(ptr);
+        bun.heap.default_allocator.destroy(ptr);
     }
 
     threadlocal var threadlocal_loop_data: Loop = undefined;

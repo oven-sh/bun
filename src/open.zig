@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const DotEnv = @import("env_loader.zig");
@@ -338,7 +338,7 @@ pub const Editor = enum(u8) {
     };
 
     fn autoClose(spawned: *SpawnedEditorContext) void {
-        defer bun.default_allocator.destroy(spawned);
+        defer bun.heap.default_allocator.destroy(spawned);
 
         Global.setThreadName("Open Editor");
         spawned.child_process.spawn() catch return;

@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
@@ -111,10 +111,10 @@ pub const ParseResult = struct {
     /// Normally, we allocate each AST in an arena and free all at once
     /// So this function only should be used when we globally allocate an AST
     pub fn deinit(this: *ParseResult) void {
-        _resolver.PendingResolution.deinitListItems(this.pending_imports, bun.default_allocator);
-        this.pending_imports.deinit(bun.default_allocator);
+        _resolver.PendingResolution.deinitListItems(this.pending_imports, bun.heap.default_allocator);
+        this.pending_imports.deinit(bun.heap.default_allocator);
         this.ast.deinit();
-        bun.default_allocator.free(@constCast(this.source.contents));
+        bun.heap.default_allocator.free(@constCast(this.source.contents));
     }
 };
 
@@ -1313,7 +1313,7 @@ pub const Transpiler = struct {
             }
 
             const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
-                if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
+                if (use_shared_buffer) bun.heap.fs_allocator else this_parse.allocator,
                 transpiler.fs,
                 path.text,
                 dirname_fd,
@@ -1440,7 +1440,7 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.heap.default_allocator).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }
@@ -1858,7 +1858,7 @@ pub const Transpiler = struct {
             // try transpiler.output_files.append(
             //     options.OutputFile.initBuf(
             //         runtime.Runtime.source_code,
-            //         bun.default_allocator,
+            //         bun.heap.default_allocator,
             //         Linker.runtime_source_path,
             //         .js,
             //         null,

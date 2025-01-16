@@ -1108,7 +1108,7 @@ export fn Bun__Node__Path_joinWTF(lhs: *bun.String, rhs_ptr: [*]const u8, rhs_le
     const rhs = rhs_ptr[0..rhs_len];
     var buf: [PATH_SIZE(u8)]u8 = undefined;
     var buf2: [PATH_SIZE(u8)]u8 = undefined;
-    var slice = lhs.toUTF8(bun.default_allocator);
+    var slice = lhs.toUTF8(bun.heap.default_allocator);
     defer slice.deinit();
     if (Environment.isWindows) {
         const win = joinWindowsT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
@@ -1249,7 +1249,7 @@ pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: 
 pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
     if (args_len == 0) return toJSString(globalObject, CHAR_STR_DOT);
 
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
@@ -2798,7 +2798,7 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
 extern "C" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());

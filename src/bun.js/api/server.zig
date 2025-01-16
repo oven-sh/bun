@@ -1,5 +1,5 @@
 const Bun = @This();
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const AnyBlob = bun.JSC.WebCore.AnyBlob;
@@ -75,7 +75,7 @@ const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
 const BoringSSL = bun.BoringSSL;
-const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
     socket_fd: bun.FileDescriptor = bun.invalid_fd,
@@ -271,7 +271,7 @@ pub const ServerConfig = struct {
     id: []const u8 = "",
     allow_hot: bool = true,
 
-    static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
+    static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.heap.default_allocator),
 
     bake: ?bun.bake.UserOptions = null,
 
@@ -299,13 +299,13 @@ pub const ServerConfig = struct {
             this.route.ref();
 
             return .{
-                .path = try bun.default_allocator.dupe(u8, this.path),
+                .path = try bun.heap.default_allocator.dupe(u8, this.path),
                 .route = this.route,
             };
         }
 
         pub fn deinit(this: *StaticRouteEntry) void {
-            bun.default_allocator.free(this.path);
+            bun.heap.default_allocator.free(this.path);
             this.route.deref();
         }
 
@@ -322,14 +322,14 @@ pub const ServerConfig = struct {
         this.websocket = null;
         this.bake = null;
 
-        var static_routes_dedupe_list = bun.StringHashMap(void).init(bun.default_allocator);
+        var static_routes_dedupe_list = bun.StringHashMap(void).init(bun.heap.default_allocator);
         try static_routes_dedupe_list.ensureTotalCapacity(@truncate(this.static_routes.items.len));
         defer static_routes_dedupe_list.deinit();
 
         // Iterate through the list of static routes backwards
         // Later ones added override earlier ones
         var static_routes = this.static_routes;
-        this.static_routes = std.ArrayList(StaticRouteEntry).init(bun.default_allocator);
+        this.static_routes = std.ArrayList(StaticRouteEntry).init(bun.heap.default_allocator);
         if (static_routes.items.len > 0) {
             var index = static_routes.items.len - 1;
             while (true) {
@@ -353,7 +353,7 @@ pub const ServerConfig = struct {
 
     pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyStaticRoute) !void {
         try this.static_routes.append(StaticRouteEntry{
-            .path = try bun.default_allocator.dupe(u8, path),
+            .path = try bun.heap.default_allocator.dupe(u8, path),
             .route = route,
         });
     }
@@ -393,10 +393,10 @@ pub const ServerConfig = struct {
     }
 
     pub fn deinit(this: *ServerConfig) void {
-        this.address.deinit(bun.default_allocator);
+        this.address.deinit(bun.heap.default_allocator);
 
         if (this.base_url.href.len > 0) {
-            bun.default_allocator.free(this.base_url.href);
+            bun.heap.default_allocator.free(this.base_url.href);
             this.base_url = URL{};
         }
         if (this.ssl_config) |*ssl_config| {
@@ -407,7 +407,7 @@ pub const ServerConfig = struct {
             for (sni.slice()) |*ssl_config| {
                 ssl_config.deinit();
             }
-            this.sni.?.deinitWithAllocator(bun.default_allocator);
+            this.sni.?.deinitWithAllocator(bun.heap.default_allocator);
             this.sni = null;
         }
 
@@ -600,7 +600,7 @@ pub const ServerConfig = struct {
                 if (@field(this, field)) |slice_ptr| {
                     const slice = std.mem.span(slice_ptr);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.heap.default_allocator.free(slice);
                     }
                     @field(this, field) = "";
                 }
@@ -610,11 +610,11 @@ pub const ServerConfig = struct {
                 for (0..this.cert_count) |i| {
                     const slice = std.mem.span(cert[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.heap.default_allocator.free(slice);
                     }
                 }
 
-                bun.default_allocator.free(cert);
+                bun.heap.default_allocator.free(cert);
                 this.cert = null;
             }
 
@@ -622,11 +622,11 @@ pub const ServerConfig = struct {
                 for (0..this.key_count) |i| {
                     const slice = std.mem.span(key[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.heap.default_allocator.free(slice);
                     }
                 }
 
-                bun.default_allocator.free(key);
+                bun.heap.default_allocator.free(key);
                 this.key = null;
             }
 
@@ -634,11 +634,11 @@ pub const ServerConfig = struct {
                 for (0..this.ca_count) |i| {
                     const slice = std.mem.span(ca[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.heap.default_allocator.free(slice);
                     }
                 }
 
-                bun.default_allocator.free(ca);
+                bun.heap.default_allocator.free(ca);
                 this.ca = null;
             }
         }
@@ -649,7 +649,7 @@ pub const ServerConfig = struct {
             var result = zero;
             errdefer result.deinit();
 
-            var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
+            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
 
             if (!obj.isObject()) {
@@ -662,10 +662,10 @@ pub const ServerConfig = struct {
 
             // Required
             if (try obj.getTruthy(global, "keyFile")) |key_file_name| {
-                var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                var sliced = key_file_name.toSlice(global, bun.heap.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.key_file_name = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access keyFile path", .{});
                     }
@@ -678,7 +678,7 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
@@ -687,7 +687,7 @@ pub const ServerConfig = struct {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -712,7 +712,7 @@ pub const ServerConfig = struct {
                         }
 
                         if (valid_count == 0) {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         } else {
                             result.key = native_array;
                         }
@@ -721,7 +721,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("key", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                         native_array[0] = content.data.ptr;
                         result.key = native_array;
                         result.key_count = 1;
@@ -732,18 +732,18 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.key = native_array;
                             result.key_count = 1;
                         } else {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         }
                     } else {
                         // mark and free all certs
@@ -754,10 +754,10 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "certFile")) |cert_file_name| {
-                var sliced = cert_file_name.toSlice(global, bun.default_allocator);
+                var sliced = cert_file_name.toSlice(global, bun.heap.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.cert_file_name = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access certFile path", .{});
                     }
@@ -771,7 +771,7 @@ pub const ServerConfig = struct {
                     defer sb.deinit();
                     const sliced = sb.slice();
                     if (sliced.len > 0) {
-                        result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                        result.protos = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                         result.protos_len = sliced.len;
                     }
 
@@ -786,7 +786,7 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
@@ -795,7 +795,7 @@ pub const ServerConfig = struct {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -820,7 +820,7 @@ pub const ServerConfig = struct {
                         }
 
                         if (valid_count == 0) {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         } else {
                             result.cert = native_array;
                         }
@@ -829,7 +829,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("cert", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                         native_array[0] = content.data.ptr;
                         result.cert = native_array;
                         result.cert_count = 1;
@@ -840,18 +840,18 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.cert = native_array;
                             result.cert_count = 1;
                         } else {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         }
                     } else {
                         // mark and free all certs
@@ -880,20 +880,20 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
-                var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
+                var sliced = ssl_ciphers.toSlice(global, bun.heap.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ssl_ciphers = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
             }
 
             if (try obj.getTruthy(global, "serverName") orelse try obj.getTruthy(global, "servername")) |server_name| {
-                var sliced = server_name.toSlice(global, bun.default_allocator);
+                var sliced = server_name.toSlice(global, bun.heap.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.server_name = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -903,7 +903,7 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
@@ -912,7 +912,7 @@ pub const ServerConfig = struct {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -937,7 +937,7 @@ pub const ServerConfig = struct {
                         }
 
                         if (valid_count == 0) {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         } else {
                             result.ca = native_array;
                         }
@@ -946,7 +946,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("ca", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                         native_array[0] = content.data.ptr;
                         result.ca = native_array;
                         result.ca_count = 1;
@@ -957,18 +957,18 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    const native_array = bun.heap.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = bun.heap.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.ca = native_array;
                             result.ca_count = 1;
                         } else {
-                            bun.default_allocator.free(native_array);
+                            bun.heap.default_allocator.free(native_array);
                         }
                     } else {
                         // mark and free all certs
@@ -979,10 +979,10 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "caFile")) |ca_file_name| {
-                var sliced = ca_file_name.toSlice(global, bun.default_allocator);
+                var sliced = ca_file_name.toSlice(global, bun.heap.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ca_file_name = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Invalid caFile path", .{});
                     }
@@ -1009,10 +1009,10 @@ pub const ServerConfig = struct {
                 }
 
                 if (try obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
-                    var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
+                    var sliced = dh_params_file_name.toSlice(global, bun.heap.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.dh_params_file_name = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
                             return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
                         }
@@ -1020,10 +1020,10 @@ pub const ServerConfig = struct {
                 }
 
                 if (try obj.getTruthy(global, "passphrase")) |passphrase| {
-                    var sliced = passphrase.toSlice(global, bun.default_allocator);
+                    var sliced = passphrase.toSlice(global, bun.heap.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.passphrase = bun.heap.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     }
                 }
 
@@ -1124,7 +1124,7 @@ pub const ServerConfig = struct {
                 }).init(global, static);
                 defer iter.deinit();
 
-                var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.default_allocator);
+                var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.heap.default_allocator);
                 defer dedupe_html_bundle_map.deinit();
 
                 errdefer {
@@ -1135,17 +1135,17 @@ pub const ServerConfig = struct {
                 }
 
                 while (try iter.next()) |key| {
-                    const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                    const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.heap.default_allocator) catch bun.outOfMemory();
 
                     const value = iter.value;
 
                     if (path.len == 0 or path[0] != '/') {
-                        bun.default_allocator.free(path);
+                        bun.heap.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
-                        bun.default_allocator.free(path);
+                        bun.heap.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
@@ -1201,22 +1201,22 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "baseURI")) |baseURI| {
-                var sliced = baseURI.toSlice(global, bun.default_allocator);
+                var sliced = baseURI.toSlice(global, bun.heap.default_allocator);
 
                 if (sliced.len > 0) {
                     defer sliced.deinit();
-                    args.base_uri = bun.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
+                    args.base_uri = bun.heap.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
                 }
             }
             if (global.hasException()) return error.JSError;
 
             if (try arg.getStringish(global, "hostname") orelse try arg.getStringish(global, "host")) |host| {
                 defer host.deref();
-                const host_str = host.toUTF8(bun.default_allocator);
+                const host_str = host.toUTF8(bun.heap.default_allocator);
                 defer host_str.deinit();
 
                 if (host_str.len > 0) {
-                    args.address.tcp.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                    args.address.tcp.hostname = bun.heap.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
                     has_hostname = true;
                 }
             }
@@ -1224,14 +1224,14 @@ pub const ServerConfig = struct {
 
             if (try arg.getStringish(global, "unix")) |unix| {
                 defer unix.deref();
-                const unix_str = unix.toUTF8(bun.default_allocator);
+                const unix_str = unix.toUTF8(bun.heap.default_allocator);
                 defer unix_str.deinit();
                 if (unix_str.len > 0) {
                     if (has_hostname) {
                         return global.throwInvalidArguments("Cannot specify both hostname and unix", .{});
                     }
 
-                    args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
+                    args.address = .{ .unix = bun.heap.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
                 }
             }
             if (global.hasException()) return error.JSError;
@@ -1242,11 +1242,11 @@ pub const ServerConfig = struct {
                 } else {
                     const id_str = id.toSlice(
                         global,
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     );
 
                     if (id_str.len > 0) {
-                        args.id = (id_str.cloneIfNeeded(bun.default_allocator) catch unreachable).slice();
+                        args.id = (id_str.cloneIfNeeded(bun.heap.default_allocator) catch unreachable).slice();
                     } else {
                         args.allow_hot = false;
                     }
@@ -1345,10 +1345,10 @@ pub const ServerConfig = struct {
                                 return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
                             }
                             if (args.sni == null) {
-                                args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
+                                args.sni = bun.BabyList(SSLConfig).initCapacity(bun.heap.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
                             }
 
-                            args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                            args.sni.?.push(bun.heap.default_allocator, ssl_config) catch bun.outOfMemory();
                         }
                     }
                 } else {
@@ -1379,13 +1379,13 @@ pub const ServerConfig = struct {
         if (args.base_uri.len > 0) {
             args.base_url = URL.parse(args.base_uri);
             if (args.base_url.hostname.len == 0) {
-                bun.default_allocator.free(@constCast(args.base_uri));
+                bun.heap.default_allocator.free(@constCast(args.base_uri));
                 args.base_uri = "";
                 return global.throwInvalidArguments("baseURI must have a hostname", .{});
             }
 
             if (!strings.isAllASCII(args.base_uri)) {
-                bun.default_allocator.free(@constCast(args.base_uri));
+                bun.heap.default_allocator.free(@constCast(args.base_uri));
                 args.base_uri = "";
                 return global.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{});
             }
@@ -1396,13 +1396,13 @@ pub const ServerConfig = struct {
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
                 if (needsBrackets) {
                     args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                        std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
+                        std.fmt.allocPrint(bun.heap.default_allocator, "{s}://[{s}]/{s}", .{
                             protocol,
                             hostname,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })
                     else
-                        std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
+                        std.fmt.allocPrint(bun.heap.default_allocator, "{s}://[{s}]:{d}/{s}", .{
                             protocol,
                             hostname,
                             port,
@@ -1410,13 +1410,13 @@ pub const ServerConfig = struct {
                         })) catch unreachable;
                 } else {
                     args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                        std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
+                        std.fmt.allocPrint(bun.heap.default_allocator, "{s}://{s}/{s}", .{
                             protocol,
                             hostname,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })
                     else
-                        std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
+                        std.fmt.allocPrint(bun.heap.default_allocator, "{s}://{s}:{d}/{s}", .{
                             protocol,
                             hostname,
                             port,
@@ -1435,24 +1435,24 @@ pub const ServerConfig = struct {
             const protocol: string = if (args.ssl_config != null) "https" else "http";
             if (needsBrackets) {
                 args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
+                    std.fmt.allocPrint(bun.heap.default_allocator, "{s}://[{s}]/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
+                    std.fmt.allocPrint(bun.heap.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
             } else {
                 args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
+                    std.fmt.allocPrint(bun.heap.default_allocator, "{s}://{s}/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
+                    std.fmt.allocPrint(bun.heap.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
             }
 
             if (!strings.isAllASCII(hostname)) {
-                bun.default_allocator.free(@constCast(args.base_uri));
+                bun.heap.default_allocator.free(@constCast(args.base_uri));
                 args.base_uri = "";
                 return global.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{});
             }
@@ -1463,13 +1463,13 @@ pub const ServerConfig = struct {
         // I don't think there's a case where this can happen
         // but let's check anyway, just in case
         if (args.base_url.hostname.len == 0) {
-            bun.default_allocator.free(@constCast(args.base_uri));
+            bun.heap.default_allocator.free(@constCast(args.base_uri));
             args.base_uri = "";
             return global.throwInvalidArguments("baseURI must have a hostname", .{});
         }
 
         if (args.base_url.username.len > 0 or args.base_url.password.len > 0) {
-            bun.default_allocator.free(@constCast(args.base_uri));
+            bun.heap.default_allocator.free(@constCast(args.base_uri));
             args.base_uri = "";
             return global.throwInvalidArguments("baseURI can't have a username or password", .{});
         }
@@ -3495,7 +3495,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob.from(byte_stream.drain().listManaged(bun.default_allocator));
+                                    this.blob.from(byte_stream.drain().listManaged(bun.heap.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -3969,7 +3969,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .{
                             .temporary = bun.ByteList.initConst(chunk),
                         },
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     );
                 } else {
                     var strong = this.request_body_readable_stream_ref;
@@ -3985,7 +3985,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .{
                             .temporary_and_done = bun.ByteList.initConst(chunk),
                         },
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                     );
                 }
 
@@ -4874,7 +4874,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publish requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = topic_value.toSlice(globalThis, bun.heap.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publish requires a non-empty topic", .{});
@@ -4911,7 +4911,7 @@ pub const ServerWebSocket = struct {
                 return .zero;
             }
             const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
+            const slice = view.toSlice(bun.heap.default_allocator);
             defer slice.deinit();
 
             defer js_string.ensureStillAlive();
@@ -4962,7 +4962,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishText requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = topic_value.toSlice(globalThis, bun.heap.default_allocator);
         defer topic_slice.deinit();
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
@@ -4980,7 +4980,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
         const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = view.toSlice(bun.heap.default_allocator);
         defer slice.deinit();
 
         defer js_string.ensureStillAlive();
@@ -5027,7 +5027,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishBinary requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = topic_value.toSlice(globalThis, bun.heap.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publishBinary requires a non-empty topic", .{});
@@ -5074,7 +5074,7 @@ pub const ServerWebSocket = struct {
         const ssl = flags.ssl;
         const publish_to_self = flags.publish_to_self;
 
-        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = topic_str.toSlice(globalThis, bun.heap.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publishBinary requires a non-empty topic", .{});
@@ -5113,7 +5113,7 @@ pub const ServerWebSocket = struct {
         const ssl = flags.ssl;
         const publish_to_self = flags.publish_to_self;
 
-        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = topic_str.toSlice(globalThis, bun.heap.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publishBinary requires a non-empty topic", .{});
@@ -5121,7 +5121,7 @@ pub const ServerWebSocket = struct {
 
         const compress = true;
 
-        const slice = str.toSlice(globalThis, bun.default_allocator);
+        const slice = str.toSlice(globalThis, bun.heap.default_allocator);
         defer slice.deinit();
         const buffer = slice.slice();
 
@@ -5234,7 +5234,7 @@ pub const ServerWebSocket = struct {
                 return .zero;
             }
             const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
+            const slice = view.toSlice(bun.heap.default_allocator);
             defer slice.deinit();
 
             defer js_string.ensureStillAlive();
@@ -5294,7 +5294,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
         const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = view.toSlice(bun.heap.default_allocator);
         defer slice.deinit();
 
         defer js_string.ensureStillAlive();
@@ -5327,7 +5327,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(0);
         }
 
-        var string_slice = message_str.toSlice(globalThis, bun.default_allocator);
+        var string_slice = message_str.toSlice(globalThis, bun.heap.default_allocator);
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
@@ -5472,7 +5472,7 @@ pub const ServerWebSocket = struct {
                         },
                     }
                 } else if (value.isString()) {
-                    var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
+                    var string_value = value.toString(globalThis).toSlice(globalThis, bun.heap.default_allocator);
                     defer string_value.deinit();
                     const buffer = string_value.slice();
 
@@ -5673,7 +5673,7 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = args.ptr[0].toSlice(globalThis, bun.heap.default_allocator);
         defer topic.deinit();
 
         if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
@@ -5708,7 +5708,7 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = args.ptr[0].toSlice(globalThis, bun.heap.default_allocator);
         defer topic.deinit();
 
         if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
@@ -5743,7 +5743,7 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = args.ptr[0].toSlice(globalThis, bun.heap.default_allocator);
         defer topic.deinit();
 
         if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
@@ -5838,7 +5838,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return globalThis.throwInvalidArguments("subscriberCount requires a topic name as a string", .{});
             }
 
-            var topic = arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
+            var topic = arguments.ptr[0].toSlice(globalThis, bun.heap.default_allocator);
             defer topic.deinit();
             if (globalThis.hasException()) {
                 return .zero;
@@ -5913,7 +5913,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return globalThis.throw("publish requires a topic string", .{});
             }
 
-            var topic_slice = topic.toSlice(bun.default_allocator);
+            var topic_slice = topic.toSlice(bun.heap.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
                 return globalThis.throw("publish requires a non-empty topic", .{});
@@ -5935,7 +5935,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     return .zero;
                 }
                 const view = js_string.view(globalThis);
-                const slice = view.toSlice(bun.default_allocator);
+                const slice = view.toSlice(bun.heap.default_allocator);
                 defer slice.deinit();
 
                 defer js_string.ensureStillAlive();
@@ -6112,9 +6112,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             });
             data_value.ensureStillAlive();
 
-            var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+            var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.heap.default_allocator);
             defer sec_websocket_protocol_str.deinit();
-            var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
+            var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.heap.default_allocator);
             defer sec_websocket_extensions_str.deinit();
 
             resp.clearAborted();
@@ -6228,7 +6228,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // TODO: set User-Agent header
             // TODO: unify with fetch() implementation.
             if (first_arg.isString()) {
-                const url_zig_str = arguments[0].toSlice(ctx, bun.default_allocator);
+                const url_zig_str = arguments[0].toSlice(ctx, bun.heap.default_allocator);
                 defer url_zig_str.deinit();
                 var temp_url_str = url_zig_str.slice();
 
@@ -6282,7 +6282,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             } else if (first_arg.as(Request)) |request_| {
                 request_.cloneInto(
                     &existing_request,
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     ctx,
                     false,
                 );
@@ -6610,7 +6610,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.app.?.close();
             }
 
-            const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+            const task = bun.heap.default_allocator.create(JSC.AnyTask) catch unreachable;
             task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
             this.vm.enqueueTask(JSC.Task.init(task));
         }
@@ -6634,8 +6634,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
-            const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
-            errdefer bun.default_allocator.free(base_url);
+            const base_url = try bun.heap.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
+            errdefer bun.heap.default_allocator.free(base_url);
 
             const dev_server = if (config.bake) |*bake_options| dev_server: {
                 bun.bake.printWarning();
@@ -6663,7 +6663,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 RequestContext.pool = bun.create(
                     server.allocator,
                     RequestContext.RequestContextStackAllocator,
-                    RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(RequestContext)),
+                    RequestContext.RequestContextStackAllocator.init(bun.heap.typedAllocator(RequestContext)),
                 );
             }
 

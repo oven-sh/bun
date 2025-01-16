@@ -10,7 +10,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
@@ -26,7 +26,7 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
+const ThreadlocalArena = bun.heap.MimallocArena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
 const Loader = bun.options.Loader;
@@ -59,7 +59,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         break :brk .{ largest_size, largest_align };
     };
 
-    const backing_allocator = bun.default_allocator;
+    const backing_allocator = bun.heap.default_allocator;
 
     const log = Output.scoped(.Store, true);
 
@@ -6973,9 +6973,9 @@ pub const Ast = struct {
     /// Do not call this if it wasn't globally allocated!
     pub fn deinit(this: *Ast) void {
         // TODO: assert mimalloc-owned memory
-        if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-        if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
-        if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
+        if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.heap.default_allocator);
+        if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.heap.default_allocator);
+        if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.heap.default_allocator);
     }
 };
 
@@ -8754,9 +8754,9 @@ pub const GlobalStoreHandle = struct {
 
     pub fn get() ?*ASTMemoryAllocator {
         if (global_store_ast == null) {
-            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
-            global.allocator = bun.default_allocator;
-            global.bump_allocator = bun.default_allocator;
+            var global = bun.heap.default_allocator.create(ASTMemoryAllocator) catch unreachable;
+            global.allocator = bun.heap.default_allocator;
+            global.bump_allocator = bun.heap.default_allocator;
             global_store_ast = global;
         }
 

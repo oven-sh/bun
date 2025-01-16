@@ -10,7 +10,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
@@ -778,7 +778,7 @@ pub const Log = struct {
 
     /// unlike toJS, this always produces an AggregateError object
     pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) JSC.JSValue {
-        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.default_allocator));
+        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.heap.default_allocator));
     }
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {

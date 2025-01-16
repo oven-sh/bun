@@ -90,7 +90,7 @@ pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
 }
 
 pub fn appendStr(this: *StringBuilder, str: bun.String) string {
-    const slice = str.toUTF8(bun.default_allocator);
+    const slice = str.toUTF8(bun.heap.default_allocator);
     defer slice.deinit();
     return this.append(slice.slice());
 }

@@ -9,7 +9,7 @@ const bun = @import("root").bun;
 const std = @import("std");
 const Shimmer = @import("./shimmer.zig").Shimmer;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
 const is_bindgen: bool = false;
@@ -244,7 +244,7 @@ pub const SourceProvider = opaque {
     }
 };
 
-const Mimalloc = @import("../../allocators/mimalloc.zig");
+const Mimalloc = bun.heap.Mimalloc;
 
 export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
     var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
@@ -386,8 +386,8 @@ pub const Process = extern struct {
     pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
         title_mutex.lock();
         defer title_mutex.unlock();
-        if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
-        bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+        if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.heap.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
+        bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.heap.default_allocator) catch bun.outOfMemory();
         return newvalue.toJS(globalObject);
     }
 
@@ -544,7 +544,7 @@ pub const ZigStackTrace = extern struct {
             const source_line = this.trace.source_lines_ptr[@as(usize, @intCast(this.i))];
             const result = SourceLine{
                 .line = this.trace.source_lines_numbers[@as(usize, @intCast(this.i))],
-                .text = source_line.toUTF8(bun.default_allocator),
+                .text = source_line.toUTF8(bun.heap.default_allocator),
             };
             this.i -= 1;
             return result;
@@ -608,7 +608,7 @@ pub const ZigStackFrame = extern struct {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
 
-            var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+            var source_slice_ = this.source_url.toUTF8(bun.heap.default_allocator);
             var source_slice = source_slice_.slice();
             defer source_slice_.deinit();
 
@@ -920,8 +920,8 @@ pub const ZigException = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
-        const name_slice = @field(this, "name").toUTF8(bun.default_allocator);
-        const message_slice = @field(this, "message").toUTF8(bun.default_allocator);
+        const name_slice = @field(this, "name").toUTF8(bun.heap.default_allocator);
+        const message_slice = @field(this, "message").toUTF8(bun.heap.default_allocator);
 
         const _name = name_slice.slice();
         defer name_slice.deinit();

@@ -17,7 +17,7 @@ const JSLexer = bun.js_lexer;
 const ScriptArguments = opaque {};
 const JSPrinter = bun.js_printer;
 const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
@@ -2098,7 +2098,7 @@ pub const Formatter = struct {
 
         switch (comptime Format) {
             .StringPossiblyFormatted => {
-                var str = value.toSlice(this.globalThis, bun.default_allocator);
+                var str = value.toSlice(this.globalThis, bun.heap.default_allocator);
                 defer str.deinit();
                 this.addForNewLine(str.len);
                 const slice = str.slice();
@@ -2145,9 +2145,9 @@ pub const Formatter = struct {
                     writer.writeAll(slice);
                 } else if (!str.isEmpty()) {
                     // slow path
-                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
+                    const buf = strings.allocateLatin1IntoUTF8(bun.heap.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
                     if (buf.len > 0) {
-                        defer bun.default_allocator.free(buf);
+                        defer bun.heap.default_allocator.free(buf);
                         writer.writeAll(buf);
                     }
                 }

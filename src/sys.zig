@@ -7,7 +7,7 @@ const bun = @import("root").bun;
 const posix = std.posix;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const kernel32 = bun.windows;
 const mem = std.mem;
 const mode_t = posix.mode_t;

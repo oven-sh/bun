@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const cli = @import("../cli.zig");
 
@@ -706,7 +706,7 @@ pub const BunxCommand = struct {
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = argv_to_use,
 
-            .envp = try this_transpiler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = try this_transpiler.env.map.createNullDelimitedEnvMap(bun.heap.default_allocator),
 
             .cwd = bunx_cache_dir,
             .stderr = .inherit,

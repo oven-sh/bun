@@ -81,7 +81,7 @@ fn OverflowGroup(comptime Block: type) type {
         // ...right?
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
-        const default_allocator = bun.default_allocator;
+        const default_allocator = bun.heap.default_allocator;
         used: UsedSize = 0,
         allocated: UsedSize = 0,
         ptrs: [max]*Block = undefined,
@@ -220,7 +220,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.heap.default_allocator.create(Self) catch bun.outOfMemory();
                 instance.* = Self{
                     .allocator = allocator,
                     .tail = OverflowBlock{},
@@ -306,7 +306,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.heap.default_allocator.create(Self) catch bun.outOfMemory();
                 instance.* = Self{
                     .allocator = allocator,
                     .backing_buf_used = 0,
@@ -483,7 +483,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.heap.default_allocator.create(Self) catch bun.outOfMemory();
                 instance.* = Self{
                     .index = IndexMap{},
                     .allocator = allocator,
@@ -635,7 +635,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.heap.default_allocator.create(Self) catch bun.outOfMemory();
                 instance.* = Self{
                     .map = BSSMapType.init(allocator),
                 };

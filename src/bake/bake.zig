@@ -30,7 +30,7 @@ pub const UserOptions = struct {
         if (!config.isObject()) {
             return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
         }
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         errdefer arena.deinit();
         const alloc = arena.allocator();
 
@@ -79,13 +79,13 @@ const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
-        al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
+        al.strings.append(bun.heap.default_allocator, str) catch bun.outOfMemory();
         return str.sliceZ();
     }
 
     pub fn free(al: *StringRefList) void {
         for (al.strings.items) |item| item.deinit();
-        al.strings.clearAndFree(bun.default_allocator);
+        al.strings.clearAndFree(bun.heap.default_allocator);
     }
 
     pub const empty: StringRefList = .{ .strings = .{} };

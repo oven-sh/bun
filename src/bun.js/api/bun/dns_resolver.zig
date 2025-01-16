@@ -1,5 +1,5 @@
 const Bun = @This();
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
@@ -191,12 +191,12 @@ const LibUVBackend = struct {
             task: JSC.AnyTask,
 
             pub fn run(held: *@This()) void {
-                defer bun.default_allocator.destroy(held);
+                defer bun.heap.default_allocator.destroy(held);
                 GetAddrInfoRequest.onLibUVComplete(held.uv_info);
             }
         };
 
-        var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        var holder = bun.heap.default_allocator.create(Holder) catch bun.outOfMemory();
         holder.* = .{
             .uv_info = uv_info,
             .task = undefined,
@@ -380,7 +380,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             }
 
             var head = this.head;
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
 
             head.processResolve(err_, timeout, result);
         }
@@ -482,7 +482,7 @@ pub const GetHostByAddrInfoRequest = struct {
         }
 
         var head = this.head;
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
 
         head.processResolve(err_, timeout, result);
     }
@@ -540,7 +540,7 @@ pub const CAresNameInfo = struct {
     pub fn deinit(this: *@This()) void {
         this.poll_ref.unref(this.globalThis.bunVM());
         // freed
-        bun.default_allocator.free(this.name);
+        bun.heap.default_allocator.free(this.name);
 
         if (this.allocated) {
             this.globalThis.allocator().destroy(this);
@@ -636,7 +636,7 @@ pub const GetNameInfoRequest = struct {
         }
 
         var head = this.head;
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
 
         head.processResolve(err_, timeout, result);
     }
@@ -741,7 +741,7 @@ pub const GetAddrInfoRequest = struct {
         }
 
         var head = this.head;
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
         head.processGetAddrInfoNative(status, addr_info);
     }
 
@@ -764,7 +764,7 @@ pub const GetAddrInfoRequest = struct {
 
                 pub fn run(this: *@This()) void {
                     const query = this.query;
-                    defer bun.default_allocator.free(@constCast(query.name));
+                    defer bun.heap.default_allocator.free(@constCast(query.name));
                     var hints = query.options.toLibC();
                     var port_buf: [128]u8 = undefined;
                     const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
@@ -843,7 +843,7 @@ pub const GetAddrInfoRequest = struct {
                     }
                 }
                 var head = this.head;
-                bun.default_allocator.destroy(this);
+                bun.heap.default_allocator.destroy(this);
                 head.onCompleteNative(any);
             },
             .err => |err| {
@@ -872,7 +872,7 @@ pub const GetAddrInfoRequest = struct {
         }
 
         var head = this.head;
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
 
         head.processGetAddrInfo(err_, timeout, result);
     }
@@ -958,7 +958,7 @@ pub const CAresReverse = struct {
 
     pub fn deinit(this: *@This()) void {
         this.poll_ref.unref(this.globalThis.bunVM());
-        bun.default_allocator.free(this.name);
+        bun.heap.default_allocator.free(this.name);
 
         if (this.resolver) |resolver| {
             resolver.deref();
@@ -1036,7 +1036,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 
         pub fn deinit(this: *@This()) void {
             this.poll_ref.unref(this.globalThis.bunVM());
-            bun.default_allocator.free(this.name);
+            bun.heap.default_allocator.free(this.name);
 
             if (this.resolver) |resolver| {
                 resolver.deref();
@@ -1205,7 +1205,7 @@ pub const InternalDNS = struct {
 
             pub fn toOwned(this: @This()) @This() {
                 if (this.host) |host| {
-                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                    const host_copy = bun.heap.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
                     return .{
                         .host = host_copy,
                         .hash = this.hash,
@@ -1270,11 +1270,11 @@ pub const InternalDNS = struct {
             bun.assert(this.notify.items.len == 0);
             if (this.result) |res| {
                 if (res.info) |info| {
-                    bun.default_allocator.destroy(&info[0]);
+                    bun.heap.default_allocator.destroy(&info[0]);
                 }
             }
             if (this.key.host) |host| {
-                bun.default_allocator.free(host);
+                bun.heap.default_allocator.free(host);
             }
 
             this.destroy();
@@ -1444,7 +1444,7 @@ pub const InternalDNS = struct {
             info_ = ai.next;
         }
 
-        var results = bun.default_allocator.alloc(ResultEntry, count) catch bun.outOfMemory();
+        var results = bun.heap.default_allocator.alloc(ResultEntry, count) catch bun.outOfMemory();
 
         // copy results
         var i: usize = 0;
@@ -1511,7 +1511,7 @@ pub const InternalDNS = struct {
             .err = err,
         };
         var notify = req.notify;
-        defer notify.deinit(bun.default_allocator);
+        defer notify.deinit(bun.heap.default_allocator);
         req.notify = .{};
         req.refcount -= 1;
 
@@ -1674,7 +1674,7 @@ pub const InternalDNS = struct {
 
         log("getaddrinfo({s}) = cache miss (libc)", .{host orelse ""});
         // schedule the request to be executed on the work pool
-        bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
+        bun.JSC.WorkPool.go(bun.heap.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
         return req;
     }
 
@@ -1691,13 +1691,13 @@ pub const InternalDNS = struct {
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
-            hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
+            hostname_slice = hostname_or_url.toSlice(globalThis, bun.heap.default_allocator);
         } else {
             return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }
 
-        const hostname_z = try bun.default_allocator.dupeZ(u8, hostname_slice.slice());
-        defer bun.default_allocator.free(hostname_z);
+        const hostname_z = try bun.heap.default_allocator.dupeZ(u8, hostname_slice.slice());
+        defer bun.heap.default_allocator.free(hostname_z);
 
         prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z);
         return .undefined;
@@ -1729,7 +1729,7 @@ pub const InternalDNS = struct {
             return;
         }
 
-        request.notify.append(bun.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
+        request.notify.append(bun.heap.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
     }
 
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
@@ -1985,7 +1985,7 @@ pub const DNSResolver = struct {
         var addr = result orelse {
             var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
             key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
@@ -2000,7 +2000,7 @@ pub const DNSResolver = struct {
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        bun.heap.default_allocator.destroy(key.lookup);
 
         array.ensureStillAlive();
 
@@ -2029,7 +2029,7 @@ pub const DNSResolver = struct {
         var addr = result orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
             key.lookup.head.processGetAddrInfo(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
@@ -2044,7 +2044,7 @@ pub const DNSResolver = struct {
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onCompleteWithArray(array);
-        bun.default_allocator.destroy(key.lookup);
+        bun.heap.default_allocator.destroy(key.lookup);
 
         array.ensureStillAlive();
         // std.c.addrinfo
@@ -2076,7 +2076,7 @@ pub const DNSResolver = struct {
             var pending: ?*DNSLookup = key.lookup.head.next;
             var head = key.lookup.head;
             head.processGetAddrInfoNative(err, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
@@ -2091,7 +2091,7 @@ pub const DNSResolver = struct {
         {
             array.ensureStillAlive();
             key.lookup.head.onCompleteWithArray(array);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
             array.ensureStillAlive();
         }
 
@@ -2122,7 +2122,7 @@ pub const DNSResolver = struct {
         var addr = result orelse {
             var pending: ?*CAresReverse = key.lookup.head.next;
             key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
@@ -2139,7 +2139,7 @@ pub const DNSResolver = struct {
         var array = addr.toJSResponse(this.vm.allocator, prev_global, "");
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        bun.heap.default_allocator.destroy(key.lookup);
 
         array.ensureStillAlive();
 
@@ -2168,7 +2168,7 @@ pub const DNSResolver = struct {
         var name_info = result orelse {
             var pending: ?*CAresNameInfo = key.lookup.head.next;
             key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.heap.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
@@ -2183,7 +2183,7 @@ pub const DNSResolver = struct {
         var array = name_info.toJSResponse(this.vm.allocator, prev_global);
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        bun.heap.default_allocator.destroy(key.lookup);
 
         array.ensureStillAlive();
 
@@ -2522,7 +2522,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolve", "name", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
 
         switch (record_type) {
             RecordType.A => {
@@ -2585,7 +2585,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "non-empty string");
         }
 
-        const ip_slice = ip_str.toSliceClone(globalThis, bun.default_allocator);
+        const ip_slice = ip_str.toSliceClone(globalThis, bun.heap.default_allocator);
         const ip = ip_slice.slice();
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
@@ -2664,7 +2664,7 @@ pub const DNSResolver = struct {
             };
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSlice(globalThis, bun.heap.default_allocator);
         defer name.deinit();
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
@@ -2721,7 +2721,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
@@ -2747,7 +2747,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
@@ -2777,7 +2777,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
@@ -2803,7 +2803,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
@@ -2833,7 +2833,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
@@ -2863,7 +2863,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
@@ -2893,7 +2893,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
@@ -2923,7 +2923,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
@@ -2953,7 +2953,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
     }
 
@@ -2983,7 +2983,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.heap.default_allocator);
         return this.doResolveCAres(c_ares.struct_any_reply, "any", name.slice(), globalThis);
     }
 
@@ -3181,9 +3181,9 @@ pub const DNSResolver = struct {
         const str = try value.toBunString2(globalThis);
         defer str.deref();
 
-        const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.default_allocator.alloc(u8, slice.len + 1) catch bun.outOfMemory();
-        defer bun.default_allocator.free(buffer);
+        const slice = str.toSlice(bun.heap.default_allocator).slice();
+        var buffer = bun.heap.default_allocator.alloc(u8, slice.len + 1) catch bun.outOfMemory();
+        defer bun.heap.default_allocator.free(buffer);
         _ = strings.copy(buffer[0..], slice);
         buffer[slice.len] = 0;
 
@@ -3230,7 +3230,7 @@ pub const DNSResolver = struct {
             return .undefined;
         }
 
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
 
         const entries = allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch bun.outOfMemory();
         defer allocator.free(entries);
@@ -3355,7 +3355,7 @@ pub const DNSResolver = struct {
         var channel = try resolver.getChannelOrError(globalThis);
 
         // This string will be freed in `CAresNameInfo.deinit`
-        const cache_name = std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }) catch bun.outOfMemory();
+        const cache_name = std.fmt.allocPrint(bun.heap.default_allocator, "{s}|{d}", .{ addr_s, port }) catch bun.outOfMemory();
 
         const key = GetNameInfoRequest.PendingCacheKey.init(cache_name);
         var cache = resolver.getOrPutIntoResolvePendingCache(

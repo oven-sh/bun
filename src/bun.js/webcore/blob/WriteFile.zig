@@ -511,7 +511,7 @@ pub const WriteFileWindows = struct {
         this.err = null;
         if (err) |err_| {
             this.throw(err_);
-            bun.default_allocator.free(err_.path);
+            bun.heap.default_allocator.free(err_.path);
             return;
         }
 

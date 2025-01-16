@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const OOM = bun.OOM;
@@ -141,7 +141,7 @@ pub const JunitReporter = struct {
                 return null;
             };
 
-            var arraylist_writer = std.ArrayList(u8).init(bun.default_allocator);
+            var arraylist_writer = std.ArrayList(u8).init(bun.heap.default_allocator);
             escapeXml(hostname, arraylist_writer.writer()) catch {
                 this.hostname_value = "";
                 return null;
@@ -184,7 +184,7 @@ pub const JunitReporter = struct {
             ci: string,
             commit: string,
         };
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         var stack = std.heap.stackFallback(1024, arena.allocator());
         const allocator = stack.get();
@@ -237,7 +237,7 @@ pub const JunitReporter = struct {
             return;
         }
 
-        var buffer = std.ArrayList(u8).init(bun.default_allocator);
+        var buffer = std.ArrayList(u8).init(bun.heap.default_allocator);
         var writer = buffer.writer();
 
         try writer.writeAll(
@@ -267,27 +267,27 @@ pub const JunitReporter = struct {
 
     pub fn beginTestSuite(this: *JunitReporter, name: string) !void {
         if (this.contents.items.len == 0) {
-            try this.contents.appendSlice(bun.default_allocator,
+            try this.contents.appendSlice(bun.heap.default_allocator,
                 \\<?xml version="1.0" encoding="UTF-8"?>
                 \\
             );
 
-            try this.contents.appendSlice(bun.default_allocator,
+            try this.contents.appendSlice(bun.heap.default_allocator,
                 \\<testsuites name="bun test" 
             );
             this.offset_of_testsuites_value = this.contents.items.len;
-            try this.contents.appendSlice(bun.default_allocator, ">\n");
+            try this.contents.appendSlice(bun.heap.default_allocator, ">\n");
         }
 
-        try this.contents.appendSlice(bun.default_allocator,
+        try this.contents.appendSlice(bun.heap.default_allocator,
             \\  <testsuite name="
         );
 
-        try escapeXml(name, this.contents.writer(bun.default_allocator));
+        try escapeXml(name, this.contents.writer(bun.heap.default_allocator));
 
-        try this.contents.appendSlice(bun.default_allocator, "\" ");
+        try this.contents.appendSlice(bun.heap.default_allocator, "\" ");
         this.offset_of_testsuite_value = this.contents.items.len;
-        try this.contents.appendSlice(bun.default_allocator, ">\n");
+        try this.contents.appendSlice(bun.heap.default_allocator, ">\n");
 
         if (this.properties_list_to_repeat_in_every_test_suite == null) {
             try this.generatePropertiesList();
@@ -295,7 +295,7 @@ pub const JunitReporter = struct {
 
         if (this.properties_list_to_repeat_in_every_test_suite) |properties_list| {
             if (properties_list.len > 0) {
-                try this.contents.appendSlice(bun.default_allocator, properties_list);
+                try this.contents.appendSlice(bun.heap.default_allocator, properties_list);
             }
         }
 
@@ -303,7 +303,7 @@ pub const JunitReporter = struct {
     }
 
     pub fn endTestSuite(this: *JunitReporter) !void {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
         const allocator = stack_fallback_allocator.get();
@@ -327,9 +327,9 @@ pub const JunitReporter = struct {
             this.getHostname() orelse "",
         });
         this.testcases_metrics = .{};
-        this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuite_value, summary) catch bun.outOfMemory();
+        this.contents.insertSlice(bun.heap.default_allocator, this.offset_of_testsuite_value, summary) catch bun.outOfMemory();
 
-        try this.contents.appendSlice(bun.default_allocator, "  </testsuite>\n");
+        try this.contents.appendSlice(bun.heap.default_allocator, "  </testsuite>\n");
     }
 
     pub fn writeTestCase(
@@ -346,44 +346,44 @@ pub const JunitReporter = struct {
         this.testcases_metrics.elapsed_time +|= @as(u64, @intFromFloat(elapsed_ms));
         this.testcases_metrics.test_cases += 1;
 
-        try this.contents.appendSlice(bun.default_allocator, "    <testcase");
-        try this.contents.appendSlice(bun.default_allocator, " name=\"");
-        try escapeXml(name, this.contents.writer(bun.default_allocator));
-        try this.contents.appendSlice(bun.default_allocator, "\" classname=\"");
-        try escapeXml(class_name, this.contents.writer(bun.default_allocator));
-        try this.contents.appendSlice(bun.default_allocator, "\"");
+        try this.contents.appendSlice(bun.heap.default_allocator, "    <testcase");
+        try this.contents.appendSlice(bun.heap.default_allocator, " name=\"");
+        try escapeXml(name, this.contents.writer(bun.heap.default_allocator));
+        try this.contents.appendSlice(bun.heap.default_allocator, "\" classname=\"");
+        try escapeXml(class_name, this.contents.writer(bun.heap.default_allocator));
+        try this.contents.appendSlice(bun.heap.default_allocator, "\"");
 
         const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
         var time_buf: [32]u8 = undefined;
         const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d}\"", .{elapsed_seconds});
-        try this.contents.appendSlice(bun.default_allocator, time_str);
+        try this.contents.appendSlice(bun.heap.default_allocator, time_str);
 
-        try this.contents.appendSlice(bun.default_allocator, " file=\"");
-        try escapeXml(file, this.contents.writer(bun.default_allocator));
-        try this.contents.appendSlice(bun.default_allocator, "\"");
+        try this.contents.appendSlice(bun.heap.default_allocator, " file=\"");
+        try escapeXml(file, this.contents.writer(bun.heap.default_allocator));
+        try this.contents.appendSlice(bun.heap.default_allocator, "\"");
 
-        try this.contents.writer(bun.default_allocator).print(" assertions=\"{d}\"", .{assertions});
+        try this.contents.writer(bun.heap.default_allocator).print(" assertions=\"{d}\"", .{assertions});
 
         this.testcases_metrics.assertions += assertions;
 
         switch (status) {
             .pass => {
-                try this.contents.appendSlice(bun.default_allocator, " />\n");
+                try this.contents.appendSlice(bun.heap.default_allocator, " />\n");
             },
             .fail => {
                 this.testcases_metrics.failures += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <failure type=\"AssertionError\" />\n    </testcase>\n");
+                try this.contents.appendSlice(bun.heap.default_allocator, ">\n      <failure type=\"AssertionError\" />\n    </testcase>\n");
                 // TODO: add the failure message
                 // if (failure_message) |msg| {
-                //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
-                //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
-                //     try this.contents.appendSlice(bun.default_allocator, "\"");
+                //     try this.contents.appendSlice(bun.heap.default_allocator, " message=\"");
+                //     try escapeXml(msg, this.contents.writer(bun.heap.default_allocator));
+                //     try this.contents.appendSlice(bun.heap.default_allocator, "\"");
                 // }
             },
             .fail_because_expected_assertion_count => {
                 this.testcases_metrics.failures += 1;
                 // TODO: add the failure message
-                try this.contents.writer(bun.default_allocator).print(
+                try this.contents.writer(bun.heap.default_allocator).print(
                     \\>
                     \\      <failure message="Expected more assertions, but only received {d}" type="AssertionError"/>
                     \\    </testcase>
@@ -392,7 +392,7 @@ pub const JunitReporter = struct {
             .fail_because_todo_passed => {
                 this.testcases_metrics.failures += 1;
                 // TODO: add the failure message
-                try this.contents.writer(bun.default_allocator).print(
+                try this.contents.writer(bun.heap.default_allocator).print(
                     \\>
                     \\      <failure message="TODO passed" type="AssertionError"/>
                     \\    </testcase>
@@ -400,7 +400,7 @@ pub const JunitReporter = struct {
             },
             .fail_because_expected_has_assertions => {
                 this.testcases_metrics.failures += 1;
-                try this.contents.writer(bun.default_allocator).print(
+                try this.contents.writer(bun.heap.default_allocator).print(
                     \\>
                     \\      <failure message="Expected to have assertions, but none were run" type="AssertionError"/>
                     \\    </testcase>
@@ -408,11 +408,11 @@ pub const JunitReporter = struct {
             },
             .skip => {
                 this.testcases_metrics.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped />\n    </testcase>\n");
+                try this.contents.appendSlice(bun.heap.default_allocator, ">\n      <skipped />\n    </testcase>\n");
             },
             .todo => {
                 this.testcases_metrics.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped message=\"TODO\" />\n    </testcase>\n");
+                try this.contents.appendSlice(bun.heap.default_allocator, ">\n      <skipped message=\"TODO\" />\n    </testcase>\n");
             },
             .pending => unreachable,
         }
@@ -421,7 +421,7 @@ pub const JunitReporter = struct {
     pub fn writeToFile(this: *JunitReporter, path: string) !void {
         if (this.contents.items.len == 0) return;
         {
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
             var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
             const allocator = stack_fallback_allocator.get();
@@ -436,8 +436,8 @@ pub const JunitReporter = struct {
                 metrics.skipped,
                 elapsed_time,
             });
-            this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary) catch bun.outOfMemory();
-            this.contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+            this.contents.insertSlice(bun.heap.default_allocator, this.offset_of_testsuites_value, summary) catch bun.outOfMemory();
+            this.contents.appendSlice(bun.heap.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
         }
 
         var junit_path_buf: bun.PathBuffer = undefined;
@@ -462,7 +462,7 @@ pub const JunitReporter = struct {
     }
 
     pub fn deinit(this: *JunitReporter) void {
-        this.contents.deinit(bun.default_allocator);
+        this.contents.deinit(bun.heap.default_allocator);
     }
 };
 
@@ -590,7 +590,7 @@ pub const CommandLineReporter = struct {
                         junit.beginTestSuite(filename) catch bun.outOfMemory();
                     }
 
-                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
                     defer arena.deinit();
                     var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
                     const allocator = stack_fallback.get();
@@ -639,7 +639,7 @@ pub const CommandLineReporter = struct {
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.failures_to_repeat_buf.items.len;
-        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
+        var writer = this.failures_to_repeat_buf.writer(bun.heap.default_allocator);
 
         writeTestStatusLine(.fail, &writer);
         printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
@@ -674,7 +674,7 @@ pub const CommandLineReporter = struct {
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
-            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+            var writer = this.skips_to_repeat_buf.writer(bun.heap.default_allocator);
 
             writeTestStatusLine(.skip, &writer);
             printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
@@ -697,7 +697,7 @@ pub const CommandLineReporter = struct {
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.todos_to_repeat_buf.items.len;
-        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+        var writer = this.todos_to_repeat_buf.writer(bun.heap.default_allocator);
 
         writeTestStatusLine(.todo, &writer);
         printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
@@ -726,7 +726,7 @@ pub const CommandLineReporter = struct {
 
         var map = bun.sourcemap.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.heap.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -794,7 +794,7 @@ pub const CommandLineReporter = struct {
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         }
 
-        var console_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var console_buffer = bun.MutableString.initEmpty(bun.heap.default_allocator);
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
@@ -845,7 +845,7 @@ pub const CommandLineReporter = struct {
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        const ptr = try bun.heap.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
                         ptr.* = .{
                             .end = 0,
                             .unbuffered_writer = writer,
@@ -873,8 +873,8 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         for (byte_ranges) |*entry| {
-            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-            defer report.deinit(bun.default_allocator);
+            var report = CodeCoverageReport.generate(vm.global, bun.heap.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.heap.default_allocator);
 
             if (comptime reporters.text) {
                 var fraction = base_fraction;
@@ -1040,7 +1040,7 @@ const Scanner = struct {
         // In this particular case, we don't actually care about non-ascii latin1 characters.
         // so we skip the ascii check
         const slice = brk: {
-            zig_slice = test_name_str.toUTF8(bun.default_allocator);
+            zig_slice = test_name_str.toUTF8(bun.heap.default_allocator);
             break :brk zig_slice.slice();
         };
 
@@ -1623,7 +1623,7 @@ pub const TestCommand = struct {
             }
         };
 
-        var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
+        var arena = bun.heap.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();

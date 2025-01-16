@@ -16,7 +16,7 @@ pub const GetAddrInfo = struct {
 
     pub fn clone(this: GetAddrInfo) GetAddrInfo {
         return GetAddrInfo{
-            .name = bun.default_allocator.dupe(u8, this.name) catch unreachable,
+            .name = bun.heap.default_allocator.dupe(u8, this.name) catch unreachable,
             .port = this.port,
             .options = this.options,
         };
@@ -370,7 +370,7 @@ pub const GetAddrInfo = struct {
     };
 };
 const String = bun.String;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
     switch (address.any.family) {
         std.posix.AF.INET => {

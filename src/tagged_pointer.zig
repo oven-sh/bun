@@ -5,7 +5,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const typeBaseName = @import("./meta.zig").typeBaseName;
 

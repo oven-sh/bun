@@ -35,7 +35,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        child_singleton.callbacks.put(bun.heap.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder
@@ -106,7 +106,7 @@ pub const InternalMsgHolder = struct {
 
     pub fn enqueue(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
         //TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
-        const new_item_ptr = this.messages.addOne(bun.default_allocator) catch bun.outOfMemory();
+        const new_item_ptr = this.messages.addOne(bun.heap.default_allocator) catch bun.outOfMemory();
         new_item_ptr.* = JSC.Strong.create(message, globalThis);
     }
 
@@ -158,16 +158,16 @@ pub const InternalMsgHolder = struct {
             }
             strong.deinit();
         }
-        messages.deinit(bun.default_allocator);
+        messages.deinit(bun.heap.default_allocator);
     }
 
     pub fn deinit(this: *InternalMsgHolder) void {
         for (this.callbacks.values()) |*strong| strong.deinit();
-        this.callbacks.deinit(bun.default_allocator);
+        this.callbacks.deinit(bun.heap.default_allocator);
         this.worker.deinit();
         this.cb.deinit();
         for (this.messages.items) |*strong| strong.deinit();
-        this.messages.deinit(bun.default_allocator);
+        this.messages.deinit(bun.heap.default_allocator);
     }
 };
 
@@ -189,7 +189,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        ipc_data.internal_msg_queue.callbacks.put(bun.heap.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder

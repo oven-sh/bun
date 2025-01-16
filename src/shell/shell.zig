@@ -66,25 +66,25 @@ pub const ShellErr = union(enum) {
         switch (this) {
             .sys => {
                 const err = this.sys;
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
+                const str = std.fmt.allocPrint(bun.heap.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
                 return str;
             },
             .custom => {
-                return std.fmt.allocPrint(bun.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
+                return std.fmt.allocPrint(bun.heap.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
             },
             .invalid_arguments => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                const str = std.fmt.allocPrint(bun.heap.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
                 return str;
             },
             .todo => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                const str = std.fmt.allocPrint(bun.heap.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
                 return str;
             },
         }
     }
 
     pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
-        defer this.deinit(bun.default_allocator);
+        defer this.deinit(bun.heap.default_allocator);
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
@@ -107,7 +107,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwMini(this: @This()) noreturn {
-        defer this.deinit(bun.default_allocator);
+        defer this.deinit(bun.heap.default_allocator);
         switch (this) {
             .sys => |err| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
@@ -307,7 +307,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        var anytask = bun.default_allocator.create(JSC.AnyTaskWithExtraContext) catch bun.outOfMemory();
+        var anytask = bun.heap.default_allocator.create(JSC.AnyTaskWithExtraContext) catch bun.outOfMemory();
         _ = anytask.from(task, "runFromMainThreadMini");
         this.mini.enqueueTaskConcurrent(anytask);
     }
@@ -4115,7 +4115,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 return this;
             }
             var this: @This() = .{
-                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+                .heap = ByteList.initCapacity(bun.heap.default_allocator, vals.len) catch bun.outOfMemory(),
             };
             this.heap.appendSliceAssumeCapacity(vals);
             return this;
@@ -4140,9 +4140,9 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             len: u32 = 0,
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                var list = bun.BabyList(T).initCapacity(bun.heap.default_allocator, n) catch bun.outOfMemory();
+                list.append(bun.heap.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
+                list.push(bun.heap.default_allocator, new) catch bun.outOfMemory();
                 return list;
             }
 
@@ -4274,7 +4274,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                    this.heap.push(bun.heap.default_allocator, new) catch bun.outOfMemory();
                 },
             }
         }
@@ -4318,7 +4318,7 @@ pub const TestingAPIs = struct {
 
         const bunstr = string.toBunString(globalThis);
         defer bunstr.deref();
-        const utf8str = bunstr.toUTF8(bun.default_allocator);
+        const utf8str = bunstr.toUTF8(bun.heap.default_allocator);
         defer utf8str.deinit();
 
         inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
@@ -4339,7 +4339,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
 
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
 
         const template_args_js = arguments.nextEat() orelse {
@@ -4407,7 +4407,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
 
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
 
         const template_args_js = arguments.nextEat() orelse {

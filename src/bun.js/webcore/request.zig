@@ -16,7 +16,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -30,7 +30,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
+const NullableAllocator = bun.heap.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -171,7 +171,7 @@ pub const Request = struct {
 
         if (this._headers) |headers| {
             if (headers.fastGet(.ContentType)) |value| {
-                return value.toSlice(bun.default_allocator);
+                return value.toSlice(bun.heap.default_allocator);
             }
         }
 
@@ -187,7 +187,7 @@ pub const Request = struct {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
         const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-        return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
+        return bun.FormData.AsyncFormData.init(bun.heap.default_allocator, encoding) catch unreachable;
     }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
@@ -478,12 +478,12 @@ pub const Request = struct {
                         };
                     } else {
                         // slow path
-                        const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                        const temp_url = std.fmt.allocPrint(bun.heap.default_allocator, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
                         }) catch bun.outOfMemory();
-                        defer bun.default_allocator.free(temp_url);
+                        defer bun.heap.default_allocator.free(temp_url);
                         this.url = bun.String.createUTF8(temp_url);
                     }
 

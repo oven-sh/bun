@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const uws = bun.uws;
@@ -339,7 +339,7 @@ pub const RunCommand = struct {
 
             // TODO: remember to free this when we add --filter or --concurrent
             // in the meantime we don't need to free it.
-            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = try env.map.createNullDelimitedEnvMap(bun.heap.default_allocator),
 
             .cwd = cwd,
             .stderr = .inherit,
@@ -503,7 +503,7 @@ pub const RunCommand = struct {
 
             // TODO: remember to free this when we add --filter or --concurrent
             // in the meantime we don't need to free it.
-            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = try env.map.createNullDelimitedEnvMap(bun.heap.default_allocator),
 
             .cwd = cwd,
             .stderr = .inherit,
@@ -757,8 +757,8 @@ pub const RunCommand = struct {
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             if (Environment.isDebug) {
-                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
-                defer bun.default_allocator.free(dir_slice_u8);
+                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.heap.default_allocator, dir_slice) catch @panic("oom");
+                defer bun.heap.default_allocator.free(dir_slice_u8);
                 std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
                 std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
             }
@@ -889,7 +889,7 @@ pub const RunCommand = struct {
             if (package_json.config) |config| {
                 try this_transpiler.env.map.ensureUnusedCapacity(config.count());
                 for (config.keys(), config.values()) |k, v| {
-                    const key = try bun.strings.concat(bun.default_allocator, &.{ "npm_package_config_", k });
+                    const key = try bun.strings.concat(bun.heap.default_allocator, &.{ "npm_package_config_", k });
                     this_transpiler.env.map.putAssumeCapacity(key, v);
                 }
             }
@@ -1496,7 +1496,7 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(2048, bun.heap.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
 

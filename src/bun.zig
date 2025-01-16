@@ -11,29 +11,6 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = true;
-
-pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").c_allocator;
-
-/// Zeroing memory allocator
-pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").z_allocator;
-
-pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").huge_allocator;
-
-pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").auto_allocator;
-
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
@@ -70,24 +47,6 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
-/// We cannot use a threadlocal memory allocator for FileSystem-related things
-/// FileSystem is a singleton.
-pub const fs_allocator = default_allocator;
-
-pub fn typedAllocator(comptime T: type) std.mem.Allocator {
-    if (heap_breakdown.enabled)
-        return heap_breakdown.allocator(comptime T);
-
-    return default_allocator;
-}
-
-pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
-    if (heap_breakdown.enabled)
-        return heap_breakdown.namedAllocator(name);
-
-    return default_allocator;
-}
-
 pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
@@ -105,6 +64,7 @@ pub const detectCI = @import("./ci_info.zig").detectCI;
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
+pub const heap = @import("./heap.zig");
 pub const meta = @import("./meta.zig");
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
@@ -137,6 +97,8 @@ pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
+
+const Allocator = std.mem.Allocator;
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -555,9 +517,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 pub const StringBuilder = @import("./string_builder.zig");
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
-pub const linux = struct {
-    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
-};
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -747,17 +706,15 @@ pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnT
 }
 
 pub fn isHeapMemory(memory: anytype) bool {
-    if (comptime use_mimalloc) {
+    if (comptime heap.use_mimalloc) {
         const Memory = @TypeOf(memory);
         if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-            return Mimalloc.mi_is_in_heap_region(memory);
+            return heap.Mimalloc.mi_is_in_heap_region(memory);
         }
-        return Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+        return heap.Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
     }
     return false;
 }
-
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -887,7 +844,6 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
@@ -1607,7 +1563,6 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
@@ -1653,38 +1608,6 @@ pub fn DebugOnlyDisabler(comptime Type: type) type {
         }
     };
 }
-
-const FailingAllocator = struct {
-    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
-        if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
-        }
-        return null;
-    }
-
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
-        }
-        return false;
-    }
-
-    fn free(
-        _: *anyopaque,
-        _: []u8,
-        _: u8,
-        _: usize,
-    ) void {
-        unreachable;
-    }
-};
-
-/// When we want to avoid initializing a value as undefined, we can use this allocator
-pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
-    .alloc = FailingAllocator.alloc,
-    .resize = FailingAllocator.resize,
-    .free = FailingAllocator.free,
-} };
 
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
@@ -1986,14 +1909,6 @@ pub const Lock = @compileError("Use bun.Mutex instead");
 pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
-pub fn threadlocalAllocator() std.mem.Allocator {
-    if (comptime use_mimalloc) {
-        return MimallocArena.getThreadlocalDefault();
-    }
-
-    return default_allocator;
-}
-
 pub fn Ref(comptime T: type) type {
     return struct {
         ref_count: u32,
@@ -2063,8 +1978,6 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         }
     };
 }
-
-pub const MaxHeapAllocator = @import("./allocators/max_heap_allocator.zig").MaxHeapAllocator;
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
@@ -2329,7 +2242,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
             // Command line is expected to be valid UTF-16le
             // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
-            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
+            out.* = string_builder.append16(arg, heap.default_allocator) orelse @panic("Failed to allocate memory for argv");
         }
 
         argv = out_argv;
@@ -3072,7 +2985,7 @@ pub inline fn new(comptime T: type, init: T) *T {
     const ptr = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
     else ptr: {
-        const ptr = default_allocator.create(T) catch outOfMemory();
+        const ptr = heap.default_allocator.create(T) catch outOfMemory();
         ptr.* = init;
         break :ptr ptr;
     };
@@ -3098,7 +3011,7 @@ pub inline fn destroy(ptr: anytype) void {
     if (comptime heap_breakdown.enabled) {
         heap_breakdown.getZoneT(T).destroy(T, ptr);
     } else {
-        default_allocator.destroy(ptr);
+        heap.default_allocator.destroy(ptr);
     }
 }
 
@@ -3343,7 +3256,7 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
         }
         return output_buffer[0..size];
     }
-    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
+    var env = std.process.getEnvMap(heap.default_allocator) catch outOfMemory();
     const user = env.get("USER") orelse return null;
     const size = @min(output_buffer.len, user.len);
     copy(u8, output_buffer[0..size], user[0..size]);
@@ -3405,7 +3318,7 @@ pub fn runtimeEmbedFile(
 
         fn load() [:0]const u8 {
             return std.fs.cwd().readFileAllocOptions(
-                default_allocator,
+                heap.default_allocator,
                 abs_path,
                 std.math.maxInt(usize),
                 null,
@@ -3425,7 +3338,7 @@ pub fn runtimeEmbedFile(
 
     if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
-        default_allocator.free(static.once.payload);
+        heap.default_allocator.free(static.once.payload);
     }
 
     return static.once.call(.{});
@@ -3513,9 +3426,6 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
-
-// TODO: migrate
-pub const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
@@ -4232,7 +4142,7 @@ pub fn PathBufferPoolT(comptime T: type) type {
 
         pub fn get() *T {
             // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+            return &Pool.get(bun.heap.threadlocalAllocator()).data.bytes;
         }
 
         pub fn put(buffer: *T) void {
@@ -4362,5 +4272,3 @@ pub fn CowSlice(T: type) type {
         }
     };
 }
-
-const Allocator = std.mem.Allocator;

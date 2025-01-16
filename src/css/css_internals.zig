@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
@@ -46,7 +46,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
-    const source = source_bunstr.toUTF8(bun.default_allocator);
+    const source = source_bunstr.toUTF8(bun.heap.default_allocator);
     defer source.deinit();
 
     const expected_arg = arguments.nextEat() orelse {
@@ -57,7 +57,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
-    const expected = expected_bunstr.toUTF8(bun.default_allocator);
+    const expected = expected_bunstr.toUTF8(bun.heap.default_allocator);
     defer expected.deinit();
 
     const browser_options_arg = arguments.nextEat();
@@ -110,7 +110,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         },
         .err => |err| {
             if (log.hasAny()) {
-                return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
+                return log.toJS(globalThis, bun.heap.default_allocator, "parsing failed:");
             }
             return globalThis.throw("parsing failed: {}", .{err.kind});
         },
@@ -204,7 +204,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
-    const source = source_bunstr.toUTF8(bun.default_allocator);
+    const source = source_bunstr.toUTF8(bun.heap.default_allocator);
     defer source.deinit();
 
     const expected_arg = arguments.nextEat() orelse {
@@ -215,7 +215,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
-    const expected = expected_bunstr.toUTF8(bun.default_allocator);
+    const expected = expected_bunstr.toUTF8(bun.heap.default_allocator);
     defer expected.deinit();
 
     const minify_arg: JSC.JSValue = arguments.nextEat() orelse {
@@ -255,7 +255,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         },
         .err => |err| {
             if (log.hasAny()) {
-                return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
+                return log.toJS(globalThis, bun.heap.default_allocator, "parsing failed:");
             }
             return globalThis.throw("parsing failed: {}", .{err.kind});
         },

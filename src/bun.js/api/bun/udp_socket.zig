@@ -63,6 +63,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         var addr_buf: [INET6_ADDRSTRLEN + 1:0]u8 = undefined;
         var hostname: ?[*:0]const u8 = null;
         var port: u16 = 0;
+        var scope_id: ?u32 = null;
 
         switch (peer.family) {
             std.posix.AF.INET => {
@@ -74,6 +75,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
                 const peer6: *std.posix.sockaddr.in6 = @ptrCast(peer);
                 hostname = inet_ntop(peer.family, &peer6.addr, &addr_buf, addr_buf.len);
                 port = ntohs(peer6.port);
+                if (peer6.scope_id != 0)
+                    scope_id = peer6.scope_id;
             },
             else => continue,
         }
@@ -90,11 +93,28 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = udpSocket.js_refcount.fetchAdd(1, .monotonic);
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
+        const span = std.mem.span(hostname.?);
+        const hostname_string = if (scope_id) |id| blk: {
+            if (comptime !bun.Environment.isWindows) {
+                const net_if = @cImport({
+                    @cInclude("net/if.h");
+                });
+
+                var buffer = std.mem.zeroes([net_if.IF_NAMESIZE:0]u8);
+                if (net_if.if_indextoname(id, &buffer) != null) {
+                    break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch bun.outOfMemory();
+                }
+            }
+
+            break :blk bun.String.createFormat("{s}%{d}", .{ span, id }) catch bun.outOfMemory();
+        } else bun.String.init(span);
+        defer hostname_string.deref();
+
         _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
-            JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
+            hostname_string.toJS(globalThis),
         }) catch |err| {
             _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
         };
@@ -583,6 +603,32 @@ pub const UDPSocket = struct {
             if (inet_pton(std.posix.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
                 addr6.port = htons(@truncate(port));
                 addr6.family = std.posix.AF.INET6;
+                addr6.scope_id = 0;
+                if (str.indexOfAsciiChar('%')) |percent| {
+                    if (percent + 1 < str.length()) {
+                        const iface_id: ?u32 = blk: {
+                            if (comptime bun.Environment.isWindows) {
+                                if (str.substring(percent + 1).toInt32()) |signed| {
+                                    if (std.math.cast(u32, signed)) |id| {
+                                        break :blk id;
+                                    }
+                                }
+                            } else {
+                                const index = std.c.if_nametoindex(address_slice[percent + 1 ..]);
+                                if (index > 0) {
+                                    if (std.math.cast(u32, index)) |id| {
+                                        break :blk id;
+                                    }
+                                }
+                            }
+                            break :blk null;
+                        };
+
+                        if (iface_id) |id| {
+                            addr6.scope_id = id;
+                        }
+                    }
+                }
             } else {
                 return false;
             }

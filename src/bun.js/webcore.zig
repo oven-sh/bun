@@ -634,13 +634,12 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
-        defer str.deref();
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
 
         const uuid = globalThis.bunVM().rareData().nextUUID();
 
         uuid.print(bytes[0..36]);
-        return str.toJS(globalThis);
+        return str.transferToJS(globalThis);
     }
 
     comptime {

@@ -114,7 +114,7 @@ describe("invalid inputs", () => {
       thrown = e as Error;
     }
     expect(thrown.code).toBe("ERR_CRYPTO_INVALID_DIGEST");
-    expect(thrown.message).toBe('Unsupported algorithm "md55"');
+    expect(thrown.message).toBe("Invalid digest: md55");
   });
 });
 

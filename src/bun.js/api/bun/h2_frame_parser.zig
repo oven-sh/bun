@@ -1768,7 +1768,6 @@ pub const H2FrameParser = struct {
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
-                    sensitiveHeaders.push(globalObject, js_header_value);
                 }
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
@@ -1788,7 +1787,6 @@ pub const H2FrameParser = struct {
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
-                    sensitiveHeaders.push(globalObject, js_header_value);
                 }
             }
 

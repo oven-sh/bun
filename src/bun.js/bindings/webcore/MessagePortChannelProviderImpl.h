@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/IsoMalloc.h>
 #include "MessagePortChannelProvider.h"
 #include "MessagePortChannelRegistry.h"
 #include "MessageWithMessagePorts.h"

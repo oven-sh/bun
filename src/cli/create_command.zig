@@ -154,7 +154,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
 
         .windows = if (Environment.isWindows) .{
             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-        } else {},
+        },
     }) catch return;
 }
 
@@ -475,18 +475,14 @@ pub const CreateCommand = struct {
                 };
 
                 var destination_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
-                const dst_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
-                    strings.withoutTrailingSlash(destination)
-                else {};
+                const dst_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows) strings.withoutTrailingSlash(destination);
                 if (comptime Environment.isWindows) {
                     strings.copyU8IntoU16(&destination_buf, dst_without_trailing_slash);
                     destination_buf[dst_without_trailing_slash.len] = std.fs.path.sep;
                 }
 
                 var template_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
-                const src_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
-                    strings.withoutTrailingSlash(abs_template_path)
-                else {};
+                const src_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows) strings.withoutTrailingSlash(abs_template_path);
                 if (comptime Environment.isWindows) {
                     strings.copyU8IntoU16(&template_path_buf, src_without_trailing_slash);
                     template_path_buf[src_without_trailing_slash.len] = std.fs.path.sep;
@@ -597,10 +593,10 @@ pub const CreateCommand = struct {
                     &walker_,
                     node,
                     &progress,
-                    if (comptime Environment.isWindows) dst_without_trailing_slash.len + 1 else {},
-                    if (comptime Environment.isWindows) &destination_buf else {},
-                    if (comptime Environment.isWindows) src_without_trailing_slash.len + 1 else {},
-                    if (comptime Environment.isWindows) &template_path_buf else {},
+                    if (comptime Environment.isWindows) dst_without_trailing_slash.len + 1,
+                    if (comptime Environment.isWindows) &destination_buf,
+                    if (comptime Environment.isWindows) src_without_trailing_slash.len + 1,
+                    if (comptime Environment.isWindows) &template_path_buf,
                 );
 
                 package_json_file = destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null;
@@ -1517,7 +1513,7 @@ pub const CreateCommand = struct {
 
                 .windows = if (Environment.isWindows) .{
                     .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                } else {},
+                },
             });
             _ = try process.unwrap();
         }

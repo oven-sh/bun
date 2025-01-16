@@ -643,6 +643,37 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
+  test(`scoped bundledDependencies`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled",
+          version: "4.4.4",
+          dependencies: {
+            "@oven/bun": "1.1.1",
+          },
+          bundledDependencies: ["@oven/bun"],
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "@oven", "bun", "package.json"),
+        JSON.stringify({
+          name: "@oven/bun",
+          version: "1.1.1",
+        }),
+      ),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/@oven/bun/package.json" },
+    ]);
+  });
+
   test(`invalid bundledDependencies value should throw`, async () => {
     await Promise.all([
       write(
@@ -733,7 +764,7 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
-  test.todo("scoped names", async () => {
+  test("scoped names", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),

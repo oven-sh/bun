@@ -466,12 +466,12 @@ public:
 
     /* Register an HTTP route handler acording to URL pattern */
     void onHttp(std::string method, std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
-        HttpContextData<SSL> *httpContextData = getSocketContextData();
+         HttpContextData<SSL> *httpContextData = getSocketContextData();
 
         /* Todo: This is ugly, fix */
         std::vector<std::string> methods;
         if (method == "*") {
-            methods = httpContextData->currentRouter->upperCasedMethods;
+            methods = {"*"};
         } else {
             methods = {method};
         }

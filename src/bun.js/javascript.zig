@@ -1916,7 +1916,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1953,7 +1953,7 @@ pub const VirtualMachine = struct {
         }
         vm.global = ZigGlobalObject.create(
             vm.console,
-            -1,
+            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             false,
             false,
             null,
@@ -2032,7 +2032,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2064,7 +2064,7 @@ pub const VirtualMachine = struct {
 
         vm.global = ZigGlobalObject.create(
             vm.console,
-            -1,
+            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             opts.smol,
             opts.eval,
             null,
@@ -2188,7 +2188,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = .{},
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2278,7 +2278,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(

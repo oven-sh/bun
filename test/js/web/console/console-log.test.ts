@@ -58,7 +58,7 @@ it("long arrays get cutoff", () => {
 });
 
 it("console.group", async () => {
-  const filepath = join(import.meta.dir, "console-group.fixture.js");
+  const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({
     cmd: [bunExe(), filepath],
     env: { ...bunEnv, "BUN_JSC_showPrivateScriptsInStackTraces": "0" },

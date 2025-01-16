@@ -43,7 +43,7 @@ async function text(stream): Promise<string> {
 }
 
 async function json(stream): Promise<any> {
-  if ($inheritsReadableStream(stream)) return Bun.readableStreamToJSON(stream).then(JSONParse);
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToJSON(stream);
   const str = await text(stream);
   return JSONParse(str);
 }

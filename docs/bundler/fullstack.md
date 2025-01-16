@@ -68,6 +68,60 @@ Bun.serve({
 
 When you make a request to `/dashboard` or `/`, Bun automatically bundles the `<script>` and `<link>` tags in the HTML files, exposes them as static routes, and serves the result.
 
+### How to use with React
+
+To use React in your client-side code, import `react-dom/client` and render your app.
+
+{% codetabs %}
+
+```ts#backend.ts
+import dashboard from "./dashboard.html";
+import { serve } from "bun";
+
+serve({
+  static: {
+    "/": homepage,
+  },
+
+  async fetch(req) {
+    // ...api requests
+    return new Response("hello world");
+  },
+});
+```
+
+```ts#frontend.tsx
+import { createRoot } from "react-dom/client";
+import { App } from "./app.tsx";
+
+document.addEventListener("DOMContentLoaded", () => {
+  const root = createRoot(document.getElementById("root"));
+  root.render(<App />);
+});
+```
+
+```html#dashboard.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./dashboard.tsx"></script>
+  </body>
+</html>
+```
+
+```css#styles.css
+body {
+  background-color: red;
+}
+```
+
+{% /codetabs %}
+
 ### Development mode
 
 When building locally, enable development mode by setting `development: true` in `Bun.serve()`.
@@ -151,3 +205,7 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 - Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.
 - We haven't figured out plugins yet. This probably will live in `bunfig.toml` with the same API as in `Bun.build` otherwise.
+
+```
+
+```

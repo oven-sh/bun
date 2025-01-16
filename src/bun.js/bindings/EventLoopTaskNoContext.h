@@ -1,5 +1,7 @@
 #pragma once
-#include "root.h"
+
+#include <wtf/IsoMalloc.h>
+#include <wtf/Function.h>
 
 namespace Bun {
 

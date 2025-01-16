@@ -3039,6 +3039,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             &config,
             &args,
             callframe.isFromBunMain(globalObject.vm()),
+            true,
         );
 
         if (globalObject.hasException()) {

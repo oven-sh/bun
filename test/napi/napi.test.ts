@@ -200,6 +200,9 @@ describe("napi", () => {
     it("exists while calling a napi_async_complete_callback", () => {
       checkSameOutput("create_promise", [false]);
     });
+    it("keeps arguments moved off the stack alive", () => {
+      checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
+    });
   });
 
   describe("escapable_handle_scope", () => {
@@ -289,7 +292,7 @@ describe("napi", () => {
     });
   });
 
-  describe("napi_set_property", () => {
+  describe("napi_set_named_property", () => {
     it("handles edge cases", () => {
       checkSameOutput("test_set_property", []);
     });
@@ -327,6 +330,8 @@ describe("napi", () => {
     });
   });
 
+  // TODO(@190n) test allocating in a finalizer from a napi module with the right version
+
   describe("napi_wrap", () => {
     it("accepts the right kinds of values", () => {
       checkSameOutput("test_napi_wrap", []);
@@ -354,6 +359,15 @@ describe("napi", () => {
       checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+    });
+  });
+
+  describe("napi_define_class", () => {
+    it("handles edge cases in the constructor", () => {
+      checkSameOutput("test_napi_class", []);
+      checkSameOutput("test_subclass_napi_class", []);
+      checkSameOutput("test_napi_class_non_constructor_call", []);
+      checkSameOutput("test_reflect_construct_napi_class", []);
     });
   });
 

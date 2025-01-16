@@ -946,7 +946,6 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-    ref->weakValueRef.set(jsc_value, weakValueHandleOwner(), ref);
     // In case the ref's finalizer is never called, we'll add a finalizer to execute on exit.
     const auto& bound_cleanup = env->addFinalizer(wrap_cleanup, native_object, ref);
     ref->boundCleanup = &bound_cleanup;
@@ -961,7 +960,10 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     if (result) {
+        ref->weakValueRef.set(jsc_value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
         *result = toNapi(ref);
+    } else {
+        ref->weakValueRef.set(jsc_value, Napi::NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
     }
 
     NAPI_RETURN_SUCCESS(env);

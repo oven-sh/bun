@@ -341,11 +341,11 @@ pub const UDPSocket = struct {
             this.closed = true;
             defer this.deinit();
             if (err != 0) {
-                const code = @tagName(@as(bun.C.E, @enumFromInt(err)));
+                const code = @tagName(bun.C.SystemErrno.init(@as(c_int, @intCast(err))).?);
                 const sys_err = JSC.SystemError{
                     .errno = err,
-                    .code = bun.String.createFormat("E{s}", .{code}) catch bun.outOfMemory(),
-                    .message = bun.String.createFormat("bind E{s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
+                    .code = bun.String.static(code),
+                    .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
                 };
                 const address = bun.String.createUTF8(config.hostname);
                 defer address.deref();

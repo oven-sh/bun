@@ -309,7 +309,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
         int flags = fcntl(fd, F_GETFL, 0);
 
-        // F_GETFL supports O_NONBLCOK
+        // F_GETFL supports O_NONBLOCK
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
         flags = fcntl(fd, F_GETFD, 0);
@@ -329,7 +329,12 @@ static int setsockopt_6_or_4(LIBUS_SOCKET_DESCRIPTOR fd, int option4, int option
         return 0;
     }
 
+#ifdef _WIN32
+    const int err = WSAGetLastError();
+    if (err == WSAENOPROTOOPT || err == WSAEINVAL) {
+#else
     if (errno == ENOPROTOOPT || errno == EINVAL) {
+#endif
         return setsockopt(fd, IPPROTO_IP, option4, option_value, option_len);
     }
 
@@ -350,7 +355,11 @@ int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
 
 static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
     if (ttl < 1 || ttl > 255) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#else
         errno = EINVAL;
+#endif
         return -1;
     }
 
@@ -1036,7 +1045,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
         if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
+#else
             *err = errno;
+#endif
         }
         bsd_close_socket(listenFd);
         freeaddrinfo(result);

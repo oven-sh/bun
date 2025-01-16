@@ -2888,7 +2888,7 @@ pub const Expect = struct {
                 } else {
                     var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
-
+                        .own_properties_only = false,
                         .include_value = true,
                     }).init(globalThis, value);
                     defer props_iter.deinit();
@@ -4532,6 +4532,7 @@ pub const Expect = struct {
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
+                .own_properties_only = false,
             }).init(globalThis, matchers_to_register);
             defer iter.deinit();
 

@@ -3334,7 +3334,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3362,7 +3362,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

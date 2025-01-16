@@ -963,8 +963,47 @@ pub const DataRow = struct {
 
 pub const BindComplete = [_]u8{'2'} ++ toBytes(Int32(4));
 
+pub const ColumnIdentifier = union(enum) {
+    name: Data,
+    index: u32,
+    duplicate: void,
+
+    pub fn init(name: Data) !@This() {
+        if (switch (name.slice().len) {
+            1..."4294967295".len => true,
+            0 => return .{ .name = .{ .empty = {} } },
+            else => false,
+        }) might_be_int: {
+            // use a u64 to avoid overflow
+            var int: u64 = 0;
+            for (name.slice()) |byte| {
+                int = int * 10 + switch (byte) {
+                    '0'...'9' => @as(u64, byte - '0'),
+                    else => break :might_be_int,
+                };
+            }
+
+            // JSC only supports indexed property names up to 2^32
+            if (int < std.math.maxInt(u32))
+                return .{ .index = @intCast(int) };
+        }
+
+        return .{ .name = .{ .owned = try name.toOwned() } };
+    }
+
+    pub fn deinit(this: *@This()) void {
+        switch (this.*) {
+            .name => |*name| name.deinit(),
+            else => {},
+        }
+    }
+};
 pub const FieldDescription = struct {
-    name: Data = .{ .empty = {} },
+    /// JavaScriptCore treats numeric property names differently than string property names.
+    /// so we do the work to figure out if the property name is a number ahead of time.
+    name_or_index: ColumnIdentifier = .{
+        .name = .{ .empty = {} },
+    },
     table_oid: int4 = 0,
     column_index: short = 0,
     type_oid: int4 = 0,
@@ -974,7 +1013,7 @@ pub const FieldDescription = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.name.deinit();
+        this.name_or_index.deinit();
     }
 
     pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) AnyPostgresError!void {
@@ -997,7 +1036,7 @@ pub const FieldDescription = struct {
             .table_oid = try reader.int4(),
             .column_index = try reader.short(),
             .type_oid = try reader.int4(),
-            .name = .{ .owned = try name.toOwned() },
+            .name_or_index = try ColumnIdentifier.init(name),
         };
 
         try reader.skip(2 + 4 + 2);
@@ -1007,10 +1046,10 @@ pub const FieldDescription = struct {
 };
 
 pub const RowDescription = struct {
-    fields: []const FieldDescription = &[_]FieldDescription{},
+    fields: []FieldDescription = &[_]FieldDescription{},
     pub fn deinit(this: *@This()) void {
         for (this.fields) |*field| {
-            @constCast(field).deinit();
+            field.deinit();
         }
 
         bun.default_allocator.free(this.fields);

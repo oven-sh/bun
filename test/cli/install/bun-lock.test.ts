@@ -45,9 +45,7 @@ it("should write plaintext lockfiles", async () => {
   }
   expect(stat.mode).toBe(mode);
 
-  expect(await file.readFile({ encoding: "utf8" })).toEqual(
-    `{\n  \"lockfileVersion\": 0,\n  \"workspaces\": {\n    \"\": {\n      \"dependencies\": {\n        \"dummy-package\": \"file:./bar-0.0.2.tgz\",\n      },\n    },\n  },\n  \"packages\": {\n    \"dummy-package\": [\"bar@./bar-0.0.2.tgz\", {}],\n  }\n}\n`,
-  );
+  expect(await file.readFile({ encoding: "utf8" })).toMatchSnapshot();
 });
 
 // won't work on windows, " is not a valid character in a filename

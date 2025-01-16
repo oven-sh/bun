@@ -24,6 +24,7 @@
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "NodeVM.h"
 #include "../../bake/BakeGlobalObject.h"
+
 namespace WebCore {
 using namespace JSC;
 

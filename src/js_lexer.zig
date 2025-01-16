@@ -117,7 +117,7 @@ fn NewLexer_(
         const is_json = json_options.is_json;
         const json = json_options;
         const JSONBool = if (is_json) bool else void;
-        const JSONBoolDefault: JSONBool = if (is_json) true else {};
+        const JSONBoolDefault: JSONBool = if (is_json) true;
 
         pub const Error = error{
             UTF8Fail,
@@ -180,8 +180,7 @@ fn NewLexer_(
             }
         else
             void = if (json_options.guess_indentation)
-            .{}
-        else {},
+            .{},
 
         pub inline fn loc(self: *const LexerType) logger.Loc {
             return logger.usize2Loc(self.start);

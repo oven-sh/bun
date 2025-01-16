@@ -2137,7 +2137,7 @@ pub const Subprocess = struct {
                 .hide_window = windows_hide,
                 .verbatim_arguments = windows_verbatim_arguments,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
-            } else {},
+            },
         };
 
         var spawned = switch (bun.spawn.spawnProcess(

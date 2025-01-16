@@ -499,3 +499,7 @@ pub extern fn strlen(ptr: [*c]const u8) usize;
 pub const passwd = translated.passwd;
 pub const geteuid = translated.geteuid;
 pub const getpwuid_r = translated.getpwuid_r;
+
+export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
+    return @tagName(bun.C.SystemErrno.init(err) orelse return null);
+}

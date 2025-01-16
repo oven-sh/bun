@@ -140,6 +140,7 @@ exports[`text lockfile workspace sorting 1`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "dependencies": {
         "no-deps": "1.0.0",
       },
@@ -173,6 +174,7 @@ exports[`text lockfile workspace sorting 2`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "dependencies": {
         "no-deps": "1.0.0",
       },
@@ -214,6 +216,7 @@ exports[`text lockfile --frozen-lockfile 1`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "dependencies": {
         "a-dep": "^1.0.2",
         "no-deps": "^1.0.0",
@@ -244,6 +247,7 @@ exports[`binaries each type of binary serializes correctly to text lockfile 1`] 
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "dependencies": {
         "dir-bin": "./dir-bin",
         "file-bin": "./file-bin",
@@ -270,6 +274,7 @@ exports[`binaries root resolution bins 1`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "fooooo",
       "dependencies": {
         "fooooo": ".",
         "no-deps": "1.0.0",
@@ -290,6 +295,7 @@ exports[`hoisting text lockfile is hoisted 1`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "dependencies": {
         "hoist-lockfile-1": "1.0.0",
         "hoist-lockfile-2": "1.0.0",
@@ -317,6 +323,7 @@ exports[`it should ignore peerDependencies within workspaces 1`] = `
   "lockfileVersion": 0,
   "workspaces": {
     "": {
+      "name": "foo",
       "peerDependencies": {
         "no-deps": ">=1.0.0",
       },

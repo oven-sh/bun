@@ -205,7 +205,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             JSC::JSValue isESMValue = callFrame->argument(2);
             if (isESMValue.isBoolean()) {
                 isESM = isESMValue.toBoolean(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
@@ -223,7 +222,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         } else if (fromValue.isBoolean()) {
             isESM = fromValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
             fromValue = JSC::jsUndefined();
         }
 

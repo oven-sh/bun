@@ -217,6 +217,9 @@ export default {
     page("bundler/html", "HTML", {
       description: `Bundle html files with Bun's native bundler.`,
     }),
+    page("bundler/fullstack", "Fullstack Dev Server", {
+      description: "Serve your frontend and backend from the same app with Bun's dev server.",
+    }),
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),
@@ -311,6 +314,9 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/s3", "S3 Object Storage", {
+      description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
+    }),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),

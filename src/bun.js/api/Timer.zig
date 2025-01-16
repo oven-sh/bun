@@ -10,6 +10,7 @@ const Async = @import("async");
 const uv = bun.windows.libuv;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
+const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -33,8 +34,7 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.Timer else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -789,6 +789,7 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        DNSResolver,
         WindowsNamedPipe,
         WTFTimer,
         PostgresSQLConnectionTimeout,
@@ -801,6 +802,7 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .DNSResolver => DNSResolver,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
                 .WTFTimer => WTFTimer,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
@@ -814,6 +816,7 @@ pub const EventLoopTimer = struct {
         StatWatcherScheduler,
         UpgradedDuplex,
         WTFTimer,
+        DNSResolver,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
 
@@ -825,6 +828,7 @@ pub const EventLoopTimer = struct {
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
                 .WTFTimer => WTFTimer,
+                .DNSResolver => DNSResolver,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
@@ -906,6 +910,10 @@ pub const EventLoopTimer = struct {
                 if (comptime t.Type() == JSC.Jest.TestRunner) {
                     container.onTestTimeout(now, vm);
                     return .disarm;
+                }
+
+                if (comptime t.Type() == DNSResolver) {
+                    return container.checkTimeouts(now, vm);
                 }
 
                 return container.callback(container);

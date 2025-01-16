@@ -3117,7 +3117,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
-
             const globalThis = server.globalThis;
             var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {

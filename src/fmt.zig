@@ -1772,23 +1772,23 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("The value of \"");
             try writer.writeAll(self.field_name);
-            try writer.writeAll("\" is out of range. It ");
+            try writer.writeAll("\" is out of range. It must be ");
 
             const min = self.min;
             const max = self.max;
             const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d} && <= {d}.", .{ min, max });
+                try std.fmt.format(writer, ">= {d} && <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d}.", .{min});
+                try std.fmt.format(writer, ">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be <= {d}.", .{max});
+                try std.fmt.format(writer, "<= {d}.", .{max});
             } else if (msg.len > 0) {
                 try writer.writeAll(msg);
                 try writer.writeByte('.');
             } else {
-                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll("within the range of values for type ");
                 try writer.writeAll(comptime @typeName(T));
                 try writer.writeAll(".");
             }

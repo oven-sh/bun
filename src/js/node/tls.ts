@@ -499,23 +499,21 @@ const TLSSocket = (function (InternalTLSSocket) {
 );
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
-class Server extends NetServer {
-  key;
-  cert;
-  ca;
-  passphrase;
-  secureOptions;
-  _rejectUnauthorized = rejectUnauthorizedDefault;
-  _requestCert;
-  servername;
-  ALPNProtocols;
-  #contexts: Map<string, typeof InternalSecureContext> | null = null;
+function Server(options, secureConnectionListener) {
+  const server = new NetServer(options, secureConnectionListener);
 
-  constructor(options, secureConnectionListener) {
-    super(options, secureConnectionListener);
-    this.setSecureContext(options);
-  }
-  addContext(hostname: string, context: typeof InternalSecureContext | object) {
+  server.key = undefined;
+  server.cert = undefined;
+  server.ca = undefined;
+  server.passphrase = undefined;
+  server.secureOptions = undefined;
+  server._rejectUnauthorized = rejectUnauthorizedDefault;
+  server._requestCert = undefined;
+  server.servername = undefined;
+  server.ALPNProtocols = undefined;
+  let contexts = null;
+
+  server.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -525,11 +523,12 @@ class Server extends NetServer {
     if (this._handle) {
       addServerName(this._handle, hostname, context);
     } else {
-      if (!this.#contexts) this.#contexts = new Map();
-      this.#contexts.set(hostname, context as typeof InternalSecureContext);
+      if (!contexts) contexts = new Map();
+      contexts.set(hostname, context);
     }
-  }
-  setSecureContext(options) {
+  };
+
+  server.setSecureContext = function (options) {
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
@@ -598,17 +597,17 @@ class Server extends NetServer {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
     }
-  }
+  };
 
-  getTicketKeys() {
+  server.getTicketKeys = function () {
     throw Error("Not implented in Bun yet");
-  }
+  };
 
-  setTicketKeys() {
+  server.setTicketKeys = function () {
     throw Error("Not implented in Bun yet");
-  }
+  };
 
-  [buntls](port, host, isClient) {
+  server[buntls] = function (port, host, isClient) {
     return [
       {
         serverName: this.servername || host || "localhost",
@@ -622,11 +621,14 @@ class Server extends NetServer {
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
-        contexts: this.#contexts,
+        contexts: contexts,
       },
       SocketClass,
     ];
-  }
+  };
+
+  server.setSecureContext(options);
+  return server;
 }
 
 function createServer(options, connectionListener) {
